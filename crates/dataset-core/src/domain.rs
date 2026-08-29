@@ -23,6 +23,8 @@ pub enum DatasetError {
     DuplicateSourceRow(Uuid),
     #[error("a snapshot must contain at least one source row")]
     EmptySnapshot,
+    #[error("source row {row_id} is missing configured group dimension {dimension}")]
+    MissingGroupDimension { row_id: Uuid, dimension: String },
     #[error("could not fingerprint dataset artifact: {0}")]
     Fingerprint(String),
 }
@@ -65,15 +67,32 @@ impl Default for SplitRatios {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SplitConfiguration {
     pub ratios: SplitRatios,
     pub seed: u64,
+    /// Optional categorical dimension whose values must remain in one split.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_dimension: Option<String>,
 }
 
 impl SplitConfiguration {
     pub fn new(ratios: SplitRatios, seed: u64) -> Self {
-        Self { ratios, seed }
+        Self {
+            ratios,
+            seed,
+            group_dimension: None,
+        }
+    }
+
+    pub fn with_group_dimension(
+        mut self,
+        group_dimension: Option<String>,
+    ) -> Result<Self, DatasetError> {
+        self.group_dimension = group_dimension
+            .map(|value| required(value, "group dimension"))
+            .transpose()?;
+        Ok(self)
     }
 }
 

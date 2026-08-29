@@ -7,6 +7,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::allocation::InitialAllocationRecord;
+use crate::contamination::{ContaminationOverride, ContaminationReport, ContaminationStatus};
 use crate::governance::{CohortRoleDecision, EvaluationCohort, EvidenceExposure, ExposurePurpose};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -100,4 +101,39 @@ pub trait GovernanceStore: Send + Sync {
         &self,
         query: ExposureQuery,
     ) -> BoxFuture<'_, Result<Vec<EvidenceExposure>, WorkflowStoreError>>;
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ContaminationQuery {
+    pub cohort_id: Option<Uuid>,
+    pub status: Option<ContaminationStatus>,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+pub trait ContaminationStore: Send + Sync {
+    fn create_contamination_report(
+        &self,
+        report: &ContaminationReport,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    fn get_contamination_report(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<ContaminationReport>, WorkflowStoreError>>;
+
+    fn query_contamination_reports(
+        &self,
+        query: ContaminationQuery,
+    ) -> BoxFuture<'_, Result<Vec<ContaminationReport>, WorkflowStoreError>>;
+
+    fn append_contamination_override(
+        &self,
+        value: &ContaminationOverride,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    fn get_contamination_override(
+        &self,
+        report_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<ContaminationOverride>, WorkflowStoreError>>;
 }

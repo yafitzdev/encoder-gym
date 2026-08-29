@@ -35,43 +35,114 @@ pub fn build_snapshot(
         source_dataset_id,
         name,
         description,
-        configuration,
+        configuration.clone(),
         source_rows.len() as u64,
     )?;
-    let mut strata = BTreeMap::<String, Vec<SourceRow>>::new();
-    for row in source_rows {
-        strata.entry(row.label.clone()).or_default().push(row);
-    }
-
     let mut members = Vec::with_capacity(snapshot.member_count as usize);
-    for rows in strata.values_mut() {
-        rows.sort_by_key(|row| (stable_score(configuration.seed, row.id), row.id));
-        let counts = allocate_counts(rows.len(), configuration);
-        let boundaries = [counts[0], counts[0] + counts[1]];
-        for (index, row) in rows.drain(..).enumerate() {
-            let split = if index < boundaries[0] {
-                SnapshotSplit::Train
-            } else if index < boundaries[1] {
-                SnapshotSplit::Validation
-            } else {
-                SnapshotSplit::Test
-            };
-            members.push(SnapshotMember {
-                id: Uuid::new_v4(),
-                snapshot_id: snapshot.id,
-                source_row_id: row.id,
-                split,
-                text: row.text,
-                label: row.label,
-                dimensions: row.dimensions,
-                source_provenance: row.provenance,
-                source_created_at: row.created_at,
-            });
-        }
+    for (row, split) in split_rows(source_rows, configuration)? {
+        members.push(SnapshotMember {
+            id: Uuid::new_v4(),
+            snapshot_id: snapshot.id,
+            source_row_id: row.id,
+            split,
+            text: row.text,
+            label: row.label,
+            dimensions: row.dimensions,
+            source_provenance: row.provenance,
+            source_created_at: row.created_at,
+        });
     }
     members.sort_by_key(|member| member.source_row_id);
     snapshot.fingerprint = snapshot_fingerprint(&snapshot, &members)?;
     Ok((snapshot, members))
+}
+
+fn split_rows(
+    source_rows: Vec<SourceRow>,
+    configuration: SplitConfiguration,
+) -> Result<Vec<(SourceRow, SnapshotSplit)>, DatasetError> {
+    let Some(group_dimension) = configuration.group_dimension.as_deref() else {
+        let mut strata = BTreeMap::<String, Vec<SourceRow>>::new();
+        for row in source_rows {
+            strata.entry(row.label.clone()).or_default().push(row);
+        }
+        let mut assignments = Vec::new();
+        for rows in strata.values_mut() {
+            rows.sort_by_key(|row| (stable_score(configuration.seed, row.id), row.id));
+            let counts = allocate_counts(rows.len(), &configuration);
+            for (index, row) in rows.drain(..).enumerate() {
+                assignments.push((row, split_for_index(index, counts)));
+            }
+        }
+        return Ok(assignments);
+    };
+
+    let mut groups = BTreeMap::<String, Vec<SourceRow>>::new();
+    for row in source_rows {
+        let group = row.dimensions.get(group_dimension).ok_or_else(|| {
+            DatasetError::MissingGroupDimension {
+                row_id: row.id,
+                dimension: group_dimension.to_owned(),
+            }
+        })?;
+        groups.entry(group.clone()).or_default().push(row);
+    }
+    let total = groups.values().map(Vec::len).sum::<usize>();
+    let targets = allocate_counts(total, &configuration);
+    let mut ordered = groups.into_iter().collect::<Vec<_>>();
+    ordered.sort_by(|(left, left_rows), (right, right_rows)| {
+        right_rows.len().cmp(&left_rows.len()).then_with(|| {
+            stable_text_score(configuration.seed, left)
+                .cmp(&stable_text_score(configuration.seed, right))
+                .then_with(|| left.cmp(right))
+        })
+    });
+    let mut assigned = [0_usize; 3];
+    let mut assignments = Vec::with_capacity(total);
+    for (_, rows) in ordered {
+        let index = (0..3)
+            .min_by(|left, right| {
+                group_split_cost(assigned, targets, *left, rows.len())
+                    .cmp(&group_split_cost(assigned, targets, *right, rows.len()))
+                    .then_with(|| left.cmp(right))
+            })
+            .expect("three candidate splits");
+        assigned[index] += rows.len();
+        let split = split_from_index(index);
+        assignments.extend(rows.into_iter().map(|row| (row, split)));
+    }
+    Ok(assignments)
+}
+
+fn group_split_cost(
+    assigned: [usize; 3],
+    targets: [usize; 3],
+    candidate: usize,
+    group_size: usize,
+) -> (usize, usize) {
+    let projected = assigned[candidate] + group_size;
+    (
+        projected.saturating_sub(targets[candidate]),
+        targets[candidate].abs_diff(projected),
+    )
+}
+
+fn split_for_index(index: usize, counts: [usize; 3]) -> SnapshotSplit {
+    if index < counts[0] {
+        SnapshotSplit::Train
+    } else if index < counts[0] + counts[1] {
+        SnapshotSplit::Validation
+    } else {
+        SnapshotSplit::Test
+    }
+}
+
+const fn split_from_index(index: usize) -> SnapshotSplit {
+    match index {
+        0 => SnapshotSplit::Train,
+        1 => SnapshotSplit::Validation,
+        _ => SnapshotSplit::Test,
+    }
 }
 
 #[derive(Serialize)]
@@ -102,7 +173,7 @@ fn snapshot_fingerprint(
         source_dataset_id: snapshot.source_dataset_id,
         name: &snapshot.name,
         description: &snapshot.description,
-        split_configuration: snapshot.split_configuration,
+        split_configuration: snapshot.split_configuration.clone(),
         members: members
             .iter()
             .map(|member| SnapshotMemberFingerprintInput {
@@ -119,7 +190,7 @@ fn snapshot_fingerprint(
     .map_err(|error| DatasetError::Fingerprint(error.to_string()))
 }
 
-fn allocate_counts(size: usize, configuration: SplitConfiguration) -> [usize; 3] {
+fn allocate_counts(size: usize, configuration: &SplitConfiguration) -> [usize; 3] {
     let ratios = [
         configuration.ratios.train,
         configuration.ratios.validation,
@@ -145,6 +216,15 @@ fn allocate_counts(size: usize, configuration: SplitConfiguration) -> [usize; 3]
 fn stable_score(seed: u64, id: Uuid) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ seed;
     for byte in id.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+fn stable_text_score(seed: u64, value: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ seed;
+    for byte in value.as_bytes() {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
@@ -191,7 +271,8 @@ mod tests {
         let configuration =
             SplitConfiguration::new(SplitRatios::new(0.6, 0.2, 0.2).expect("ratios"), 42);
         let (first_snapshot, first) =
-            build_snapshot(dataset_id, "stable", None, configuration, source).expect("snapshot");
+            build_snapshot(dataset_id, "stable", None, configuration.clone(), source)
+                .expect("snapshot");
         let (second_snapshot, second) =
             build_snapshot(dataset_id, "stable", None, configuration, reversed).expect("snapshot");
 
@@ -253,5 +334,59 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn group_aware_split_keeps_related_rows_together_and_is_deterministic() {
+        let dataset_id = Uuid::new_v4();
+        let mut source = rows(dataset_id);
+        for (index, row) in source.iter_mut().enumerate() {
+            row.dimensions
+                .insert("account".into(), format!("account-{}", index / 2));
+        }
+        let configuration =
+            SplitConfiguration::new(SplitRatios::new(0.6, 0.2, 0.2).expect("ratios"), 42)
+                .with_group_dimension(Some("account".into()))
+                .expect("group configuration");
+        let mut reversed = source.clone();
+        reversed.reverse();
+        let (_, first) = build_snapshot(dataset_id, "grouped", None, configuration.clone(), source)
+            .expect("snapshot");
+        let (_, second) =
+            build_snapshot(dataset_id, "grouped", None, configuration, reversed).expect("snapshot");
+
+        let assignments = |members: &[crate::domain::SnapshotMember]| {
+            members
+                .iter()
+                .map(|member| (member.source_row_id, member.split))
+                .collect::<BTreeMap<_, _>>()
+        };
+        assert_eq!(assignments(&first), assignments(&second));
+        let mut group_splits = BTreeMap::<String, BTreeSet<SnapshotSplit>>::new();
+        for member in first {
+            group_splits
+                .entry(member.dimensions["account"].clone())
+                .or_default()
+                .insert(member.split);
+        }
+        assert!(group_splits.values().all(|splits| splits.len() == 1));
+    }
+
+    #[test]
+    fn group_aware_split_rejects_missing_group_values() {
+        let dataset_id = Uuid::new_v4();
+        let result = build_snapshot(
+            dataset_id,
+            "grouped",
+            None,
+            SplitConfiguration::new(SplitRatios::default(), 42)
+                .with_group_dimension(Some("account".into()))
+                .expect("group configuration"),
+            rows(dataset_id),
+        );
+        assert!(matches!(
+            result,
+            Err(crate::domain::DatasetError::MissingGroupDimension { .. })
+        ));
     }
 }

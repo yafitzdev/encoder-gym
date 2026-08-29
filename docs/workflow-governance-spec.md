@@ -115,6 +115,11 @@ entity/group identity across cohorts. Group-aware splitting keeps related rows
 together when group identity exists. Policy determines whether findings block,
 warn, or require an explicit append-only override.
 
+For local classification datasets, `snapshot create --group-dimension` treats
+an arbitrary categorical dimension as the optional group identity and assigns
+the whole group to one split deterministically. Persisted overlap findings keep
+evidence fingerprints instead of raw text.
+
 Evidence used to guide a model is adaptive regardless of whether it comes from
 one holdout, multiple folds, confidence intervals, or statistical tests. The
 platform reports exposure and retirement; it does not promise that repeated

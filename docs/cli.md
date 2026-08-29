@@ -54,6 +54,21 @@ Sealed cohorts reject training, diagnosis, advisor, optimization, and other
 adaptation-eligible exposure. They can be used for acceptance or manual
 inspection only. Role decisions and exposure facts are append-only.
 
+Leakage-defense commands are:
+
+- `synth snapshot create ... --group-dimension account_id` to keep all rows
+  sharing a declared categorical group value in one deterministic split;
+- `synth contamination check --cohort <ID> --cohort <ID>` for strict source,
+  exact-text, and normalized-text cross-cohort checks;
+- `--group-dimension account_id` to include group overlap and `--policy FILE`
+  to load explicit nonzero thresholds; and
+- `synth contamination show|list|override` to inspect immutable reports or add
+  a named, reasoned exception without altering the report.
+
+Contamination reports persist fingerprints of overlapping evidence rather than
+raw overlapping text. A blocked report is ineligible for a benchmark suite
+unless it has an explicit persisted override.
+
 Error-analysis commands are:
 
 - `synth analysis create <RUN_ID>` with support, ranking, confidence,

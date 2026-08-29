@@ -55,6 +55,9 @@ applied automatically when the SQLite store connects.
 - `0027_cohort_governance`: immutable evaluation cohorts, append-only role
   transitions, and append-only evidence exposures with normalized policy fields
   and reproducible fingerprints.
+- `0028_contamination_reports`: immutable cross-cohort leakage reports,
+  normalized cohort membership, and one explicit append-only override per
+  blocked report.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

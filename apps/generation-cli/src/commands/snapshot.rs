@@ -22,6 +22,7 @@ pub async fn execute(command: SnapshotCommand, store: &SqliteStore) -> anyhow::R
             validation_ratio,
             test_ratio,
             seed,
+            group_dimension,
             config: config_path,
         } => {
             let configured = config_path
@@ -68,7 +69,7 @@ pub async fn execute(command: SnapshotCommand, store: &SqliteStore) -> anyhow::R
                 dataset_id,
                 name,
                 description,
-                SplitConfiguration::new(ratios, seed),
+                SplitConfiguration::new(ratios, seed).with_group_dimension(group_dimension)?,
                 source_rows,
             )?;
             store.create_snapshot(&snapshot, &members).await?;

@@ -105,6 +105,11 @@ pub enum Command {
         #[command(subcommand)]
         command: ExposureCommand,
     },
+    /// Detect and govern leakage across evaluation cohorts.
+    Contamination {
+        #[command(subcommand)]
+        command: ContaminationCommand,
+    },
     /// Configure non-secret generation backend settings.
     Backend {
         #[command(subcommand)]
@@ -287,6 +292,9 @@ pub enum SnapshotCommand {
         test_ratio: Option<f64>,
         #[arg(long)]
         seed: Option<u64>,
+        /// Keep rows with the same categorical dimension value in one split.
+        #[arg(long)]
+        group_dimension: Option<String>,
         /// Project TOML supplying defaults; explicit flags take precedence.
         #[arg(long)]
         config: Option<PathBuf>,
@@ -1159,6 +1167,45 @@ pub enum DisclosureLevelArg {
     Slices,
     Predictions,
     RowContent,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ContaminationCommand {
+    Check {
+        /// Cohorts to compare; provide this flag at least twice.
+        #[arg(long = "cohort", required = true, num_args = 2..)]
+        cohort_ids: Vec<Uuid>,
+        /// Dimension whose values identify related groups across cohorts.
+        #[arg(long)]
+        group_dimension: Option<String>,
+        /// Strict TOML or JSON contamination policy; defaults to zero overlap.
+        #[arg(long)]
+        policy: Option<PathBuf>,
+    },
+    Show {
+        id: Uuid,
+    },
+    List {
+        #[arg(long)]
+        cohort_id: Option<Uuid>,
+        #[arg(long, value_enum)]
+        status: Option<ContaminationStatusArg>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    Override {
+        id: Uuid,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        approved_by: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ContaminationStatusArg {
+    Clean,
+    Blocked,
 }
 
 #[derive(Debug, Subcommand)]

@@ -69,6 +69,53 @@ fn sealed_cohort_exposure_is_governed_from_the_cli() {
         "elevated"
     );
 
+    let diagnostic = run_json(
+        &database_url,
+        [
+            "cohort",
+            "create",
+            &snapshot_id.to_string(),
+            "--name",
+            "diagnostic-copy",
+            "--split",
+            "test",
+            "--role",
+            "diagnostic",
+            "--reason",
+            "contamination fixture",
+        ],
+    );
+    let diagnostic_id = diagnostic["cohort"]["id"].as_str().expect("diagnostic ID");
+    let report = run_json(
+        &database_url,
+        [
+            "contamination",
+            "check",
+            "--cohort",
+            &cohort_id,
+            diagnostic_id,
+        ],
+    );
+    assert_eq!(report["status"], "blocked");
+    assert_eq!(report["counts"]["source_row"], 1);
+    let report_id = report["id"].as_str().expect("report ID");
+    run_json(
+        &database_url,
+        [
+            "contamination",
+            "override",
+            report_id,
+            "--reason",
+            "intentional process-test overlap",
+            "--approved-by",
+            "test-operator",
+        ],
+    );
+    assert_eq!(
+        run_json(&database_url, ["contamination", "show", report_id])["eligible"],
+        true
+    );
+
     let rejected = run(
         &database_url,
         [
@@ -141,6 +188,50 @@ async fn create_snapshot_fixture(database_url: &str) -> Uuid {
     .execute(store.pool())
     .await
     .expect("snapshot fixture persisted");
+    let source_row_id = Uuid::new_v4();
+    let member_id = Uuid::new_v4();
+    let created_at = Utc::now();
+    sqlx::query(
+        "INSERT INTO dataset_source_rows \
+         (id, dataset_id, source_kind, source_ref, cell_key, text, normalized_text, label, \
+          dimensions_json, provenance_json, created_at) \
+         VALUES (?, ?, 'generated', ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(source_row_id)
+    .bind(dataset.id)
+    .bind(source_row_id.to_string())
+    .bind(r#"{"label":"billing","dimensions":{}}"#)
+    .bind("charged twice")
+    .bind("charged twice")
+    .bind("billing")
+    .bind("{}")
+    .bind(format!(
+        r#"{{"kind":"generated","generation_job_id":"{}","backend":"fake","model":"fake-v1"}}"#,
+        Uuid::nil()
+    ))
+    .bind(created_at)
+    .execute(store.pool())
+    .await
+    .expect("source fixture persisted");
+    sqlx::query(
+        "INSERT INTO dataset_snapshot_members \
+         (id, snapshot_id, source_row_id, split, text, label, dimensions_json, \
+          source_provenance_json, source_created_at) VALUES (?, ?, ?, 'test', ?, ?, ?, ?, ?)",
+    )
+    .bind(member_id)
+    .bind(snapshot_id)
+    .bind(source_row_id)
+    .bind("charged twice")
+    .bind("billing")
+    .bind("{}")
+    .bind(format!(
+        r#"{{"kind":"generated","generation_job_id":"{}","backend":"fake","model":"fake-v1"}}"#,
+        Uuid::nil()
+    ))
+    .bind(created_at)
+    .execute(store.pool())
+    .await
+    .expect("snapshot member fixture persisted");
     snapshot_id
 }
 
