@@ -11,6 +11,7 @@ use serde_json::json;
 #[derive(Debug)]
 pub struct FakeGenerationBackend {
     model: String,
+    namespace: String,
     sequence: AtomicU64,
 }
 
@@ -18,7 +19,17 @@ impl Default for FakeGenerationBackend {
     fn default() -> Self {
         Self {
             model: "deterministic-v1".to_owned(),
+            namespace: "default".to_owned(),
             sequence: AtomicU64::new(0),
+        }
+    }
+}
+
+impl FakeGenerationBackend {
+    pub fn with_namespace(namespace: impl Into<String>) -> Self {
+        Self {
+            namespace: namespace.into(),
+            ..Self::default()
         }
     }
 }
@@ -42,8 +53,8 @@ impl GenerationBackend for FakeGenerationBackend {
                     let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
                     GeneratedCandidate {
                         text: format!(
-                            "Synthetic example {sequence} for label {}",
-                            request.target.label
+                            "Synthetic example {} {sequence} for label {}",
+                            self.namespace, request.target.label
                         ),
                         label: request.target.label.clone(),
                         dimensions: request.target.dimensions.clone(),

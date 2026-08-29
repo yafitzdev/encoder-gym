@@ -672,8 +672,23 @@ fn apply_outcome(
     run.current_stage = Some(attempt.stage);
     match attempt.state {
         StageAttemptState::Completed => {
-            if attempt.stage == WorkflowStage::StopDecision {
+            if attempt.stage == WorkflowStage::AcceptanceAssessment
+                && attempt
+                    .artifacts
+                    .iter()
+                    .any(|artifact| artifact.kind == "development_acceptance_pass")
+            {
                 run.state = WorkflowRunState::DevelopmentComplete;
+            } else if attempt.stage == WorkflowStage::StopDecision {
+                run.state = if attempt
+                    .artifacts
+                    .iter()
+                    .any(|artifact| artifact.kind == "workflow_continue")
+                {
+                    WorkflowRunState::Running
+                } else {
+                    WorkflowRunState::DevelopmentComplete
+                };
             } else if attempt.stage == WorkflowStage::Promotion {
                 run.state = WorkflowRunState::Completed;
             } else {

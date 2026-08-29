@@ -319,6 +319,34 @@ pub(crate) async fn run_workflow(
     .await
 }
 
+pub(crate) async fn compare_workflow(
+    left_run_id: uuid::Uuid,
+    right_run_id: uuid::Uuid,
+    store: &SqliteStore,
+) -> anyhow::Result<evaluation_core::domain::EvaluationComparisonReport> {
+    if let Some(existing) = store
+        .list_comparisons(10_000, 0)
+        .await?
+        .into_iter()
+        .find(|value| value.left_run_id == left_run_id && value.right_run_id == right_run_id)
+    {
+        return Ok(existing);
+    }
+    let left = store
+        .get_evaluation_run(left_run_id)
+        .await?
+        .with_context(|| format!("evaluation run not found: {left_run_id}"))?;
+    let right = store
+        .get_evaluation_run(right_run_id)
+        .await?
+        .with_context(|| format!("evaluation run not found: {right_run_id}"))?;
+    let left_predictions = store.list_predictions(left.id).await?;
+    let right_predictions = store.list_predictions(right.id).await?;
+    let report = paired_comparison(&left, &right, &left_predictions, &right_predictions)?;
+    store.create_comparison(&report).await?;
+    Ok(report)
+}
+
 async fn run(
     checkpoint_id: uuid::Uuid,
     snapshot_id: Option<uuid::Uuid>,

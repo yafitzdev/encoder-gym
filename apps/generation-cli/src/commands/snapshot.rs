@@ -134,6 +134,7 @@ pub async fn execute(command: SnapshotCommand, store: &SqliteStore) -> anyhow::R
 
 pub(crate) async fn create_workflow(
     dataset_id: uuid::Uuid,
+    workflow_run_id: uuid::Uuid,
     iteration: u32,
     configured: &project_config::ResolvedProjectConfig,
     store: &SqliteStore,
@@ -141,7 +142,10 @@ pub(crate) async fn create_workflow(
     let source_rows = store.list_accepted_source_rows(dataset_id).await?;
     let (snapshot, members) = build_snapshot(
         dataset_id,
-        format!("{}-workflow-{iteration}", configured.snapshot.name),
+        format!(
+            "{}-workflow-{workflow_run_id}-{iteration}",
+            configured.snapshot.name
+        ),
         configured.snapshot.description.clone(),
         configured.split_configuration()?,
         source_rows,

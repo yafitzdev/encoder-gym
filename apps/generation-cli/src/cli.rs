@@ -1323,6 +1323,20 @@ pub enum WorkflowCommand {
     Resume {
         id: Uuid,
     },
+    /// Approve the current bounded optimization proposal and resume the workflow.
+    Approve {
+        id: Uuid,
+        #[arg(long = "recommendation-id")]
+        recommendation_ids: Vec<String>,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    ApprovalShow {
+        id: Uuid,
+    },
+    StopShow {
+        id: Uuid,
+    },
     Status {
         id: Uuid,
     },

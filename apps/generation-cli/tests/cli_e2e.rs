@@ -218,7 +218,7 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
                 "metric_requirements": [{
                     "target": {"kind": "overall"},
                     "metric": "accuracy",
-                    "minimum": 0.0,
+                    "minimum": 1.0,
                     "minimum_support": 1
                 }]
             }
@@ -245,7 +245,7 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
         &database_url,
         ["benchmark", "assess", &benchmark_id, "--run", &run_mapping],
     );
-    assert_eq!(acceptance["state"], "pass");
+    assert_eq!(acceptance["state"], "fail");
     let repeated_acceptance = run_json(
         &database_url,
         ["benchmark", "assess", &benchmark_id, "--run", &run_mapping],
@@ -336,12 +336,13 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
         &database_url,
         ["workflow", "start", &workflow_definition_id],
     );
+    assert_eq!(automatic_workflow["run"]["current_stage"], "approval");
+    assert_eq!(automatic_workflow["run"]["state"], "awaiting_approval");
+    assert_eq!(automatic_workflow["attempt_count"], 20);
     assert_eq!(
-        automatic_workflow["run"]["current_stage"],
-        "optimization_proposal"
+        automatic_workflow["latest_attempt"]["state"],
+        "awaiting_approval"
     );
-    assert_eq!(automatic_workflow["attempt_count"], 18);
-    assert_eq!(automatic_workflow["latest_attempt"]["state"], "completed");
     let workflow_artifact_kinds = automatic_workflow["attempts"]
         .as_array()
         .expect("workflow attempts")
@@ -386,6 +387,117 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
     assert_eq!(
         advisory_assessments[0]["request"]["egress_policy"],
         "aggregate_only"
+    );
+    let completed_workflow = run_json(
+        &database_url,
+        ["workflow", "approve", &automatic_workflow_id],
+    );
+    assert_eq!(completed_workflow["run"]["state"], "development_complete");
+    assert_eq!(completed_workflow["run"]["iteration"], 1);
+    let completed_artifact_kinds = completed_workflow["attempts"]
+        .as_array()
+        .expect("completed workflow attempts")
+        .iter()
+        .flat_map(|attempt| {
+            attempt["artifacts"]
+                .as_array()
+                .expect("completed attempt artifacts")
+                .iter()
+        })
+        .map(|artifact| string_at(artifact, "/kind"))
+        .collect::<Vec<_>>();
+    for kind in [
+        "workflow_approval",
+        "proposal_application",
+        "iteration_generation_plan",
+        "dataset_diff_generation_job",
+        "iteration_snapshot",
+        "iteration_training_run",
+        "iteration_checkpoint",
+        "iteration_evaluation_run",
+        "evaluation_comparison",
+        "followup_analysis_report",
+        "stop_decision",
+    ] {
+        assert!(completed_artifact_kinds.contains(&kind.to_owned()));
+    }
+    let preauthorized_definition_path = directory.path().join("preauthorized-workflow.json");
+    std::fs::write(
+        &preauthorized_definition_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "name": "preauthorized bounded encoder loop",
+            "dataset_id": dataset_id,
+            "project_configuration_id": initialized["project_configuration"]["id"],
+            "project_configuration_fingerprint": initialized["project_configuration"]["fingerprint"],
+            "development_suite_id": benchmark_id,
+            "development_suite_fingerprint": benchmark["fingerprint"],
+            "initial_allocation": {
+                "total_rows": 24,
+                "reserved_rows": 4,
+                "policy": {"kind": "balanced"},
+                "constraints": []
+            },
+            "governance": {
+                "mode": "preauthorized_bounded",
+                "envelope": {
+                    "maximum_iterations": 1,
+                    "maximum_additional_rows": 4,
+                    "maximum_generation_requests": 50,
+                    "maximum_advisor_calls": 0,
+                    "maximum_advisor_tokens": 0,
+                    "permitted_generation_backend": "fake",
+                    "permitted_generation_model": "deterministic-v1",
+                    "permitted_training_backend": "hashing-linear",
+                    "permitted_training_configuration_fingerprints": []
+                }
+            },
+            "budget": {
+                "maximum_iterations": 1,
+                "maximum_initial_rows": 24,
+                "maximum_cumulative_rows": 28,
+                "maximum_generation_attempts": 100,
+                "maximum_generation_requests": 50,
+                "maximum_advisor_calls": 0,
+                "maximum_advisor_tokens": 0,
+                "maximum_stage_attempts": 3
+            },
+            "policy": {
+                "minimum_improvement": 0.01,
+                "maximum_tolerated_regression": 0.02,
+                "stop_on_inconclusive": true,
+                "stop_on_invalid": true,
+                "enable_advisor": false,
+                "require_fresh_development_cohort_after_iterations": 2
+            }
+        }))
+        .expect("preauthorized workflow definition JSON"),
+    )
+    .expect("write preauthorized workflow definition");
+    let preauthorized_definition = run_json(
+        &database_url,
+        [
+            "workflow",
+            "define",
+            "--definition",
+            path(&preauthorized_definition_path),
+        ],
+    );
+    let preauthorized_definition_id = string_at(&preauthorized_definition, "/id");
+    let preauthorized_workflow = run_json(
+        &database_url,
+        ["workflow", "start", &preauthorized_definition_id],
+    );
+    assert_eq!(
+        preauthorized_workflow["run"]["state"],
+        "development_complete"
+    );
+    assert!(
+        preauthorized_workflow["attempts"]
+            .as_array()
+            .expect("preauthorized attempts")
+            .iter()
+            .flat_map(|attempt| attempt["artifacts"].as_array().expect("artifacts"))
+            .any(|artifact| artifact["kind"] == "workflow_approval")
     );
 
     let analysis = run_json(
@@ -940,13 +1052,13 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
             path(&export_path),
         ],
     );
-    assert_eq!(exported["row_count"], 18);
+    assert_eq!(exported["row_count"], 26);
     assert_eq!(
         std::fs::read_to_string(&export_path)
             .expect("read export")
             .lines()
             .count(),
-        18
+        26
     );
 
     let listed = run_json(

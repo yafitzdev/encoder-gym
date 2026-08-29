@@ -8,9 +8,11 @@ use uuid::Uuid;
 
 use crate::advisor::AdvisoryAssessment;
 use crate::allocation::InitialAllocationRecord;
+use crate::approval::WorkflowApprovalDecision;
 use crate::benchmark::{AcceptanceAssessment, AcceptanceState, BenchmarkSuite, BenchmarkSuiteKind};
 use crate::contamination::{ContaminationOverride, ContaminationReport, ContaminationStatus};
 use crate::governance::{CohortRoleDecision, EvaluationCohort, EvidenceExposure, ExposurePurpose};
+use crate::stop::StopDecision;
 use crate::workflow::{WorkflowDefinition, WorkflowRun, WorkflowRunState, WorkflowStageAttempt};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -68,6 +70,42 @@ pub trait AdvisorStore: Send + Sync {
         &self,
         query: AdvisoryAssessmentQuery,
     ) -> BoxFuture<'_, Result<Vec<AdvisoryAssessment>, WorkflowStoreError>>;
+}
+
+pub trait WorkflowApprovalStore: Send + Sync {
+    fn create_workflow_approval(
+        &self,
+        decision: &WorkflowApprovalDecision,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    fn get_workflow_approval(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<WorkflowApprovalDecision>, WorkflowStoreError>>;
+
+    fn get_iteration_workflow_approval(
+        &self,
+        workflow_run_id: Uuid,
+        workflow_iteration: u32,
+    ) -> BoxFuture<'_, Result<Option<WorkflowApprovalDecision>, WorkflowStoreError>>;
+}
+
+pub trait StopDecisionStore: Send + Sync {
+    fn create_stop_decision(
+        &self,
+        decision: &StopDecision,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    fn get_stop_decision(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<StopDecision>, WorkflowStoreError>>;
+
+    fn get_iteration_stop_decision(
+        &self,
+        workflow_run_id: Uuid,
+        workflow_iteration: u32,
+    ) -> BoxFuture<'_, Result<Option<StopDecision>, WorkflowStoreError>>;
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -10,6 +10,10 @@ use generation_core::{
     jobs::JobState,
     ports::{DatasetStore, JobQuery, JobStore, RowStore},
 };
+use optimization_core::{
+    ports::OptimizationStore,
+    reviews::{ProposalReviewRecord, ProposalReviewState},
+};
 use project_config::ProjectConfigurationStore;
 use serde::de::DeserializeOwned;
 use synthetic_data_sqlite::SqliteStore;
@@ -22,13 +26,15 @@ use workflow_core::{
         InitialAllocationFeasibility, InitialAllocationRecord, InitialAllocationRequest,
         InitialCellCoverage, allocate_initial_budget,
     },
+    approval::{WorkflowApprovalDecision, WorkflowApprovalMode},
     benchmark::{BenchmarkSuiteKind, CohortAssessmentInput, assess_benchmark},
     governance::{EvidenceExposure, EvidenceExposureRequest, ExposurePurpose},
     ports::{
         AcceptanceAssessmentQuery, AdvisorStore, AdvisoryAssessmentQuery, BenchmarkStore,
-        GovernanceStore, InitialAllocationQuery, InitialAllocationStore, WorkflowDefinitionQuery,
-        WorkflowRunQuery, WorkflowRunStore,
+        GovernanceStore, InitialAllocationQuery, InitialAllocationStore, StopDecisionStore,
+        WorkflowApprovalStore, WorkflowDefinitionQuery, WorkflowRunQuery, WorkflowRunStore,
     },
+    stop::decide,
     workflow::{
         StageAttemptState, StageOutcome, WorkflowArtifactLink, WorkflowBudgetUsage,
         WorkflowDefinition, WorkflowDefinitionRequest, WorkflowRun, WorkflowRunState,
@@ -94,6 +100,23 @@ pub async fn execute(command: WorkflowCommand, store: &SqliteStore) -> anyhow::R
             let run = drive_initial_pipeline(store, definition, run, attempt).await?;
             print_status(store, run).await
         }
+        WorkflowCommand::Approve {
+            id,
+            recommendation_ids,
+            note,
+        } => approve_and_resume(store, id, recommendation_ids, note).await,
+        WorkflowCommand::ApprovalShow { id } => crate::presentation::print(
+            &store
+                .get_workflow_approval(id)
+                .await?
+                .with_context(|| format!("workflow approval not found: {id}"))?,
+        ),
+        WorkflowCommand::StopShow { id } => crate::presentation::print(
+            &store
+                .get_stop_decision(id)
+                .await?
+                .with_context(|| format!("workflow stop decision not found: {id}"))?,
+        ),
         WorkflowCommand::Status { id } => {
             let run = require_run(store, id).await?;
             print_status(store, run).await
@@ -161,6 +184,17 @@ async fn drive_initial_pipeline(
             return Ok(run);
         }
         if attempt.state == StageAttemptState::Completed {
+            if run.state == WorkflowRunState::DevelopmentComplete {
+                return Ok(run);
+            }
+            if attempt.stage == WorkflowStage::StopDecision
+                && !attempt
+                    .artifacts
+                    .iter()
+                    .any(|artifact| artifact.kind == "workflow_continue")
+            {
+                return Ok(run);
+            }
             let Some(next) = initial_successor(attempt.stage, definition.policy.enable_advisor)
             else {
                 return Ok(run);
@@ -173,10 +207,30 @@ async fn drive_initial_pipeline(
             attempt = started;
             continue;
         }
+        if attempt.state == StageAttemptState::AwaitingApproval
+            && attempt.stage == WorkflowStage::Approval
+            && store
+                .get_iteration_workflow_approval(run.id, run.iteration)
+                .await?
+                .is_some()
+        {
+            let started = WorkflowStageAttempt::start(
+                &definition,
+                &mut run,
+                WorkflowStage::ProposalApplication,
+                Some(&attempt),
+                1,
+            )?;
+            store
+                .commit_workflow_attempt(&run, &started, attempt.id)
+                .await?;
+            attempt = started;
+            continue;
+        }
         if attempt.state != StageAttemptState::Running {
             return Ok(run);
         }
-        let (artifacts, usage) = execute_initial_stage(
+        let execution = execute_initial_stage(
             store,
             &definition,
             &run,
@@ -188,11 +242,11 @@ async fn drive_initial_pipeline(
             &definition,
             &mut run,
             StageOutcome {
-                state: StageAttemptState::Completed,
-                reason: None,
+                state: execution.state,
+                reason: execution.reason,
                 retryable: false,
-                artifacts,
-                usage_after: usage,
+                artifacts: execution.artifacts,
+                usage_after: execution.usage,
             },
         )?;
         store
@@ -208,9 +262,12 @@ async fn execute_initial_stage(
     run: &WorkflowRun,
     attempt: &WorkflowStageAttempt,
     configured: &project_config::ResolvedProjectConfig,
-) -> anyhow::Result<(Vec<WorkflowArtifactLink>, WorkflowBudgetUsage)> {
+) -> anyhow::Result<StageExecution> {
     let history = store.list_workflow_attempts(run.id).await?;
     let mut usage = run.usage.clone();
+    if attempt.stage == WorkflowStage::Approval {
+        return execute_approval_stage(store, definition, run, configured, usage).await;
+    }
     let artifacts = match attempt.stage {
         WorkflowStage::InitialAllocation => {
             let record = execute_initial_allocation(store, definition).await?;
@@ -263,7 +320,10 @@ async fn execute_initial_stage(
             )]
         }
         WorkflowStage::Snapshot => {
-            let expected_name = format!("{}-workflow-{}", configured.snapshot.name, run.iteration);
+            let expected_name = format!(
+                "{}-workflow-{}-{}",
+                configured.snapshot.name, run.id, run.iteration
+            );
             let existing = dataset_core::ports::SnapshotStore::query_snapshots(
                 store,
                 dataset_core::ports::SnapshotQuery {
@@ -280,6 +340,7 @@ async fn execute_initial_stage(
                 None => {
                     super::snapshot::create_workflow(
                         definition.dataset_id,
+                        run.id,
                         run.iteration,
                         configured,
                         store,
@@ -433,11 +494,19 @@ async fn execute_initial_stage(
                     assessment
                 }
             };
-            vec![link(
+            let mut links = vec![link(
                 "acceptance_assessment",
                 assessment.id,
                 &assessment.fingerprint,
-            )]
+            )];
+            if assessment.state == workflow_core::benchmark::AcceptanceState::Pass {
+                links.push(link(
+                    "development_acceptance_pass",
+                    assessment.id,
+                    &assessment.fingerprint,
+                ));
+            }
+            links
         }
         WorkflowStage::ErrorAnalysis => {
             let evaluation_ids = artifact_ids(&history, "evaluation_run");
@@ -613,7 +682,8 @@ async fn execute_initial_stage(
             )]
         }
         WorkflowStage::OptimizationProposal => {
-            let analysis_report_id = artifact_id(&history, "analysis_report")?;
+            let analysis_report_id = artifact_id(&history, "followup_analysis_report")
+                .or_else(|_| artifact_id(&history, "analysis_report"))?;
             let proposal = super::optimization::propose_workflow(
                 store,
                 analysis_report_id,
@@ -629,10 +699,621 @@ async fn execute_initial_stage(
                 &proposal.fingerprint,
             )]
         }
+        WorkflowStage::ProposalApplication => {
+            let decision = store
+                .get_iteration_workflow_approval(run.id, run.iteration)
+                .await?
+                .context("workflow proposal has no approval decision")?;
+            let (plan, application) = super::optimization::apply_workflow(
+                store,
+                decision.proposal_id,
+                decision.proposal_review_id,
+            )
+            .await?;
+            vec![
+                link("workflow_approval", decision.id, &decision.fingerprint),
+                link(
+                    "proposal_review",
+                    decision.proposal_review_id,
+                    &decision.proposal_review_fingerprint,
+                ),
+                link(
+                    "proposal_application",
+                    application.proposal_id,
+                    &artifact_core::fingerprint(&application)?,
+                ),
+                link(
+                    "iteration_generation_plan",
+                    plan.id,
+                    &artifact_core::fingerprint(&plan)?,
+                ),
+            ]
+        }
+        WorkflowStage::DatasetDiffGeneration => {
+            let plan_id = artifact_id(&history, "iteration_generation_plan")?;
+            let existing = store
+                .list_jobs(JobQuery {
+                    plan_id: Some(plan_id),
+                    state: Some(JobState::Completed),
+                    limit: 1,
+                    ..JobQuery::default()
+                })
+                .await?
+                .into_iter()
+                .next();
+            let job = match existing {
+                Some(job) => job,
+                None => super::generation::run_workflow(plan_id, configured, store.clone()).await?,
+            };
+            ensure!(
+                job.state == JobState::Completed,
+                "dataset diff did not complete"
+            );
+            usage.accepted_rows = usage.accepted_rows.saturating_add(job.accepted_rows);
+            usage.generation_attempts =
+                usage.generation_attempts.saturating_add(job.generated_rows);
+            let batch = u64::from(configured.generation.batch_size.max(1));
+            usage.generation_requests = usage
+                .generation_requests
+                .saturating_add(job.generated_rows.div_ceil(batch))
+                .saturating_add(job.failed_requests);
+            usage.iterations = usage.iterations.saturating_add(1);
+            vec![link(
+                "dataset_diff_generation_job",
+                job.id,
+                &artifact_core::fingerprint(&job)?,
+            )]
+        }
+        WorkflowStage::IterationSnapshot => {
+            let expected_name = format!(
+                "{}-workflow-{}-{}",
+                configured.snapshot.name, run.id, run.iteration
+            );
+            let existing = dataset_core::ports::SnapshotStore::query_snapshots(
+                store,
+                dataset_core::ports::SnapshotQuery {
+                    dataset_id: Some(definition.dataset_id),
+                    limit: 10_000,
+                    offset: 0,
+                },
+            )
+            .await?
+            .into_iter()
+            .find(|snapshot| snapshot.name == expected_name);
+            let snapshot = match existing {
+                Some(snapshot) => snapshot,
+                None => {
+                    super::snapshot::create_workflow(
+                        definition.dataset_id,
+                        run.id,
+                        run.iteration,
+                        configured,
+                        store,
+                    )
+                    .await?
+                }
+            };
+            vec![link(
+                "iteration_snapshot",
+                snapshot.id,
+                &snapshot.fingerprint,
+            )]
+        }
+        WorkflowStage::IterationTraining => {
+            let snapshot_id = artifact_id(&history, "iteration_snapshot")?;
+            let existing = training_core::ports::TrainingStore::query_training_runs(
+                store,
+                training_core::ports::TrainingRunQuery {
+                    snapshot_id: Some(snapshot_id),
+                    state: Some(training_core::domain::TrainingRunState::Completed),
+                    limit: 1,
+                    offset: 0,
+                },
+            )
+            .await?
+            .into_iter()
+            .next();
+            let completed = match existing {
+                Some(training_run) => super::training::CompletedTraining {
+                    checkpoints: training_core::ports::TrainingStore::list_checkpoints(
+                        store,
+                        training_run.id,
+                    )
+                    .await?,
+                    run: training_run,
+                },
+                None => {
+                    super::training::run_workflow(snapshot_id, configured, store.clone()).await?
+                }
+            };
+            let checkpoint = completed
+                .checkpoints
+                .iter()
+                .find(|value| value.is_final)
+                .context("iteration training has no final checkpoint")?;
+            vec![
+                link(
+                    "iteration_training_run",
+                    completed.run.id,
+                    &artifact_core::fingerprint(&completed.run)?,
+                ),
+                link(
+                    "iteration_checkpoint",
+                    checkpoint.id,
+                    &checkpoint.artifact_checksum,
+                ),
+            ]
+        }
+        WorkflowStage::IterationEvaluation => {
+            let checkpoint_id = artifact_id(&history, "iteration_checkpoint")?;
+            let suite = store
+                .get_benchmark_suite(definition.development_suite_id)
+                .await?
+                .context("development benchmark suite not found")?;
+            let mut links = Vec::new();
+            for cohort in &suite.cohorts {
+                let evaluation = match store
+                    .query_evaluation_runs(evaluation_core::ports::EvaluationRunQuery {
+                        checkpoint_id: Some(checkpoint_id),
+                        snapshot_id: Some(cohort.snapshot_id),
+                        state: Some(evaluation_core::domain::EvaluationRunState::Completed),
+                        limit: 100,
+                        offset: 0,
+                    })
+                    .await?
+                    .into_iter()
+                    .find(|value| {
+                        value.protocol_fingerprint == cohort.protocol_fingerprint
+                            && value.split == cohort.split
+                    }) {
+                    Some(value) => value,
+                    None => {
+                        super::evaluation::run_workflow(
+                            checkpoint_id,
+                            cohort.snapshot_id,
+                            &cohort.protocol,
+                            store.clone(),
+                        )
+                        .await?
+                        .run
+                    }
+                };
+                links.push(link(
+                    "iteration_evaluation_run",
+                    evaluation.id,
+                    &artifact_core::fingerprint(&evaluation)?,
+                ));
+            }
+            links
+        }
+        WorkflowStage::Comparison => {
+            let baseline_ids = artifact_ids_for_stage(
+                &history,
+                WorkflowStage::DevelopmentEvaluation,
+                0,
+                "evaluation_run",
+            );
+            let iteration_ids = artifact_ids_for_stage(
+                &history,
+                WorkflowStage::IterationEvaluation,
+                run.iteration,
+                "iteration_evaluation_run",
+            );
+            ensure!(
+                baseline_ids.len() == iteration_ids.len() && !baseline_ids.is_empty(),
+                "iteration evaluations are incompatible with the baseline"
+            );
+            let mut links = Vec::new();
+            for (left, right) in baseline_ids.into_iter().zip(iteration_ids) {
+                let comparison = super::evaluation::compare_workflow(left, right, store).await?;
+                links.push(link(
+                    "evaluation_comparison",
+                    comparison.id,
+                    &comparison.fingerprint,
+                ));
+            }
+            links
+        }
+        WorkflowStage::FollowupAnalysis => {
+            let evaluations = artifact_ids_for_stage(
+                &history,
+                WorkflowStage::IterationEvaluation,
+                run.iteration,
+                "iteration_evaluation_run",
+            );
+            let comparisons = artifact_ids_for_stage(
+                &history,
+                WorkflowStage::Comparison,
+                run.iteration,
+                "evaluation_comparison",
+            );
+            ensure!(
+                evaluations.len() == comparisons.len() && !evaluations.is_empty(),
+                "follow-up analysis inputs are incomplete"
+            );
+            let base_protocol = definition
+                .analysis_protocol
+                .as_ref()
+                .context("workflow has no resolved analysis protocol")?;
+            let mut links = Vec::new();
+            for (evaluation_id, comparison_id) in evaluations.into_iter().zip(comparisons) {
+                let mut protocol = base_protocol.clone();
+                protocol.comparison_id = Some(comparison_id);
+                let fingerprint = protocol.fingerprint()?;
+                let existing = store
+                    .query_analysis_reports(analysis_core::ports::AnalysisReportQuery {
+                        evaluation_run_id: Some(evaluation_id),
+                        limit: 10_000,
+                        offset: 0,
+                    })
+                    .await?
+                    .into_iter()
+                    .find(|report| report.protocol_fingerprint == fingerprint);
+                let report = match existing {
+                    Some(value) => value,
+                    None => run_analysis(store, store, evaluation_id, protocol).await?,
+                };
+                links.push(link(
+                    "followup_analysis_report",
+                    report.id,
+                    &report.fingerprint,
+                ));
+            }
+            links
+        }
+        WorkflowStage::StopDecision => {
+            let decision = execute_stop_decision(store, definition, run, &history, &usage).await?;
+            let mut links = vec![link("stop_decision", decision.id, &decision.fingerprint)];
+            if decision.should_continue {
+                links.push(link(
+                    "workflow_continue",
+                    decision.id,
+                    &decision.fingerprint,
+                ));
+            }
+            links
+        }
         other => anyhow::bail!("workflow stage {other:?} is not connected yet"),
     };
     usage.validate_against(&definition.budget)?;
-    Ok((artifacts, usage))
+    Ok(StageExecution::completed(artifacts, usage))
+}
+
+struct StageExecution {
+    artifacts: Vec<WorkflowArtifactLink>,
+    usage: WorkflowBudgetUsage,
+    state: StageAttemptState,
+    reason: Option<String>,
+}
+
+impl StageExecution {
+    fn completed(artifacts: Vec<WorkflowArtifactLink>, usage: WorkflowBudgetUsage) -> Self {
+        Self {
+            artifacts,
+            usage,
+            state: StageAttemptState::Completed,
+            reason: None,
+        }
+    }
+}
+
+async fn execute_approval_stage(
+    store: &SqliteStore,
+    definition: &WorkflowDefinition,
+    run: &WorkflowRun,
+    configured: &project_config::ResolvedProjectConfig,
+    usage: WorkflowBudgetUsage,
+) -> anyhow::Result<StageExecution> {
+    if let Some(decision) = store
+        .get_iteration_workflow_approval(run.id, run.iteration)
+        .await?
+    {
+        return Ok(StageExecution::completed(
+            vec![
+                link("workflow_approval", decision.id, &decision.fingerprint),
+                link(
+                    "proposal_review",
+                    decision.proposal_review_id,
+                    &decision.proposal_review_fingerprint,
+                ),
+            ],
+            usage,
+        ));
+    }
+    let history = store.list_workflow_attempts(run.id).await?;
+    let proposal_id = artifact_id(&history, "optimization_proposal")?;
+    let proposal = store
+        .get_optimization_proposal(proposal_id)
+        .await?
+        .context("workflow optimization proposal not found")?;
+    let approved_rows = proposal.allocated_count();
+    if approved_rows == 0 {
+        return Ok(StageExecution {
+            artifacts: Vec::new(),
+            usage,
+            state: StageAttemptState::Inconclusive,
+            reason: Some("optimization proposal has no eligible data recommendation".into()),
+        });
+    }
+    let workflow_core::workflow::IterationGovernance::PreauthorizedBounded { envelope } =
+        &definition.governance
+    else {
+        return Ok(StageExecution {
+            artifacts: Vec::new(),
+            usage,
+            state: StageAttemptState::AwaitingApproval,
+            reason: Some("explicit proposal approval is required".into()),
+        });
+    };
+    validate_preauthorization(definition, configured, envelope, &usage, approved_rows)?;
+    let review = ProposalReviewRecord::new(
+        &proposal,
+        ProposalReviewState::ApprovedForPlanCreation,
+        Vec::new(),
+        Some("approved by persisted bounded preauthorization envelope".into()),
+        None,
+        None,
+    )?;
+    store.append_proposal_review(&review).await?;
+    let decision = WorkflowApprovalDecision::new(
+        run.id,
+        run.iteration,
+        proposal.id,
+        proposal.fingerprint.clone(),
+        review.id,
+        review.fingerprint.clone(),
+        WorkflowApprovalMode::PreauthorizedEnvelope,
+        approved_rows,
+        usage.clone(),
+        Some(envelope.clone()),
+        Some("exact action fits persisted preauthorization".into()),
+    )?;
+    store.create_workflow_approval(&decision).await?;
+    Ok(StageExecution::completed(
+        vec![
+            link("workflow_approval", decision.id, &decision.fingerprint),
+            link("proposal_review", review.id, &review.fingerprint),
+        ],
+        usage,
+    ))
+}
+
+async fn approve_and_resume(
+    store: &SqliteStore,
+    id: uuid::Uuid,
+    recommendation_ids: Vec<String>,
+    note: Option<String>,
+) -> anyhow::Result<()> {
+    let run = require_run(store, id).await?;
+    ensure!(
+        run.state == WorkflowRunState::AwaitingApproval,
+        "workflow is not awaiting approval"
+    );
+    let definition = require_definition(store, run.definition_id).await?;
+    ensure!(
+        matches!(
+            definition.governance,
+            workflow_core::workflow::IterationGovernance::ReviewEachIteration
+        ),
+        "workflow uses bounded preauthorization and does not accept manual approval here"
+    );
+    let mut attempts = store.list_workflow_attempts(id).await?;
+    let attempt = attempts.pop().context("workflow has no stage attempt")?;
+    ensure!(
+        attempt.stage == WorkflowStage::Approval
+            && attempt.state == StageAttemptState::AwaitingApproval,
+        "workflow is not paused at the approval stage"
+    );
+    if store
+        .get_iteration_workflow_approval(id, run.iteration)
+        .await?
+        .is_none()
+    {
+        let proposal_id = artifact_id(&attempts, "optimization_proposal")?;
+        let proposal = store
+            .get_optimization_proposal(proposal_id)
+            .await?
+            .context("workflow optimization proposal not found")?;
+        let state = if recommendation_ids.is_empty() {
+            ProposalReviewState::ApprovedForPlanCreation
+        } else {
+            ProposalReviewState::PartiallyAccepted
+        };
+        let review = ProposalReviewRecord::new(
+            &proposal,
+            state,
+            recommendation_ids,
+            note.clone(),
+            None,
+            None,
+        )?;
+        let selected = review.selected_data_recommendation_ids(&proposal)?;
+        let approved_rows = proposal
+            .normalized_recommendations
+            .iter()
+            .filter(|recommendation| selected.contains(&recommendation.id))
+            .map(|recommendation| u64::from(recommendation.additional_count))
+            .sum();
+        ensure!(approved_rows > 0, "approval selected no generated rows");
+        ensure!(
+            run.usage.accepted_rows.saturating_add(approved_rows)
+                <= definition.budget.maximum_cumulative_rows,
+            "approval exceeds the workflow row budget"
+        );
+        store.append_proposal_review(&review).await?;
+        let decision = WorkflowApprovalDecision::new(
+            run.id,
+            run.iteration,
+            proposal.id,
+            proposal.fingerprint,
+            review.id,
+            review.fingerprint.clone(),
+            WorkflowApprovalMode::HumanReview,
+            approved_rows,
+            run.usage.clone(),
+            None,
+            note,
+        )?;
+        store.create_workflow_approval(&decision).await?;
+    }
+    let run = drive_initial_pipeline(store, definition, run, attempt).await?;
+    print_status(store, run).await
+}
+
+fn validate_preauthorization(
+    definition: &WorkflowDefinition,
+    configured: &project_config::ResolvedProjectConfig,
+    envelope: &workflow_core::workflow::ApprovalEnvelope,
+    usage: &WorkflowBudgetUsage,
+    approved_rows: u64,
+) -> anyhow::Result<()> {
+    let generation_backend = match configured.generation.backend {
+        project_config::GenerationBackendKind::Fake => "fake",
+        project_config::GenerationBackendKind::OpenaiCompatible => "openai-compatible",
+    };
+    let training_backend = match configured.training.backend {
+        project_config::TrainingBackendKind::HashingLinear => "hashing-linear",
+        project_config::TrainingBackendKind::BertCpu => "bert-cpu",
+    };
+    ensure!(
+        generation_backend == envelope.permitted_generation_backend
+            && configured.generation.model == envelope.permitted_generation_model
+            && training_backend == envelope.permitted_training_backend,
+        "configured provider or training backend is outside the preauthorization envelope"
+    );
+    let initial_rows =
+        definition.initial_allocation.total_rows - definition.initial_allocation.reserved_rows;
+    let estimated_generation_requests =
+        approved_rows.div_ceil(u64::from(configured.generation.batch_size.max(1)));
+    ensure!(
+        usage
+            .accepted_rows
+            .saturating_sub(initial_rows)
+            .saturating_add(approved_rows)
+            <= envelope.maximum_additional_rows
+            && usage.iterations < envelope.maximum_iterations
+            && usage
+                .generation_requests
+                .saturating_add(estimated_generation_requests)
+                <= envelope.maximum_generation_requests
+            && usage.advisor_calls <= envelope.maximum_advisor_calls
+            && envelope
+                .maximum_advisor_tokens
+                .is_none_or(|maximum| usage.advisor_tokens <= maximum),
+        "workflow action exceeds the preauthorization envelope"
+    );
+    let fingerprint = artifact_core::fingerprint(&configured.training)?;
+    ensure!(
+        envelope
+            .permitted_training_configuration_fingerprints
+            .is_empty()
+            || envelope
+                .permitted_training_configuration_fingerprints
+                .contains(&fingerprint),
+        "training configuration is outside the preauthorization envelope"
+    );
+    Ok(())
+}
+
+async fn execute_stop_decision(
+    store: &SqliteStore,
+    definition: &WorkflowDefinition,
+    run: &WorkflowRun,
+    history: &[WorkflowStageAttempt],
+    usage: &WorkflowBudgetUsage,
+) -> anyhow::Result<workflow_core::stop::StopDecision> {
+    if let Some(existing) = store
+        .get_iteration_stop_decision(run.id, run.iteration)
+        .await?
+    {
+        return Ok(existing);
+    }
+    let suite = store
+        .get_benchmark_suite(definition.development_suite_id)
+        .await?
+        .context("development benchmark suite not found")?;
+    let evaluation_ids = artifact_ids_for_stage(
+        history,
+        WorkflowStage::IterationEvaluation,
+        run.iteration,
+        "iteration_evaluation_run",
+    );
+    let mut inputs = Vec::new();
+    for cohort in &suite.cohorts {
+        inputs.push(CohortAssessmentInput {
+            cohort_id: cohort.cohort_id,
+            run: Some(load_matching_evaluation(store, cohort, &evaluation_ids).await?),
+            comparison: None,
+        });
+    }
+    let candidate = assess_benchmark(&suite, inputs)?;
+    let acceptance = match store
+        .query_acceptance_assessments(AcceptanceAssessmentQuery {
+            suite_id: Some(suite.id),
+            checkpoint_id: candidate.checkpoint_id,
+            state: None,
+            limit: 10_000,
+            offset: 0,
+        })
+        .await?
+        .into_iter()
+        .find(|value| value.evaluation_run_ids == candidate.evaluation_run_ids)
+    {
+        Some(value) => value,
+        None => {
+            for cohort in &suite.cohorts {
+                let current_role = store
+                    .get_current_cohort_role(cohort.cohort_id)
+                    .await?
+                    .context("development cohort has no current role")?;
+                let exposure = EvidenceExposure::new(
+                    &store
+                        .get_cohort(cohort.cohort_id)
+                        .await?
+                        .context("development cohort not found")?,
+                    &current_role,
+                    EvidenceExposureRequest {
+                        evaluation_run_id: Some(candidate.evaluation_run_ids[&cohort.cohort_id]),
+                        workflow_run_id: Some(run.id),
+                        workflow_iteration: Some(run.iteration),
+                        purpose: ExposurePurpose::Comparison,
+                        disclosure: cohort.disclosure,
+                        adaptation_eligible: true,
+                        note: Some("workflow iteration stop assessment".into()),
+                    },
+                )?;
+                store.append_exposure(&exposure, None).await?;
+            }
+            store.create_acceptance_assessment(&candidate).await?;
+            candidate
+        }
+    };
+    let comparison_ids = artifact_ids_for_stage(
+        history,
+        WorkflowStage::Comparison,
+        run.iteration,
+        "evaluation_comparison",
+    );
+    let mut comparisons = Vec::new();
+    for id in comparison_ids {
+        comparisons.push(
+            store
+                .get_comparison(id)
+                .await?
+                .with_context(|| format!("workflow comparison not found: {id}"))?,
+        );
+    }
+    let decision = decide(
+        run.id,
+        run.iteration,
+        &acceptance,
+        &comparisons,
+        usage,
+        &definition.budget,
+        &definition.policy,
+    )?;
+    store.create_stop_decision(&decision).await?;
+    Ok(decision)
 }
 
 async fn execute_initial_allocation(
@@ -729,7 +1410,16 @@ const fn initial_successor(stage: WorkflowStage, advisor: bool) -> Option<Workfl
         WorkflowStage::ErrorAnalysis if advisor => Some(WorkflowStage::Advisor),
         WorkflowStage::ErrorAnalysis => Some(WorkflowStage::OptimizationProposal),
         WorkflowStage::Advisor => Some(WorkflowStage::OptimizationProposal),
-        WorkflowStage::OptimizationProposal => None,
+        WorkflowStage::OptimizationProposal => Some(WorkflowStage::Approval),
+        WorkflowStage::Approval => Some(WorkflowStage::ProposalApplication),
+        WorkflowStage::ProposalApplication => Some(WorkflowStage::DatasetDiffGeneration),
+        WorkflowStage::DatasetDiffGeneration => Some(WorkflowStage::IterationSnapshot),
+        WorkflowStage::IterationSnapshot => Some(WorkflowStage::IterationTraining),
+        WorkflowStage::IterationTraining => Some(WorkflowStage::IterationEvaluation),
+        WorkflowStage::IterationEvaluation => Some(WorkflowStage::Comparison),
+        WorkflowStage::Comparison => Some(WorkflowStage::FollowupAnalysis),
+        WorkflowStage::FollowupAnalysis => Some(WorkflowStage::StopDecision),
+        WorkflowStage::StopDecision => Some(WorkflowStage::OptimizationProposal),
         _ => None,
     }
 }
@@ -755,6 +1445,25 @@ fn artifact_id(history: &[WorkflowStageAttempt], kind: &str) -> anyhow::Result<u
 fn artifact_ids(history: &[WorkflowStageAttempt], kind: &str) -> Vec<uuid::Uuid> {
     history
         .iter()
+        .flat_map(|attempt| &attempt.artifacts)
+        .filter(|artifact| artifact.kind == kind)
+        .map(|artifact| artifact.artifact_id)
+        .collect()
+}
+
+fn artifact_ids_for_stage(
+    history: &[WorkflowStageAttempt],
+    stage: WorkflowStage,
+    iteration: u32,
+    kind: &str,
+) -> Vec<uuid::Uuid> {
+    history
+        .iter()
+        .filter(|attempt| {
+            attempt.stage == stage
+                && attempt.iteration == iteration
+                && attempt.state == StageAttemptState::Completed
+        })
         .flat_map(|attempt| &attempt.artifacts)
         .filter(|artifact| artifact.kind == kind)
         .map(|artifact| artifact.artifact_id)

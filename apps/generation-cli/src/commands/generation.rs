@@ -63,12 +63,13 @@ pub async fn execute(args: GenerateArgs, store: SqliteStore) -> anyhow::Result<(
 }
 
 pub async fn resume(args: ResumeGenerationArgs, store: SqliteStore) -> anyhow::Result<()> {
-    let options = ExecutionOptions::from_resume(args);
+    let mut options = ExecutionOptions::from_resume(args);
     let job_id = options.job_id.context("generation job is required")?;
     let job = store
         .get_job(job_id)
         .await?
         .with_context(|| format!("generation job not found: {job_id}"))?;
+    options.plan_id = Some(job.plan_id);
     let configured = options
         .config
         .as_deref()
@@ -286,7 +287,11 @@ async fn build_backend(
 ) -> anyhow::Result<(Arc<dyn GenerationBackend>, GenerationParameters)> {
     match backend_kind {
         BackendKind::Fake => Ok((
-            Arc::new(FakeGenerationBackend::default()),
+            Arc::new(FakeGenerationBackend::with_namespace(
+                options
+                    .plan_id
+                    .map_or_else(|| "unscoped".into(), |id| id.to_string()),
+            )),
             configured.map_or_else(GenerationParameters::default, |config| {
                 config.generation_parameters()
             }),

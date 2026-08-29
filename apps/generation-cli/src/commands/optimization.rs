@@ -488,6 +488,30 @@ pub(crate) async fn propose_workflow(
     Ok(proposal)
 }
 
+pub(crate) async fn apply_workflow(
+    store: &SqliteStore,
+    proposal_id: uuid::Uuid,
+    approval_id: uuid::Uuid,
+) -> anyhow::Result<(generation_core::domain::GenerationPlan, ProposalApplication)> {
+    let proposal = require_proposal(store, proposal_id).await?;
+    if let Some(application) = store.get_proposal_application(proposal_id).await? {
+        let plan = store
+            .get_plan(application.generation_plan_id)
+            .await?
+            .context("applied workflow optimization plan is missing")?;
+        return Ok((plan, application));
+    }
+    let approval = require_review(store, proposal_id, approval_id).await?;
+    let dataset = store
+        .get_dataset(proposal.dataset_id)
+        .await?
+        .with_context(|| format!("dataset not found: {}", proposal.dataset_id))?;
+    let accepted = accepted_coverage(store, dataset.id).await?;
+    let (plan, application) = approved_proposal_to_plan(&proposal, &approval, &dataset, &accepted)?;
+    let application = store.apply_proposal_plan(&plan, &application).await?;
+    Ok((plan, application))
+}
+
 async fn legacy_proposal(
     store: &SqliteStore,
     analysis_report_id: uuid::Uuid,

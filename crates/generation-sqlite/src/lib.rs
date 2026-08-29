@@ -2,6 +2,7 @@
 
 mod advisor;
 mod analysis;
+mod approval;
 mod benchmark;
 mod contamination;
 mod evaluation;
@@ -11,6 +12,7 @@ mod optimization;
 mod project;
 mod provenance;
 mod recovery;
+mod stop;
 mod training;
 mod workflow;
 mod workflow_run;
