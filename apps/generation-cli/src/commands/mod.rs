@@ -1,6 +1,7 @@
 mod allocation;
 mod analysis;
 mod backend;
+mod benchmark;
 mod campaign;
 mod config;
 mod contamination;
@@ -34,6 +35,7 @@ pub async fn execute(command: Command, store: SqliteStore) -> anyhow::Result<()>
         Command::Cohort { command } => governance::cohort(command, &store).await,
         Command::Exposure { command } => governance::exposure(command, &store).await,
         Command::Contamination { command } => contamination::execute(command, &store).await,
+        Command::Benchmark { command } => benchmark::execute(command, &store).await,
         Command::Dataset { command } => dataset::execute(command, &store).await,
         Command::Snapshot { command } => snapshot::execute(command, &store).await,
         Command::Encoder { command } => encoder::execute(command, &store).await,

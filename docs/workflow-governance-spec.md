@@ -137,6 +137,12 @@ with structured reasons. Development suites may drive iteration. Sealed suites
 may support final milestone assessment only and never become workflow adaptation
 evidence.
 
+The local definition format supports overall, per-label, and arbitrary slice
+metric requirements, minimum support, paired baseline regression tolerances,
+confidence-bound requirements, optional McNemar significance, model-format
+compatibility, and explicit disclosure policy. Identical persisted assessment
+inputs are idempotent at the CLI boundary.
+
 ## Workflow lifecycle
 
 A resolved workflow proceeds through legal durable stages:

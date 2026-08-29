@@ -69,6 +69,70 @@ fn sealed_cohort_exposure_is_governed_from_the_cli() {
         "elevated"
     );
 
+    let sealed_contamination = run_json(
+        &database_url,
+        ["contamination", "check", "--cohort", &cohort_id],
+    );
+    assert_eq!(sealed_contamination["status"], "clean");
+    let benchmark_path = directory.path().join("sealed-benchmark.json");
+    std::fs::write(
+        &benchmark_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "contamination_report_id": sealed_contamination["id"],
+            "name": "release gate",
+            "kind": "sealed_acceptance",
+            "task": "classify support requests",
+            "labels": ["billing", "fraud"],
+            "required_model_formats": [],
+            "cohorts": [{
+                "cohort_id": cohort_id,
+                "protocol": evaluation_core::domain::EvaluationProtocol::default(),
+                "disclosure": "aggregate",
+                "adaptation_eligible": false
+            }],
+            "contract": {
+                "metric_requirements": [{
+                    "target": {"kind": "overall"},
+                    "metric": "accuracy",
+                    "minimum": 0.8,
+                    "minimum_support": 1
+                }]
+            }
+        }))
+        .expect("benchmark JSON"),
+    )
+    .expect("benchmark definition written");
+    let benchmark = run_json(
+        &database_url,
+        [
+            "benchmark",
+            "create",
+            "--definition",
+            benchmark_path.to_str().expect("UTF-8 path"),
+        ],
+    );
+    let benchmark_id = benchmark["id"].as_str().expect("benchmark ID");
+    assert_eq!(benchmark["kind"], "sealed_acceptance");
+    assert_eq!(
+        run_json(&database_url, ["benchmark", "validate", benchmark_id])["valid"],
+        true
+    );
+    let unauthorized = run(
+        &database_url,
+        [
+            "benchmark",
+            "assess",
+            benchmark_id,
+            "--run",
+            &format!("{cohort_id}={}", Uuid::new_v4()),
+        ],
+    );
+    assert!(!unauthorized.status.success());
+    assert!(
+        String::from_utf8_lossy(&unauthorized.stderr)
+            .contains("sealed assessment requires --authorize-sealed")
+    );
+
     let diagnostic = run_json(
         &database_url,
         [
@@ -147,6 +211,10 @@ fn sealed_cohort_exposure_is_governed_from_the_cli() {
     );
     let shown = run_json(&database_url, ["cohort", "show", &cohort_id]);
     assert_eq!(shown["current_role"]["disposition"], "retired");
+    assert_eq!(
+        run_json(&database_url, ["benchmark", "validate", benchmark_id])["valid"],
+        false
+    );
     assert_eq!(
         run_json(&database_url, ["cohort", "history", &cohort_id])
             .as_array()

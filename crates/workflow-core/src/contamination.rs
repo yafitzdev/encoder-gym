@@ -136,7 +136,7 @@ impl ContaminationOverride {
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ContaminationError {
-    #[error("contamination check requires at least two cohorts")]
+    #[error("contamination check requires at least one cohort")]
     TooFewCohorts,
     #[error("cohort appears more than once: {0}")]
     DuplicateCohort(Uuid),
@@ -161,7 +161,7 @@ pub fn check_contamination(
     group_dimension: Option<String>,
     policy: ContaminationPolicy,
 ) -> Result<ContaminationReport, ContaminationError> {
-    if inputs.len() < 2 {
+    if inputs.is_empty() {
         return Err(ContaminationError::TooFewCohorts);
     }
     inputs.sort_by_key(|input| input.cohort.id);

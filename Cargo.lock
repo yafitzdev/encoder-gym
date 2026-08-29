@@ -4121,10 +4121,12 @@ dependencies = [
  "artifact-core",
  "chrono",
  "dataset-core",
+ "evaluation-core",
  "serde",
  "serde_json",
  "synthetic-data-core",
  "thiserror 2.0.20",
+ "training-core",
  "uuid",
 ]
 

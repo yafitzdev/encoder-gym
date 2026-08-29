@@ -110,6 +110,11 @@ pub enum Command {
         #[command(subcommand)]
         command: ContaminationCommand,
     },
+    /// Define immutable benchmark suites and deterministic acceptance contracts.
+    Benchmark {
+        #[command(subcommand)]
+        command: BenchmarkCommand,
+    },
     /// Configure non-secret generation backend settings.
     Backend {
         #[command(subcommand)]
@@ -1172,8 +1177,8 @@ pub enum DisclosureLevelArg {
 #[derive(Debug, Subcommand)]
 pub enum ContaminationCommand {
     Check {
-        /// Cohorts to compare; provide this flag at least twice.
-        #[arg(long = "cohort", required = true, num_args = 2..)]
+        /// Cohorts to validate and compare.
+        #[arg(long = "cohort", required = true, num_args = 1..)]
         cohort_ids: Vec<Uuid>,
         /// Dimension whose values identify related groups across cohorts.
         #[arg(long)]
@@ -1206,6 +1211,67 @@ pub enum ContaminationCommand {
 pub enum ContaminationStatusArg {
     Clean,
     Blocked,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BenchmarkCommand {
+    Create {
+        #[arg(long)]
+        definition: PathBuf,
+    },
+    Validate {
+        id: Uuid,
+    },
+    Show {
+        id: Uuid,
+    },
+    List {
+        #[arg(long, value_enum)]
+        kind: Option<BenchmarkSuiteKindArg>,
+        #[arg(long)]
+        cohort_id: Option<Uuid>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    Assess {
+        id: Uuid,
+        /// Cohort-to-evaluation mapping: COHORT_ID=RUN_ID.
+        #[arg(long = "run", required = true)]
+        runs: Vec<String>,
+        /// Cohort-to-paired-comparison mapping: COHORT_ID=COMPARISON_ID.
+        #[arg(long = "comparison")]
+        comparisons: Vec<String>,
+        /// Required acknowledgement for a sealed acceptance suite.
+        #[arg(long)]
+        authorize_sealed: bool,
+    },
+    AssessmentShow {
+        id: Uuid,
+    },
+    AssessmentList {
+        #[arg(long)]
+        suite_id: Option<Uuid>,
+        #[arg(long)]
+        checkpoint_id: Option<Uuid>,
+        #[arg(long, value_enum)]
+        state: Option<AcceptanceStateArg>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum BenchmarkSuiteKindArg {
+    Development,
+    SealedAcceptance,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum AcceptanceStateArg {
+    Pass,
+    Fail,
+    Inconclusive,
+    Invalid,
 }
 
 #[derive(Debug, Subcommand)]

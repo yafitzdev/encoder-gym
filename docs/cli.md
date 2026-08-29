@@ -69,6 +69,25 @@ Contamination reports persist fingerprints of overlapping evidence rather than
 raw overlapping text. A blocked report is ineligible for a benchmark suite
 unless it has an explicit persisted override.
 
+Benchmark and acceptance commands are:
+
+- `synth benchmark create --definition benchmark.toml` to resolve a strict
+  definition into an immutable suite with cohort, role, protocol,
+  contamination, model-format, disclosure, and threshold fingerprints;
+- `synth benchmark validate|show|list` to verify that bound role decisions and
+  contamination evidence remain eligible;
+- `synth benchmark assess <SUITE_ID> --run <COHORT_ID>=<RUN_ID>` with optional
+  paired `--comparison <COHORT_ID>=<COMPARISON_ID>` values; and
+- `synth benchmark assessment-show|assessment-list` to inspect immutable
+  `pass`, `fail`, `inconclusive`, or `invalid` outcomes and exact reasons.
+
+Metric contracts support overall metrics, per-label precision/recall/F1,
+arbitrary persisted slice keys, minimum support, maximum regressions, paired
+confidence bounds, and optional McNemar significance. Sealed suites require
+aggregate, adaptation-ineligible disclosure and a separate
+`--authorize-sealed` acknowledgement. Repeating an identical assessment returns
+the existing artifact.
+
 Error-analysis commands are:
 
 - `synth analysis create <RUN_ID>` with support, ranking, confidence,

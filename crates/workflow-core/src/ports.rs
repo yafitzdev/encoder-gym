@@ -7,6 +7,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::allocation::InitialAllocationRecord;
+use crate::benchmark::{AcceptanceAssessment, AcceptanceState, BenchmarkSuite, BenchmarkSuiteKind};
 use crate::contamination::{ContaminationOverride, ContaminationReport, ContaminationStatus};
 use crate::governance::{CohortRoleDecision, EvaluationCohort, EvidenceExposure, ExposurePurpose};
 
@@ -136,4 +137,53 @@ pub trait ContaminationStore: Send + Sync {
         &self,
         report_id: Uuid,
     ) -> BoxFuture<'_, Result<Option<ContaminationOverride>, WorkflowStoreError>>;
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BenchmarkSuiteQuery {
+    pub kind: Option<BenchmarkSuiteKind>,
+    pub cohort_id: Option<Uuid>,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AcceptanceAssessmentQuery {
+    pub suite_id: Option<Uuid>,
+    pub checkpoint_id: Option<Uuid>,
+    pub state: Option<AcceptanceState>,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+pub trait BenchmarkStore: Send + Sync {
+    fn create_benchmark_suite(
+        &self,
+        suite: &BenchmarkSuite,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    fn get_benchmark_suite(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<BenchmarkSuite>, WorkflowStoreError>>;
+
+    fn query_benchmark_suites(
+        &self,
+        query: BenchmarkSuiteQuery,
+    ) -> BoxFuture<'_, Result<Vec<BenchmarkSuite>, WorkflowStoreError>>;
+
+    fn create_acceptance_assessment(
+        &self,
+        assessment: &AcceptanceAssessment,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    fn get_acceptance_assessment(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<AcceptanceAssessment>, WorkflowStoreError>>;
+
+    fn query_acceptance_assessments(
+        &self,
+        query: AcceptanceAssessmentQuery,
+    ) -> BoxFuture<'_, Result<Vec<AcceptanceAssessment>, WorkflowStoreError>>;
 }

@@ -58,6 +58,9 @@ applied automatically when the SQLite store connects.
 - `0028_contamination_reports`: immutable cross-cohort leakage reports,
   normalized cohort membership, and one explicit append-only override per
   blocked report.
+- `0029_benchmark_suites`: immutable suite definitions and normalized cohort
+  bindings plus deterministic acceptance assessments keyed by suite,
+  checkpoint, state, and reproducible artifact fingerprints.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

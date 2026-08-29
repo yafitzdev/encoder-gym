@@ -176,6 +176,82 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
     );
     let comparison_id = string_at(&comparison, "/id");
 
+    let development_cohort = run_json(
+        &database_url,
+        [
+            "cohort",
+            "create",
+            &snapshot_id,
+            "--name",
+            "development-test-split",
+            "--split",
+            "test",
+            "--role",
+            "development",
+            "--reason",
+            "local iterative benchmark",
+        ],
+    );
+    let development_cohort_id = string_at(&development_cohort, "/cohort/id");
+    let contamination = run_json(
+        &database_url,
+        ["contamination", "check", "--cohort", &development_cohort_id],
+    );
+    assert_eq!(contamination["status"], "clean");
+    let benchmark_definition_path = directory.path().join("development-benchmark.json");
+    std::fs::write(
+        &benchmark_definition_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "contamination_report_id": contamination["id"],
+            "name": "development gate",
+            "kind": "development",
+            "task": "Classify intentionally ambiguous support messages.",
+            "labels": ["billing", "fraud"],
+            "required_model_formats": [evaluation["run"]["source_identity"]["checkpoint_model_format"]],
+            "cohorts": [{
+                "cohort_id": development_cohort_id,
+                "protocol": evaluation["run"]["protocol"],
+                "disclosure": "aggregate",
+                "adaptation_eligible": true
+            }],
+            "contract": {
+                "metric_requirements": [{
+                    "target": {"kind": "overall"},
+                    "metric": "accuracy",
+                    "minimum": 0.0,
+                    "minimum_support": 1
+                }]
+            }
+        }))
+        .expect("benchmark definition JSON"),
+    )
+    .expect("write benchmark definition");
+    let benchmark = run_json(
+        &database_url,
+        [
+            "benchmark",
+            "create",
+            "--definition",
+            path(&benchmark_definition_path),
+        ],
+    );
+    let benchmark_id = string_at(&benchmark, "/id");
+    assert_eq!(
+        run_json(&database_url, ["benchmark", "validate", &benchmark_id])["valid"],
+        true
+    );
+    let run_mapping = format!("{development_cohort_id}={evaluation_id}");
+    let acceptance = run_json(
+        &database_url,
+        ["benchmark", "assess", &benchmark_id, "--run", &run_mapping],
+    );
+    assert_eq!(acceptance["state"], "pass");
+    let repeated_acceptance = run_json(
+        &database_url,
+        ["benchmark", "assess", &benchmark_id, "--run", &run_mapping],
+    );
+    assert_eq!(repeated_acceptance["id"], acceptance["id"]);
+
     let analysis = run_json(
         &database_url,
         [
