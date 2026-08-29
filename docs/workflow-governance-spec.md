@@ -143,6 +143,34 @@ confidence-bound requirements, optional McNemar significance, model-format
 compatibility, and explicit disclosure policy. Identical persisted assessment
 inputs are idempotent at the CLI boundary.
 
+## Declarative preparation
+
+An operator may author one versioned preparation manifest instead of manually
+copying project, cohort, contamination, suite, and workflow UUIDs. The manifest
+contains:
+
+- the complete strict project configuration and synthetic training-data schema;
+- exact initial/reserved allocation policy and all finite workflow budgets;
+- immutable development, diagnostic, external, and optional sealed snapshot
+  sources with roles, splits, protocols, disclosure, and adaptation policy;
+- contamination thresholds and optional group dimension;
+- development and sealed deterministic acceptance contracts;
+- advisor egress policy, iteration governance, training policy, and stop rules.
+
+`project preview` is a pure, read-only compilation. It resolves persisted
+snapshot evidence and reports exact cell targets, initial/request ceilings,
+stage order, backend/training choices, approval boundaries, evidence exposure,
+and contamination eligibility. It performs no provider call and creates no
+artifact.
+
+`project prepare` reruns the same validation and atomically inserts only normal
+slice/workflow artifacts plus one immutable preparation summary. The manifest
+fingerprint is an idempotency key. Preparation rejects missing or changed
+snapshots, mismatched label order, empty selected splits, duplicate snapshot/
+split use across roles, blocked cross-cohort contamination, unsafe sealed
+disclosure, and invalid finite budgets before writing anything. Preparation
+does not start the workflow; `workflow start` remains a separate authorization.
+
 ## Workflow lifecycle
 
 A resolved workflow proceeds through legal durable stages:

@@ -36,6 +36,13 @@ Workflow Orchestration
 The workflow layer links slice artifacts; it does not replace their planners,
 runners, persistence ports, or provenance.
 
+A declarative preparation layer may compile one strict local manifest into the
+ordinary project configuration, evaluation cohorts, contamination reports,
+benchmark suites, and resolved workflow definition required to start that
+workflow. Preparation is read-only during preview and atomic during creation.
+It derives identities and fingerprints from persisted snapshot evidence; it
+does not import hidden defaults, run a slice, or weaken any governance check.
+
 Every arrow crosses an explicit, persisted contract. A later slice consumes
 immutable artifacts from the earlier slice and never reaches into its internal
 implementation.

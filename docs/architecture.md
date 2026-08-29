@@ -29,6 +29,7 @@ apps / SQLite adapter ──> recovery-core
 slice cores / adapters ──> artifact-core
 dataset-import ─────────> dataset-core + generation-core
 workflow-core ──────────> narrow artifact contracts from slice cores
+project-preparation ─────> project-config + workflow-core + slice artifact shapes
 ```
 
 `artifact-core` only canonicalizes fingerprint inputs and describes provenance
@@ -42,6 +43,15 @@ request or inspect ordinary slice artifacts. It must not import SQLite, CLI,
 provider, Candle, Axum, or adapter types. The CLI application assembles the
 concrete slice runners and workflow ports; SQLite implements workflow
 persistence in a feature-owned adapter module.
+
+`project-preparation` owns the strict operator manifest and its pure compiler.
+It may construct ordinary domain requests and an atomic persistence bundle, but
+it cannot execute generation, snapshotting, training, evaluation, analysis, or
+optimization. The compiler receives already-loaded immutable snapshot evidence
+through its own input shape; it has no SQLite or CLI dependency. SQLite owns
+the one transaction that inserts the compiled ordinary artifacts plus a small
+preparation record. Repeating the same manifest returns that record by stable
+manifest fingerprint instead of creating another project.
 
 The arrows between core crates describe artifact consumption, not access to
 another slice's implementation. Training consumes normalized snapshot examples;
@@ -217,6 +227,23 @@ coverage, decision, recommendation, training-candidate, review, application,
 scenario, campaign-link, and outcome relationships needed for filtering and
 integrity audits. Decision-grade application atomically inserts the ordinary
 generation plan and its application marker.
+
+### `project-preparation`
+
+This core turns an operator-authored manifest into a deterministic preview or a
+validated preparation bundle. The manifest embeds the strict project
+configuration, exact workflow budgets/policies, and development/diagnostic/
+sealed cohort source declarations. Benchmark sources are immutable persisted
+snapshot IDs and splits; the application loads their source datasets and
+members before invoking the compiler.
+
+Preview exposes exact allocation cells, provider-request ceilings, stage graph,
+training choice, evidence disclosures, approval boundaries, and contamination
+results without generating UUID-bearing artifacts or writing state. Creation
+resolves all intermediate IDs and fingerprints, rejects duplicate evidence use,
+unknown labels, empty splits, blocked contamination, unsafe sealed disclosure,
+and incompatible workflow budgets, then hands one bundle to the persistence
+port. It never shells out to existing CLI commands or copies slice algorithms.
 
 ## Durability and provenance
 

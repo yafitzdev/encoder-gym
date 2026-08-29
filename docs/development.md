@@ -29,6 +29,12 @@ boundary specification, pure allocation/governance policies, persistence,
 CLI-first orchestration, recovery/doctor, offline end-to-end verification, and
 documentation. Do not extend the HTTP API or graphical UI during this phase.
 
+Declarative project preparation follows the same boundary order: specification,
+pure strict-manifest compilation and preview, atomic adapter persistence,
+scriptable CLI, offline process test, doctor/provenance verification, and
+documentation. It may compose constructors and ports, but it must not invoke
+CLI commands internally or start the prepared workflow.
+
 ## Component loop
 
 For each component:
