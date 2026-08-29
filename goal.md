@@ -1,590 +1,677 @@
-# Goal — Slice 6.1: Constrained Optimization and Human-Governed Experiment Cycles
-
-Advance the Rust encoder-development platform from basic error-weighted data
-allocation to a decision-grade, reproducible optimization workflow.
-
-This extends Slice 6. Do not rewrite the platform or weaken the completed data
-generation, dataset management, training, evaluation, comparison, selection,
-error-analysis, provenance, recovery, or persistence boundaries.
-
-Keep this phase CLI-only. Do not add or extend graphical UI, TUI, or HTTP API
-behavior.
-
-The guiding principle is:
-
-Optimization may recommend and explain a finite next experiment, but a human
-must explicitly approve every mutation and start every expensive operation.
-
-The platform already supports a basic immutable proposal that allocates an
-additional-example budget in proportion to cell error counts and can create an
-unequal Slice 1 generation plan. Preserve that workflow while making the
-optimizer safer, more expressive, comparison-aware, and empirically auditable.
-
-## 1. Architecture and compatibility audit
-
-Before implementation:
-
-1. Read `AGENTS.md`.
-2. Read `docs/platform-spec.md`.
-3. Read `docs/slice-6-spec.md`.
-4. Read `docs/architecture.md`.
-5. Read `docs/development.md`.
-6. Read `docs/error-analysis.md`.
-7. Inspect the current analysis diagnostic contract, optimization proposal,
-   generation planner, project configuration, snapshot, training,
-   checkpoint, evaluation, comparison, selection, review, persistence,
-   provenance, recovery, doctor, export, and CLI contracts.
-
-Preserve historical optimization proposals and the existing commands where
-practical. Add append-only migrations and explicit legacy defaults.
-
-Do not leak SQLite, CLI, generation-backend, trainer, Candle, tokenizer, HTTP,
-or presentation types into `optimization-core`.
-
-Record material architectural decisions when persistence or public contracts
-change.
-
-## 2. Immutable optimization protocol
-
-Introduce a normalized, validated optimization protocol that captures at
-least:
-
-- the recommendation kinds to calculate;
-- the finite additional-example budget;
-- minimum evidence support;
-- scoring policy and deterministic tie rules;
-- uncertainty/risk policy;
-- allowed and excluded labels, cells, and dimension values;
-- optional per-label and per-cell lower/upper allocation bounds;
-- maximum share of the total budget assignable to one cell;
-- minimum useful allocation increment;
-- whether comparison regression evidence affects priority;
-- whether accepted-limitation or resolved findings are excluded;
-- optional bounded training-candidate generation;
-- deterministic seed for any tie-breaking or candidate enumeration;
-- behavior for infeasible constraints and unallocated budget.
-
-Validate contradictory, unsafe, or impossible settings before loading large
-evidence sets.
-
-Persist the complete resolved protocol and a deterministic SHA-256 fingerprint
-on every new proposal.
-
-The proposal identity must include:
-
-- analysis-report ID and fingerprint;
-- analysis protocol and evaluation evidence identity;
-- source dataset and snapshot IDs/fingerprints;
-- current accepted-cell coverage fingerprint;
-- optional comparison ID/fingerprint;
-- optimization protocol fingerprint;
-- exact supported training configuration space when training candidates are
-  requested.
-
-Never consult mutable project defaults after proposal construction begins.
-
-## 3. Stable evidence boundary
-
-Continue consuming Slice 5 through a project-owned diagnostic contract rather
-than report layout, SQLite rows, CLI types, or presentation order.
-
-Expand that contract only where the optimizer genuinely needs stable facts,
-such as:
-
-- structured cell identity;
-- support, error count, and error rate;
-- error-rate lift and share of errors;
-- high-confidence error severity;
-- marginal and cumulative error coverage;
-- comparison fixed/regressed/persistent counts where applicable;
-- finding/review disposition relevant to eligibility;
-- immutable evidence fingerprints.
-
-The optimizer must reject incomplete, mismatched, non-finite, stale, or
-internally inconsistent evidence with actionable errors.
-
-Do not let optimization query normalized analysis tables directly. Application
-composition may resolve immutable artifacts, but decision logic consumes only
-optimization-owned inputs and upstream project-owned contracts.
-
-## 4. Evidence-aware scoring policies
-
-Replace the single implicit error-count weighting rule with explicit,
-deterministic scoring policies.
-
-Support at least:
-
-- error count;
-- error rate;
-- error-rate lift versus evaluation baseline;
-- high-confidence error severity;
-- unique marginal error coverage;
-- comparison regression priority;
-- a documented conservative composite policy.
-
-The conservative composite should avoid over-prioritizing tiny, noisy cells.
-Use a deterministic and documented uncertainty adjustment such as a Wilson
-lower bound, shrinkage toward the baseline, or another bounded analytical
-method that requires no random simulation.
-
-Every recommendation must expose an auditable score breakdown rather than one
-opaque number. Include the raw evidence, transformations, penalties, boosts,
-eligibility decision, and final score.
-
-Define and test:
-
-- zero support and zero errors;
-- zero variance and perfect error rate;
-- negative lift;
-- missing comparison evidence;
-- ties;
-- floating-point clamping and rounding;
-- very large counts and overflow behavior;
-- reviewed findings excluded by policy;
-- unknown or no-longer-valid dataset cells.
-
-Do not claim that a score proves root cause or expected model improvement.
-
-## 5. Constrained deterministic budget allocation
-
-Build a pure allocation engine that converts eligible scored cells and explicit
-constraints into a finite recommendation set.
-
-It must support:
-
-- exact total-budget conservation when constraints are feasible;
-- explicit unallocated budget with reasons when constraints are infeasible;
-- per-cell minimum and maximum additions;
-- per-label minimum and maximum shares;
-- global maximum share per cell;
-- exclusions and frozen cells;
-- deterministic largest-remainder or equivalent integer allocation;
-- stable tie-breaking on canonical cell identity;
-- current accepted coverage and absolute proposed targets;
-- saturation detection when a cell cannot accept more allocation.
-
-Do not hide infeasibility by silently violating a bound. Return a structured
-constraint result explaining which constraint prevented allocation.
-
-The allocation engine must be independent from SQLite, analysis persistence,
-generation backends, and CLI parsing and must be exhaustively unit-testable.
-
-Do not introduce a heavyweight optimization solver unless the required finite
-integer allocation cannot be expressed clearly with small project-owned logic.
-
-## 6. Recommendation types
-
-Support explicit, independently reviewable recommendation sections.
-
-### Data-generation recommendations
-
-Recommend unequal absolute cell targets consumable by the existing Slice 1
-planner. Preserve arbitrary categorical dimensions and canonical cell keys.
-
-Each recommendation must include:
-
-- source cell identity;
-- current accepted count;
-- proposed additional count and absolute target;
-- complete score breakdown;
-- supporting analysis finding IDs/keys/fingerprints;
-- applicable comparison and review context;
-- constraints that affected the allocation;
-- a concise deterministic rationale assembled from structured facts.
-
-### Training-configuration candidates
-
-Optionally propose a small, bounded set of explicit training configurations for
-an approved future run.
-
-Training candidates must:
-
-- use only settings supported by the selected registered backend;
-- stay inside user-supplied finite ranges or enumerated choices;
-- identify the baseline training run/configuration/checkpoint;
-- state exactly which fields differ;
-- include deterministic rule-based rationale and cautions;
-- preserve dataset/snapshot identity requirements;
-- be immutable and fingerprinted;
-- never start training automatically.
-
-Do not infer an allegedly optimal learning rate, epoch count, regularization,
-or transformer mode from one metric. Present candidates as bounded experiments,
-not conclusions.
-
-Do not recommend unsupported provider/model-specific settings through generic
-maps that bypass backend validation.
-
-### Review-only recommendations
-
-Allow the optimizer to surface cells or confusions as candidates for label or
-schema review without mutating labels, dimensions, rows, or snapshots.
-
-Review-only recommendations consume existing Slice 5 finding/review evidence
-and remain advisory.
-
-## 7. Alternatives and sensitivity analysis
-
-One score policy must not masquerade as the only rational choice.
-
-Allow generating a bounded set of alternative proposal scenarios from the same
-immutable evidence, for example:
-
-- conservative support-adjusted allocation;
-- raw error-volume allocation;
-- high-confidence-regression allocation;
-- balanced per-label allocation.
-
-For each scenario expose:
-
-- protocol/fingerprint;
-- eligible and excluded cells;
-- allocation and unallocated budget;
-- concentration by label and dimension;
-- overlap with other scenarios;
-- cells whose allocations are sensitive to policy choice.
-
-Scenario comparison must be deterministic and must not duplicate or mutate the
-underlying analysis report.
-
-Do not run generation, training, or evaluation merely to compare scenarios.
-
-## 8. Approval and review boundary
-
-Keep immutable proposals separate from append-only human decisions.
-
-Add proposal review records with states such as:
-
-- open;
-- approved for plan creation;
-- rejected;
-- superseded;
-- partially accepted with explicit selected recommendation IDs;
-- accepted as a training experiment candidate;
-- completed and awaiting outcome assessment.
-
-Record timestamps, optional notes, selected recommendation identities, and
-optional superseding proposal/campaign references.
-
-Review records must not mutate proposal contents or fingerprints. Do not add
-users, authentication, assignment, or collaborative workflow features.
-
-Applying a proposal or subset must require an explicit compatible approval
-record unless a clearly named legacy compatibility path is retained.
-
-## 9. Safe application
-
-Applying approved data recommendations must create a normal immutable unequal
-generation plan through the existing Slice 1 contract.
-
-Application must:
-
-- verify proposal, protocol, analysis, dataset, coverage, and approval
-  fingerprints;
-- detect stale current coverage before creating a plan;
-- reject cells that no longer belong to the dataset definition;
-- preserve exact absolute targets;
-- be transactional and idempotent;
-- retain proposal, review, recommendation, and source-analysis provenance;
-- return the existing plan on an identical repeated application;
-- never start a generation job.
-
-If coverage has changed, provide an explicit rebase/refresh command that creates
-a new proposal. Never rewrite the stale proposal or silently reinterpret its
-absolute targets.
-
-Applying a training candidate may create an immutable configuration draft or
-explicit candidate artifact if useful, but must never create or start a
-training run automatically.
-
-## 10. Human-governed experiment campaigns
-
-Add a lightweight immutable/append-only campaign ledger that lets a human link
-one optimization decision to its later outcomes.
-
-A campaign should be able to record explicit links to:
-
-- baseline analysis and optional comparison;
-- chosen optimization proposal/scenario;
-- approval decision;
-- applied generation plan;
-- manually started generation jobs;
-- resulting immutable dataset snapshot;
-- manually started training runs and checkpoints;
-- evaluation runs and paired comparison against the baseline;
-- follow-up analysis report;
-- final outcome assessment.
-
-Campaign commands only record and validate links to artifacts that already
-exist or were explicitly created by a separate normal command. They must not
-start, poll, retry, schedule, or orchestrate those workflows.
-
-Validate compatibility at every link:
-
-- generated rows belong to the expected dataset/plan lineage;
-- snapshots derive from the expected dataset;
-- training runs consume the linked snapshot;
-- evaluations consume linked checkpoints and compatible cohorts/protocols;
-- comparisons contain the expected baseline and candidate evaluations;
-- follow-up analyses reference the candidate evaluation/comparison.
-
-Provide a deterministic outcome summary comparing the baseline and candidate:
-
-- overall and per-label metric deltas;
-- confidence intervals/significance already persisted by Slice 4.1;
-- fixed, regressed, and persistent errors;
-- target-cell coverage changes;
-- whether proposal constraints were actually realized;
-- explicit outcome classification such as improved, regressed, mixed, or
-  inconclusive under a persisted assessment policy.
-
-Do not attribute causality. A campaign records an observed experiment lineage,
-not proof that one recommendation caused the result.
+# Goal — Controlled End-to-End Encoder Workflow and Evaluation Governance
+
+Build the missing product layer that turns the existing local encoder-development
+components into one coherent, resumable, CLI-first workflow.
+
+The repository already contains independently useful implementations for:
+
+- synthetic-data planning, generation, validation, deduplication, and coverage;
+- immutable dataset snapshots and imports;
+- linear and local BERT training with immutable checkpoints;
+- evaluation, persisted predictions, statistical comparison, and model selection;
+- deterministic error analysis;
+- constrained optimization proposals, reviews, applications, and campaigns;
+- SQLite persistence, provenance, recovery, and doctor checks.
+
+Do not rebuild these slices. Audit them, preserve their public contracts, and
+compose them through narrow workflow-owned interfaces.
+
+The product journey to implement is:
+
+```text
+dataset definition + labels + arbitrary categorical dimensions
+  -> exact initial row budget and allocation policy
+  -> generation, validation, deduplication, and coverage completion
+  -> immutable dataset snapshot
+  -> encoder V1 training
+  -> development benchmark evaluation
+  -> deterministic metrics and error analysis
+  -> optional advisory LLM assessment
+  -> bounded data/training proposal
+  -> explicit approval or bounded pre-authorization
+  -> dataset diff and immutable snapshot V2
+  -> encoder V2 training
+  -> compatible paired evaluation and comparison
+  -> repeat within finite limits or stop
+  -> explicitly requested sealed acceptance evaluation
+```
+
+This is a long-range goal. Continue until the completion criterion is genuinely
+satisfied. Do not stop after adding domain models, migrations, command stubs, or
+one happy-path demonstration.
+
+The guiding rules are:
+
+- automation is a durable finite state machine, not an autonomous agent;
+- deterministic acceptance policy decides pass/fail, never an LLM opinion;
+- development evidence may guide iteration, sealed evidence may not;
+- every external call and generated row stays inside explicit user budgets;
+- every mutation-producing iteration is explicitly approved or covered by a
+  finite persisted pre-authorization envelope;
+- historical datasets, runs, evaluations, decisions, and workflow attempts are
+  immutable;
+- no graphical UI or HTTP expansion is part of this goal.
+
+## 1. Architecture and product-boundary audit
+
+Before implementation, read all platform and slice specifications, architecture,
+development, operations, recovery, provenance, evaluation, analysis, optimization,
+and configuration documentation. Inspect the actual CLI, runners, persistence
+ports, leases, migrations, and end-to-end tests.
+
+Produce an internal compatibility map covering:
+
+- the command or application workflow that creates each artifact;
+- the immutable identity and fingerprint of every artifact;
+- the ports needed to start, inspect, cancel, recover, or link each workflow;
+- current generation, training, and evaluation state transitions;
+- which evidence Error Analysis and Optimization currently consume;
+- existing campaign compatibility and outcome rules;
+- failure, retry, cancellation, and interruption semantics;
+- the exact modules that would become dependency or ownership hotspots.
+
+Update `docs/platform-spec.md`, `docs/architecture.md`, and the relevant slice
+specifications before adding automatic cross-slice execution. Add a focused
+workflow/evaluation-governance specification. Update `AGENTS.md` only as needed to
+permit this explicitly bounded orchestrator while retaining the prohibitions on
+unbounded autonomy, cloud execution, and multiple workers.
+
+Prefer a dedicated `workflow-core` crate if the audit confirms it gives the
+state machine, policies, and ports one clear owner. Keep SQLite implementation in
+an adapter and CLI assembly in the CLI application. Do not add generic
+`services.rs`, `utils.rs`, or a central object that reaches into every database
+table directly.
+
+## 2. Exact initial dataset-budget allocation
+
+Add a pure deterministic allocator for the initial dataset. It converts:
+
+- labels;
+- arbitrary categorical dimensions;
+- an exact desired accepted-row total;
+- current accepted coverage, when present;
+- an allocation policy;
+- optional minimums, maximums, exclusions, and reserved iteration budget;
+
+into explicit absolute targets for ordinary Slice 1 generation cells.
+
+Support at least these policies:
+
+- balanced coverage across every eligible cell;
+- user-supplied label and dimension-value weights;
+- minimum coverage per cell followed by weighted remainder allocation;
+- a fully explicit per-cell allocation;
+- optional reservation of part of the total budget for later iterations.
+
+The allocator must:
+
+- conserve the requested total exactly when constraints are feasible;
+- use deterministic integer rounding and canonical tie-breaking;
+- account for already accepted rows without requesting negative work;
+- reject unknown labels, dimensions, values, or duplicate canonical cells;
+- report structured infeasibility and unallocated budget;
+- preview every cell target before persistence or provider calls;
+- create a normal explicit Slice 1 generation plan without bypassing its planner;
+- avoid claiming that an evidence-free initial allocation is statistically
+  optimal.
+
+Treat targets as accepted-row coverage. Configure a finite attempt ceiling so
+validation failures cannot cause unbounded generation. Expose requested,
+attempted, accepted, rejected, remaining, and exhausted counts.
+
+## 3. Dataset roles and evaluation-governance model
+
+Introduce project-owned evaluation roles for immutable snapshot cohorts. At
+minimum distinguish:
+
+- training;
+- development/validation;
+- diagnostic/challenge;
+- sealed acceptance;
+- external benchmark.
+
+A role assignment and every later role transition must be persisted and
+append-only. Historical evaluations keep the role and policy that applied when
+they ran.
+
+Implement a system-enforced evidence boundary:
+
+- training may consume only approved training membership;
+- iterative evaluation, Error Analysis, Optimization, and the LLM advisor may
+  consume development/diagnostic evidence;
+- sealed-acceptance rows, labels, predictions, error examples, and slice details
+  must never enter analysis, optimization, prompt construction, or workflow
+  iteration decisions;
+- sealed evaluation is a separate explicit workflow action, not an automatic
+  stage in the iterative loop;
+- default sealed output should disclose only policy-approved aggregate results;
+- inspecting sealed row-level errors or using its result to change a model must
+  append an exposure and retire or demote that cohort from unbiased-acceptance
+  use;
+- repeated aggregate exposure must be counted and surfaced as an adaptive-
+  overfitting risk rather than silently treated as independent evidence.
+
+Add an immutable exposure ledger recording:
+
+- cohort/snapshot and role;
+- evaluation and protocol;
+- requesting workflow/iteration;
+- purpose: development, diagnosis, comparison, acceptance, or manual inspection;
+- disclosure level: aggregate, slices, predictions, or row content;
+- whether the evidence was eligible for adaptation;
+- timestamp and append-only retirement/demotion decisions.
+
+The platform is local and cannot prevent a user from opening SQLite manually.
+Document that sealing is an application-enforced scientific-governance boundary,
+not encryption or access control.
+
+## 4. Leakage and adaptive-overfitting defenses
+
+Add practical protections around dataset construction and evaluation:
+
+- exact and normalized-text overlap checks across train, development, diagnostic,
+  sealed, and external cohorts;
+- optional source/entity/group identifiers so related examples can be split as a
+  unit;
+- deterministic group-aware splitting where group identity exists;
+- provenance checks that detect the same source row in incompatible cohorts;
+- a contamination report persisted before a benchmark suite becomes eligible;
+- policy-controlled thresholds that block execution or require explicit override;
+- warnings when a development cohort has been repeatedly optimized against;
+- support for multiple deterministic development cohorts or folds so iteration
+  does not depend on one static validation sample;
+- a fresh-cohort or retirement path when evaluation evidence has become adaptive.
+
+Do not describe nested validation, multiple cohorts, bootstrap intervals, or
+significance testing as magical protection. Any evidence used to guide changes is
+adaptive evidence. Make that fact visible in status, comparison, and promotion
+commands.
+
+## 5. Immutable benchmark suites and acceptance contracts
+
+Create a benchmark-suite model that groups compatible evaluation cohorts and
+their policies. A suite may contain internal immutable snapshot cohorts and
+locally imported external classification benchmarks.
+
+Each suite must bind:
+
+- task and label vocabulary;
+- cohort identity, evaluation role, and split;
+- required predictor/checkpoint compatibility;
+- metric definitions and evaluation protocol fingerprints;
+- overall, per-label, and arbitrary-dimension slice thresholds;
+- minimum support requirements;
+- allowed regression tolerances against a named baseline;
+- confidence-interval or paired-comparison requirements where applicable;
+- disclosure and adaptation eligibility;
+- contamination status;
+- an immutable suite fingerprint.
+
+Acceptance must be deterministic and structured. Produce pass, fail,
+inconclusive, and invalid states with exact reasons. An LLM narrative cannot
+override the contract.
+
+Allow a development suite to drive iterations and a sealed suite to decide an
+explicit release/milestone assessment. Do not build a remote benchmark catalog,
+download arbitrary benchmark code, or execute user-supplied scripts.
+
+## 6. Workflow domain and finite state machine
+
+Define small workflow-owned domain objects only where useful, such as:
+
+- `WorkflowDefinition`;
+- `WorkflowRun`;
+- `WorkflowIteration`;
+- `WorkflowStage` and `WorkflowStageAttempt`;
+- `WorkflowBudget`;
+- `WorkflowPolicy`;
+- `ApprovalEnvelope`;
+- `StopDecision`;
+- artifact-link summaries owned by the workflow boundary.
+
+The exact names may differ. Do not copy complete domain models from every slice
+into the workflow crate.
+
+Support durable stages resembling:
+
+1. initial allocation and plan creation;
+2. generation;
+3. snapshot materialization;
+4. training;
+5. development benchmark evaluation;
+6. deterministic acceptance assessment;
+7. error analysis;
+8. optional LLM advisory assessment;
+9. optimization proposal creation;
+10. approval wait or pre-authorization validation;
+11. proposal application and dataset-diff generation;
+12. next snapshot, training, evaluation, comparison, and follow-up analysis;
+13. iteration stop/continue decision;
+14. completed, failed, cancelled, exhausted, or awaiting-user state.
+
+Model transitions explicitly and reject illegal transitions. Persist the
+workflow definition resolved at start so mutable project defaults cannot change
+a running or historical workflow.
+
+The workflow must link ordinary artifacts created by existing slices. It must
+not invent alternative generation plans, snapshots, training runs, evaluations,
+analysis reports, or optimization proposals.
+
+## 7. Orchestration and execution semantics
+
+Starting a workflow is explicit authorization for its configured initial
+generation, snapshot, training, and development-evaluation stages. Those stages
+may chain automatically after successful completion.
+
+Iteration supports two governance modes:
+
+- `review-each-iteration`: pause after a proposal and require an explicit
+  compatible approval before applying it or spending more provider budget;
+- `preauthorized-bounded`: continue only while a persisted user-supplied envelope
+  permits the exact action, row budget, advisor-call budget, training candidate,
+  iteration count, and acceptance policy.
+
+Pre-authorization is not permission for an LLM to expand scope. Any action
+outside the envelope pauses for review.
+
+Enforce finite limits including:
+
+- maximum iterations;
+- maximum initial and cumulative accepted rows;
+- maximum generation attempts and provider requests;
+- maximum advisor calls and optional token ceilings;
+- permitted generation backend/model;
+- permitted training backend and explicit finite configuration space;
+- maximum wall-clock stage attempts where practical;
+- minimum improvement and maximum tolerated regression;
+- stop on invalid, incompatible, stale, or inconclusive evidence according to
+  persisted policy.
+
+Do not promise monetary cost enforcement unless provider pricing is explicit and
+versioned. Track observable request/token usage and enforce count/token limits.
+
+Stage execution must be:
+
+- idempotent;
+- restartable after process interruption;
+- cancellable between bounded batches;
+- protected by the existing process-identity lease model;
+- single-worker and local;
+- transactional when recording a stage result and artifact link;
+- safe against duplicate commands and concurrent resume attempts;
+- explicit about retryable versus terminal failures.
+
+If a slice artifact was durably created before a crash, recovery must discover,
+validate, and link it rather than creating a duplicate. Never silently replay a
+completed provider call, training run, or sealed evaluation.
+
+## 8. Advisory LLM analysis through a replaceable port
+
+Add an optional project-owned advisor contract independent from any provider SDK.
+Conceptually:
+
+```text
+AnalysisAdvisor
+  generate_advisory(AdvisoryRequest) -> AdvisoryAssessment
+```
+
+Implement:
+
+- a deterministic fake advisor for ordinary tests and offline workflows;
+- one OpenAI-compatible adapter, reusing transport conventions where helpful
+  without coupling analysis to the generation backend;
+- prompt construction as an inspectable versioned component separate from HTTP;
+- strict structured-output parsing and composable validation;
+- persisted provider/model/prompt/version/parameters/usage metadata;
+- environment-variable credentials only, never persisted raw secrets.
+
+The normalized request may contain only policy-approved development evidence:
+
+- task/schema and canonical labels/dimensions;
+- deterministic aggregate metrics and comparison facts;
+- bounded representative development errors;
+- coverage and validation summaries;
+- reviewed analysis findings;
+- the finite action space and remaining workflow budget.
+
+Never send sealed evidence. Require an explicit persisted data-egress policy
+before sending raw imported or generated text to an external provider. Support an
+aggregate-only mode.
+
+Treat every model response as untrusted. Validate:
+
+- referenced labels, dimensions, values, cells, findings, and evaluations;
+- claimed evidence against persisted facts;
+- finite confidence values and bounded list sizes;
+- proposed action kinds against the allowed action space;
+- absence of direct commands, arbitrary code, credentials, or provider-specific
+  types in core artifacts.
+
+An advisory assessment may provide:
+
+- a concise evidence-linked interpretation;
+- suspected data-quality problems;
+- coverage-gap and confusion hypotheses;
+- candidate cells for more data or manual review;
+- cautions and uncertainty;
+- a recommendation to stop, inspect, or consider another bounded experiment.
+
+It must not:
+
+- be the authoritative good/bad decision;
+- directly create a generation plan, mutate a dataset, start training, or expose
+  sealed evidence;
+- claim root cause or guaranteed improvement;
+- invent target counts outside deterministic planning and allocation;
+- bypass Optimization review, application, or workflow budgets.
+
+## 9. Immutable dataset diffs and iteration lineage
+
+Represent every iteration as new artifacts rather than mutation:
+
+```text
+snapshot V1
+  + accepted rows from approved generation-plan delta
+  = immutable snapshot V2
+```
+
+Preserve lineage from each added row and target cell through:
+
+- advisor assessment, when used;
+- deterministic analysis evidence;
+- optimization proposal and scenario;
+- approval or pre-authorization decision;
+- applied generation plan and jobs;
+- resulting snapshot;
+- V2 training run/checkpoint;
+- compatible V1/V2 evaluations and paired comparison;
+- follow-up analysis and workflow stop decision.
+
+Do not delete allegedly bad historical rows automatically. Data-removal,
+relabeling, or schema-change recommendations remain review-only unless a future
+explicit specification adds immutable correction workflows.
+
+Training V2 may start fresh or continue from a compatible checkpoint according
+to an explicit persisted policy. Never silently change that choice between
+iterations.
+
+## 10. Deterministic stop, promotion, and final evaluation
+
+Stop/continue decisions must combine the persisted acceptance contract,
+statistical comparison, workflow budget, and governance mode.
+
+Support deterministic reasons including:
+
+- development acceptance thresholds satisfied;
+- statistically supported improvement without forbidden regression;
+- regression or invalid comparison;
+- insufficient or inconclusive evidence;
+- no eligible recommendations;
+- minimum-improvement threshold not met;
+- maximum iterations, rows, attempts, advisor calls, or token budget reached;
+- stale or incompatible evidence;
+- awaiting approval;
+- user cancellation.
+
+The command that declares a candidate ready must not imply final generalization.
+Final acceptance requires a separate explicit command against a sealed suite.
+That command records an exposure and cannot feed the current workflow back into
+analysis or optimization.
+
+If the user inspects final errors or chooses another iteration based on final
+results, require an explicit cohort retirement/demotion record before continuing.
+
+Model promotion is an immutable record linking the selected checkpoint, training
+snapshot, development assessment, optional sealed assessment, benchmark suite,
+and exact policy. Do not overwrite a global `best model` pointer without history.
 
 ## 11. Persistence and migrations
 
+Use append-only migrations and normalized relationships required for integrity,
+filtering, pagination, provenance, and doctor checks.
+
 Persist at least:
 
-- normalized optimization protocols and fingerprints;
-- immutable evidence/source identities;
-- normalized recommendation rows and score breakdowns;
-- allocation constraints and feasibility results;
-- scenario groups and scenario comparisons;
-- optional bounded training candidates;
-- append-only proposal review records;
-- idempotent applications and selected recommendation subsets;
-- campaign identity and append-only artifact links;
-- immutable outcome assessments and fingerprints.
+- initial allocation policies, constraints, previews, and results;
+- snapshot cohort roles and append-only role decisions;
+- contamination reports and overrides;
+- benchmark suites, cohort membership, protocols, thresholds, and fingerprints;
+- exposure-ledger entries;
+- immutable workflow definitions and resolved budgets;
+- workflow runs, iterations, stages, attempts, leases, and state transitions;
+- idempotency keys and linked slice-artifact identities;
+- approval envelopes and consumption counters;
+- advisor requests/assessments, prompt identity, validation, and usage metadata;
+- deterministic acceptance and stop decisions;
+- dataset-diff lineage;
+- immutable promotion/final-assessment records.
 
-Use append-only SQLite migrations. Preserve historical proposal JSON and current
-proposal/application behavior through explicit legacy defaults or upgrade
-backfills.
+Do not duplicate complete datasets, predictions, model tensors, or earlier slice
+artifacts in workflow tables. Store their identities, fingerprints, compatibility
+facts, and bounded workflow-owned summaries.
 
-Do not store raw secrets, model tensors, duplicated datasets, or unbounded
-prediction payloads in optimization tables.
+Add migration upgrade tests and run `PRAGMA foreign_key_check`. Preserve every
+existing database and legacy artifact.
 
-Normalize fields required for filtering, pagination, uniqueness, foreign-key
-integrity, doctor checks, and provenance. JSON payloads may preserve complete
-immutable artifacts but must not be the only queryable representation of core
-relationships.
+## 12. CLI-first user workflow
 
-## 12. CLI workflow
+Expose the complete behavior through focused, scriptable CLI commands before any
+new API or graphical work.
 
-Add focused CLI behavior for:
-
-- creating a proposal from a resolved optimization protocol;
-- previewing feasibility before persistence;
-- creating bounded alternative scenarios;
-- listing/showing proposals and normalized recommendations;
-- filtering recommendations by kind, label, dimension, eligibility, and score;
-- explaining one recommendation's score and evidence;
-- approving, partially accepting, rejecting, or superseding a proposal;
-- rebasing stale evidence into a new immutable proposal;
-- applying an approved data recommendation set into a generation plan;
-- listing/showing/exporting training candidates without starting training;
-- creating a campaign ledger;
-- linking already-created artifacts to a campaign;
-- validating campaign compatibility;
-- recording and showing a deterministic outcome assessment;
-- exporting proposal summaries and recommendation rows to JSONL and CSV;
-- tracing proposal, recommendation, review, application, campaign, and outcome
-  provenance.
-
-Suggested conceptual commands include:
+Provide behavior equivalent to:
 
 ```text
-synth optimize preview <ANALYSIS_REPORT_ID> --budget 500 --policy conservative
-synth optimize propose <ANALYSIS_REPORT_ID> --protocol optimization.toml
-synth optimize scenarios <ANALYSIS_REPORT_ID> --budget 500
-synth optimize recommendations <PROPOSAL_ID> --label billing --eligible
-synth optimize explain <PROPOSAL_ID> <RECOMMENDATION_ID>
-synth optimize review <PROPOSAL_ID> --state approved-for-plan-creation
-synth optimize apply <PROPOSAL_ID> --approval-id <REVIEW_ID>
-synth optimize rebase <PROPOSAL_ID>
-synth optimize training-candidates <PROPOSAL_ID>
-synth campaign create <PROPOSAL_ID> --approval-id <REVIEW_ID>
-synth campaign link <CAMPAIGN_ID> --generation-plan-id <PLAN_ID>
-synth campaign link <CAMPAIGN_ID> --snapshot-id <SNAPSHOT_ID>
-synth campaign assess <CAMPAIGN_ID> --comparison-id <COMPARISON_ID>
+synth allocation preview --project project.toml --total-rows 20000
+synth benchmark create --definition benchmark.toml
+synth benchmark validate <SUITE_ID>
+synth workflow create --definition workflow.toml
+synth workflow plan <WORKFLOW_ID>
+synth workflow start <WORKFLOW_ID>
+synth workflow status <RUN_ID>
+synth workflow watch <RUN_ID>
+synth workflow approve <RUN_ID> <PROPOSAL_ID>
+synth workflow resume <RUN_ID>
+synth workflow cancel <RUN_ID>
+synth workflow iterations <RUN_ID>
+synth workflow explain-stop <RUN_ID>
+synth workflow finalize <RUN_ID> --sealed-suite <SUITE_ID>
+synth workflow promote <RUN_ID> <CHECKPOINT_ID>
+synth exposure list --suite <SUITE_ID>
 ```
 
-Exact command names may differ if existing CLI conventions suggest a clearer
-shape.
+Exact names may differ to fit existing conventions.
 
-Keep stdout machine-readable under JSON output. Progress and warnings belong on
-stderr. File output must continue to use `--file`.
+Requirements:
 
-Do not create an interactive terminal interface.
+- `plan` previews all provider calls, row targets, stages, limits, development
+  cohorts, and approval gates without mutation;
+- `start` returns a durable run identity and does not hide long work inside an
+  HTTP request;
+- `status` and `watch` display persisted stage and budget progress;
+- JSON stdout remains machine-readable; warnings/progress use stderr;
+- list operations are filtered, sorted, and bounded;
+- `cancel` is durable and observed between batches;
+- `resume` is idempotent and lease-safe;
+- commands expose why a stage paused, failed, stopped, or needs approval;
+- raw API keys never appear in arguments, TOML, SQLite, output, or logs.
+
+Do not add a TUI. Do not extend the existing Slice 1 server or graphical surface.
+The CLI is the product surface for this goal and the future UI must call the same
+application boundary.
 
 ## 13. Provenance, doctor, and recovery
 
-Extend provenance so every recommendation and campaign outcome can be traced
-through:
+Extend provenance so a promoted encoder or final assessment traces through:
 
 ```text
-outcome assessment
-  -> campaign
-    -> proposal + approval
-      -> analysis findings/reviews
-        -> evaluation/comparison
-          -> checkpoint/training run
-            -> immutable snapshot/source rows
-    -> applied generation plan/jobs
-    -> candidate snapshot/training/evaluation/analysis
+promotion/final assessment
+  -> sealed exposure + benchmark suite + acceptance contract
+  -> workflow run and stop decision
+    -> iteration N checkpoint/evaluation/comparison
+      -> snapshot N and dataset diff
+        -> approved proposal + analysis + optional advisor assessment
+          -> previous evaluation/checkpoint/snapshot
+    -> initial allocation and generation plan
+      -> dataset definition and generation backend metadata
 ```
 
-Extend `doctor` to verify:
+Extend doctor to recompute and verify:
 
-- optimization protocol and proposal fingerprints reproduce;
-- source analysis/evaluation/dataset/snapshot identities match;
-- normalized recommendations reproduce immutable proposal contents;
-- score breakdowns reproduce from stable diagnostic evidence;
-- allocation obeys every persisted constraint;
-- allocated plus unallocated budget equals the finite requested budget;
-- application approval and selected recommendation sets are valid;
-- applications are idempotent and generated plans match absolute targets;
-- stale-coverage detection facts are internally consistent;
-- training candidates pass the selected backend's configuration validation;
-- campaign links form a compatible acyclic artifact lineage;
-- outcome assessments reproduce from persisted comparison/evaluation facts;
-- append-only reviews reference existing immutable artifacts;
-- historical proposal JSON remains decodable.
+- allocation totals, constraints, and canonical cell targets;
+- benchmark-suite, cohort-role, contamination, and acceptance fingerprints;
+- sealed-evidence exclusion from analysis, optimization, and advisor requests;
+- exposure-ledger consistency and retirement decisions;
+- workflow definition, budget, stage, transition, and artifact-link integrity;
+- approval-envelope scope and consumed limits;
+- idempotency and absence of duplicate stage artifacts;
+- advisor prompt/request/assessment fingerprints and referenced evidence;
+- comparison compatibility and deterministic stop decisions;
+- dataset-diff and V1/V2 provenance;
+- final-assessment and promotion compatibility;
+- migration and foreign-key integrity.
 
-Doctor must not call an LLM, load model tensors, run inference, train, generate
-data, or mutate workflow state.
+Doctor must not call a provider, load model tensors, generate rows, run training,
+evaluate a model, reveal sealed rows, or mutate workflow state.
 
-Optimization proposal construction is a bounded read plus transactional write.
-A crash before the transaction leaves no partial proposal. Campaign links and
-review records are append-only. Recovery must never auto-apply or auto-resume an
-optimization decision.
+Recovery must distinguish interrupted, retryable, awaiting-approval, exhausted,
+cancelled, and terminal states. It must never infer approval or silently consume a
+new external-call budget.
 
-## 14. Tests and practical verification
+## 14. Testing and practical verification
 
-Ordinary tests must require no network, provider credentials, external model,
-Python runtime, GPU, or paid service.
+Ordinary tests must require no network, credentials, provider credits, public
+model download, Python runtime, GPU, or external service.
 
 Add focused tests for:
 
-- optimization-protocol validation and fingerprinting;
-- stable evidence-contract conversion and mismatch rejection;
-- every scoring policy and score breakdown;
-- uncertainty adjustment and numerical edge cases;
-- exact integer budget conservation;
-- infeasible constraints and structured unallocated reasons;
-- per-cell, per-label, concentration, exclusion, and saturation constraints;
-- deterministic ties and canonical arbitrary-dimension cells;
-- comparison regression boosts and missing-comparison behavior;
-- review-disposition eligibility;
-- scenario determinism, overlap, and sensitivity summaries;
-- bounded training-candidate enumeration and backend validation;
-- immutable proposal/recommendation fingerprint reproducibility;
-- normalized persistence round trips and migration upgrades;
-- proposal filtering, sorting, and bounded pagination;
-- append-only review history and partial acceptance;
-- stale-coverage rejection and explicit rebase behavior;
-- transactional/idempotent plan application;
-- campaign link compatibility and invalid-lineage rejection;
-- deterministic outcome assessment;
-- JSONL/CSV exports;
-- provenance through recommendations, approvals, campaigns, and outcomes;
-- doctor detection of altered evidence, scores, allocations, links, or
-  fingerprints;
-- legacy proposal compatibility.
+- exact total-budget allocation under every policy;
+- weighted rounding, ties, existing coverage, reservations, and infeasibility;
+- arbitrary dimensions and collision-safe cell identities;
+- cohort-role transitions and immutable history;
+- group-aware splitting and cross-cohort contamination detection;
+- sealed-evidence rejection at every analysis, optimization, advisor, export, and
+  workflow boundary;
+- exposure counting, disclosure levels, retirement, and repeated-use warnings;
+- benchmark-suite validation and deterministic acceptance outcomes;
+- workflow transition legality and resolved-definition fingerprints;
+- stage idempotency, duplicate commands, and concurrent resume attempts;
+- interruption between every major stage and recovery without duplicate work;
+- cancellation and retry budgets;
+- approval-envelope validation and consumption;
+- fake-advisor determinism and OpenAI-compatible normalization through a local
+  mock server;
+- malicious, malformed, unsupported, and evidence-inconsistent advisor output;
+- aggregate-only and explicit text-egress policies;
+- iteration budget exhaustion and every stop reason;
+- immutable dataset-diff and V1/V2 lineage;
+- fresh versus continuation training policy;
+- final sealed evaluation isolation and post-exposure retirement;
+- promotion history and provenance;
+- migration upgrades and legacy database compatibility;
+- doctor detection of tampered allocations, exposure, stages, budgets, advisor
+  evidence, decisions, and links.
 
-Expand the offline CLI end-to-end workflow using deterministic local fixtures:
+Expand the offline CLI end-to-end test to execute a complete deterministic
+two-version workflow:
 
-1. create/import and generate a dataset;
-2. create a baseline snapshot, training run, evaluation, and analysis;
-3. preview multiple optimization scenarios;
-4. persist a constrained proposal;
-5. inspect and explain normalized recommendations;
-6. record explicit approval;
-7. apply approved data recommendations into a normal generation plan;
-8. explicitly run generation with the normal Slice 1 command;
-9. explicitly create a new snapshot, train, and evaluate with normal commands;
-10. create a paired comparison and follow-up analysis;
-11. link the already-created artifacts into a campaign;
-12. record and inspect the deterministic outcome assessment;
-13. export recommendations to JSONL and CSV;
-14. trace provenance; and
-15. pass doctor.
+1. define a dataset with arbitrary dimensions and an exact total budget;
+2. preview and persist the initial allocation;
+3. generate with the fake backend and materialize snapshot V1;
+4. train encoder V1 automatically through the workflow;
+5. evaluate a development suite, analyze errors, and call the fake advisor;
+6. create a bounded proposal and pause for approval;
+7. approve and resume generation of an explicit dataset diff;
+8. materialize snapshot V2 and train encoder V2;
+9. evaluate the same compatible development evidence and compare V1/V2;
+10. record a deterministic stop decision;
+11. explicitly run a sealed aggregate-only acceptance evaluation;
+12. promote or reject the candidate according to the persisted contract;
+13. inspect exposures, budget consumption, iteration history, and provenance;
+14. interrupt and resume at least one independently tested stage; and
+15. pass doctor and every standard repository gate.
 
-Keep the existing linear, tiny-transformer, comparison-aware analysis, and
-legacy optimization workflows passing.
+Keep all existing generation, dataset, linear, transformer, evaluation,
+comparison, analysis, optimization, campaign, API, and legacy migration tests
+passing.
 
-## 15. Documentation
+Live-provider smoke tests, if added, must be opt-in, spend-bounded, and excluded
+from ordinary verification.
+
+## 15. Documentation and operator experience
 
 Update:
 
-- architecture;
-- Slice 6 specification;
-- configuration;
+- README quick start;
+- architecture and platform specification;
+- relevant slice specifications;
+- configuration and example TOML files;
 - CLI guide;
-- operations;
-- recovery;
-- provenance;
-- migrations;
-- development workflow;
-- README.
+- operations and recovery guides;
+- provenance and migration documentation;
+- evaluation/model-selection, error-analysis, and optimization guides;
+- development workflow.
 
-Add a focused optimization guide explaining:
+Add focused documentation for:
 
-- raw evidence versus adjusted scores;
-- why uncertainty/support adjustment matters;
-- allocation constraints and infeasibility;
-- absolute targets versus additional counts;
-- alternatives and sensitivity analysis;
-- data, training, and review-only recommendations;
-- approval and partial acceptance;
-- stale evidence and rebasing;
-- campaign lineage and outcome assessment;
-- correlation versus causal attribution;
-- why optimization never starts generation, training, or evaluation.
+- the complete user journey;
+- initial balanced versus weighted allocation;
+- development, diagnostic, sealed, and external benchmark roles;
+- why repeated holdout use creates adaptive overfitting;
+- contamination and group-aware splitting;
+- deterministic acceptance versus advisory LLM interpretation;
+- external text-egress controls;
+- review-each-iteration and bounded pre-authorization;
+- workflow budgets, pause states, retries, cancellation, and recovery;
+- dataset V1/V2 diff lineage;
+- final assessment and model promotion;
+- why a stopped development workflow is not automatically a final-quality model.
+
+Examples must use fake/local components by default and clearly separate optional
+provider configuration.
 
 ## Explicit non-goals
 
 Do not implement:
 
-- graphical UI, TUI, or HTTP API additions;
-- automatic generation, snapshotting, training, evaluation, or analysis;
-- a daemon, scheduler, watcher, or background optimization worker;
-- autonomous agents or closed-loop experiment execution;
-- bandits, reinforcement learning, Bayesian optimization, or population-based
-  training;
-- unbounded hyperparameter search;
-- LLM-authored recommendations, explanations, or judges;
-- external spending or provider calls from optimization;
-- automatic label/schema/data mutation;
-- causal claims;
-- cloud or distributed execution;
-- multiple workers;
-- authentication or multi-user collaboration;
-- semantic/embedding clustering or deduplication;
-- external experiment-tracking services;
-- arbitrary user-supplied scoring code.
+- a graphical UI, TUI, or HTTP API expansion;
+- authentication, multiple users, roles, or collaboration;
+- cloud deployment, remote workers, distributed scheduling, or multiple workers;
+- an unbounded autonomous agent or infinite closed loop;
+- an LLM as final evaluator, acceptance authority, allocator, or executor;
+- LLM access to sealed evidence;
+- provider calls outside explicit persisted budgets;
+- bandits, reinforcement learning, Bayesian optimization, population-based
+  training, or unbounded hyperparameter search;
+- dynamic execution of downloaded benchmarks or arbitrary user code;
+- automatic relabeling, deletion, schema mutation, or historical artifact edits;
+- semantic/embedding deduplication;
+- causal claims from one iteration;
+- a remote model registry or external experiment-tracking service;
+- cryptographic access control for local sealed data;
+- unrelated refactors or speculative framework abstractions.
 
-## Working method
+## Working method and staged commits
 
-Implement one coherent component at a time.
+Implement one coherent, working component at a time. Begin with domain and pure
+policy logic, then persistence, CLI behavior, recovery/doctor, end-to-end tests,
+and documentation.
 
-Suggested sequence:
+Suggested stages:
 
-1. architecture audit and immutable optimization protocol;
-2. stable evidence/source identity contract;
-3. pure scoring policies and score explanations;
-4. constrained deterministic integer allocation;
-5. immutable normalized proposals and recommendations;
-6. alternative scenarios and sensitivity summaries;
-7. append-only approvals and partial acceptance;
-8. stale detection, rebase, and safe application;
-9. bounded training-configuration candidates;
-10. campaign ledger and compatibility validation;
-11. outcome assessment;
-12. CLI filters, explanations, and exports;
-13. provenance, doctor, and recovery integration;
-14. end-to-end tests and documentation.
+1. architecture audit and specification update;
+2. initial total-budget allocation;
+3. cohort roles, contamination checks, and exposure ledger;
+4. benchmark suites and deterministic acceptance contracts;
+5. workflow state machine and persistence;
+6. idempotent orchestration of initial generation through development analysis;
+7. advisor port, fake, prompts, validation, and OpenAI-compatible adapter;
+8. approval envelopes and bounded iterative execution;
+9. dataset-diff, V1/V2 comparison, stop decisions, and promotion;
+10. final sealed-evaluation isolation;
+11. provenance, doctor, recovery, and migration hardening;
+12. complete offline CLI end-to-end verification and documentation.
 
-After every coherent component, run:
+After every coherent stage run:
 
 ```text
 cargo fmt-check
@@ -593,37 +680,47 @@ cargo lint
 cargo test-all
 ```
 
-Review dependency directions and public interfaces after each component.
+Review dependency direction, public interfaces, secret handling, sealed-evidence
+boundaries, idempotency, and budget conservation after every stage.
 
-Commit coherent working changes only when Git identity is configured.
-
-Preserve unrelated user changes.
+Commit each coherent passing stage. Do not rewrite published history. Preserve
+unrelated user changes. Never commit credentials, runtime databases, generated
+model artifacts, or provider responses containing private data.
 
 ## Completion criterion
 
 This goal is complete only when a user can:
 
-1. create a reproducible constrained optimization protocol from immutable
-   analysis evidence;
-2. compare deterministic scoring/allocation scenarios and understand why their
-   recommendations differ;
-3. inspect every recommendation's raw evidence, uncertainty adjustment, score,
-   constraints, and rationale;
-4. conserve a finite budget exactly or see explicit structured reasons for
-   unallocated budget;
-5. approve, reject, supersede, or partially accept a proposal without mutating
-   it;
-6. safely create an ordinary unequal generation plan only from explicitly
-   approved, non-stale recommendations;
-7. inspect bounded optional training candidates without starting training;
-8. manually link later generation, snapshot, training, evaluation, comparison,
-   and analysis artifacts into a validated campaign lineage;
-9. assess observed outcomes deterministically without causal claims;
-10. export normalized recommendations, trace complete provenance, and pass
-    doctor and all standard checks;
-11. complete the expanded offline CLI workflow without network access; and
-12. retain compatibility with historical optimization proposals.
+1. define labels, arbitrary categorical dimensions, and an exact initial accepted-
+   row budget;
+2. preview and persist a deterministic balanced, weighted, constrained, or
+   explicit allocation whose totals are auditable;
+3. configure provider settings without persisting an API key;
+4. start one durable workflow that generates the initial dataset, validates it,
+   freezes snapshot V1, trains encoder V1, and evaluates a development benchmark;
+5. watch persisted stage, coverage, usage, retry, and budget progress and safely
+   cancel or resume the workflow;
+6. obtain deterministic metrics, acceptance status, error analysis, and an
+   optional evidence-linked LLM advisory without exposing sealed evidence;
+7. inspect and approve a bounded dataset/training proposal or run inside a finite
+   explicit pre-authorization envelope;
+8. create a provenance-preserving dataset diff, immutable snapshot V2, encoder V2,
+   compatible evaluation, paired comparison, and follow-up analysis;
+9. repeat only within persisted limits and receive an auditable deterministic stop
+   reason;
+10. prove that training, analysis, optimization, prompts, and iteration decisions
+    cannot consume sealed-acceptance rows or predictions;
+11. explicitly evaluate the selected candidate against a sealed benchmark suite,
+    record the exposure, and deterministically promote, reject, or mark it
+    inconclusive;
+12. inspect complete V1/V2 lineage, allocation decisions, approvals, advisor usage,
+    exposures, budget consumption, and promotion provenance;
+13. recover safely from interruption without duplicate provider calls or artifacts;
+14. complete the two-version offline CLI workflow and pass doctor; and
+15. pass `cargo fmt-check`, `cargo check-all`, `cargo lint`, and `cargo test-all`
+    with all existing behavior preserved.
 
-Architecture and human control matter as much as allocation quality. Slice 6
-must remain an advisory, replaceable component that proposes finite experiments
-while every generation, training, and evaluation action stays explicit.
+The architecture matters as much as automation. The finished system must make
+the desired one-command journey convenient while keeping evidence roles,
+external spending, iteration scope, acceptance decisions, and historical lineage
+explicit and enforceable.
