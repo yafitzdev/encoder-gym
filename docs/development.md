@@ -23,6 +23,12 @@ After Slice 1, build Dataset Management, Encoder Training, Evaluation, Error
 Analysis, and Optimization in that order. Slices 2–6 stop at complete CLI
 workflows until the user explicitly starts a separate API/UI phase.
 
+After the independent slices, Controlled Workflow and Evaluation Governance may
+compose their existing application contracts. Build it in this order: product-
+boundary specification, pure allocation/governance policies, persistence,
+CLI-first orchestration, recovery/doctor, offline end-to-end verification, and
+documentation. Do not extend the HTTP API or graphical UI during this phase.
+
 ## Component loop
 
 For each component:

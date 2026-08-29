@@ -46,6 +46,12 @@ deterministic Cartesian product. Every planned cell has its own target count.
 The first interface may offer an equal-target shortcut, but the underlying plan
 must represent unequal targets without changing its model.
 
+The controlled-workflow phase adds a separate pure initial-budget allocator. It
+may convert one exact accepted-row total and a balanced, weighted, constrained,
+or explicit policy into absolute Slice 1 cell targets. It must preview and then
+create an ordinary unequal generation plan; it does not change the Slice 1 plan
+or backend contracts.
+
 For every cell, persisted facts must support reporting:
 
 - target

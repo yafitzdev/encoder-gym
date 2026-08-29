@@ -28,6 +28,18 @@ The application must let a user:
   remainder allocation so every row is assigned exactly once.
 - Snapshot statistics come from persisted members, never cached frontend state.
 
+## Controlled-workflow evaluation roles
+
+The controlled-workflow phase assigns immutable snapshot cohorts explicit
+training, development, diagnostic, sealed-acceptance, or external-benchmark
+roles through append-only decisions. It also adds optional source/entity/group
+identity for deterministic group-aware splitting and contamination checks.
+
+These additions do not make Dataset Management decide evaluation policy.
+Dataset Management preserves membership, source identity, split, and provenance;
+the workflow-governance core decides whether a cohort may be used for training,
+adaptation, diagnosis, or final acceptance.
+
 ## Architecture
 
 `dataset-core` owns snapshot domain objects, deterministic splitting,

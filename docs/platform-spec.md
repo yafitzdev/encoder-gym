@@ -19,6 +19,23 @@ Error Analysis
 Optimization
 ```
 
+The slices remain independently useful. A separate bounded workflow layer may
+compose their normal application contracts into a durable local run:
+
+```text
+Workflow Orchestration
+  -> generation plan/job
+  -> immutable snapshot
+  -> training run/checkpoint
+  -> development benchmark evaluation
+  -> analysis and optional advisory interpretation
+  -> reviewed or finitely pre-authorized optimization iteration
+  -> explicit sealed acceptance and promotion
+```
+
+The workflow layer links slice artifacts; it does not replace their planners,
+runners, persistence ports, or provenance.
+
 Every arrow crosses an explicit, persisted contract. A later slice consumes
 immutable artifacts from the earlier slice and never reaches into its internal
 implementation.
@@ -36,6 +53,14 @@ implementation.
 - Long-running operations use durable run states and never block an HTTP
   request.
 - CLI workflows are complete before equivalent API and UI workflows are added.
+- Evidence used for adaptation is explicitly distinguished from sealed
+  acceptance evidence. Sealed rows and predictions never enter analysis,
+  optimization, prompts, or iteration decisions.
+- Automatic cross-slice execution is finite, budgeted, persisted, idempotent,
+  cancellable, and either explicitly approved per iteration or constrained by
+  a persisted pre-authorization envelope.
+- Deterministic benchmark contracts decide pass, fail, inconclusive, or invalid;
+  an LLM may provide advisory interpretation but never acceptance authority.
 
 ## Slice definitions
 
@@ -46,13 +71,17 @@ implementation.
 - [Slice 5 — Error Analysis](slice-5-spec.md)
 - [Slice 6 — Optimization](slice-6-spec.md)
 
+Cross-slice composition is specified separately in
+[Controlled Workflow and Evaluation Governance](workflow-governance-spec.md).
+
 ## Current non-goals
 
 The local platform does not include authentication, multi-user collaboration,
-cloud deployment, distributed execution, multiple workers, autonomous agents,
-bandits, reinforcement learning, automatic external spending, or semantic
-deduplication. Optimization is deterministic recommendation logic, not an
-unbounded autonomous loop.
+cloud deployment, distributed execution, multiple workers, unbounded autonomous
+agents, bandits, reinforcement learning, automatic external spending outside a
+persisted finite budget, or semantic deduplication. Optimization remains
+deterministic recommendation logic. The workflow layer may execute a bounded,
+pre-authorized state machine but never an open-ended agent loop.
 
 ## Platform completion criterion
 
@@ -61,4 +90,8 @@ immutable and reproducibly split snapshot, train a replaceable local classifier
 backend with checkpoints, evaluate a chosen checkpoint, inspect persisted
 errors by label and arbitrary dimensions, obtain an explicit optimization
 proposal, and turn that proposal into a new generation plan without rewriting
-an earlier slice.
+an earlier slice. The complete local product additionally permits a user to
+define an exact initial row budget, run the slices through a durable governed
+workflow, iterate from development evidence within finite limits, and perform a
+separate sealed acceptance assessment without leaking sealed evidence back into
+adaptation.

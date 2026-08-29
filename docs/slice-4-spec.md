@@ -18,6 +18,17 @@ The application must let a user:
 Evaluation never retrains a model and never changes snapshot membership.
 Metrics are recomputable from persisted predictions.
 
+The controlled-workflow phase groups compatible evaluation cohorts into
+immutable benchmark suites with deterministic acceptance contracts. Every run
+records its cohort role, purpose, disclosure level, and exposure. Development
+evidence may drive later analysis; sealed-acceptance evidence is separately
+authorized, aggregate-only by default, and ineligible for analysis,
+optimization, advisor prompts, or workflow iteration.
+
+Benchmark acceptance produces structured `pass`, `fail`, `inconclusive`, or
+`invalid` results from persisted metrics and comparison evidence. An advisory
+LLM interpretation cannot override that result.
+
 The Slice 4.1 protocol, statistical comparison, and advisory selection workflow
 is documented in [`evaluation-model-selection.md`](evaluation-model-selection.md).
 

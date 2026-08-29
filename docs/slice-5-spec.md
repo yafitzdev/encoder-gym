@@ -22,6 +22,11 @@ identities, overlap-aware ranked coverage, bounded evidence links, optional
 paired-comparison diagnosis, and append-only review history. Semantic
 clustering, LLM-authored explanations, and embedding analysis are not required.
 
+The controlled-workflow phase may optionally send bounded, policy-approved
+development findings to a separate provider-neutral advisor. That advisor is
+not part of Error Analysis and cannot change report contents or fingerprints.
+Analysis creation and evidence export must reject sealed-acceptance evaluations.
+
 ## Test priorities
 
 - correct grouping and ranking

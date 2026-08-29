@@ -28,11 +28,20 @@ apps / SQLite adapter ──> project-config
 apps / SQLite adapter ──> recovery-core
 slice cores / adapters ──> artifact-core
 dataset-import ─────────> dataset-core + generation-core
+workflow-core ──────────> narrow artifact contracts from slice cores
 ```
 
 `artifact-core` only canonicalizes fingerprint inputs and describes provenance
 trees. `recovery-core` only describes process leases and interruption records.
 Neither crate orchestrates slice business logic.
+
+`workflow-core` owns only cross-slice policy: initial finite allocation,
+evaluation roles and exposure rules, benchmark acceptance contracts, durable
+workflow state, approval envelopes, stop decisions, and the ports required to
+request or inspect ordinary slice artifacts. It must not import SQLite, CLI,
+provider, Candle, Axum, or adapter types. The CLI application assembles the
+concrete slice runners and workflow ports; SQLite implements workflow
+persistence in a feature-owned adapter module.
 
 The arrows between core crates describe artifact consumption, not access to
 another slice's implementation. Training consumes normalized snapshot examples;
@@ -159,6 +168,31 @@ safe plan conversion, campaign compatibility, and deterministic outcome
 assessment. It is advisory: persistence and explicit CLI application are
 separate from generation and training execution.
 
+### `workflow-core`
+
+This cross-slice core is introduced by the controlled-workflow phase. It owns a
+finite state machine and governance policies, not the implementation of any
+slice. Workflow artifact links contain identities, fingerprints, bounded state,
+and compatibility facts rather than copied datasets, predictions, checkpoints,
+or proposal payloads.
+
+The dependency direction is deliberately outward from the workflow core's
+ports:
+
+```text
+workflow-core
+  -> project-owned generation/snapshot/training/evaluation/analysis/optimization
+     artifact shapes or narrow workflow-facing summaries
+
+generation-cli + generation-sqlite
+  -> workflow-core ports
+  -> concrete existing slice runners/stores
+```
+
+The workflow core may decide which legal stage comes next. It cannot construct
+a provider request, assign snapshot members, train tensors, calculate evaluation
+metrics, aggregate predictions, score optimization evidence, or write SQL.
+
 Slice 6.1 decisions begin with a canonical, validated optimization protocol.
 Every new proposal embeds the resolved protocol and its fingerprint so later
 scoring, allocation, approval, and application behavior cannot drift with
@@ -211,6 +245,18 @@ containers with a JSON manifest plus safetensors for model and AdamW state.
 Continuation creates a new run linked to its parent checkpoint; interrupted
 runs are never silently resumed under the same identity.
 
+Cross-slice workflow stages use durable attempts and idempotency keys. A stage
+that already produced a verified ordinary slice artifact links that artifact on
+recovery rather than producing a duplicate. Workflow recovery never infers an
+approval, repeats a sealed evaluation, or silently consumes a fresh provider
+budget.
+
+Snapshot cohorts carry append-only evaluation-role decisions and exposure
+records. Development evidence may flow into analysis, optimization, and an
+optional advisor; sealed evidence cannot. Sealing is an application-enforced
+scientific-governance boundary for a local tool, not cryptographic access
+control.
+
 ## Interface strategy
 
 Rust traits define replaceability boundaries for generation and persistence.
@@ -223,8 +269,15 @@ Dynamic-library plugin loading is not required. Generation, training, and
 prediction implementations are adapter crates selected during application
 composition.
 
+The optional analysis advisor follows the same rule. `workflow-core` owns a
+provider-neutral structured contract; a deterministic fake and an
+OpenAI-compatible adapter live outside the core. Prompt policy remains separate
+from transport, raw credentials remain environment-only, and advisor output is
+untrusted advisory evidence.
+
 ## UI strategy
 
-The existing graphical UI covers Slice 1 only. Slices 2–6 remain CLI-only until
+The existing graphical UI covers Slice 1 only. Slices 2–6 and cross-slice
+workflow orchestration remain CLI-only until
 the user explicitly starts a separate UI phase. Any future UI communicates only
 with an API and never imports or reimplements core rules.

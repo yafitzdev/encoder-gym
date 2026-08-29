@@ -24,6 +24,14 @@ start generation or training automatically, rewrite historical artifacts, or
 run an autonomous loop. Applying a proposal is an explicit user action through
 the same ports used by ordinary plan creation.
 
+The controlled-workflow phase preserves this boundary. A separate workflow
+orchestrator may create Optimization inputs, request a normal proposal, verify a
+compatible explicit approval or finite pre-authorization envelope, apply the
+proposal through the existing idempotent contract, and then invoke ordinary
+slice runners. Optimization itself remains deterministic and provider-free.
+Only development/diagnostic evidence is eligible; sealed-acceptance evidence is
+rejected before Optimization receives a diagnostic contract.
+
 ## Decision evidence and scoring
 
 Slice 6.1 consumes only the analysis-owned diagnostic contract. Cell evidence

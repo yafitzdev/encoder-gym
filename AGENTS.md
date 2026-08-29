@@ -14,6 +14,11 @@ The platform slices are:
 5. Error Analysis
 6. Optimization
 
+After the independent slices, the controlled-workflow phase may compose their
+existing contracts into one finite local run. It may automate explicitly
+authorized stages and bounded iterations, but it must preserve slice ownership,
+sealed-evidence isolation, external-call budgets, and deterministic acceptance.
+
 Each slice must remain independently useful and replaceable. Do not add cloud
 deployment, authentication, multi-user collaboration, distributed execution,
 multiple workers, autonomous agents, bandits, reinforcement learning, or
@@ -34,7 +39,8 @@ Before implementation work, read:
 - Implement one coherent component at a time.
 - Begin each slice with domain and pure logic; expose it through the CLI before
   building HTTP API or graphical UI surfaces.
-- For Slices 2–6, implement core logic, persistence, tests, and CLI only. Do not
+- For Slices 2–6 and controlled workflow orchestration, implement core logic,
+  persistence, tests, and CLI only. Do not
   extend the HTTP API or graphical UI until the user explicitly requests that
   separate phase.
 - Keep domain objects independent from SQLite, HTTP, SDKs, CLI parsing, and
@@ -61,6 +67,10 @@ Before implementation work, read:
   training or generation.
 - Optimization may propose explicit generation targets or training settings,
   but must not mutate source datasets, model artifacts, or historical runs.
+- Workflow orchestration may invoke the normal slice contracts and link their
+  immutable artifacts. It must not copy slice business logic, expose sealed
+  evidence to adaptive components, infer approval, or exceed persisted finite
+  execution budgets.
 
 ## Validation and commits
 
