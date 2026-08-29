@@ -1,5 +1,7 @@
 use std::{collections::BTreeMap, path::Path};
 
+use advisor_fake::FakeAnalysisAdvisor;
+use advisor_openai_compatible::OpenAICompatibleAdvisor;
 use analysis_core::{ports::AnalysisStore, runner::run_analysis};
 use anyhow::{Context, ensure};
 use evaluation_core::ports::EvaluationStore;
@@ -12,6 +14,10 @@ use project_config::ProjectConfigurationStore;
 use serde::de::DeserializeOwned;
 use synthetic_data_sqlite::SqliteStore;
 use workflow_core::{
+    advisor::{
+        AdvisorEgressPolicy, AdvisoryActionKind, AdvisoryExample, AdvisoryFinding, AdvisoryRequest,
+        AnalysisAdvisor, run_advisor,
+    },
     allocation::{
         InitialAllocationFeasibility, InitialAllocationRecord, InitialAllocationRequest,
         InitialCellCoverage, allocate_initial_budget,
@@ -19,8 +25,9 @@ use workflow_core::{
     benchmark::{BenchmarkSuiteKind, CohortAssessmentInput, assess_benchmark},
     governance::{EvidenceExposure, EvidenceExposureRequest, ExposurePurpose},
     ports::{
-        AcceptanceAssessmentQuery, BenchmarkStore, GovernanceStore, InitialAllocationQuery,
-        InitialAllocationStore, WorkflowDefinitionQuery, WorkflowRunQuery, WorkflowRunStore,
+        AcceptanceAssessmentQuery, AdvisorStore, AdvisoryAssessmentQuery, BenchmarkStore,
+        GovernanceStore, InitialAllocationQuery, InitialAllocationStore, WorkflowDefinitionQuery,
+        WorkflowRunQuery, WorkflowRunStore,
     },
     workflow::{
         StageAttemptState, StageOutcome, WorkflowArtifactLink, WorkflowBudgetUsage,
@@ -154,7 +161,8 @@ async fn drive_initial_pipeline(
             return Ok(run);
         }
         if attempt.state == StageAttemptState::Completed {
-            let Some(next) = initial_successor(attempt.stage) else {
+            let Some(next) = initial_successor(attempt.stage, definition.policy.enable_advisor)
+            else {
                 return Ok(run);
             };
             let started =
@@ -461,6 +469,149 @@ async fn execute_initial_stage(
             );
             links
         }
+        WorkflowStage::Advisor => {
+            let configuration = definition
+                .advisor
+                .as_ref()
+                .context("workflow advisor is enabled without resolved configuration")?;
+            let analysis_report_id = artifact_id(&history, "analysis_report")?;
+            let assessment_id = artifact_id(&history, "acceptance_assessment")?;
+            let report = store
+                .get_analysis_report(analysis_report_id)
+                .await?
+                .context("workflow analysis report not found")?;
+            let acceptance = store
+                .get_acceptance_assessment(assessment_id)
+                .await?
+                .context("workflow acceptance assessment not found")?;
+            let existing = store
+                .query_advisory_assessments(AdvisoryAssessmentQuery {
+                    workflow_run_id: Some(run.id),
+                    analysis_report_id: Some(report.id),
+                    limit: 10_000,
+                    offset: 0,
+                })
+                .await?
+                .into_iter()
+                .find(|value| {
+                    value.request.workflow_iteration == run.iteration
+                        && value.backend == configuration.backend
+                        && value.model == configuration.model
+                });
+            let assessment = match existing {
+                Some(value) => value,
+                None => {
+                    let dataset = store
+                        .get_dataset(definition.dataset_id)
+                        .await?
+                        .context("workflow dataset not found")?;
+                    let finding_limit = usize::from(configuration.maximum_findings);
+                    let findings = report
+                        .findings
+                        .iter()
+                        .take(finding_limit)
+                        .map(|finding| AdvisoryFinding {
+                            key: finding.key.clone(),
+                            fingerprint: finding.fingerprint.clone(),
+                            kind: serde_json::to_value(finding.kind)
+                                .ok()
+                                .and_then(|value| value.as_str().map(str::to_owned))
+                                .unwrap_or_else(|| "unknown".into()),
+                            support: finding.support,
+                            error_count: finding.error_count,
+                            error_rate: finding.error_rate,
+                        })
+                        .collect();
+                    let representative_errors =
+                        if configuration.egress_policy == AdvisorEgressPolicy::DevelopmentText {
+                            report
+                                .errors
+                                .iter()
+                                .take(usize::from(configuration.maximum_representative_errors))
+                                .map(|error| AdvisoryExample {
+                                    finding_key: report
+                                        .findings
+                                        .first()
+                                        .map_or_else(String::new, |finding| finding.key.clone()),
+                                    text: error.text.clone(),
+                                    expected_label: error.expected_label.clone(),
+                                    predicted_label: error.predicted_label.clone(),
+                                    dimensions: error.dimensions.clone(),
+                                })
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
+                    let request = AdvisoryRequest {
+                        id: uuid::Uuid::new_v4(),
+                        workflow_run_id: run.id,
+                        workflow_iteration: run.iteration,
+                        task: dataset.task_description.clone(),
+                        labels: dataset.labels.clone(),
+                        dimensions: dataset
+                            .dimensions
+                            .iter()
+                            .map(|dimension| (dimension.name.clone(), dimension.values.clone()))
+                            .collect(),
+                        analysis_report_id: report.id,
+                        analysis_report_fingerprint: report.fingerprint.clone(),
+                        acceptance_assessment_id: acceptance.id,
+                        acceptance_assessment_fingerprint: acceptance.fingerprint.clone(),
+                        acceptance_state: serde_json::to_value(acceptance.state)?
+                            .as_str()
+                            .unwrap_or("invalid")
+                            .to_owned(),
+                        prediction_count: report.prediction_count,
+                        error_count: report.error_count,
+                        findings,
+                        representative_errors,
+                        allowed_cells: expand_generation_cells(&dataset),
+                        allowed_actions: vec![
+                            AdvisoryActionKind::Stop,
+                            AdvisoryActionKind::Inspect,
+                            AdvisoryActionKind::ConsiderExperiment,
+                        ],
+                        remaining_row_budget: definition
+                            .budget
+                            .maximum_cumulative_rows
+                            .saturating_sub(usage.accepted_rows),
+                        remaining_iteration_budget: definition
+                            .budget
+                            .maximum_iterations
+                            .saturating_sub(usage.iterations),
+                        egress_policy: configuration.egress_policy,
+                    };
+                    let backend: Box<dyn AnalysisAdvisor> = match configuration.backend.as_str() {
+                        "fake" => Box::<FakeAnalysisAdvisor>::default(),
+                        "openai-compatible" => {
+                            let base_url = configuration
+                                .base_url
+                                .as_deref()
+                                .context("OpenAI-compatible advisor requires base_url")?;
+                            let api_key = std::env::var(&configuration.api_key_env).ok();
+                            Box::new(OpenAICompatibleAdvisor::new(base_url, api_key)?)
+                        }
+                        value => anyhow::bail!("unsupported advisor backend: {value}"),
+                    };
+                    let value = run_advisor(backend.as_ref(), configuration, request).await?;
+                    store.create_advisory_assessment(&value).await?;
+                    value
+                }
+            };
+            usage.advisor_calls = usage.advisor_calls.saturating_add(1);
+            usage.advisor_tokens =
+                usage
+                    .advisor_tokens
+                    .saturating_add(assessment.usage.total_tokens.unwrap_or_else(|| {
+                        assessment.usage.input_tokens.unwrap_or_default()
+                            + assessment.usage.output_tokens.unwrap_or_default()
+                    }));
+            vec![link(
+                "advisory_assessment",
+                assessment.id,
+                &assessment.fingerprint,
+            )]
+        }
         WorkflowStage::OptimizationProposal => {
             let analysis_report_id = artifact_id(&history, "analysis_report")?;
             let proposal = super::optimization::propose_workflow(
@@ -567,7 +718,7 @@ async fn load_matching_evaluation(
     )
 }
 
-const fn initial_successor(stage: WorkflowStage) -> Option<WorkflowStage> {
+const fn initial_successor(stage: WorkflowStage, advisor: bool) -> Option<WorkflowStage> {
     match stage {
         WorkflowStage::InitialAllocation => Some(WorkflowStage::Generation),
         WorkflowStage::Generation => Some(WorkflowStage::Snapshot),
@@ -575,7 +726,9 @@ const fn initial_successor(stage: WorkflowStage) -> Option<WorkflowStage> {
         WorkflowStage::Training => Some(WorkflowStage::DevelopmentEvaluation),
         WorkflowStage::DevelopmentEvaluation => Some(WorkflowStage::AcceptanceAssessment),
         WorkflowStage::AcceptanceAssessment => Some(WorkflowStage::ErrorAnalysis),
+        WorkflowStage::ErrorAnalysis if advisor => Some(WorkflowStage::Advisor),
         WorkflowStage::ErrorAnalysis => Some(WorkflowStage::OptimizationProposal),
+        WorkflowStage::Advisor => Some(WorkflowStage::OptimizationProposal),
         WorkflowStage::OptimizationProposal => None,
         _ => None,
     }

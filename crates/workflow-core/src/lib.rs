@@ -1,5 +1,6 @@
 //! Cross-slice workflow policy and domain contracts.
 
+pub mod advisor;
 pub mod allocation;
 pub mod benchmark;
 pub mod contamination;

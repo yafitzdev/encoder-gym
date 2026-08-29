@@ -18,6 +18,7 @@ thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+tokio.workspace = true
 training-core.workspace = true
 
 [lints]

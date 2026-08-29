@@ -11,6 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+advisor-fake.workspace = true
+advisor-openai-compatible.workspace = true
 artifact-core.workspace = true
 analysis-core.workspace = true
 chrono.workspace = true

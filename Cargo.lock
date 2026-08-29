@@ -3,6 +3,26 @@
 version = 4
 
 [[package]]
+name = "advisor-fake"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "workflow-core",
+]
+
+[[package]]
+name = "advisor-openai-compatible"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "workflow-core",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2959,6 +2979,8 @@ dependencies = [
 name = "synthetic-data-cli"
 version = "0.1.0"
 dependencies = [
+ "advisor-fake",
+ "advisor-openai-compatible",
  "analysis-core",
  "anyhow",
  "artifact-core",
@@ -4128,6 +4150,7 @@ dependencies = [
  "serde_json",
  "synthetic-data-core",
  "thiserror 2.0.20",
+ "tokio",
  "training-core",
  "uuid",
 ]

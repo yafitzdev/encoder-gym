@@ -3,6 +3,8 @@ members = [
     "apps/generation-cli",
     "apps/generation-server",
     "crates/analysis-core",
+    "crates/advisor-fake",
+    "crates/advisor-openai-compatible",
     "crates/artifact-core",
     "crates/dataset-core",
     "crates/dataset-import",
@@ -66,6 +68,8 @@ optimization-core = { package = "optimization-core", path = "crates/optimization
 project-config = { package = "project-config", path = "crates/project-config" }
 recovery-core = { package = "recovery-core", path = "crates/recovery-core" }
 workflow-core = { package = "workflow-core", path = "crates/workflow-core" }
+advisor-fake = { package = "advisor-fake", path = "crates/advisor-fake" }
+advisor-openai-compatible = { package = "advisor-openai-compatible", path = "crates/advisor-openai-compatible" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::advisor::AdvisorConfiguration;
 use crate::allocation::{InitialAllocationPolicy, InitialCellConstraint};
 use analysis_core::protocol::AnalysisProtocol;
 use optimization_core::protocol::OptimizationProtocol;
@@ -27,6 +28,8 @@ pub struct WorkflowDefinitionRequest {
     pub analysis_protocol: Option<AnalysisProtocol>,
     #[serde(default)]
     pub optimization_protocol: Option<OptimizationProtocol>,
+    #[serde(default)]
+    pub advisor: Option<AdvisorConfiguration>,
     pub governance: IterationGovernance,
     pub budget: WorkflowBudget,
     pub policy: WorkflowPolicy,
@@ -107,6 +110,8 @@ pub struct WorkflowDefinition {
     pub analysis_protocol: Option<AnalysisProtocol>,
     #[serde(default)]
     pub optimization_protocol: Option<OptimizationProtocol>,
+    #[serde(default)]
+    pub advisor: Option<AdvisorConfiguration>,
     pub governance: IterationGovernance,
     pub budget: WorkflowBudget,
     pub policy: WorkflowPolicy,
@@ -141,6 +146,14 @@ impl WorkflowDefinition {
                     .map_err(|_| WorkflowError::InvalidOptimizationProtocol)?
             }
         };
+        if request.policy.enable_advisor != request.advisor.is_some() {
+            return Err(WorkflowError::InvalidAdvisorConfiguration);
+        }
+        if let Some(advisor) = &request.advisor {
+            advisor
+                .validate()
+                .map_err(|_| WorkflowError::InvalidAdvisorConfiguration)?;
+        }
         let mut value = Self {
             id: Uuid::new_v4(),
             name: required(request.name, "workflow name")?,
@@ -160,6 +173,7 @@ impl WorkflowDefinition {
             initial_allocation: request.initial_allocation,
             analysis_protocol: Some(analysis_protocol),
             optimization_protocol: Some(optimization_protocol),
+            advisor: request.advisor,
             governance: request.governance,
             budget: request.budget,
             policy: request.policy,
@@ -468,6 +482,8 @@ pub enum WorkflowError {
     InvalidAnalysisProtocol,
     #[error("workflow optimization protocol is invalid or exceeds the iteration budget")]
     InvalidOptimizationProtocol,
+    #[error("workflow advisor configuration does not match the workflow policy")]
+    InvalidAdvisorConfiguration,
     #[error("sealed suite id and fingerprint must either both be present or both absent")]
     SealedSuitePair,
     #[error("preauthorization exceeds the workflow budget or has invalid permissions")]
@@ -696,7 +712,10 @@ fn definition_fingerprint(value: &WorkflowDefinition) -> Result<String, Workflow
         "initial_allocation": value.initial_allocation, "governance": value.governance,
         "budget": value.budget, "policy": value.policy,
     });
-    if value.analysis_protocol.is_some() || value.optimization_protocol.is_some() {
+    if value.analysis_protocol.is_some()
+        || value.optimization_protocol.is_some()
+        || value.advisor.is_some()
+    {
         let object = document
             .as_object_mut()
             .expect("definition document object");
@@ -708,6 +727,11 @@ fn definition_fingerprint(value: &WorkflowDefinition) -> Result<String, Workflow
         object.insert(
             "optimization_protocol".into(),
             serde_json::to_value(&value.optimization_protocol)
+                .map_err(|error| WorkflowError::Fingerprint(error.to_string()))?,
+        );
+        object.insert(
+            "advisor".into(),
+            serde_json::to_value(&value.advisor)
                 .map_err(|error| WorkflowError::Fingerprint(error.to_string()))?,
         );
     }
@@ -758,6 +782,18 @@ mod tests {
             },
             analysis_protocol: None,
             optimization_protocol: None,
+            advisor: Some(AdvisorConfiguration {
+                backend: "fake".into(),
+                model: "deterministic-v1".into(),
+                base_url: None,
+                api_key_env: "SYNTH_ADVISOR_API_KEY".into(),
+                egress_policy: crate::advisor::AdvisorEgressPolicy::AggregateOnly,
+                maximum_findings: 10,
+                maximum_representative_errors: 0,
+                maximum_actions: 5,
+                maximum_output_tokens: 1_000,
+                temperature: Some(0.0),
+            }),
             governance: IterationGovernance::ReviewEachIteration,
             budget: WorkflowBudget {
                 maximum_iterations: 2,
@@ -862,6 +898,7 @@ mod tests {
             initial_allocation: definition.initial_allocation,
             analysis_protocol: definition.analysis_protocol,
             optimization_protocol: definition.optimization_protocol,
+            advisor: definition.advisor,
             governance: definition.governance,
             budget: definition.budget,
             policy: definition.policy,

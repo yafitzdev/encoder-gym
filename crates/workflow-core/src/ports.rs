@@ -6,6 +6,7 @@ use generation_core::domain::GenerationPlan;
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::advisor::AdvisoryAssessment;
 use crate::allocation::InitialAllocationRecord;
 use crate::benchmark::{AcceptanceAssessment, AcceptanceState, BenchmarkSuite, BenchmarkSuiteKind};
 use crate::contamination::{ContaminationOverride, ContaminationReport, ContaminationStatus};
@@ -42,6 +43,31 @@ pub trait InitialAllocationStore: Send + Sync {
         &self,
         query: InitialAllocationQuery,
     ) -> BoxFuture<'_, Result<Vec<InitialAllocationRecord>, WorkflowStoreError>>;
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AdvisoryAssessmentQuery {
+    pub workflow_run_id: Option<Uuid>,
+    pub analysis_report_id: Option<Uuid>,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+pub trait AdvisorStore: Send + Sync {
+    fn create_advisory_assessment(
+        &self,
+        assessment: &AdvisoryAssessment,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    fn get_advisory_assessment(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<AdvisoryAssessment>, WorkflowStoreError>>;
+
+    fn query_advisory_assessments(
+        &self,
+        query: AdvisoryAssessmentQuery,
+    ) -> BoxFuture<'_, Result<Vec<AdvisoryAssessment>, WorkflowStoreError>>;
 }
 
 #[derive(Debug, Clone, Copy)]

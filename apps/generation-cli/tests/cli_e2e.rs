@@ -275,16 +275,28 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
                 "maximum_cumulative_rows": 30,
                 "maximum_generation_attempts": 100,
                 "maximum_generation_requests": 50,
-                "maximum_advisor_calls": 0,
-                "maximum_advisor_tokens": 0,
+                "maximum_advisor_calls": 2,
+                "maximum_advisor_tokens": 1000,
                 "maximum_stage_attempts": 3
+            },
+            "advisor": {
+                "backend": "fake",
+                "model": "deterministic-v1",
+                "base_url": null,
+                "api_key_env": "SYNTH_ADVISOR_API_KEY",
+                "egress_policy": "aggregate_only",
+                "maximum_findings": 10,
+                "maximum_representative_errors": 0,
+                "maximum_actions": 5,
+                "maximum_output_tokens": 1000,
+                "temperature": 0.0
             },
             "policy": {
                 "minimum_improvement": 0.01,
                 "maximum_tolerated_regression": 0.02,
                 "stop_on_inconclusive": true,
                 "stop_on_invalid": true,
-                "enable_advisor": false,
+                "enable_advisor": true,
                 "require_fresh_development_cohort_after_iterations": 2
             }
         }))
@@ -328,7 +340,7 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
         automatic_workflow["run"]["current_stage"],
         "optimization_proposal"
     );
-    assert_eq!(automatic_workflow["attempt_count"], 16);
+    assert_eq!(automatic_workflow["attempt_count"], 18);
     assert_eq!(automatic_workflow["latest_attempt"]["state"], "completed");
     let workflow_artifact_kinds = automatic_workflow["attempts"]
         .as_array()
@@ -352,10 +364,29 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
         "evaluation_run",
         "acceptance_assessment",
         "analysis_report",
+        "advisory_assessment",
         "optimization_proposal",
     ] {
         assert!(workflow_artifact_kinds.contains(&kind.to_owned()));
     }
+    let automatic_workflow_id = string_at(&automatic_workflow, "/run/id");
+    let advisory_assessments = run_json(
+        &database_url,
+        [
+            "advisor",
+            "list",
+            "--workflow-run-id",
+            &automatic_workflow_id,
+        ],
+    );
+    assert_eq!(
+        advisory_assessments.as_array().expect("advisor list").len(),
+        1
+    );
+    assert_eq!(
+        advisory_assessments[0]["request"]["egress_policy"],
+        "aggregate_only"
+    );
 
     let analysis = run_json(
         &database_url,

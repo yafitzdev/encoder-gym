@@ -1,3 +1,4 @@
+mod advisor;
 mod allocation;
 mod analysis;
 mod backend;
@@ -30,6 +31,7 @@ pub async fn execute(command: Command, store: SqliteStore) -> anyhow::Result<()>
         Command::Doctor(args) => doctor::execute(args, &store).await,
         Command::Config { command } => config::execute(command, &store).await,
         Command::Analysis { command } => analysis::execute(command, &store).await,
+        Command::Advisor { command } => advisor::execute(command, &store).await,
         Command::Optimize { command } => optimization::execute(command, &store).await,
         Command::Campaign { command } => campaign::execute(command, &store).await,
         Command::Allocation { command } => allocation::execute(command, &store).await,

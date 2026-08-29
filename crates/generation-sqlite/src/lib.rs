@@ -1,5 +1,6 @@
 //! SQLite implementations of persistence ports owned by `synthetic-data-core`.
 
+mod advisor;
 mod analysis;
 mod benchmark;
 mod contamination;

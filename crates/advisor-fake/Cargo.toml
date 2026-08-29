@@ -1,0 +1,12 @@
+[package]
+name = "advisor-fake"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+workflow-core.workspace = true
+
+[lints]
+workspace = true

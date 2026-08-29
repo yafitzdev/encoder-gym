@@ -75,6 +75,11 @@ pub enum Command {
         #[command(subcommand)]
         command: AnalysisCommand,
     },
+    /// Inspect persisted bounded LLM advisory assessments.
+    Advisor {
+        #[command(subcommand)]
+        command: AdvisorCommand,
+    },
     /// Build and explicitly apply bounded data recommendations.
     Optimize {
         #[command(subcommand)]
@@ -149,6 +154,21 @@ pub enum Command {
     Rows(RowsArgs),
     /// Export accepted rows.
     Export(ExportArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AdvisorCommand {
+    Show {
+        id: Uuid,
+    },
+    List {
+        #[arg(long)]
+        workflow_run_id: Option<Uuid>,
+        #[arg(long)]
+        analysis_report_id: Option<Uuid>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
