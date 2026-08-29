@@ -8,6 +8,7 @@ mod project;
 mod provenance;
 mod recovery;
 mod training;
+mod workflow;
 
 use std::{collections::BTreeMap, str::FromStr, time::Duration};
 

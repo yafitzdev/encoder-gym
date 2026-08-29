@@ -48,8 +48,8 @@ A minimal fake-backend workflow is:
 ```text
 cargo run -p synthetic-data-cli -- dataset create --name support --task "Classify support messages" --label billing --label fraud --dimension difficulty=easy,hard --dimension style=clean,messy
 cargo run -p synthetic-data-cli -- dataset list
-cargo run -p synthetic-data-cli -- plan preview <DATASET_ID>
-cargo run -p synthetic-data-cli -- plan create <DATASET_ID> --per-cell 2
+cargo run -p synthetic-data-cli -- allocation preview <DATASET_ID> --total-rows 20000 --reserved-rows 2000
+cargo run -p synthetic-data-cli -- allocation create <DATASET_ID> --total-rows 20000 --reserved-rows 2000
 cargo run -p synthetic-data-cli -- generate <PLAN_ID> --backend fake
 cargo run -p synthetic-data-cli -- coverage <PLAN_ID>
 cargo run -p synthetic-data-cli -- rows --dataset-id <DATASET_ID>
@@ -59,6 +59,12 @@ cargo run -p synthetic-data-cli -- export <DATASET_ID> --format jsonl --file exp
 `plan create --targets <FILE>` accepts explicit per-cell targets when an equal
 distribution is not appropriate. This is the underlying plan model used by
 both the CLI and browser application.
+
+`allocation preview|create` converts one exact accepted-row total into complete
+absolute cell targets using balanced, weighted, minimum-then-weighted, or
+explicit policy. Reserved rows remain outside the initial plan for later
+evidence-driven iterations. `create` atomically persists the reproducible
+allocation and the ordinary unequal generation plan it produced.
 
 Plan targets are absolute dataset coverage. If a cell already contains 20
 accepted rows and a later plan targets 25, generation requests only the five-row

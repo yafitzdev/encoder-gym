@@ -38,6 +38,7 @@ training-transformer = { path = "../../crates/training-transformer" }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
+workflow-core.workspace = true
 synthetic-data-sqlite = { path = "../../crates/generation-sqlite" }
 tempfile.workspace = true
 

@@ -19,6 +19,23 @@ Transformer-specific command groups are:
 progress is written to stderr; JSON results remain a single value on stdout.
 There is no interactive TUI, graphical UI, or new HTTP endpoint for this work.
 
+Exact initial-budget allocation commands are:
+
+- `synth allocation preview <DATASET_ID> --total-rows 20000` for a read-only
+  complete balanced preview;
+- `synth allocation create <DATASET_ID> --total-rows 20000` to atomically persist
+  the immutable allocation and its ordinary Slice 1 plan;
+- `--reserved-rows` to keep part of the requested total outside the initial plan;
+- `--policy weighted --weights <JSON_OR_TOML>` for label and dimension-value
+  weights;
+- `--policy minimum-then-weighted --minimum-per-cell N` for explicit floors;
+- `--policy explicit --targets <JSON_OR_TOML>` for complete absolute targets;
+- `--constraints <JSON_OR_TOML>` for per-cell minima, maxima, and exclusions; and
+- `synth allocation list|show` for immutable persisted results.
+
+Preview accounts for persisted accepted coverage but writes nothing. Infeasible
+constraints return structured issues and cannot create a generation plan.
+
 Error-analysis commands are:
 
 - `synth analysis create <RUN_ID>` with support, ranking, confidence,

@@ -1,0 +1,18 @@
+[package]
+name = "workflow-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+artifact-core.workspace = true
+chrono.workspace = true
+generation-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+
+[lints]
+workspace = true

@@ -1,3 +1,4 @@
+mod allocation;
 mod analysis;
 mod backend;
 mod campaign;
@@ -27,6 +28,7 @@ pub async fn execute(command: Command, store: SqliteStore) -> anyhow::Result<()>
         Command::Analysis { command } => analysis::execute(command, &store).await,
         Command::Optimize { command } => optimization::execute(command, &store).await,
         Command::Campaign { command } => campaign::execute(command, &store).await,
+        Command::Allocation { command } => allocation::execute(command, &store).await,
         Command::Dataset { command } => dataset::execute(command, &store).await,
         Command::Snapshot { command } => snapshot::execute(command, &store).await,
         Command::Encoder { command } => encoder::execute(command, &store).await,

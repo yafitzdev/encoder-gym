@@ -49,6 +49,9 @@ applied automatically when the SQLite store connects.
 - `0025_optimization_decision_evidence`: complete bounded evidence artifacts
   and normalized accepted coverage required to reproduce scores, allocations,
   stale checks, and proposal fingerprints offline.
+- `0026_initial_allocations`: immutable exact initial-budget allocation artifacts,
+  normalized totals/fingerprints, and a unique atomic link to the ordinary
+  generation plan produced from their complete absolute cell targets.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

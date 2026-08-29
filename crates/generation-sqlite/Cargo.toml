@@ -21,6 +21,7 @@ sqlx.workspace = true
 sysinfo.workspace = true
 training-core.workspace = true
 uuid.workspace = true
+workflow-core.workspace = true
 
 [dev-dependencies]
 dataset-import.workspace = true

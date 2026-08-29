@@ -90,6 +90,11 @@ pub enum Command {
         #[command(subcommand)]
         command: PlanCommand,
     },
+    /// Preview and persist exact initial dataset-budget allocations.
+    Allocation {
+        #[command(subcommand)]
+        command: AllocationCommand,
+    },
     /// Configure non-secret generation backend settings.
     Backend {
         #[command(subcommand)]
@@ -988,6 +993,56 @@ pub enum PlanCommand {
     Show {
         id: Uuid,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AllocationCommand {
+    /// Calculate complete absolute cell targets without writing anything.
+    Preview(InitialAllocationArgs),
+    /// Persist the allocation and its ordinary Slice 1 generation plan atomically.
+    Create(InitialAllocationArgs),
+    /// Inspect one immutable initial allocation.
+    Show { id: Uuid },
+    /// List immutable initial allocations.
+    List {
+        #[arg(long)]
+        dataset_id: Option<Uuid>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct InitialAllocationArgs {
+    pub dataset_id: Uuid,
+    /// Exact desired accepted-row total, including any reserved iteration rows.
+    #[arg(long)]
+    pub total_rows: u32,
+    /// Rows held outside the initial generation plan for later iterations.
+    #[arg(long, default_value_t = 0)]
+    pub reserved_rows: u32,
+    #[arg(long, value_enum, default_value_t = InitialAllocationPolicyArg::Balanced)]
+    pub policy: InitialAllocationPolicyArg,
+    /// JSON/TOML AllocationWeights document for weighted policies.
+    #[arg(long)]
+    pub weights: Option<PathBuf>,
+    /// Absolute floor for every non-excluded cell in minimum-then-weighted mode.
+    #[arg(long)]
+    pub minimum_per_cell: Option<u32>,
+    /// JSON array or TOML/JSON object with a `targets` array for explicit mode.
+    #[arg(long)]
+    pub targets: Option<PathBuf>,
+    /// JSON array or TOML/JSON object with a `constraints` array.
+    #[arg(long)]
+    pub constraints: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum InitialAllocationPolicyArg {
+    Balanced,
+    Weighted,
+    MinimumThenWeighted,
+    Explicit,
 }
 
 #[derive(Debug, Subcommand)]
