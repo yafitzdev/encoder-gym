@@ -14,6 +14,7 @@ evaluation-core.workspace = true
 generation-core.workspace = true
 optimization-core.workspace = true
 project-config.workspace = true
+project-preparation.workspace = true
 recovery-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true

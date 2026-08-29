@@ -202,9 +202,7 @@ pub fn compile_project(
             .iter()
             .map(|cohort| cohort.role.clone())
             .collect(),
-        contamination_reports: std::iter::once(context.global_report)
-            .chain(context.suite_reports)
-            .collect(),
+        contamination_reports: canonical_reports(context.global_report, context.suite_reports),
         development_suite,
         sealed_suite,
         workflow_definition,
@@ -381,6 +379,16 @@ fn build_context(
             .map_err(domain)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let suite_reports = suite_reports
+        .into_iter()
+        .map(|report| {
+            if report.fingerprint == global_report.fingerprint {
+                global_report.clone()
+            } else {
+                report
+            }
+        })
+        .collect();
     Ok(BuildContext {
         resolved,
         dataset,
@@ -389,6 +397,22 @@ fn build_context(
         global_report,
         suite_reports,
     })
+}
+
+fn canonical_reports(
+    global: ContaminationReport,
+    suites: Vec<ContaminationReport>,
+) -> Vec<ContaminationReport> {
+    let mut reports = Vec::new();
+    for report in std::iter::once(global).chain(suites) {
+        if !reports
+            .iter()
+            .any(|existing: &ContaminationReport| existing.fingerprint == report.fingerprint)
+        {
+            reports.push(report);
+        }
+    }
+    reports
 }
 
 fn validate_manifest_shape(manifest: &PreparationManifest) -> Result<(), PreparationError> {

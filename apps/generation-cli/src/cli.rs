@@ -1469,6 +1469,7 @@ pub enum WorkflowKindArg {
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ArtifactKindArg {
+    ProjectPreparation,
     ProjectConfiguration,
     Dataset,
     GenerationPlan,

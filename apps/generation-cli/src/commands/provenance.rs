@@ -19,6 +19,7 @@ pub async fn execute(
 
 const fn artifact_kind(kind: ArtifactKindArg) -> ArtifactKind {
     match kind {
+        ArtifactKindArg::ProjectPreparation => ArtifactKind::ProjectPreparation,
         ArtifactKindArg::ProjectConfiguration => ArtifactKind::ProjectConfiguration,
         ArtifactKindArg::Dataset => ArtifactKind::Dataset,
         ArtifactKindArg::GenerationPlan => ArtifactKind::GenerationPlan,

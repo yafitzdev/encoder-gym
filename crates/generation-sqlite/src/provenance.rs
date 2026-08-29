@@ -15,6 +15,7 @@ use optimization_core::{
     ports::OptimizationStore,
     reviews::ProposalReviewRecord,
 };
+use project_preparation::PreparationStore;
 use serde::Serialize;
 use serde_json::json;
 use sqlx::FromRow;
@@ -35,6 +36,7 @@ impl ProvenanceStore for SqliteStore {
     ) -> BoxFuture<'_, Result<Option<ProvenanceNode>, ProvenanceStoreError>> {
         Box::pin(async move {
             match kind {
+                ArtifactKind::ProjectPreparation => self.project_preparation_node(id).await,
                 ArtifactKind::ProjectConfiguration => self.configuration_node(id).await,
                 ArtifactKind::Dataset => self.dataset_node(id).await,
                 ArtifactKind::GenerationPlan => self.plan_node(id).await,
@@ -67,6 +69,27 @@ impl ProvenanceStore for SqliteStore {
 }
 
 impl SqliteStore {
+    async fn project_preparation_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(value) = self.get_preparation(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let parents = self
+            .workflow_definition_node(value.workflow_definition_id)
+            .await?
+            .into_iter()
+            .collect();
+        Ok(Some(node(
+            ArtifactKind::ProjectPreparation,
+            id,
+            Some(value.fingerprint.clone()),
+            &value,
+            parents,
+        )?))
+    }
+
     async fn workflow_definition_node(
         &self,
         id: Uuid,

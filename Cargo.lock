@@ -3102,6 +3102,7 @@ dependencies = [
  "evaluation-core",
  "optimization-core",
  "project-config",
+ "project-preparation",
  "recovery-core",
  "serde",
  "serde_json",

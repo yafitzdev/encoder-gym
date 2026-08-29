@@ -10,6 +10,7 @@ mod governance;
 mod imports;
 mod optimization;
 mod project;
+mod project_preparation;
 mod promotion;
 mod provenance;
 mod recovery;
