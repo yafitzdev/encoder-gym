@@ -21,6 +21,7 @@ pub enum StopReason {
     MinimumImprovementNotMet,
     IterationBudgetReached,
     RowBudgetReached,
+    FreshDevelopmentCohortRequired,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -76,6 +77,12 @@ pub fn decide(
         }
         _ if usage.accepted_rows >= budget.maximum_cumulative_rows => {
             (false, StopReason::RowBudgetReached)
+        }
+        _ if policy
+            .require_fresh_development_cohort_after_iterations
+            .is_some_and(|maximum| workflow_iteration >= maximum) =>
+        {
+            (false, StopReason::FreshDevelopmentCohortRequired)
         }
         _ if accuracy_delta.is_some_and(|delta| delta < -policy.maximum_tolerated_regression)
             || macro_f1_delta.is_some_and(|delta| delta < -policy.maximum_tolerated_regression) =>

@@ -5,6 +5,12 @@ report into finite, reproducible recommendations. It never starts generation,
 snapshot creation, training, evaluation, or analysis. Those actions remain
 separate normal CLI commands chosen by a human.
 
+When composed by the governed encoder workflow, proposal creation records an
+`optimization` evidence exposure and still crosses an explicit approval or
+finite preauthorization boundary before generating a dataset diff. The
+optional LLM advisor may interpret development evidence but cannot allocate
+rows, apply the proposal, start training, or consume sealed evidence.
+
 ## Decision protocol
 
 Start from `examples/optimization.toml`. The file is strict: unknown fields,

@@ -4,6 +4,13 @@ Error analysis converts immutable evaluation predictions into prioritized facts
 for a human decision. It never loads a checkpoint, reruns inference, edits a
 dataset, or automatically starts optimization.
 
+In a governed workflow, analysis is permitted only for development or
+diagnostic evidence and appends a `diagnosis` exposure. Sealed rows,
+predictions, slice details, and representative errors are rejected at the
+workflow boundary and never enter an analysis or advisor request. Repeated
+development analysis is adaptive evidence, even when folds or confidence
+intervals are used.
+
 ## Reading a finding
 
 `support` is the number of evaluated examples belonging to the finding.

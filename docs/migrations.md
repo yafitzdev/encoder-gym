@@ -64,6 +64,18 @@ applied automatically when the SQLite store connects.
 - `0030_workflow_runs`: immutable bounded workflow definitions, durable current
   run state, fingerprint-linked append-only stage attempts, and normalized
   cross-slice artifact links with optimistic concurrency support.
+- `0031_advisory_assessments`: immutable advisory assessments with normalized
+  workflow/report identity, versioned prompt, validation, provider metadata,
+  and observable token usage.
+- `0032_workflow_approvals`: immutable human and preauthorization decisions
+  binding exact proposals, reviews, recommendation selections, and envelopes.
+- `0033_workflow_stop_decisions`: deterministic iteration stop/continue facts
+  linked to acceptance and paired-comparison evidence.
+- `0034_model_promotions`: immutable promote/reject records linking checkpoint,
+  snapshot, development and sealed assessments, suites, and policy identity.
+- `0035_encoder_workflow_recovery`: expands process leases and interruption
+  records to the durable cross-slice encoder workflow while preserving legacy
+  generation, training, and evaluation recovery rows.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

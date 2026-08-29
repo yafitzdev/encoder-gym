@@ -30,6 +30,8 @@ pub struct WorkflowDefinitionRequest {
     pub optimization_protocol: Option<OptimizationProtocol>,
     #[serde(default)]
     pub advisor: Option<AdvisorConfiguration>,
+    #[serde(default)]
+    pub training_iteration_policy: Option<TrainingIterationPolicy>,
     pub governance: IterationGovernance,
     pub budget: WorkflowBudget,
     pub policy: WorkflowPolicy,
@@ -94,6 +96,13 @@ pub struct WorkflowPolicy {
     pub require_fresh_development_cohort_after_iterations: Option<u32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrainingIterationPolicy {
+    /// Train every candidate independently from the configured base model.
+    Fresh,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowDefinition {
     pub id: Uuid,
@@ -112,6 +121,8 @@ pub struct WorkflowDefinition {
     pub optimization_protocol: Option<OptimizationProtocol>,
     #[serde(default)]
     pub advisor: Option<AdvisorConfiguration>,
+    #[serde(default)]
+    pub training_iteration_policy: Option<TrainingIterationPolicy>,
     pub governance: IterationGovernance,
     pub budget: WorkflowBudget,
     pub policy: WorkflowPolicy,
@@ -174,6 +185,11 @@ impl WorkflowDefinition {
             analysis_protocol: Some(analysis_protocol),
             optimization_protocol: Some(optimization_protocol),
             advisor: request.advisor,
+            training_iteration_policy: Some(
+                request
+                    .training_iteration_policy
+                    .unwrap_or(TrainingIterationPolicy::Fresh),
+            ),
             governance: request.governance,
             budget: request.budget,
             policy: request.policy,
@@ -691,6 +707,8 @@ fn apply_outcome(
                 };
             } else if attempt.stage == WorkflowStage::Promotion {
                 run.state = WorkflowRunState::Completed;
+            } else if attempt.stage == WorkflowStage::SealedEvaluation {
+                run.state = WorkflowRunState::AwaitingUser;
             } else {
                 run.state = WorkflowRunState::Running;
             }
@@ -730,6 +748,7 @@ fn definition_fingerprint(value: &WorkflowDefinition) -> Result<String, Workflow
     if value.analysis_protocol.is_some()
         || value.optimization_protocol.is_some()
         || value.advisor.is_some()
+        || value.training_iteration_policy.is_some()
     {
         let object = document
             .as_object_mut()
@@ -747,6 +766,11 @@ fn definition_fingerprint(value: &WorkflowDefinition) -> Result<String, Workflow
         object.insert(
             "advisor".into(),
             serde_json::to_value(&value.advisor)
+                .map_err(|error| WorkflowError::Fingerprint(error.to_string()))?,
+        );
+        object.insert(
+            "training_iteration_policy".into(),
+            serde_json::to_value(value.training_iteration_policy)
                 .map_err(|error| WorkflowError::Fingerprint(error.to_string()))?,
         );
     }
@@ -809,6 +833,7 @@ mod tests {
                 maximum_output_tokens: 1_000,
                 temperature: Some(0.0),
             }),
+            training_iteration_policy: Some(TrainingIterationPolicy::Fresh),
             governance: IterationGovernance::ReviewEachIteration,
             budget: WorkflowBudget {
                 maximum_iterations: 2,
@@ -914,6 +939,7 @@ mod tests {
             analysis_protocol: definition.analysis_protocol,
             optimization_protocol: definition.optimization_protocol,
             advisor: definition.advisor,
+            training_iteration_policy: definition.training_iteration_policy,
             governance: definition.governance,
             budget: definition.budget,
             policy: definition.policy,
@@ -922,5 +948,61 @@ mod tests {
             WorkflowDefinition::new(request),
             Err(WorkflowError::InvalidEnvelope)
         );
+    }
+
+    #[test]
+    fn retryable_failure_restarts_only_the_same_stage_within_the_ceiling() {
+        let definition = definition();
+        let mut run = WorkflowRun::queued(&definition).expect("run");
+        let running = WorkflowStageAttempt::start(
+            &definition,
+            &mut run,
+            WorkflowStage::InitialAllocation,
+            None,
+            1,
+        )
+        .expect("start");
+        let failed = running
+            .finish(
+                &definition,
+                &mut run,
+                StageOutcome {
+                    state: StageAttemptState::Failed,
+                    reason: Some("retry me".into()),
+                    retryable: true,
+                    artifacts: Vec::new(),
+                    usage_after: WorkflowBudgetUsage::zero(),
+                },
+            )
+            .expect("fail");
+        assert_eq!(run.state, WorkflowRunState::AwaitingUser);
+        assert!(matches!(
+            WorkflowStageAttempt::start(
+                &definition,
+                &mut run,
+                WorkflowStage::Generation,
+                Some(&failed),
+                2,
+            ),
+            Err(WorkflowError::IllegalStage { .. })
+        ));
+        WorkflowStageAttempt::start(
+            &definition,
+            &mut run,
+            WorkflowStage::InitialAllocation,
+            Some(&failed),
+            2,
+        )
+        .expect("same-stage retry");
+        assert!(matches!(
+            WorkflowStageAttempt::start(
+                &definition,
+                &mut run,
+                WorkflowStage::InitialAllocation,
+                Some(&failed),
+                4,
+            ),
+            Err(WorkflowError::StageAttemptsExceeded)
+        ));
     }
 }

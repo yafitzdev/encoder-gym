@@ -44,3 +44,10 @@ synth provenance trace model-selection <SELECTION_ID>
 Leaderboards never mix cohorts or protocol families. Ties are deterministic.
 Selection reports are immutable and advisory: they never deploy, copy, or
 mutate a checkpoint.
+
+Within a governed encoder workflow, only a development suite may drive model
+iteration and paired selection. Each use is recorded in the exposure ledger,
+so repeated development optimization is visible as adaptive evidence. A
+development stop does not assert final generalization. `workflow finalize` is
+the separate, explicit aggregate-only sealed assessment, and `workflow promote`
+records the immutable promote, reject, or inconclusive result.

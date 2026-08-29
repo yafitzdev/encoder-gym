@@ -35,6 +35,7 @@ const fn workflow_kind(kind: WorkflowKindArg) -> WorkflowKind {
         WorkflowKindArg::Generation => WorkflowKind::Generation,
         WorkflowKindArg::Training => WorkflowKind::Training,
         WorkflowKindArg::Evaluation => WorkflowKind::Evaluation,
+        WorkflowKindArg::EncoderWorkflow => WorkflowKind::EncoderWorkflow,
     }
 }
 

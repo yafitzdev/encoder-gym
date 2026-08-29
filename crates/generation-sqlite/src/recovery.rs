@@ -17,12 +17,10 @@ impl RecoveryStore for SqliteStore {
         Box::pin(async move {
             let process_id = std::process::id();
             let process_started_at = current_process_started_at(process_id)?;
-            sqlx::query(
+            let inserted = sqlx::query(
                 "INSERT INTO workflow_execution_leases \
                  (workflow_kind, workflow_id, process_id, process_started_at, acquired_at) \
-                 VALUES (?, ?, ?, ?, ?) ON CONFLICT(workflow_kind, workflow_id) DO UPDATE SET \
-                 process_id = excluded.process_id, process_started_at = excluded.process_started_at, \
-                 acquired_at = excluded.acquired_at",
+                 VALUES (?, ?, ?, ?, ?) ON CONFLICT(workflow_kind, workflow_id) DO NOTHING",
             )
             .bind(kind.as_str())
             .bind(workflow_id)
@@ -32,6 +30,46 @@ impl RecoveryStore for SqliteStore {
             .execute(&self.pool)
             .await
             .map_err(store_error)?;
+            if inserted.rows_affected() == 0 {
+                let lease = sqlx::query_as::<_, LeaseRecord>(
+                    "SELECT process_id, process_started_at FROM workflow_execution_leases \
+                     WHERE workflow_kind = ? AND workflow_id = ?",
+                )
+                .bind(kind.as_str())
+                .bind(workflow_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(store_error)?;
+                let current_identity = lease.process_id == i64::from(process_id)
+                    && lease.process_started_at == to_i64(process_started_at)?;
+                if !current_identity && lease.is_active(&System::new_all()) {
+                    return Err(RecoveryStoreError(format!(
+                        "{} workflow {workflow_id} is owned by another active process",
+                        kind.as_str()
+                    )));
+                }
+                let replaced = sqlx::query(
+                    "UPDATE workflow_execution_leases SET process_id = ?, process_started_at = ?, \
+                     acquired_at = ? WHERE workflow_kind = ? AND workflow_id = ? \
+                     AND process_id = ? AND process_started_at = ?",
+                )
+                .bind(i64::from(process_id))
+                .bind(to_i64(process_started_at)?)
+                .bind(Utc::now())
+                .bind(kind.as_str())
+                .bind(workflow_id)
+                .bind(lease.process_id)
+                .bind(lease.process_started_at)
+                .execute(&self.pool)
+                .await
+                .map_err(store_error)?;
+                if replaced.rows_affected() != 1 {
+                    return Err(RecoveryStoreError(format!(
+                        "{} workflow {workflow_id} lease changed concurrently",
+                        kind.as_str()
+                    )));
+                }
+            }
             Ok(())
         })
     }
@@ -65,6 +103,7 @@ impl RecoveryStore for SqliteStore {
                  FROM generation_jobs WHERE state = 'running' \
                  UNION ALL SELECT 'training', id FROM training_runs WHERE state = 'running' \
                  UNION ALL SELECT 'evaluation', id FROM evaluation_runs WHERE state = 'running' \
+                 UNION ALL SELECT 'encoder_workflow', id FROM workflow_runs WHERE state = 'running' \
                  ORDER BY workflow_kind, workflow_id",
             )
             .fetch_all(&self.pool)
@@ -92,7 +131,10 @@ impl RecoveryStore for SqliteStore {
                     kind.as_str()
                 );
                 mark_failed(&mut transaction, kind, workflow.workflow_id, &message, now).await?;
-                let resumable_in_place = kind == WorkflowKind::Generation;
+                let resumable_in_place = matches!(
+                    kind,
+                    WorkflowKind::Generation | WorkflowKind::EncoderWorkflow
+                );
                 sqlx::query(
                     "INSERT INTO workflow_recovery_records \
                      (workflow_kind, workflow_id, state, resumable_in_place, message, detected_at, \
@@ -292,10 +334,40 @@ async fn mark_failed(
     message: &str,
     now: DateTime<Utc>,
 ) -> Result<(), RecoveryStoreError> {
+    if kind == WorkflowKind::EncoderWorkflow {
+        let artifact_json: String = sqlx::query_scalar(
+            "SELECT artifact_json FROM workflow_runs WHERE id = ? AND state = 'running'",
+        )
+        .bind(workflow_id)
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(store_error)?;
+        let mut run: workflow_core::workflow::WorkflowRun =
+            serde_json::from_str(&artifact_json).map_err(store_error)?;
+        run.state = workflow_core::workflow::WorkflowRunState::AwaitingUser;
+        run.updated_at = now;
+        let result = sqlx::query(
+            "UPDATE workflow_runs SET state = 'awaiting_user', artifact_json = ?, updated_at = ? \
+             WHERE id = ? AND state = 'running'",
+        )
+        .bind(serde_json::to_string(&run).map_err(store_error)?)
+        .bind(now)
+        .bind(workflow_id)
+        .execute(&mut **transaction)
+        .await
+        .map_err(store_error)?;
+        if result.rows_affected() != 1 {
+            return Err(RecoveryStoreError(format!(
+                "encoder workflow {workflow_id} changed while detecting interruption"
+            )));
+        }
+        return Ok(());
+    }
     let table = match kind {
         WorkflowKind::Generation => "generation_jobs",
         WorkflowKind::Training => "training_runs",
         WorkflowKind::Evaluation => "evaluation_runs",
+        WorkflowKind::EncoderWorkflow => unreachable!("handled above"),
     };
     let query = format!(
         "UPDATE {table} SET state = 'failed', error_message = ?, updated_at = ? \
@@ -329,6 +401,7 @@ fn parse_kind(value: &str) -> Result<WorkflowKind, RecoveryStoreError> {
         "generation" => Ok(WorkflowKind::Generation),
         "training" => Ok(WorkflowKind::Training),
         "evaluation" => Ok(WorkflowKind::Evaluation),
+        "encoder_workflow" => Ok(WorkflowKind::EncoderWorkflow),
         _ => Err(RecoveryStoreError(format!(
             "unknown workflow kind in SQLite: {value}"
         ))),

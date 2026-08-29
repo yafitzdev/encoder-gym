@@ -20,6 +20,10 @@ use serde_json::json;
 use sqlx::FromRow;
 use training_core::ports::{EncoderRegistry, TrainingStore};
 use uuid::Uuid;
+use workflow_core::ports::{
+    AdvisorStore, BenchmarkStore, PromotionStore, StopDecisionStore, WorkflowApprovalStore,
+    WorkflowRunStore,
+};
 
 use super::SqliteStore;
 
@@ -50,12 +54,243 @@ impl ProvenanceStore for SqliteStore {
                 ArtifactKind::OptimizationCampaign => self.campaign_node(id).await,
                 ArtifactKind::OptimizationCampaignLink => self.campaign_link_node(id).await,
                 ArtifactKind::OptimizationOutcome => self.optimization_outcome_node(id).await,
+                ArtifactKind::WorkflowDefinition => self.workflow_definition_node(id).await,
+                ArtifactKind::WorkflowRun => self.workflow_run_node(id).await,
+                ArtifactKind::AcceptanceAssessment => self.acceptance_node(id).await,
+                ArtifactKind::AdvisoryAssessment => self.advisory_node(id).await,
+                ArtifactKind::WorkflowApproval => self.workflow_approval_node(id).await,
+                ArtifactKind::StopDecision => self.stop_decision_node(id).await,
+                ArtifactKind::ModelPromotion => self.promotion_node(id).await,
             }
         })
     }
 }
 
 impl SqliteStore {
+    async fn workflow_definition_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(value) = self
+            .get_workflow_definition(id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let mut parents = Vec::new();
+        if let Some(dataset) = self.dataset_node(value.dataset_id).await? {
+            parents.push(dataset);
+        }
+        if let Some(config) = self
+            .configuration_node(value.project_configuration_id)
+            .await?
+        {
+            parents.push(config);
+        }
+        Ok(Some(node(
+            ArtifactKind::WorkflowDefinition,
+            id,
+            Some(value.fingerprint.clone()),
+            &value,
+            parents,
+        )?))
+    }
+
+    async fn workflow_run_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(run) = self.get_workflow_run(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let attempts = self.list_workflow_attempts(id).await.map_err(store_error)?;
+        let mut parents = self
+            .workflow_definition_node(run.definition_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        for artifact in attempts.iter().flat_map(|attempt| &attempt.artifacts) {
+            let parent = match artifact.kind.as_str() {
+                "generation_plan" | "iteration_generation_plan" => {
+                    self.plan_node(artifact.artifact_id).await?
+                }
+                "generation_job" | "dataset_diff_generation_job" => {
+                    self.job_node(artifact.artifact_id).await?
+                }
+                "snapshot" | "iteration_snapshot" => {
+                    self.snapshot_node(artifact.artifact_id).await?
+                }
+                "training_run" | "iteration_training_run" => {
+                    self.training_node(artifact.artifact_id).await?
+                }
+                "checkpoint" | "iteration_checkpoint" => {
+                    self.checkpoint_node(artifact.artifact_id).await?
+                }
+                "evaluation_run" | "iteration_evaluation_run" | "sealed_evaluation_run" => {
+                    self.evaluation_node(artifact.artifact_id).await?
+                }
+                "evaluation_comparison" => self.comparison_node(artifact.artifact_id).await?,
+                "analysis_report" | "followup_analysis_report" => {
+                    self.analysis_node(artifact.artifact_id).await?
+                }
+                "optimization_proposal" => self.optimization_node(artifact.artifact_id).await?,
+                "proposal_review" => self.optimization_review_node(artifact.artifact_id).await?,
+                _ => None,
+            };
+            if let Some(parent) = parent {
+                parents.push(parent);
+            }
+        }
+        Ok(Some(node(
+            ArtifactKind::WorkflowRun,
+            id,
+            run.latest_attempt_fingerprint.clone(),
+            &serde_json::json!({"run": run, "attempts": attempts}),
+            parents,
+        )?))
+    }
+
+    async fn acceptance_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(value) = self
+            .get_acceptance_assessment(id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let mut parents = Vec::new();
+        for run_id in value.evaluation_run_ids.values() {
+            if let Some(parent) = self.evaluation_node(*run_id).await? {
+                parents.push(parent);
+            }
+        }
+        for comparison_id in value.comparison_ids.values() {
+            if let Some(parent) = self.comparison_node(*comparison_id).await? {
+                parents.push(parent);
+            }
+        }
+        Ok(Some(node(
+            ArtifactKind::AcceptanceAssessment,
+            id,
+            Some(value.fingerprint.clone()),
+            &value,
+            parents,
+        )?))
+    }
+
+    async fn advisory_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(value) = self
+            .get_advisory_assessment(id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let parents = self
+            .analysis_node(value.request.analysis_report_id)
+            .await?
+            .into_iter()
+            .collect();
+        Ok(Some(node(
+            ArtifactKind::AdvisoryAssessment,
+            id,
+            Some(value.fingerprint.clone()),
+            &value,
+            parents,
+        )?))
+    }
+
+    async fn workflow_approval_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(value) = self.get_workflow_approval(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let mut parents = Vec::new();
+        if let Some(parent) = self.optimization_node(value.proposal_id).await? {
+            parents.push(parent);
+        }
+        if let Some(parent) = self
+            .optimization_review_node(value.proposal_review_id)
+            .await?
+        {
+            parents.push(parent);
+        }
+        Ok(Some(node(
+            ArtifactKind::WorkflowApproval,
+            id,
+            Some(value.fingerprint.clone()),
+            &value,
+            parents,
+        )?))
+    }
+
+    async fn stop_decision_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(value) = self.get_stop_decision(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let mut parents = self
+            .acceptance_node(value.acceptance_assessment_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        for comparison_id in &value.comparison_ids {
+            if let Some(parent) = self.comparison_node(*comparison_id).await? {
+                parents.push(parent);
+            }
+        }
+        Ok(Some(node(
+            ArtifactKind::StopDecision,
+            id,
+            Some(value.fingerprint.clone()),
+            &value,
+            parents,
+        )?))
+    }
+
+    async fn promotion_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(value) = self.get_promotion(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let mut parents = Vec::new();
+        if let Some(parent) = self.checkpoint_node(value.checkpoint_id).await? {
+            parents.push(parent);
+        }
+        if let Some(parent) = self.snapshot_node(value.training_snapshot_id).await? {
+            parents.push(parent);
+        }
+        if let Some(parent) = self
+            .acceptance_node(value.development_assessment_id)
+            .await?
+        {
+            parents.push(parent);
+        }
+        if let Some(parent) = self.acceptance_node(value.sealed_assessment_id).await? {
+            parents.push(parent);
+        }
+        Ok(Some(node(
+            ArtifactKind::ModelPromotion,
+            id,
+            Some(value.fingerprint.clone()),
+            &value,
+            parents,
+        )?))
+    }
+
     async fn optimization_review_node(
         &self,
         id: Uuid,

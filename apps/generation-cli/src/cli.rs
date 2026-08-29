@@ -1323,6 +1323,12 @@ pub enum WorkflowCommand {
     Resume {
         id: Uuid,
     },
+    /// Wait until a running workflow pauses or reaches a terminal/development-complete state.
+    Watch {
+        id: Uuid,
+        #[arg(long, default_value_t = 500)]
+        poll_ms: u64,
+    },
     /// Approve the current bounded optimization proposal and resume the workflow.
     Approve {
         id: Uuid,
@@ -1335,6 +1341,17 @@ pub enum WorkflowCommand {
         id: Uuid,
     },
     StopShow {
+        id: Uuid,
+    },
+    /// Explicitly run the configured sealed acceptance suite once.
+    Finalize {
+        id: Uuid,
+    },
+    /// Record the immutable promotion or rejection decision after final assessment.
+    Promote {
+        id: Uuid,
+    },
+    PromotionShow {
         id: Uuid,
     },
     Status {
@@ -1447,6 +1464,7 @@ pub enum WorkflowKindArg {
     Generation,
     Training,
     Evaluation,
+    EncoderWorkflow,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1470,6 +1488,13 @@ pub enum ArtifactKindArg {
     OptimizationCampaign,
     OptimizationCampaignLink,
     OptimizationOutcome,
+    WorkflowDefinition,
+    WorkflowRun,
+    AcceptanceAssessment,
+    AdvisoryAssessment,
+    WorkflowApproval,
+    StopDecision,
+    ModelPromotion,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

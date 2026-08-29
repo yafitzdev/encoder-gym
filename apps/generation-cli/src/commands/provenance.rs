@@ -38,5 +38,12 @@ const fn artifact_kind(kind: ArtifactKindArg) -> ArtifactKind {
         ArtifactKindArg::OptimizationCampaign => ArtifactKind::OptimizationCampaign,
         ArtifactKindArg::OptimizationCampaignLink => ArtifactKind::OptimizationCampaignLink,
         ArtifactKindArg::OptimizationOutcome => ArtifactKind::OptimizationOutcome,
+        ArtifactKindArg::WorkflowDefinition => ArtifactKind::WorkflowDefinition,
+        ArtifactKindArg::WorkflowRun => ArtifactKind::WorkflowRun,
+        ArtifactKindArg::AcceptanceAssessment => ArtifactKind::AcceptanceAssessment,
+        ArtifactKindArg::AdvisoryAssessment => ArtifactKind::AdvisoryAssessment,
+        ArtifactKindArg::WorkflowApproval => ArtifactKind::WorkflowApproval,
+        ArtifactKindArg::StopDecision => ArtifactKind::StopDecision,
+        ArtifactKindArg::ModelPromotion => ArtifactKind::ModelPromotion,
     }
 }

@@ -68,6 +68,13 @@ pub enum ArtifactKind {
     OptimizationCampaign,
     OptimizationCampaignLink,
     OptimizationOutcome,
+    WorkflowDefinition,
+    WorkflowRun,
+    AcceptanceAssessment,
+    AdvisoryAssessment,
+    WorkflowApproval,
+    StopDecision,
+    ModelPromotion,
 }
 
 impl ArtifactKind {
@@ -92,6 +99,13 @@ impl ArtifactKind {
             Self::OptimizationCampaign => "optimization_campaign",
             Self::OptimizationCampaignLink => "optimization_campaign_link",
             Self::OptimizationOutcome => "optimization_outcome",
+            Self::WorkflowDefinition => "workflow_definition",
+            Self::WorkflowRun => "workflow_run",
+            Self::AcceptanceAssessment => "acceptance_assessment",
+            Self::AdvisoryAssessment => "advisory_assessment",
+            Self::WorkflowApproval => "workflow_approval",
+            Self::StopDecision => "stop_decision",
+            Self::ModelPromotion => "model_promotion",
         }
     }
 }

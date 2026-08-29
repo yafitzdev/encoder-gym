@@ -12,6 +12,7 @@ use crate::approval::WorkflowApprovalDecision;
 use crate::benchmark::{AcceptanceAssessment, AcceptanceState, BenchmarkSuite, BenchmarkSuiteKind};
 use crate::contamination::{ContaminationOverride, ContaminationReport, ContaminationStatus};
 use crate::governance::{CohortRoleDecision, EvaluationCohort, EvidenceExposure, ExposurePurpose};
+use crate::promotion::ModelPromotion;
 use crate::stop::StopDecision;
 use crate::workflow::{WorkflowDefinition, WorkflowRun, WorkflowRunState, WorkflowStageAttempt};
 
@@ -106,6 +107,23 @@ pub trait StopDecisionStore: Send + Sync {
         workflow_run_id: Uuid,
         workflow_iteration: u32,
     ) -> BoxFuture<'_, Result<Option<StopDecision>, WorkflowStoreError>>;
+}
+
+pub trait PromotionStore: Send + Sync {
+    fn create_promotion(
+        &self,
+        promotion: &ModelPromotion,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    fn get_promotion(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<ModelPromotion>, WorkflowStoreError>>;
+
+    fn get_workflow_promotion(
+        &self,
+        workflow_run_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<ModelPromotion>, WorkflowStoreError>>;
 }
 
 #[derive(Debug, Clone, Copy)]

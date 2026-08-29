@@ -56,6 +56,33 @@ cargo run -p synthetic-data-cli -- rows --dataset-id <DATASET_ID>
 cargo run -p synthetic-data-cli -- export <DATASET_ID> --format jsonl --file exports/support.jsonl
 ```
 
+## Governed encoder workflow
+
+The cross-slice workflow is also CLI-only. After creating immutable development
+and sealed cohorts, clean contamination reports, benchmark suites, and a
+resolved project configuration, define one finite workflow and run it:
+
+```text
+cargo run -p synthetic-data-cli -- workflow define --definition workflow.toml
+cargo run -p synthetic-data-cli -- workflow start <DEFINITION_ID>
+cargo run -p synthetic-data-cli -- workflow status <RUN_ID>
+cargo run -p synthetic-data-cli -- workflow approve <RUN_ID> --recommendation-id <ID>
+cargo run -p synthetic-data-cli -- workflow resume <RUN_ID>
+cargo run -p synthetic-data-cli -- workflow finalize <RUN_ID>
+cargo run -p synthetic-data-cli -- workflow promote <RUN_ID>
+cargo run -p synthetic-data-cli -- provenance model-promotion <PROMOTION_ID>
+```
+
+`start` runs initial allocation, generation, immutable snapshot V1, fresh
+training, development evaluation, deterministic acceptance, error analysis,
+the optional advisor, and proposal creation. Review mode pauses before the
+dataset diff; bounded preauthorization continues only when the exact action is
+inside its persisted envelope. `finalize` is the only workflow command that
+uses sealed evidence, and `promote` records immutable promotion or rejection—it
+does not overwrite a mutable "best model" pointer. See
+[`docs/workflow-governance-spec.md`](docs/workflow-governance-spec.md) and
+[`docs/cli.md`](docs/cli.md).
+
 `plan create --targets <FILE>` accepts explicit per-cell targets when an equal
 distribution is not appropriate. This is the underlying plan model used by
 both the CLI and browser application.

@@ -67,6 +67,25 @@ campaign links, outcome fingerprints, and optional generation backend
 reachability. Connectivity output reports only the safe endpoint origin
 and HTTP status; credentials are never printed.
 
+## Governed workflow operation
+
+Run one local workflow process at a time. `workflow start` and `resume` hold a
+process-identity lease and reject concurrent drivers. Use `workflow status` for
+persisted attempts, usage, generation jobs, and coverage, or `workflow watch`
+from another terminal. Ctrl+C may interrupt the process; startup reconciliation
+then exposes the run through `recovery list`, and `workflow resume` continues
+from durable facts. `workflow cancel` is the durable cancellation path and
+forwards cancellation to an active generation job between bounded batches.
+
+Review mode deliberately stops at `awaiting_approval`; inspect the proposal and
+approve exact recommendation IDs before more rows or training are authorized.
+Preauthorized mode is still finite and records every envelope decision. A
+development-complete workflow is only a candidate. Run `workflow finalize`
+explicitly to disclose the configured sealed aggregate, then `workflow promote`
+to record promotion, rejection, or inconclusive evidence. Never use sealed
+row-level inspection to tune a candidate without first retiring/demoting that
+cohort through the exposure workflow.
+
 ## Error analysis
 
 ```text

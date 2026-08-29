@@ -124,3 +124,80 @@ struct Usage {
     completion_tokens: Option<u64>,
     total_tokens: Option<u64>,
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::{Json, Router, extract::State, http::HeaderMap, routing::post};
+    use serde_json::json;
+    use tokio::{net::TcpListener, sync::mpsc};
+    use workflow_core::advisor::{AdvisorPrompt, AnalysisAdvisor};
+
+    use super::OpenAICompatibleAdvisor;
+
+    #[tokio::test]
+    async fn normalizes_chat_completion_content_usage_and_metadata() {
+        type RecordedRequest = (HeaderMap, serde_json::Value);
+
+        async fn handler(
+            State(sender): State<mpsc::UnboundedSender<RecordedRequest>>,
+            headers: HeaderMap,
+            Json(body): Json<serde_json::Value>,
+        ) -> Json<serde_json::Value> {
+            sender.send((headers, body)).expect("receiver remains open");
+            Json(json!({
+                "id": "advisor-request",
+                "model": "served-advisor",
+                "choices": [{
+                    "message": {"content": "{\"interpretation\":\"bounded\"}"},
+                    "finish_reason": "stop"
+                }],
+                "usage": {
+                    "prompt_tokens": 11,
+                    "completion_tokens": 7,
+                    "total_tokens": 18
+                }
+            }))
+        }
+
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let app = Router::new()
+            .route("/v1/chat/completions", post(handler))
+            .with_state(sender);
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock advisor");
+        let address = listener.local_addr().expect("mock address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("mock advisor remains available");
+        });
+        let advisor = OpenAICompatibleAdvisor::new(
+            &format!("http://{address}/v1"),
+            Some("test-secret".into()),
+        )
+        .expect("advisor");
+        let result = advisor
+            .generate(AdvisorPrompt {
+                system_prompt: "system".into(),
+                user_prompt: "{}".into(),
+                prompt_version: "advisor-v1".into(),
+                prompt_fingerprint: "sha256:prompt".into(),
+                model: "requested-advisor".into(),
+                maximum_output_tokens: 256,
+                temperature: Some(0.0),
+            })
+            .await
+            .expect("HTTP advisory succeeds");
+        let (headers, body) = receiver.recv().await.expect("request captured");
+
+        assert_eq!(headers["authorization"], "Bearer test-secret");
+        assert_eq!(body["model"], "requested-advisor");
+        assert_eq!(body["response_format"]["type"], "json_object");
+        assert_eq!(result.content, "{\"interpretation\":\"bounded\"}");
+        assert_eq!(result.usage.total_tokens, Some(18));
+        assert_eq!(result.metadata["request_id"], "advisor-request");
+        assert_eq!(result.metadata["response_model"], "served-advisor");
+        server.abort();
+    }
+}

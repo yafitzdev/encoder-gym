@@ -172,6 +172,15 @@ can expand that envelope.
 Every stage is idempotent, cancellable at existing batch boundaries, lease-safe,
 and restartable without duplicating a verified artifact. Recovery cannot infer
 approval, replay a completed provider request, or repeat a sealed evaluation.
+Execution errors become explicit failed attempts; retryable failures pause and
+`workflow resume` starts the same stage with an incremented attempt number up to
+the persisted ceiling. Every new candidate currently uses the resolved
+`fresh` training policy; checkpoint continuation is not silently inferred.
+
+Development evaluation, diagnosis, advising, optimization, and paired
+comparison each append their own idempotent exposure fact. A configured
+fresh-cohort threshold produces a deterministic stop reason before further
+adaptive iteration, rather than treating repeated holdout use as fresh evidence.
 
 ## Optional advisor boundary
 

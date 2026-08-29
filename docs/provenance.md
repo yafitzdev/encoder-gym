@@ -47,6 +47,25 @@ of their containing proposal. A plan created by approved application links
 back to that proposal. Scenario proposals become independently traceable after
 explicit `scenario-materialize`.
 
+The governed workflow adds a fingerprint-linked orchestration chain without
+copying slice artifacts:
+
+```text
+model promotion or rejection
+  -> sealed acceptance assessment -> sealed evaluation -> sealed suite/cohort
+  -> selected checkpoint -> training run -> immutable candidate snapshot
+  -> development acceptance and stop decision
+  -> paired comparison and follow-up analysis
+  -> approved proposal/application -> generation plan/job -> added rows
+  -> workflow run -> immutable resolved workflow definition
+```
+
+Workflow attempts retain iteration, predecessor, usage-after, approval,
+advisor, dataset-diff, and slice-artifact links. Exposure records independently
+show which development evidence was consumed for diagnosis, advising,
+optimization, and comparison, and which sealed aggregate was disclosed for
+acceptance.
+
 Inspect a chain with:
 
 ```text
@@ -59,6 +78,13 @@ synth provenance optimization-proposal-review <REVIEW_ID>
 synth provenance optimization-campaign <CAMPAIGN_ID>
 synth provenance optimization-campaign-link <LINK_ID>
 synth provenance optimization-outcome <OUTCOME_ID>
+synth provenance workflow-definition <DEFINITION_ID>
+synth provenance workflow-run <RUN_ID>
+synth provenance acceptance-assessment <ASSESSMENT_ID>
+synth provenance advisory-assessment <ASSESSMENT_ID>
+synth provenance workflow-approval <APPROVAL_ID>
+synth provenance stop-decision <DECISION_ID>
+synth provenance model-promotion <PROMOTION_ID>
 ```
 
 A changed local base-model file fails encoder verification; it does not change

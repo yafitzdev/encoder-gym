@@ -15,16 +15,23 @@ pub enum WorkflowKind {
     Generation,
     Training,
     Evaluation,
+    EncoderWorkflow,
 }
 
 impl WorkflowKind {
-    pub const ALL: [Self; 3] = [Self::Generation, Self::Training, Self::Evaluation];
+    pub const ALL: [Self; 4] = [
+        Self::Generation,
+        Self::Training,
+        Self::Evaluation,
+        Self::EncoderWorkflow,
+    ];
 
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Generation => "generation",
             Self::Training => "training",
             Self::Evaluation => "evaluation",
+            Self::EncoderWorkflow => "encoder_workflow",
         }
     }
 }

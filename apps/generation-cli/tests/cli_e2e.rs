@@ -251,6 +251,65 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
         ["benchmark", "assess", &benchmark_id, "--run", &run_mapping],
     );
     assert_eq!(repeated_acceptance["id"], acceptance["id"]);
+    let sealed_cohort = run_json(
+        &database_url,
+        [
+            "cohort",
+            "create",
+            &snapshot_id,
+            "--name",
+            "sealed-acceptance-test-split",
+            "--split",
+            "test",
+            "--role",
+            "sealed-acceptance",
+            "--reason",
+            "explicit final local acceptance gate",
+        ],
+    );
+    let sealed_cohort_id = string_at(&sealed_cohort, "/cohort/id");
+    let sealed_contamination = run_json(
+        &database_url,
+        ["contamination", "check", "--cohort", &sealed_cohort_id],
+    );
+    let sealed_benchmark_path = directory.path().join("sealed-benchmark.json");
+    std::fs::write(
+        &sealed_benchmark_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "contamination_report_id": sealed_contamination["id"],
+            "name": "sealed acceptance gate",
+            "kind": "sealed_acceptance",
+            "task": "Classify intentionally ambiguous support messages.",
+            "labels": ["billing", "fraud"],
+            "required_model_formats": [evaluation["run"]["source_identity"]["checkpoint_model_format"]],
+            "cohorts": [{
+                "cohort_id": sealed_cohort_id,
+                "protocol": evaluation["run"]["protocol"],
+                "disclosure": "aggregate",
+                "adaptation_eligible": false
+            }],
+            "contract": {
+                "metric_requirements": [{
+                    "target": {"kind": "overall"},
+                    "metric": "accuracy",
+                    "minimum": 0.0,
+                    "minimum_support": 1
+                }]
+            }
+        }))
+        .expect("sealed benchmark definition JSON"),
+    )
+    .expect("write sealed benchmark definition");
+    let sealed_benchmark = run_json(
+        &database_url,
+        [
+            "benchmark",
+            "create",
+            "--definition",
+            path(&sealed_benchmark_path),
+        ],
+    );
+    let sealed_benchmark_id = string_at(&sealed_benchmark, "/id");
 
     let workflow_definition_path = directory.path().join("workflow-definition.json");
     std::fs::write(
@@ -262,6 +321,8 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
             "project_configuration_fingerprint": initialized["project_configuration"]["fingerprint"],
             "development_suite_id": benchmark_id,
             "development_suite_fingerprint": benchmark["fingerprint"],
+            "sealed_suite_id": sealed_benchmark_id,
+            "sealed_suite_fingerprint": sealed_benchmark["fingerprint"],
             "initial_allocation": {
                 "total_rows": 20,
                 "reserved_rows": 4,
@@ -328,9 +389,24 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
         run_json(&database_url, ["workflow", "status", &workflow_id])["attempt_count"],
         1
     );
+    let interrupted_workflows = run_json(&database_url, ["recovery", "list"]);
+    assert!(
+        interrupted_workflows
+            .as_array()
+            .expect("recovery records")
+            .iter()
+            .any(|record| {
+                record["workflow_kind"] == "encoder_workflow"
+                    && record["workflow_id"] == workflow_id
+            })
+    );
     assert_eq!(
         run_json(&database_url, ["workflow", "cancel", &workflow_id])["cancel_requested"],
         true
+    );
+    run_json(
+        &database_url,
+        ["recovery", "dismiss", "encoder-workflow", &workflow_id],
     );
     let automatic_workflow = run_json(
         &database_url,
@@ -421,6 +497,87 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
     ] {
         assert!(completed_artifact_kinds.contains(&kind.to_owned()));
     }
+    let finalized_workflow = run_json(
+        &database_url,
+        ["workflow", "finalize", &automatic_workflow_id],
+    );
+    assert_eq!(
+        finalized_workflow["run"]["current_stage"],
+        "sealed_evaluation"
+    );
+    assert_eq!(finalized_workflow["latest_attempt"]["state"], "completed");
+    let promoted_workflow = run_json(
+        &database_url,
+        ["workflow", "promote", &automatic_workflow_id],
+    );
+    assert_eq!(promoted_workflow["run"]["state"], "completed");
+    let promotion_link = promoted_workflow["attempts"]
+        .as_array()
+        .expect("promotion attempts")
+        .iter()
+        .flat_map(|attempt| {
+            attempt["artifacts"]
+                .as_array()
+                .expect("promotion artifacts")
+        })
+        .find(|artifact| artifact["kind"] == "model_promotion")
+        .expect("model promotion link");
+    let promotion_id = string_at(promotion_link, "/artifact_id");
+    assert_eq!(
+        run_json(&database_url, ["workflow", "promotion-show", &promotion_id],)["state"],
+        "promoted"
+    );
+    let promotion_trace = run_json(
+        &database_url,
+        ["provenance", "model-promotion", &promotion_id],
+    );
+    let promotion_trace_text = serde_json::to_string(&promotion_trace).expect("promotion trace");
+    for kind in [
+        "model_promotion",
+        "checkpoint",
+        "snapshot",
+        "acceptance_assessment",
+        "evaluation_run",
+    ] {
+        assert!(promotion_trace_text.contains(kind));
+    }
+    let workflow_trace = run_json(
+        &database_url,
+        ["provenance", "workflow-run", &automatic_workflow_id],
+    );
+    assert_eq!(workflow_trace["kind"], "workflow_run");
+    let development_exposures =
+        run_json(&database_url, ["exposure", "list", &development_cohort_id]);
+    let development_purposes = development_exposures
+        .as_array()
+        .expect("development exposures")
+        .iter()
+        .map(|value| string_at(value, "/purpose"))
+        .collect::<std::collections::BTreeSet<_>>();
+    for purpose in [
+        "development_evaluation",
+        "diagnosis",
+        "advisor",
+        "optimization",
+        "comparison",
+    ] {
+        assert!(development_purposes.contains(purpose));
+    }
+    let sealed_exposures = run_json(&database_url, ["exposure", "list", &sealed_cohort_id]);
+    assert_eq!(
+        sealed_exposures.as_array().expect("sealed exposures").len(),
+        1
+    );
+    assert_eq!(sealed_exposures[0]["purpose"], "acceptance");
+    assert_eq!(sealed_exposures[0]["disclosure"], "aggregate");
+    assert_eq!(sealed_exposures[0]["adaptation_eligible"], false);
+    assert!(
+        promoted_workflow["evidence_risk"]
+            .as_array()
+            .expect("workflow evidence risk")
+            .iter()
+            .any(|value| value["cohort_id"] == sealed_cohort_id)
+    );
     let preauthorized_definition_path = directory.path().join("preauthorized-workflow.json");
     std::fs::write(
         &preauthorized_definition_path,

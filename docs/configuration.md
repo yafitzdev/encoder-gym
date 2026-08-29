@@ -53,6 +53,21 @@ embedded in every decision-grade proposal. Optional training candidates use a
 separate finite, fingerprinted configuration space built by `optimize
 training-space`; arbitrary provider setting maps are not accepted.
 
+Governed workflow definitions are separate strict TOML/JSON documents. At
+`workflow define`, the platform resolves and fingerprints the project
+configuration, development and optional sealed suites, analysis protocol,
+optimization protocol, optional advisor policy, fresh-iteration training
+policy, governance mode, and finite budgets. Editing project TOML or suite
+defaults later cannot change an existing workflow definition or run.
+Start with `examples/workflow.toml` and replace its persisted identity and
+fingerprint placeholders after creating the project and benchmark suites.
+
+The optional OpenAI-compatible advisor stores only its endpoint, model,
+versioned prompt policy, parameters, egress policy, and `api_key_env` name.
+`aggregate_only` is the default-safe evidence boundary. Raw development text
+requires the explicit `development_text` policy; sealed text is rejected under
+every policy.
+
 ## Secrets
 
 TOML accepts an environment-variable name such as

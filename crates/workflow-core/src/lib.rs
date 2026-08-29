@@ -7,5 +7,6 @@ pub mod benchmark;
 pub mod contamination;
 pub mod governance;
 pub mod ports;
+pub mod promotion;
 pub mod stop;
 pub mod workflow;

@@ -90,15 +90,36 @@ the existing artifact.
 
 Finite-workflow commands are:
 
-- `synth workflow define --definition workflow.toml` to persist resolved slice
+- `synth workflow define --definition workflow.toml` (start from
+  `examples/workflow.toml`) to persist resolved slice
   references, initial allocation, governance mode, finite budgets, and stop
   policy as one immutable fingerprinted definition;
-- `synth workflow start <DEFINITION_ID>` to create a run and its first owned
-  stage attempt;
-- `synth workflow status|history|list` to derive current state and complete
-  attempt history from SQLite; and
-- `synth workflow cancel <RUN_ID>` to persist a cancellation request observed
-  at bounded stage boundaries.
+- `synth workflow start <DEFINITION_ID>` to create and drive the authorized
+  initial pipeline until development completion, an approval pause, a bounded
+  stop, or a failure;
+- `synth workflow status <RUN_ID>` to show the persisted run, usage, complete
+  attempt chain, linked generation jobs, and per-cell coverage;
+- `synth workflow watch <RUN_ID>` to wait until a concurrently running workflow
+  pauses or stops, while `history|list` remain scriptable snapshots;
+- `synth workflow approve <RUN_ID> --recommendation-id <ID>` to persist an
+  exact compatible review decision and continue a review-each-iteration run;
+- `synth workflow resume <RUN_ID>` to resume an interrupted running stage or
+  start the next bounded retry after a retryable failure;
+- `synth workflow cancel <RUN_ID>` to persist cancellation and forward it to an
+  active generation job for observation between batches;
+- `synth workflow finalize <RUN_ID>` to explicitly run only the configured
+  sealed aggregate-only suite after development has stopped; and
+- `synth workflow promote <RUN_ID>` plus `promotion-show <ID>` to persist and
+  inspect the immutable promote/reject record.
+
+The workflow definition resolves analysis and optimization protocols, optional
+advisor configuration, `training_iteration_policy = "fresh"`, exact suite and
+project fingerprints, and all budgets before the run starts. Advisor secrets
+are environment-variable names only. `review_each_iteration` always pauses;
+`preauthorized_bounded` records each envelope decision and rejects actions that
+exceed its backend, model, configuration, row, request, token, or iteration
+limits. Development acceptance is not final acceptance: only `finalize` may
+touch the sealed suite, and sealed results never feed analysis or optimization.
 
 Stage attempts form a fingerprint-linked append-only chain. Run updates use the
 expected latest attempt as an optimistic concurrency guard. Illegal stage

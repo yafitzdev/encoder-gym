@@ -1,9 +1,10 @@
 # Crash recovery
 
-Generation, training, and evaluation are foreground local workflows. Before a
-runner starts, the CLI persists an execution lease with its PID and OS process
-start time. On every CLI startup, SQLite reconciles `running` records with live
-processes. This avoids both timeout guessing and PID-reuse errors.
+Generation, training, evaluation, and the governed encoder workflow are
+foreground local workflows. Before a runner starts, the CLI persists an
+execution lease with its PID and OS process start time. On every CLI startup,
+SQLite reconciles `running` records with live processes. This avoids both
+timeout guessing and PID-reuse errors.
 
 ```text
 synth recovery scan
@@ -13,6 +14,21 @@ synth recovery list --all
 
 When the owning process is gone, the run is marked failed with an explicit
 interruption message and a pending recovery record is created.
+
+An interrupted encoder workflow keeps its current fingerprint-linked running
+stage attempt and is moved to `awaiting_user`. Continue it with:
+
+```text
+synth workflow resume <WORKFLOW_RUN_ID>
+```
+
+Resume acquires the same single-process lease, discovers completed slice
+artifacts by immutable identity, and links them rather than repeating work. A
+retryable failed stage creates a new attempt of the same stage up to
+`maximum_stage_attempts`; a completed attempt is never replayed. Successful
+resume marks the pending `encoder_workflow` recovery record `resumed`. Use
+`synth recovery dismiss encoder-workflow <RUN_ID>` only when intentionally
+abandoning recovery.
 
 Generation is resumable in place:
 

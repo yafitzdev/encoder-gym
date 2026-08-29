@@ -98,8 +98,10 @@ test for import, generation, snapshotting, training, evaluation, analysis,
 paired comparison, normalized findings, evidence export, append-only review,
 proposal/application, provenance, export, pagination, and diagnostics.
 It also covers the decision-grade optimization protocol, explicit approval,
-idempotent plan application, scenario persistence, campaign lineage, and the
-final optimization doctor audit.
+idempotent plan application, scenario persistence, campaign lineage, exact
+workflow allocation, fake advising, V1/V2 iteration, paired stopping, explicit
+sealed assessment, immutable promotion, recovery, workflow provenance, and the
+final doctor audit.
 `apps/generation-cli/tests/transformer_cli_e2e.rs` independently exercises
 registration, verification, bounded CPU training, checkpoint prediction,
 explicit continuation, evaluation, provenance, and doctor with the tiny local
