@@ -9,6 +9,7 @@ mod encoder;
 mod evaluation;
 mod export;
 mod generation;
+mod governance;
 mod ingestion;
 mod inspect;
 mod optimization;
@@ -29,6 +30,8 @@ pub async fn execute(command: Command, store: SqliteStore) -> anyhow::Result<()>
         Command::Optimize { command } => optimization::execute(command, &store).await,
         Command::Campaign { command } => campaign::execute(command, &store).await,
         Command::Allocation { command } => allocation::execute(command, &store).await,
+        Command::Cohort { command } => governance::cohort(command, &store).await,
+        Command::Exposure { command } => governance::exposure(command, &store).await,
         Command::Dataset { command } => dataset::execute(command, &store).await,
         Command::Snapshot { command } => snapshot::execute(command, &store).await,
         Command::Encoder { command } => encoder::execute(command, &store).await,

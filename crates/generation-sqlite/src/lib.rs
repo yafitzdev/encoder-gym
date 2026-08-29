@@ -2,6 +2,7 @@
 
 mod analysis;
 mod evaluation;
+mod governance;
 mod imports;
 mod optimization;
 mod project;

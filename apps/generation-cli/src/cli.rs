@@ -95,6 +95,16 @@ pub enum Command {
         #[command(subcommand)]
         command: AllocationCommand,
     },
+    /// Define immutable evaluation cohorts and append-only role decisions.
+    Cohort {
+        #[command(subcommand)]
+        command: CohortCommand,
+    },
+    /// Record and inspect scientific evidence disclosures.
+    Exposure {
+        #[command(subcommand)]
+        command: ExposureCommand,
+    },
     /// Configure non-secret generation backend settings.
     Backend {
         #[command(subcommand)]
@@ -1043,6 +1053,112 @@ pub enum InitialAllocationPolicyArg {
     Weighted,
     MinimumThenWeighted,
     Explicit,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CohortCommand {
+    Create {
+        snapshot_id: Uuid,
+        #[arg(long)]
+        name: String,
+        #[arg(long, value_enum)]
+        split: SnapshotSplitArg,
+        #[arg(long, value_enum, default_value_t = CohortOriginArg::InternalSnapshot)]
+        origin: CohortOriginArg,
+        #[arg(long, value_enum)]
+        role: CohortRoleArg,
+        #[arg(long)]
+        reason: String,
+    },
+    List {
+        #[arg(long)]
+        snapshot_id: Option<Uuid>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    Show {
+        id: Uuid,
+    },
+    Assign {
+        id: Uuid,
+        #[arg(long, value_enum)]
+        role: CohortRoleArg,
+        #[arg(long)]
+        reason: String,
+    },
+    Retire {
+        id: Uuid,
+        #[arg(long)]
+        reason: String,
+    },
+    History {
+        id: Uuid,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CohortOriginArg {
+    InternalSnapshot,
+    ExternalBenchmark,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CohortRoleArg {
+    Training,
+    Development,
+    Diagnostic,
+    SealedAcceptance,
+    ExternalBenchmark,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ExposureCommand {
+    Record {
+        cohort_id: Uuid,
+        #[arg(long)]
+        evaluation_run_id: Option<Uuid>,
+        #[arg(long, value_enum)]
+        purpose: ExposurePurposeArg,
+        #[arg(long, value_enum, default_value_t = DisclosureLevelArg::Aggregate)]
+        disclosure: DisclosureLevelArg,
+        #[arg(long)]
+        adaptation_eligible: bool,
+        #[arg(long)]
+        note: Option<String>,
+        /// Required to atomically retire a sealed cohort after row-level disclosure.
+        #[arg(long)]
+        retirement_reason: Option<String>,
+    },
+    List {
+        cohort_id: Uuid,
+        #[arg(long, value_enum)]
+        purpose: Option<ExposurePurposeArg>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    Risk {
+        cohort_id: Uuid,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ExposurePurposeArg {
+    Training,
+    DevelopmentEvaluation,
+    Diagnosis,
+    Comparison,
+    Acceptance,
+    ManualInspection,
+    Advisor,
+    Optimization,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum DisclosureLevelArg {
+    Aggregate,
+    Slices,
+    Predictions,
+    RowContent,
 }
 
 #[derive(Debug, Subcommand)]

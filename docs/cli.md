@@ -36,6 +36,24 @@ Exact initial-budget allocation commands are:
 Preview accounts for persisted accepted coverage but writes nothing. Infeasible
 constraints return structured issues and cannot create a generation plan.
 
+Evaluation-governance commands are:
+
+- `synth cohort create <SNAPSHOT_ID> --name NAME --split test --role
+  sealed-acceptance --reason REASON` to bind an immutable snapshot split to its
+  initial role;
+- `synth cohort list|show|history`, `cohort assign`, and `cohort retire` to
+  inspect or append explicit role decisions;
+- `synth exposure record <COHORT_ID> --purpose acceptance --disclosure
+  aggregate` to append a disclosure fact;
+- `synth exposure list|risk` to inspect the exposure ledger and its derived
+  adaptive-overfitting risk; and
+- `--retirement-reason` to atomically retire a sealed cohort when row-level
+  manual inspection discloses it.
+
+Sealed cohorts reject training, diagnosis, advisor, optimization, and other
+adaptation-eligible exposure. They can be used for acceptance or manual
+inspection only. Role decisions and exposure facts are append-only.
+
 Error-analysis commands are:
 
 - `synth analysis create <RUN_ID>` with support, ranking, confidence,

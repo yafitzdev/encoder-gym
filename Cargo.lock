@@ -4120,6 +4120,7 @@ version = "0.1.0"
 dependencies = [
  "artifact-core",
  "chrono",
+ "dataset-core",
  "serde",
  "synthetic-data-core",
  "thiserror 2.0.20",

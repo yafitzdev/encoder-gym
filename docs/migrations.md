@@ -52,6 +52,9 @@ applied automatically when the SQLite store connects.
 - `0026_initial_allocations`: immutable exact initial-budget allocation artifacts,
   normalized totals/fingerprints, and a unique atomic link to the ordinary
   generation plan produced from their complete absolute cell targets.
+- `0027_cohort_governance`: immutable evaluation cohorts, append-only role
+  transitions, and append-only evidence exposures with normalized policy fields
+  and reproducible fingerprints.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild
