@@ -1,0 +1,58 @@
+version = 1
+
+[dataset]
+name = "support-intents"
+task = "Classify a customer support message by its primary intent."
+labels = ["billing", "fraud", "account", "technical"]
+
+[[dataset.dimensions]]
+name = "difficulty"
+values = ["easy", "medium", "hard"]
+
+[[dataset.dimensions]]
+name = "writing_style"
+values = ["clean", "messy"]
+
+[[dataset.dimensions]]
+name = "ambiguity"
+values = ["obvious", "ambiguous"]
+
+[generation]
+target_per_cell = 10
+batch_size = 20
+max_retries = 3
+max_attempt_multiplier = 3
+backend = "fake"
+model = "deterministic-v1"
+temperature = 0.4
+max_tokens = 1200
+seed = 42
+api_key_env = "SYNTH_OPENAI_API_KEY"
+
+[snapshot]
+name = "baseline-v1"
+description = "First reproducible local baseline"
+train_ratio = 0.8
+validation_ratio = 0.1
+test_ratio = 0.1
+seed = 42
+
+[training]
+backend = "hashing-linear"
+feature_dimension = 2048
+epochs = 12
+learning_rate = 0.08
+l2 = 0.0001
+checkpoint_every = 3
+seed = 42
+artifact_root = "artifacts/training"
+
+[evaluation]
+split = "test"
+batch_size = 32
+top_k = [1]
+calibration_bins = 10
+minimum_slice_support = 1
+bootstrap_samples = 1000
+statistical_seed = 42
+confidence_level = 0.95

@@ -1,0 +1,72 @@
+[workspace]
+members = [
+    "apps/generation-cli",
+    "apps/generation-server",
+    "crates/analysis-core",
+    "crates/artifact-core",
+    "crates/dataset-core",
+    "crates/dataset-import",
+    "crates/evaluation-core",
+    "crates/generation-core",
+    "crates/generation-fake",
+    "crates/generation-openai-compatible",
+    "crates/optimization-core",
+    "crates/project-config",
+    "crates/recovery-core",
+    "crates/generation-sqlite",
+    "crates/generation-test-support",
+    "crates/training-core",
+    "crates/training-linear",
+    "crates/training-transformer",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[workspace.dependencies]
+anyhow = "1"
+candle-core = { version = "0.11", default-features = false }
+candle-nn = { version = "0.11", default-features = false }
+candle-transformers = { version = "0.11", default-features = false }
+sha2 = "0.10"
+axum = { version = "0.8", features = ["http1", "json", "tokio"] }
+clap = { version = "4.5", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+csv = "1"
+dotenvy = "0.15"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+safetensors = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = ["chrono", "json", "macros", "migrate", "runtime-tokio", "sqlite", "uuid"] }
+sysinfo = "0.35"
+tempfile = "3"
+thiserror = "2"
+toml = "0.9"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
+tower = { version = "0.5", features = ["util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+
+generation-core = { package = "synthetic-data-core", path = "crates/generation-core" }
+generation-fake = { package = "synthetic-data-fake", path = "crates/generation-fake" }
+dataset-core = { package = "dataset-core", path = "crates/dataset-core" }
+dataset-import = { package = "dataset-import", path = "crates/dataset-import" }
+training-core = { package = "training-core", path = "crates/training-core" }
+evaluation-core = { package = "evaluation-core", path = "crates/evaluation-core" }
+analysis-core = { package = "analysis-core", path = "crates/analysis-core" }
+artifact-core = { package = "artifact-core", path = "crates/artifact-core" }
+optimization-core = { package = "optimization-core", path = "crates/optimization-core" }
+project-config = { package = "project-config", path = "crates/project-config" }
+recovery-core = { package = "recovery-core", path = "crates/recovery-core" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

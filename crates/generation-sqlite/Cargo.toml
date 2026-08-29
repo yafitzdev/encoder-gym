@@ -1,0 +1,33 @@
+[package]
+name = "synthetic-data-sqlite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+chrono.workspace = true
+analysis-core.workspace = true
+artifact-core.workspace = true
+dataset-core.workspace = true
+evaluation-core.workspace = true
+generation-core.workspace = true
+optimization-core.workspace = true
+project-config.workspace = true
+recovery-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+sysinfo.workspace = true
+training-core.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+dataset-import.workspace = true
+generation-test-support = { package = "synthetic-data-test-support", path = "../generation-test-support" }
+tempfile.workspace = true
+tokio.workspace = true
+training-linear = { path = "../training-linear" }
+
+[lints]
+workspace = true

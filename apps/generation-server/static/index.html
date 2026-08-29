@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Synthetic Data Generation</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Synthetic Data Generation</h1>
+        <p>Slice 1 developer control surface</p>
+      </header>
+
+      <section aria-labelledby="dataset-heading">
+        <h2 id="dataset-heading">Dataset configuration</h2>
+        <form id="dataset-form">
+          <label>Name <input name="name" required></label>
+          <label>Task description <textarea name="task_description" required></textarea></label>
+          <label>Labels, one per line <textarea name="labels" required></textarea></label>
+          <fieldset>
+            <legend>Dimensions</legend>
+            <div id="dimension-editor"></div>
+            <button type="button" id="add-dimension">Add dimension</button>
+          </fieldset>
+          <button type="submit">Create dataset</button>
+        </form>
+        <div class="inline-control">
+          <label>Existing dataset <select id="dataset-select"></select></label>
+          <button type="button" id="load-dataset">Load</button>
+        </div>
+        <p id="dataset-status" role="status"></p>
+      </section>
+
+      <section aria-labelledby="plan-heading">
+        <h2 id="plan-heading">Generation cells and targets</h2>
+        <div class="inline-control">
+          <label>Default target <input id="default-target" type="number" min="0" value="10"></label>
+          <button type="button" id="apply-default-target">Apply to all</button>
+          <button type="button" id="save-plan">Save plan</button>
+        </div>
+        <p id="plan-summary">Create or load a dataset to see its cells.</p>
+        <div class="table-wrap"><table id="plan-table"></table></div>
+      </section>
+
+      <section aria-labelledby="backend-heading">
+        <h2 id="backend-heading">Generation backend</h2>
+        <form id="backend-form">
+          <label>Base URL <input name="base_url" value="https://api.openai.com/v1" required></label>
+          <label>Model <input name="model" required></label>
+          <label>API key (memory only) <input name="api_key" type="password" autocomplete="off"></label>
+          <label>Temperature <input name="temperature" type="number" min="0" step="0.1"></label>
+          <label>Max tokens <input name="max_tokens" type="number" min="1"></label>
+          <label>Seed <input name="seed" type="number" min="0"></label>
+          <button type="submit">Save backend configuration</button>
+        </form>
+        <p id="backend-status" role="status"></p>
+      </section>
+
+      <section aria-labelledby="generation-heading">
+        <h2 id="generation-heading">Generation controls</h2>
+        <div id="generation-controls">
+          <label>Backend
+            <select id="generation-backend">
+              <option value="fake">Fake (deterministic)</option>
+              <option value="openai-compatible">OpenAI-compatible</option>
+            </select>
+          </label>
+          <label>Batch size <input id="batch-size" type="number" min="1" value="20"></label>
+          <button type="button" id="start-generation">Start</button>
+          <button type="button" id="stop-generation" disabled>Stop</button>
+        </div>
+        <div id="generation-progress"></div>
+      </section>
+
+      <section aria-labelledby="coverage-heading">
+        <h2 id="coverage-heading">Coverage</h2>
+        <div class="table-wrap"><table id="coverage-table"></table></div>
+      </section>
+
+      <section aria-labelledby="rows-heading">
+        <h2 id="rows-heading">Generated rows</h2>
+        <div class="inline-control">
+          <label>Status
+            <select id="row-status-filter">
+              <option value="">All</option>
+              <option value="accepted">Accepted</option>
+              <option value="rejected">Rejected</option>
+            </select>
+          </label>
+          <button type="button" id="refresh-rows">Refresh</button>
+          <button type="button" id="export-jsonl">Export JSONL</button>
+          <button type="button" id="export-csv">Export CSV</button>
+        </div>
+        <div class="table-wrap"><table id="rows-table"></table></div>
+      </section>
+
+      <p id="global-error" class="error" role="alert"></p>
+    </main>
+    <script type="module" src="/assets/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,678 @@
+use std::collections::BTreeSet;
+
+use analysis_core::ports::AnalysisStore;
+use artifact_core::{
+    ArtifactKind, BoxFuture, ProvenanceNode, ProvenanceStore, ProvenanceStoreError,
+};
+use dataset_core::{
+    domain::SourceProvenance,
+    ports::{ImportStore, SnapshotStore},
+};
+use evaluation_core::ports::EvaluationStore;
+use generation_core::ports::{DatasetStore, JobStore, PlanStore};
+use optimization_core::{
+    campaigns::{CampaignArtifactKind, CampaignArtifactLink, CampaignOutcomeAssessment},
+    ports::OptimizationStore,
+    reviews::ProposalReviewRecord,
+};
+use serde::Serialize;
+use serde_json::json;
+use sqlx::FromRow;
+use training_core::ports::{EncoderRegistry, TrainingStore};
+use uuid::Uuid;
+
+use super::SqliteStore;
+
+impl ProvenanceStore for SqliteStore {
+    fn trace_provenance(
+        &self,
+        kind: ArtifactKind,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<ProvenanceNode>, ProvenanceStoreError>> {
+        Box::pin(async move {
+            match kind {
+                ArtifactKind::ProjectConfiguration => self.configuration_node(id).await,
+                ArtifactKind::Dataset => self.dataset_node(id).await,
+                ArtifactKind::GenerationPlan => self.plan_node(id).await,
+                ArtifactKind::GenerationJob => self.job_node(id).await,
+                ArtifactKind::DatasetImport => self.import_node(id).await,
+                ArtifactKind::Snapshot => self.snapshot_node(id).await,
+                ArtifactKind::BaseModel => self.encoder_node(id).await,
+                ArtifactKind::TrainingRun => self.training_node(id).await,
+                ArtifactKind::Checkpoint => self.checkpoint_node(id).await,
+                ArtifactKind::EvaluationRun => self.evaluation_node(id).await,
+                ArtifactKind::EvaluationComparison => self.comparison_node(id).await,
+                ArtifactKind::ModelSelection => self.selection_node(id).await,
+                ArtifactKind::AnalysisReport => self.analysis_node(id).await,
+                ArtifactKind::AnalysisFindingReview => self.analysis_review_node(id).await,
+                ArtifactKind::OptimizationProposal => self.optimization_node(id).await,
+                ArtifactKind::OptimizationProposalReview => self.optimization_review_node(id).await,
+                ArtifactKind::OptimizationCampaign => self.campaign_node(id).await,
+                ArtifactKind::OptimizationCampaignLink => self.campaign_link_node(id).await,
+                ArtifactKind::OptimizationOutcome => self.optimization_outcome_node(id).await,
+            }
+        })
+    }
+}
+
+impl SqliteStore {
+    async fn optimization_review_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(payload) = sqlx::query_scalar::<_, String>(
+            "SELECT review_json FROM optimization_proposal_reviews WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let review: ProposalReviewRecord = serde_json::from_str(&payload).map_err(store_error)?;
+        let mut parents = self
+            .optimization_node(review.proposal_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(superseding_id) = review.superseding_proposal_id {
+            if let Some(proposal) = self.optimization_node(superseding_id).await? {
+                parents.push(proposal);
+            }
+        }
+        Ok(Some(node(
+            ArtifactKind::OptimizationProposalReview,
+            id,
+            Some(review.fingerprint.clone()),
+            &review,
+            parents,
+        )?))
+    }
+
+    async fn campaign_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(campaign) = self.get_campaign(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let mut parents = self
+            .optimization_node(campaign.proposal_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(review) = self
+            .optimization_review_node(campaign.approval_review_id)
+            .await?
+        {
+            parents.push(review);
+        }
+        Ok(Some(node(
+            ArtifactKind::OptimizationCampaign,
+            id,
+            Some(campaign.fingerprint.clone()),
+            &campaign,
+            parents,
+        )?))
+    }
+
+    async fn campaign_link_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(payload) = sqlx::query_scalar::<_, String>(
+            "SELECT link_json FROM optimization_campaign_links WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let link: CampaignArtifactLink = serde_json::from_str(&payload).map_err(store_error)?;
+        let mut parents = self
+            .campaign_node(link.campaign_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        let artifact = match link.artifact_kind {
+            CampaignArtifactKind::GenerationPlan => self.plan_node(link.artifact_id).await?,
+            CampaignArtifactKind::GenerationJob => self.job_node(link.artifact_id).await?,
+            CampaignArtifactKind::DatasetSnapshot => self.snapshot_node(link.artifact_id).await?,
+            CampaignArtifactKind::TrainingRun => self.training_node(link.artifact_id).await?,
+            CampaignArtifactKind::TrainingCheckpoint => {
+                self.checkpoint_node(link.artifact_id).await?
+            }
+            CampaignArtifactKind::CandidateEvaluation => {
+                self.evaluation_node(link.artifact_id).await?
+            }
+            CampaignArtifactKind::EvaluationComparison => {
+                self.comparison_node(link.artifact_id).await?
+            }
+            CampaignArtifactKind::FollowUpAnalysis => self.analysis_node(link.artifact_id).await?,
+        };
+        if let Some(artifact) = artifact {
+            parents.push(artifact);
+        }
+        Ok(Some(node(
+            ArtifactKind::OptimizationCampaignLink,
+            id,
+            Some(link.fingerprint.clone()),
+            &link,
+            parents,
+        )?))
+    }
+
+    async fn optimization_outcome_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(payload) = sqlx::query_scalar::<_, String>(
+            "SELECT outcome_json FROM optimization_campaign_outcomes WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let outcome: CampaignOutcomeAssessment =
+            serde_json::from_str(&payload).map_err(store_error)?;
+        let mut parents = self
+            .campaign_node(outcome.campaign_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(comparison) = self.comparison_node(outcome.comparison_id).await? {
+            parents.push(comparison);
+        }
+        Ok(Some(node(
+            ArtifactKind::OptimizationOutcome,
+            id,
+            Some(outcome.fingerprint.clone()),
+            &outcome,
+            parents,
+        )?))
+    }
+
+    async fn analysis_review_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(review) = sqlx::query_as::<_, AnalysisReviewProvenanceRecord>(
+            "SELECT analysis_report_id, finding_key, state, note, \
+             resolution_evaluation_run_id, resolution_comparison_id, created_at \
+             FROM analysis_finding_reviews WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let mut parents = self
+            .analysis_node(review.analysis_report_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(run_id) = review.resolution_evaluation_run_id {
+            if let Some(run) = self.evaluation_node(run_id).await? {
+                parents.push(run);
+            }
+        }
+        if let Some(comparison_id) = review.resolution_comparison_id {
+            if let Some(comparison) = self.comparison_node(comparison_id).await? {
+                parents.push(comparison);
+            }
+        }
+        Ok(Some(node(
+            ArtifactKind::AnalysisFindingReview,
+            id,
+            None,
+            &review,
+            parents,
+        )?))
+    }
+
+    async fn comparison_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(report) = self.get_comparison(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let mut parents = Vec::new();
+        if let Some(node) = self.evaluation_node(report.left_run_id).await? {
+            parents.push(node);
+        }
+        if let Some(node) = self.evaluation_node(report.right_run_id).await? {
+            parents.push(node);
+        }
+        Ok(Some(node(
+            ArtifactKind::EvaluationComparison,
+            id,
+            Some(report.fingerprint.clone()),
+            &report,
+            parents,
+        )?))
+    }
+
+    async fn selection_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(report) = self.get_selection(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let mut parents = Vec::new();
+        for run_id in &report.candidate_run_ids {
+            if let Some(node) = self.evaluation_node(*run_id).await? {
+                parents.push(node);
+            }
+        }
+        Ok(Some(node(
+            ArtifactKind::ModelSelection,
+            id,
+            Some(report.fingerprint.clone()),
+            &report,
+            parents,
+        )?))
+    }
+    async fn encoder_node(&self, id: Uuid) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(encoder) = self.get_encoder(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        Ok(Some(node(
+            ArtifactKind::BaseModel,
+            id,
+            Some(encoder.fingerprint.clone()),
+            &encoder,
+            vec![],
+        )?))
+    }
+
+    async fn configuration_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let record = sqlx::query_as::<_, ConfigurationRecord>(
+            "SELECT id, fingerprint, dataset_id, generation_plan_id, resolved_toml_json \
+             FROM project_configurations WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(store_error)?;
+        record.map(ConfigurationRecord::into_node).transpose()
+    }
+
+    async fn configuration_for_dataset(
+        &self,
+        dataset_id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let record = sqlx::query_as::<_, ConfigurationRecord>(
+            "SELECT id, fingerprint, dataset_id, generation_plan_id, resolved_toml_json \
+             FROM project_configurations WHERE dataset_id = ?",
+        )
+        .bind(dataset_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(store_error)?;
+        record.map(ConfigurationRecord::into_node).transpose()
+    }
+
+    async fn dataset_node(&self, id: Uuid) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(dataset) = self.get_dataset(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let parents = self
+            .configuration_for_dataset(id)
+            .await?
+            .into_iter()
+            .collect();
+        Ok(Some(node(
+            ArtifactKind::Dataset,
+            id,
+            None,
+            &dataset,
+            parents,
+        )?))
+    }
+
+    async fn plan_node(&self, id: Uuid) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(plan) = self.get_plan(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let configured = sqlx::query_as::<_, ConfigurationRecord>(
+            "SELECT id, fingerprint, dataset_id, generation_plan_id, resolved_toml_json \
+             FROM project_configurations WHERE generation_plan_id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(store_error)?
+        .map(ConfigurationRecord::into_node)
+        .transpose()?;
+        let mut parents = configured.into_iter().collect::<Vec<_>>();
+        if parents.is_empty() {
+            if let Some(proposal) = sqlx::query_as::<_, ShallowProposalRecord>(
+                "SELECT p.id, p.fingerprint, p.analysis_report_id, p.dataset_id \
+                 FROM optimization_proposals p \
+                 JOIN optimization_proposal_applications a ON a.proposal_id = p.id \
+                 WHERE a.generation_plan_id = ?",
+            )
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(store_error)?
+            {
+                parents.push(proposal.into_node());
+            }
+        }
+        Ok(Some(node(
+            ArtifactKind::GenerationPlan,
+            id,
+            None,
+            &plan,
+            parents,
+        )?))
+    }
+
+    async fn job_node(&self, id: Uuid) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(job) = self.get_job(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let parents = self.plan_node(job.plan_id).await?.into_iter().collect();
+        Ok(Some(node(
+            ArtifactKind::GenerationJob,
+            id,
+            None,
+            &job,
+            parents,
+        )?))
+    }
+
+    async fn import_node(&self, id: Uuid) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(dataset_import) = self.get_import(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        Ok(Some(node(
+            ArtifactKind::DatasetImport,
+            id,
+            None,
+            &dataset_import,
+            vec![],
+        )?))
+    }
+
+    async fn snapshot_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(snapshot) = self.get_snapshot(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let members = self.list_snapshot_members(id).await.map_err(store_error)?;
+        let mut parents = self
+            .dataset_node(snapshot.source_dataset_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        let mut generated = BTreeSet::new();
+        let mut imported = BTreeSet::new();
+        for member in &members {
+            match member.source_provenance {
+                SourceProvenance::Generated {
+                    generation_job_id, ..
+                } => {
+                    generated.insert(generation_job_id);
+                }
+                SourceProvenance::Imported { import_id, .. } => {
+                    imported.insert(import_id);
+                }
+            }
+        }
+        for job_id in generated {
+            if let Some(parent) = self.job_node(job_id).await? {
+                parents.push(parent);
+            }
+        }
+        for import_id in imported {
+            if let Some(parent) = self.import_node(import_id).await? {
+                parents.push(parent);
+            }
+        }
+        Ok(Some(node(
+            ArtifactKind::Snapshot,
+            id,
+            Some(snapshot.fingerprint.clone()),
+            &json!({
+                "snapshot": snapshot,
+                "source_row_ids": members.iter().map(|member| member.source_row_id).collect::<Vec<_>>(),
+            }),
+            parents,
+        )?))
+    }
+
+    async fn training_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(run) = self.get_training_run(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let mut parents = self
+            .snapshot_node(run.snapshot_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(base_model_id) = run.base_model_id {
+            if let Some(base_model) = self.encoder_node(base_model_id).await? {
+                parents.push(base_model);
+            }
+        }
+        if let Some(parent_checkpoint_id) = run.parent_checkpoint_id {
+            if let Some(parent_checkpoint) =
+                Box::pin(self.checkpoint_node(parent_checkpoint_id)).await?
+            {
+                parents.push(parent_checkpoint);
+            }
+        }
+        Ok(Some(node(
+            ArtifactKind::TrainingRun,
+            id,
+            None,
+            &run,
+            parents,
+        )?))
+    }
+
+    async fn checkpoint_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(checkpoint) = self.get_checkpoint(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let parents = self
+            .training_node(checkpoint.run_id)
+            .await?
+            .into_iter()
+            .collect();
+        Ok(Some(node(
+            ArtifactKind::Checkpoint,
+            id,
+            Some(checkpoint.artifact_checksum.clone()),
+            &checkpoint,
+            parents,
+        )?))
+    }
+
+    async fn evaluation_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(run) = self.get_evaluation_run(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let mut parents = self
+            .checkpoint_node(run.checkpoint_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(snapshot) = self.snapshot_node(run.snapshot_id).await? {
+            parents.push(snapshot);
+        }
+        Ok(Some(node(
+            ArtifactKind::EvaluationRun,
+            id,
+            Some(run.input_fingerprint.clone()),
+            &run,
+            parents,
+        )?))
+    }
+
+    async fn analysis_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(report) = self.get_analysis_report(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let mut parents = self
+            .evaluation_node(report.evaluation_run_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(comparison_id) = report
+            .source_identity
+            .as_ref()
+            .and_then(|source| source.comparison_id)
+        {
+            if let Some(comparison) = self.comparison_node(comparison_id).await? {
+                parents.push(comparison);
+            }
+        }
+        Ok(Some(node(
+            ArtifactKind::AnalysisReport,
+            id,
+            Some(report.fingerprint.clone()),
+            &report,
+            parents,
+        )?))
+    }
+
+    async fn optimization_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(proposal) = self
+            .get_optimization_proposal(id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let mut parents = self
+            .analysis_node(proposal.analysis_report_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(dataset) = self.dataset_node(proposal.dataset_id).await? {
+            parents.push(dataset);
+        }
+        Ok(Some(node(
+            ArtifactKind::OptimizationProposal,
+            id,
+            Some(proposal.fingerprint.clone()),
+            &proposal,
+            parents,
+        )?))
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct ConfigurationRecord {
+    id: Uuid,
+    fingerprint: String,
+    dataset_id: Uuid,
+    generation_plan_id: Uuid,
+    resolved_toml_json: String,
+}
+
+#[derive(Debug, FromRow, Serialize)]
+struct AnalysisReviewProvenanceRecord {
+    analysis_report_id: Uuid,
+    finding_key: String,
+    state: String,
+    note: Option<String>,
+    resolution_evaluation_run_id: Option<Uuid>,
+    resolution_comparison_id: Option<Uuid>,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl ConfigurationRecord {
+    fn into_node(self) -> Result<ProvenanceNode, ProvenanceStoreError> {
+        let resolved: serde_json::Value =
+            serde_json::from_str(&self.resolved_toml_json).map_err(store_error)?;
+        Ok(ProvenanceNode {
+            kind: ArtifactKind::ProjectConfiguration,
+            id: self.id,
+            fingerprint: Some(self.fingerprint),
+            attributes: json!({
+                "dataset_id": self.dataset_id,
+                "generation_plan_id": self.generation_plan_id,
+                "resolved_configuration": resolved,
+            }),
+            parents: vec![],
+        })
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct ShallowProposalRecord {
+    id: Uuid,
+    fingerprint: Option<String>,
+    analysis_report_id: Uuid,
+    dataset_id: Uuid,
+}
+
+impl ShallowProposalRecord {
+    fn into_node(self) -> ProvenanceNode {
+        ProvenanceNode {
+            kind: ArtifactKind::OptimizationProposal,
+            id: self.id,
+            fingerprint: self.fingerprint,
+            attributes: json!({
+                "analysis_report_id": self.analysis_report_id,
+                "dataset_id": self.dataset_id,
+                "note": "shallow reference prevents a cyclic applied-plan trace",
+            }),
+            parents: vec![],
+        }
+    }
+}
+
+fn node(
+    kind: ArtifactKind,
+    id: Uuid,
+    fingerprint: Option<String>,
+    attributes: &impl Serialize,
+    parents: Vec<ProvenanceNode>,
+) -> Result<ProvenanceNode, ProvenanceStoreError> {
+    Ok(ProvenanceNode {
+        kind,
+        id,
+        fingerprint,
+        attributes: serde_json::to_value(attributes).map_err(store_error)?,
+        parents,
+    })
+}
+
+fn store_error(error: impl std::fmt::Display) -> ProvenanceStoreError {
+    ProvenanceStoreError(error.to_string())
+}

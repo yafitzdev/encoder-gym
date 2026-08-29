@@ -1,0 +1,866 @@
+use std::{path::Path, process::Command};
+
+use optimization_core::protocol::{
+    OptimizationProtocol, RecommendationKind, TrainingCandidateRequest,
+};
+use serde_json::Value;
+
+#[test]
+fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let database = directory.path().join("workflow.db");
+    let database_url = format!(
+        "sqlite://{}?mode=rwc",
+        database.to_string_lossy().replace('\\', "/")
+    );
+    let artifacts = directory.path().join("artifacts");
+    let config_path = directory.path().join("project.toml");
+    std::fs::write(&config_path, config(&artifacts)).expect("write config");
+    let csv_path = directory.path().join("ambiguous.csv");
+    std::fs::write(&csv_path, ambiguous_csv()).expect("write CSV");
+    let optimization_protocol_path = directory.path().join("optimization.json");
+    std::fs::write(
+        &optimization_protocol_path,
+        serde_json::to_vec_pretty(&OptimizationProtocol::legacy(2, 1))
+            .expect("serialize optimization protocol"),
+    )
+    .expect("write optimization protocol");
+
+    let doctor = run_json(
+        &database_url,
+        ["doctor", "--config", path(&config_path), "--check-backend"],
+    );
+    assert_eq!(doctor["healthy"], true);
+
+    let initialized = run_json(&database_url, ["config", "init", path(&config_path)]);
+    let dataset_id = string_at(&initialized, "/dataset/id");
+    let initial_plan_id = string_at(&initialized, "/generation_plan/id");
+
+    let imported = run_json(
+        &database_url,
+        [
+            "dataset",
+            "import",
+            &dataset_id,
+            "--input",
+            path(&csv_path),
+            "--format",
+            "csv",
+            "--batch-size",
+            "3",
+        ],
+    );
+    assert_eq!(imported["accepted_rows"], 12);
+    assert_eq!(imported["rejected_rows"], 0);
+
+    let generated = run_json(
+        &database_url,
+        [
+            "generate",
+            &initial_plan_id,
+            "--config",
+            path(&config_path),
+            "--batch-size",
+            "1",
+        ],
+    );
+    assert_eq!(generated["state"], "completed");
+    assert_eq!(generated["accepted_rows"], 2);
+
+    let snapshot_result = run_json(
+        &database_url,
+        [
+            "snapshot",
+            "create",
+            &dataset_id,
+            "--config",
+            path(&config_path),
+        ],
+    );
+    let snapshot_id = string_at(&snapshot_result, "/snapshot/id");
+    assert!(string_at(&snapshot_result, "/snapshot/fingerprint").starts_with("sha256:"));
+
+    let training = run_json(
+        &database_url,
+        [
+            "training",
+            "run",
+            &snapshot_id,
+            "--config",
+            path(&config_path),
+        ],
+    );
+    assert_eq!(training["run"]["state"], "completed");
+    let training_run_id = string_at(&training, "/run/id");
+    let checkpoint_id = training["checkpoints"]
+        .as_array()
+        .expect("checkpoint array")
+        .iter()
+        .find(|checkpoint| checkpoint["is_final"] == true)
+        .and_then(|checkpoint| checkpoint["id"].as_str())
+        .expect("final checkpoint")
+        .to_owned();
+    let training_choices_path = directory.path().join("training-choices.json");
+    let training_space_path = directory.path().join("training-space.json");
+    let mut candidate_configuration = training["run"]["configuration"].clone();
+    let baseline_epochs = candidate_configuration["epochs"]
+        .as_u64()
+        .expect("baseline epochs");
+    candidate_configuration["epochs"] = serde_json::json!(baseline_epochs + 1);
+    std::fs::write(
+        &training_choices_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "choices": [{
+                "configuration": candidate_configuration,
+                "transformer_configuration": null
+            }]
+        }))
+        .expect("serialize training choices"),
+    )
+    .expect("write training choices");
+    let training_space = run_json(
+        &database_url,
+        [
+            "optimize",
+            "training-space",
+            &training_run_id,
+            &checkpoint_id,
+            "--choices",
+            path(&training_choices_path),
+            "--file",
+            path(&training_space_path),
+        ],
+    );
+    assert_eq!(training_space["choices"], 1);
+    assert!(string_at(&training_space, "/fingerprint").starts_with("sha256:"));
+
+    let evaluation = run_json(
+        &database_url,
+        [
+            "evaluation",
+            "run",
+            &checkpoint_id,
+            "--config",
+            path(&config_path),
+        ],
+    );
+    assert_eq!(evaluation["run"]["state"], "completed");
+    let evaluation_id = string_at(&evaluation, "/run/id");
+    assert!(
+        evaluation["run"]["metrics"]["overall"]["accuracy"]
+            .as_f64()
+            .expect("accuracy")
+            < 1.0,
+        "ambiguous identical token features must retain at least one error"
+    );
+
+    let repeated_evaluation = run_json(
+        &database_url,
+        [
+            "evaluation",
+            "run",
+            &checkpoint_id,
+            "--config",
+            path(&config_path),
+        ],
+    );
+    let repeated_evaluation_id = string_at(&repeated_evaluation, "/run/id");
+    let comparison = run_json(
+        &database_url,
+        [
+            "evaluation",
+            "compare",
+            &evaluation_id,
+            &repeated_evaluation_id,
+        ],
+    );
+    let comparison_id = string_at(&comparison, "/id");
+
+    let analysis = run_json(
+        &database_url,
+        [
+            "analysis",
+            "create",
+            &evaluation_id,
+            "--minimum-support",
+            "1",
+            "--comparison-id",
+            &comparison_id,
+        ],
+    );
+    let analysis_id = string_at(&analysis, "/id");
+    assert!(analysis["error_count"].as_u64().expect("error count") > 0);
+    assert_eq!(
+        string_at(&analysis, "/comparison_diagnosis/comparison_id"),
+        comparison_id
+    );
+
+    let findings = run_json(
+        &database_url,
+        ["analysis", "findings", &analysis_id, "--limit", "10"],
+    );
+    let finding_key = findings
+        .as_array()
+        .and_then(|values| values.first())
+        .and_then(|finding| finding["key"].as_str())
+        .expect("ranked finding key")
+        .to_owned();
+    let finding = run_json(
+        &database_url,
+        ["analysis", "finding", &analysis_id, &finding_key],
+    );
+    assert_eq!(finding["rank"], 1);
+    let reviewed = run_json(
+        &database_url,
+        [
+            "analysis",
+            "review",
+            &analysis_id,
+            &finding_key,
+            "--state",
+            "candidate-for-more-data",
+            "--note",
+            "offline workflow review",
+        ],
+    );
+    assert_eq!(reviewed["state"], "candidate_for_more_data");
+    let review_id = string_at(&reviewed, "/id");
+    let review_trace = run_json(
+        &database_url,
+        ["provenance", "analysis-finding-review", &review_id],
+    );
+    let review_trace = serde_json::to_string(&review_trace).expect("review trace JSON");
+    for kind in [
+        "analysis_finding_review",
+        "analysis_report",
+        "evaluation_comparison",
+        "evaluation_run",
+    ] {
+        assert!(
+            review_trace.contains(kind),
+            "review trace is missing {kind}"
+        );
+    }
+    let weak_cells = run_json(
+        &database_url,
+        ["analysis", "weak-cells", &analysis_id, "--limit", "10"],
+    );
+    assert!(!weak_cells.as_array().expect("weak cells").is_empty());
+    let persistent = run_json(
+        &database_url,
+        ["analysis", "comparison-group", &analysis_id, "persistent"],
+    );
+    assert!(
+        !persistent
+            .as_array()
+            .expect("persistent comparison evidence")
+            .is_empty()
+    );
+    let evidence_path = directory.path().join("finding-evidence.jsonl");
+    let evidence_export = run_json(
+        &database_url,
+        [
+            "analysis",
+            "evidence",
+            &analysis_id,
+            &finding_key,
+            "--format",
+            "jsonl",
+            "--file",
+            path(&evidence_path),
+        ],
+    );
+    assert!(evidence_export["rows"].as_u64().expect("evidence rows") > 0);
+    assert!(
+        std::fs::read_to_string(&evidence_path)
+            .expect("read evidence export")
+            .lines()
+            .all(|line| serde_json::from_str::<Value>(line).is_ok())
+    );
+    let evidence_csv_path = directory.path().join("finding-evidence.csv");
+    let csv_export = run_json(
+        &database_url,
+        [
+            "analysis",
+            "evidence",
+            &analysis_id,
+            &finding_key,
+            "--format",
+            "csv",
+            "--file",
+            path(&evidence_csv_path),
+        ],
+    );
+    assert_eq!(csv_export["rows"], evidence_export["rows"]);
+    assert!(
+        std::fs::read_to_string(&evidence_csv_path)
+            .expect("read evidence CSV")
+            .starts_with("category,prediction_id")
+    );
+
+    let training_protocol_path = directory.path().join("training-optimization.json");
+    let mut training_protocol = OptimizationProtocol::legacy(2, 1);
+    training_protocol.recommendation_kinds = vec![
+        RecommendationKind::DataGeneration,
+        RecommendationKind::TrainingConfiguration,
+    ];
+    training_protocol.training_candidates = Some(TrainingCandidateRequest {
+        maximum_candidates: 1,
+    });
+    std::fs::write(
+        &training_protocol_path,
+        serde_json::to_vec_pretty(&training_protocol.normalize().expect("training protocol"))
+            .expect("serialize training protocol"),
+    )
+    .expect("write training protocol");
+    let training_proposal = run_json(
+        &database_url,
+        [
+            "optimize",
+            "propose",
+            &analysis_id,
+            "--protocol",
+            path(&training_protocol_path),
+            "--training-space",
+            path(&training_space_path),
+        ],
+    );
+    let training_proposal_id = string_at(&training_proposal, "/id");
+    assert_eq!(
+        training_proposal["training_candidate_set"]["candidates"]
+            .as_array()
+            .expect("training candidates")
+            .len(),
+        1
+    );
+    let training_candidates_export = directory.path().join("training-candidates.csv");
+    run_json(
+        &database_url,
+        [
+            "optimize",
+            "training-candidates",
+            &training_proposal_id,
+            "--format",
+            "csv",
+            "--file",
+            path(&training_candidates_export),
+        ],
+    );
+    assert!(
+        std::fs::read_to_string(&training_candidates_export)
+            .expect("training candidate export")
+            .starts_with("proposal_id,candidate_id")
+    );
+
+    let proposal = run_json(
+        &database_url,
+        [
+            "optimize",
+            "propose",
+            &analysis_id,
+            "--budget",
+            "2",
+            "--minimum-support",
+            "1",
+        ],
+    );
+    let proposal_id = string_at(&proposal, "/id");
+    assert_eq!(proposal["additional_example_budget"], 2);
+
+    let application = run_json(&database_url, ["optimize", "legacy-apply", &proposal_id]);
+    let applied_plan_id = string_at(&application, "/generation_plan/id");
+    assert_eq!(application["already_applied"], false);
+    let repeated = run_json(&database_url, ["optimize", "legacy-apply", &proposal_id]);
+    assert_eq!(repeated["already_applied"], true);
+    assert_eq!(string_at(&repeated, "/generation_plan/id"), applied_plan_id);
+
+    let preview = run_json(
+        &database_url,
+        [
+            "optimize",
+            "preview",
+            &analysis_id,
+            "--protocol",
+            path(&optimization_protocol_path),
+        ],
+    );
+    assert_eq!(preview["persisted"], false);
+    let decision_proposal = run_json(
+        &database_url,
+        [
+            "optimize",
+            "propose",
+            &analysis_id,
+            "--protocol",
+            path(&optimization_protocol_path),
+        ],
+    );
+    let decision_proposal_id = string_at(&decision_proposal, "/id");
+    let review = run_json(
+        &database_url,
+        [
+            "optimize",
+            "review",
+            &decision_proposal_id,
+            "--state",
+            "approved-for-plan-creation",
+        ],
+    );
+    let review_id = string_at(&review, "/id");
+    let decision_application = run_json(
+        &database_url,
+        [
+            "optimize",
+            "apply",
+            &decision_proposal_id,
+            "--approval-id",
+            &review_id,
+        ],
+    );
+    assert_eq!(decision_application["generation_started"], false);
+    let campaign = run_json(
+        &database_url,
+        [
+            "campaign",
+            "create",
+            &decision_proposal_id,
+            "--approval-id",
+            &review_id,
+        ],
+    );
+    let campaign_id = string_at(&campaign, "/id");
+    let decision_plan_id = string_at(&decision_application, "/generation_plan/id");
+    let campaign_link = run_json(
+        &database_url,
+        [
+            "campaign",
+            "link",
+            &campaign_id,
+            "--generation-plan-id",
+            &decision_plan_id,
+        ],
+    );
+    assert_eq!(campaign_link["already_linked"], false);
+
+    let optimized_generation = run_json(
+        &database_url,
+        [
+            "generate",
+            &decision_plan_id,
+            "--config",
+            path(&config_path),
+            "--batch-size",
+            "1",
+        ],
+    );
+    assert_eq!(optimized_generation["state"], "completed");
+    let optimized_job_id = string_at(&optimized_generation, "/id");
+    run_json(
+        &database_url,
+        [
+            "campaign",
+            "link",
+            &campaign_id,
+            "--generation-job-id",
+            &optimized_job_id,
+        ],
+    );
+
+    let candidate_snapshot = run_json(
+        &database_url,
+        [
+            "snapshot",
+            "create",
+            &dataset_id,
+            "--config",
+            path(&config_path),
+        ],
+    );
+    let candidate_snapshot_id = string_at(&candidate_snapshot, "/snapshot/id");
+    run_json(
+        &database_url,
+        [
+            "campaign",
+            "link",
+            &campaign_id,
+            "--snapshot-id",
+            &candidate_snapshot_id,
+        ],
+    );
+
+    let candidate_training = run_json(
+        &database_url,
+        [
+            "training",
+            "run",
+            &candidate_snapshot_id,
+            "--config",
+            path(&config_path),
+        ],
+    );
+    let candidate_training_id = string_at(&candidate_training, "/run/id");
+    let candidate_checkpoint_id = candidate_training["checkpoints"]
+        .as_array()
+        .expect("candidate checkpoints")
+        .iter()
+        .find(|checkpoint| checkpoint["is_final"] == true)
+        .and_then(|checkpoint| checkpoint["id"].as_str())
+        .expect("candidate final checkpoint")
+        .to_owned();
+    run_json(
+        &database_url,
+        [
+            "campaign",
+            "link",
+            &campaign_id,
+            "--training-run-id",
+            &candidate_training_id,
+        ],
+    );
+    run_json(
+        &database_url,
+        [
+            "campaign",
+            "link",
+            &campaign_id,
+            "--checkpoint-id",
+            &candidate_checkpoint_id,
+        ],
+    );
+
+    let candidate_evaluation = run_json(
+        &database_url,
+        [
+            "evaluation",
+            "run",
+            &candidate_checkpoint_id,
+            "--snapshot-id",
+            &snapshot_id,
+            "--config",
+            path(&config_path),
+        ],
+    );
+    let candidate_evaluation_id = string_at(&candidate_evaluation, "/run/id");
+    run_json(
+        &database_url,
+        [
+            "campaign",
+            "link",
+            &campaign_id,
+            "--evaluation-run-id",
+            &candidate_evaluation_id,
+        ],
+    );
+    let outcome_comparison = run_json(
+        &database_url,
+        [
+            "evaluation",
+            "compare",
+            &evaluation_id,
+            &candidate_evaluation_id,
+        ],
+    );
+    let outcome_comparison_id = string_at(&outcome_comparison, "/id");
+    run_json(
+        &database_url,
+        [
+            "campaign",
+            "link",
+            &campaign_id,
+            "--comparison-id",
+            &outcome_comparison_id,
+        ],
+    );
+    let follow_up_analysis = run_json(
+        &database_url,
+        [
+            "analysis",
+            "create",
+            &candidate_evaluation_id,
+            "--minimum-support",
+            "1",
+            "--comparison-id",
+            &outcome_comparison_id,
+        ],
+    );
+    let follow_up_analysis_id = string_at(&follow_up_analysis, "/id");
+    run_json(
+        &database_url,
+        [
+            "campaign",
+            "link",
+            &campaign_id,
+            "--analysis-report-id",
+            &follow_up_analysis_id,
+        ],
+    );
+    let outcome = run_json(
+        &database_url,
+        [
+            "campaign",
+            "assess",
+            &campaign_id,
+            "--comparison-id",
+            &outcome_comparison_id,
+            "--allow-non-significant",
+        ],
+    );
+    assert_eq!(outcome["already_assessed"], false);
+    let outcome_id = string_at(&outcome, "/outcome/id");
+
+    let campaign_show = run_json(&database_url, ["campaign", "show", &campaign_id]);
+    assert_eq!(campaign_show["links"].as_array().expect("links").len(), 8);
+    assert!(campaign_show["outcome"].is_object());
+    let campaign_trace = run_json(
+        &database_url,
+        ["provenance", "optimization-campaign", &campaign_id],
+    );
+    let campaign_trace = serde_json::to_string(&campaign_trace).expect("campaign trace");
+    assert!(campaign_trace.contains("optimization_campaign"));
+    assert!(campaign_trace.contains("optimization_proposal_review"));
+    let outcome_trace = run_json(
+        &database_url,
+        ["provenance", "optimization-outcome", &outcome_id],
+    );
+    assert!(
+        serde_json::to_string(&outcome_trace)
+            .expect("outcome trace")
+            .contains("evaluation_comparison")
+    );
+
+    let scenarios = run_json(
+        &database_url,
+        [
+            "optimize",
+            "scenarios",
+            &analysis_id,
+            "--protocol",
+            path(&optimization_protocol_path),
+        ],
+    );
+    assert_eq!(
+        scenarios["scenarios"].as_array().expect("scenarios").len(),
+        4
+    );
+    let scenario_group_id = string_at(&scenarios, "/id");
+    let scenario_id = string_at(&scenarios, "/scenarios/0/id");
+    let shown_scenarios = run_json(
+        &database_url,
+        ["optimize", "scenario-show", &scenario_group_id],
+    );
+    assert_eq!(shown_scenarios["fingerprint"], scenarios["fingerprint"]);
+    let materialized = run_json(
+        &database_url,
+        [
+            "optimize",
+            "scenario-materialize",
+            &scenario_group_id,
+            &scenario_id,
+        ],
+    );
+    assert_eq!(materialized["already_materialized"], false);
+
+    let recommendation_export = directory.path().join("recommendations.jsonl");
+    let summary_export = directory.path().join("proposal-summary.csv");
+    run_json(
+        &database_url,
+        [
+            "optimize",
+            "export-recommendations",
+            &decision_proposal_id,
+            "--file",
+            path(&recommendation_export),
+        ],
+    );
+    run_json(
+        &database_url,
+        [
+            "optimize",
+            "export-summary",
+            &decision_proposal_id,
+            "--format",
+            "csv",
+            "--file",
+            path(&summary_export),
+        ],
+    );
+    assert!(
+        std::fs::read_to_string(&recommendation_export)
+            .expect("recommendation export")
+            .lines()
+            .all(|line| serde_json::from_str::<Value>(line).is_ok())
+    );
+    assert!(
+        std::fs::read_to_string(&summary_export)
+            .expect("summary export")
+            .starts_with("proposal_id,analysis_report_id")
+    );
+
+    let trace = run_json(
+        &database_url,
+        ["provenance", "optimization-proposal", &proposal_id],
+    );
+    let trace_text = serde_json::to_string(&trace).expect("trace JSON");
+    for kind in [
+        "optimization_proposal",
+        "analysis_report",
+        "evaluation_run",
+        "checkpoint",
+        "training_run",
+        "snapshot",
+        "dataset",
+        "project_configuration",
+        "dataset_import",
+        "generation_job",
+    ] {
+        assert!(trace_text.contains(kind), "trace is missing {kind}");
+    }
+
+    let export_path = directory.path().join("accepted.jsonl");
+    let exported = run_json(
+        &database_url,
+        [
+            "export",
+            &dataset_id,
+            "--format",
+            "jsonl",
+            "--file",
+            path(&export_path),
+        ],
+    );
+    assert_eq!(exported["row_count"], 16);
+    assert_eq!(
+        std::fs::read_to_string(&export_path)
+            .expect("read export")
+            .lines()
+            .count(),
+        16
+    );
+
+    let listed = run_json(
+        &database_url,
+        [
+            "job",
+            "list",
+            "--dataset-id",
+            &dataset_id,
+            "--state",
+            "completed",
+            "--limit",
+            "1",
+            "--summary",
+        ],
+    );
+    assert_eq!(listed["page"]["returned"], 1);
+
+    let human = run_text(
+        &database_url,
+        ["dataset", "list", "--name", "ambiguous", "--limit", "1"],
+    );
+    assert!(human.contains("id:"));
+    assert!(!human.trim_start().starts_with('{'));
+
+    let final_doctor = run_json(&database_url, ["doctor", "--config", path(&config_path)]);
+    assert_eq!(final_doctor["healthy"], true);
+}
+
+fn run_json<'a>(database_url: &str, arguments: impl IntoIterator<Item = &'a str>) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_synth"))
+        .args(["--database-url", database_url, "--output", "json"])
+        .args(arguments)
+        .output()
+        .expect("CLI starts");
+    assert!(
+        output.status.success(),
+        "CLI failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "stdout was not one JSON value: {error}\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    })
+}
+
+fn run_text<'a>(database_url: &str, arguments: impl IntoIterator<Item = &'a str>) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_synth"))
+        .args(["--database-url", database_url, "--output", "human"])
+        .args(arguments)
+        .output()
+        .expect("CLI starts");
+    assert!(
+        output.status.success(),
+        "CLI failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("human output is UTF-8")
+}
+
+fn string_at(value: &Value, pointer: &str) -> String {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("missing string at {pointer}: {value}"))
+        .to_owned()
+}
+
+fn path(path: &Path) -> &str {
+    path.to_str().expect("test path is UTF-8")
+}
+
+fn config(artifacts: &Path) -> String {
+    format!(
+        r#"version = 1
+
+[dataset]
+name = "ambiguous-support"
+task = "Classify intentionally ambiguous support messages."
+labels = ["billing", "fraud"]
+
+[generation]
+target_per_cell = 7
+batch_size = 1
+max_retries = 0
+max_attempt_multiplier = 2
+backend = "fake"
+model = "deterministic-v1"
+seed = 7
+
+[snapshot]
+name = "ambiguous-baseline"
+train_ratio = 0.5
+validation_ratio = 0.0
+test_ratio = 0.5
+seed = 7
+
+[training]
+backend = "hashing-linear"
+feature_dimension = 16
+epochs = 1
+learning_rate = 0.1
+l2 = 0.0
+checkpoint_every = 1
+seed = 7
+artifact_root = "{}"
+
+[evaluation]
+split = "test"
+"#,
+        artifacts.to_string_lossy().replace('\\', "/")
+    )
+}
+
+fn ambiguous_csv() -> String {
+    let billing = ["!", "!!", "!!!", ".!", "!?", "!?!"];
+    let fraud = ["?", "??", "???", ".?", "?!", "?!?"];
+    let mut csv = String::from("text,label\n");
+    for punctuation in billing {
+        csv.push_str(&format!("same support message{punctuation},billing\n"));
+    }
+    for punctuation in fraud {
+        csv.push_str(&format!("same support message{punctuation},fraud\n"));
+    }
+    csv
+}

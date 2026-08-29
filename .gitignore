@@ -1,0 +1,26 @@
+# Rust build output
+/target/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data and exports
+/data/*
+!/data/.gitkeep
+/exports/*
+!/exports/.gitkeep
+/artifacts/*
+!/artifacts/.gitkeep
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
+
+# Local logs and coverage output
+*.log
+/coverage/

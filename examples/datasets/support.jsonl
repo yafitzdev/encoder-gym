@@ -1,0 +1,8 @@
+{"message":"Why was I charged twice for the same order?","category":"billing","metadata":{"difficulty":"easy","style":"clean"}}
+{"message":"invoice got 2 charges idk why","category":"billing","metadata":{"difficulty":"easy","style":"messy"}}
+{"message":"The amount on my statement differs from the finalized invoice.","category":"billing","metadata":{"difficulty":"hard","style":"clean"}}
+{"message":"bill says extra fee maybe tax maybe duplicate???","category":"billing","metadata":{"difficulty":"hard","style":"messy"}}
+{"message":"I do not recognize this card purchase.","category":"fraud","metadata":{"difficulty":"easy","style":"clean"}}
+{"message":"not me who bought this pls help","category":"fraud","metadata":{"difficulty":"easy","style":"messy"}}
+{"message":"A pending transaction from an unfamiliar merchant disappeared and returned with a different descriptor.","category":"fraud","metadata":{"difficulty":"hard","style":"clean"}}
+{"message":"weird shop charge vanished then came back diff name wasnt me","category":"fraud","metadata":{"difficulty":"hard","style":"messy"}}
