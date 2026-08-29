@@ -252,6 +252,70 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
     );
     assert_eq!(repeated_acceptance["id"], acceptance["id"]);
 
+    let workflow_definition_path = directory.path().join("workflow-definition.json");
+    std::fs::write(
+        &workflow_definition_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "name": "bounded encoder loop",
+            "dataset_id": dataset_id,
+            "project_configuration_id": initialized["project_configuration"]["id"],
+            "project_configuration_fingerprint": initialized["project_configuration"]["fingerprint"],
+            "development_suite_id": benchmark_id,
+            "development_suite_fingerprint": benchmark["fingerprint"],
+            "initial_allocation": {
+                "total_rows": 20,
+                "reserved_rows": 4,
+                "policy": {"kind": "balanced"},
+                "constraints": []
+            },
+            "governance": {"mode": "review_each_iteration"},
+            "budget": {
+                "maximum_iterations": 2,
+                "maximum_initial_rows": 20,
+                "maximum_cumulative_rows": 30,
+                "maximum_generation_attempts": 100,
+                "maximum_generation_requests": 50,
+                "maximum_advisor_calls": 0,
+                "maximum_advisor_tokens": 0,
+                "maximum_stage_attempts": 3
+            },
+            "policy": {
+                "minimum_improvement": 0.01,
+                "maximum_tolerated_regression": 0.02,
+                "stop_on_inconclusive": true,
+                "stop_on_invalid": true,
+                "enable_advisor": false,
+                "require_fresh_development_cohort_after_iterations": 2
+            }
+        }))
+        .expect("workflow definition JSON"),
+    )
+    .expect("write workflow definition");
+    let workflow_definition = run_json(
+        &database_url,
+        [
+            "workflow",
+            "define",
+            "--definition",
+            path(&workflow_definition_path),
+        ],
+    );
+    let workflow_definition_id = string_at(&workflow_definition, "/id");
+    let workflow = run_json(
+        &database_url,
+        ["workflow", "start", &workflow_definition_id],
+    );
+    let workflow_id = string_at(&workflow, "/run/id");
+    assert_eq!(workflow["attempt"]["stage"], "initial_allocation");
+    assert_eq!(
+        run_json(&database_url, ["workflow", "status", &workflow_id])["attempt_count"],
+        1
+    );
+    assert_eq!(
+        run_json(&database_url, ["workflow", "cancel", &workflow_id])["cancel_requested"],
+        true
+    );
+
     let analysis = run_json(
         &database_url,
         [

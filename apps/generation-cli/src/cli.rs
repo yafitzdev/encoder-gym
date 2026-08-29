@@ -115,6 +115,11 @@ pub enum Command {
         #[command(subcommand)]
         command: BenchmarkCommand,
     },
+    /// Define and operate finite local encoder-development workflows.
+    Workflow {
+        #[command(subcommand)]
+        command: WorkflowCommand,
+    },
     /// Configure non-secret generation backend settings.
     Backend {
         #[command(subcommand)]
@@ -1272,6 +1277,57 @@ pub enum AcceptanceStateArg {
     Fail,
     Inconclusive,
     Invalid,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WorkflowCommand {
+    Define {
+        #[arg(long)]
+        definition: PathBuf,
+    },
+    DefinitionShow {
+        id: Uuid,
+    },
+    DefinitionList {
+        #[arg(long)]
+        dataset_id: Option<Uuid>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    Start {
+        definition_id: Uuid,
+    },
+    Status {
+        id: Uuid,
+    },
+    List {
+        #[arg(long)]
+        definition_id: Option<Uuid>,
+        #[arg(long, value_enum)]
+        state: Option<WorkflowRunStateArg>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    History {
+        id: Uuid,
+    },
+    Cancel {
+        id: Uuid,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum WorkflowRunStateArg {
+    Queued,
+    Running,
+    AwaitingApproval,
+    AwaitingUser,
+    DevelopmentComplete,
+    Completed,
+    Failed,
+    Cancelled,
+    Exhausted,
+    Inconclusive,
 }
 
 #[derive(Debug, Subcommand)]

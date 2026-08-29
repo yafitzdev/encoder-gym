@@ -12,6 +12,7 @@ mod provenance;
 mod recovery;
 mod training;
 mod workflow;
+mod workflow_run;
 
 use std::{collections::BTreeMap, str::FromStr, time::Duration};
 

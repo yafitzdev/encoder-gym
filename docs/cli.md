@@ -88,6 +88,24 @@ aggregate, adaptation-ineligible disclosure and a separate
 `--authorize-sealed` acknowledgement. Repeating an identical assessment returns
 the existing artifact.
 
+Finite-workflow commands are:
+
+- `synth workflow define --definition workflow.toml` to persist resolved slice
+  references, initial allocation, governance mode, finite budgets, and stop
+  policy as one immutable fingerprinted definition;
+- `synth workflow start <DEFINITION_ID>` to create a run and its first owned
+  stage attempt;
+- `synth workflow status|history|list` to derive current state and complete
+  attempt history from SQLite; and
+- `synth workflow cancel <RUN_ID>` to persist a cancellation request observed
+  at bounded stage boundaries.
+
+Stage attempts form a fingerprint-linked append-only chain. Run updates use the
+expected latest attempt as an optimistic concurrency guard. Illegal stage
+transitions, stale attempts, retries above the configured ceiling, and usage
+above finite row/request/advisor/iteration budgets are rejected by the core
+state machine.
+
 Error-analysis commands are:
 
 - `synth analysis create <RUN_ID>` with support, ranking, confidence,

@@ -20,6 +20,7 @@ mod provenance;
 mod recovery;
 mod snapshot;
 mod training;
+mod workflow;
 
 use crate::cli::Command;
 use synthetic_data_sqlite::SqliteStore;
@@ -36,6 +37,7 @@ pub async fn execute(command: Command, store: SqliteStore) -> anyhow::Result<()>
         Command::Exposure { command } => governance::exposure(command, &store).await,
         Command::Contamination { command } => contamination::execute(command, &store).await,
         Command::Benchmark { command } => benchmark::execute(command, &store).await,
+        Command::Workflow { command } => workflow::execute(command, &store).await,
         Command::Dataset { command } => dataset::execute(command, &store).await,
         Command::Snapshot { command } => snapshot::execute(command, &store).await,
         Command::Encoder { command } => encoder::execute(command, &store).await,

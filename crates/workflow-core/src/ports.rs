@@ -10,6 +10,7 @@ use crate::allocation::InitialAllocationRecord;
 use crate::benchmark::{AcceptanceAssessment, AcceptanceState, BenchmarkSuite, BenchmarkSuiteKind};
 use crate::contamination::{ContaminationOverride, ContaminationReport, ContaminationStatus};
 use crate::governance::{CohortRoleDecision, EvaluationCohort, EvidenceExposure, ExposurePurpose};
+use crate::workflow::{WorkflowDefinition, WorkflowRun, WorkflowRunState, WorkflowStageAttempt};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -186,4 +187,72 @@ pub trait BenchmarkStore: Send + Sync {
         &self,
         query: AcceptanceAssessmentQuery,
     ) -> BoxFuture<'_, Result<Vec<AcceptanceAssessment>, WorkflowStoreError>>;
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct WorkflowDefinitionQuery {
+    pub dataset_id: Option<Uuid>,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct WorkflowRunQuery {
+    pub definition_id: Option<Uuid>,
+    pub state: Option<WorkflowRunState>,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+pub trait WorkflowRunStore: Send + Sync {
+    fn create_workflow_definition(
+        &self,
+        definition: &WorkflowDefinition,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    fn get_workflow_definition(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<WorkflowDefinition>, WorkflowStoreError>>;
+
+    fn query_workflow_definitions(
+        &self,
+        query: WorkflowDefinitionQuery,
+    ) -> BoxFuture<'_, Result<Vec<WorkflowDefinition>, WorkflowStoreError>>;
+
+    /// Atomically creates a run and its first running stage attempt.
+    fn create_workflow_run(
+        &self,
+        run: &WorkflowRun,
+        initial_attempt: &WorkflowStageAttempt,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    fn get_workflow_run(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<WorkflowRun>, WorkflowStoreError>>;
+
+    fn query_workflow_runs(
+        &self,
+        query: WorkflowRunQuery,
+    ) -> BoxFuture<'_, Result<Vec<WorkflowRun>, WorkflowStoreError>>;
+
+    /// Optimistically updates the run and appends exactly one attempt event.
+    fn commit_workflow_attempt(
+        &self,
+        run: &WorkflowRun,
+        attempt: &WorkflowStageAttempt,
+        expected_previous_attempt_id: Uuid,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    fn list_workflow_attempts(
+        &self,
+        run_id: Uuid,
+    ) -> BoxFuture<'_, Result<Vec<WorkflowStageAttempt>, WorkflowStoreError>>;
+
+    fn save_workflow_run(
+        &self,
+        run: &WorkflowRun,
+        expected_latest_attempt_id: Option<Uuid>,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
 }

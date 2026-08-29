@@ -159,6 +159,11 @@ Terminal or paused states include completed, failed, cancelled, exhausted,
 inconclusive, and awaiting user. Final sealed evaluation and promotion are
 explicit post-iteration actions.
 
+Every stage start and outcome is a separate fingerprint-linked attempt event.
+The mutable run row is only a concurrency-protected projection of that history;
+it cannot advance unless the caller owns the expected latest event. Retryable
+failures pause for recovery while non-retryable failures are terminal.
+
 Initial `start` authorization may chain allocation through development analysis.
 Later mutation-producing work either pauses for one compatible append-only
 approval or fits an exact persisted pre-authorization envelope. No LLM response

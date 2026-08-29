@@ -61,6 +61,9 @@ applied automatically when the SQLite store connects.
 - `0029_benchmark_suites`: immutable suite definitions and normalized cohort
   bindings plus deterministic acceptance assessments keyed by suite,
   checkpoint, state, and reproducible artifact fingerprints.
+- `0030_workflow_runs`: immutable bounded workflow definitions, durable current
+  run state, fingerprint-linked append-only stage attempts, and normalized
+  cross-slice artifact links with optimistic concurrency support.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild
