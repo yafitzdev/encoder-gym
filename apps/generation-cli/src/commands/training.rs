@@ -182,7 +182,8 @@ async fn run(args: TrainingRunArgs, store: SqliteStore) -> anyhow::Result<()> {
     )?;
     let request =
         training_request(&store, training_run.id, args.snapshot_id, configuration).await?;
-    execute_training(training_run, request, backend, artifact_root, store).await
+    let completed = execute_training(training_run, request, backend, artifact_root, store).await?;
+    print_json(&completed)
 }
 
 async fn continue_run(args: TrainingContinueArgs, store: SqliteStore) -> anyhow::Result<()> {
@@ -254,7 +255,70 @@ async fn continue_run(args: TrainingContinueArgs, store: SqliteStore) -> anyhow:
             |config| config.training.artifact_root,
         )
     });
-    execute_training(run, request, backend, artifact_root, store).await
+    let completed = execute_training(run, request, backend, artifact_root, store).await?;
+    print_json(&completed)
+}
+
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct CompletedTraining {
+    pub run: TrainingRun,
+    pub checkpoints: Vec<training_core::domain::TrainingCheckpoint>,
+}
+
+pub(crate) async fn run_workflow(
+    snapshot_id: uuid::Uuid,
+    configured: &project_config::ResolvedProjectConfig,
+    store: SqliteStore,
+) -> anyhow::Result<CompletedTraining> {
+    let configuration = configured.training_configuration()?;
+    let (backend, base_model_id, transformer_configuration, backend_fingerprint) =
+        match configured.training.backend {
+            project_config::TrainingBackendKind::HashingLinear => (
+                Arc::new(HashingLinearBackend) as Arc<dyn TrainingBackend>,
+                None,
+                None,
+                None,
+            ),
+            project_config::TrainingBackendKind::BertCpu => {
+                let encoder_id = configured
+                    .training
+                    .base_model_id
+                    .context("persisted workflow configuration has no base model ID")?;
+                let encoder = store
+                    .get_encoder(encoder_id)
+                    .await?
+                    .with_context(|| format!("registered encoder not found: {encoder_id}"))?;
+                configured.training.transformer.validate()?;
+                (
+                    Arc::new(BertTrainingBackend::new(
+                        encoder,
+                        configured.training.transformer.clone(),
+                    )?) as Arc<dyn TrainingBackend>,
+                    Some(encoder_id),
+                    Some(configured.training.transformer.clone()),
+                    Some(configured.transformer_configuration_fingerprint()?),
+                )
+            }
+        };
+    let run = TrainingRun::queued_with_context(
+        snapshot_id,
+        backend.name(),
+        backend.model_format(),
+        configuration.clone(),
+        base_model_id,
+        None,
+        transformer_configuration,
+        backend_fingerprint,
+    )?;
+    let request = training_request(&store, run.id, snapshot_id, configuration).await?;
+    execute_training(
+        run,
+        request,
+        backend,
+        configured.training.artifact_root.clone(),
+        store,
+    )
+    .await
 }
 
 async fn training_request(
@@ -315,7 +379,7 @@ async fn execute_training(
     backend: Arc<dyn TrainingBackend>,
     artifact_root: PathBuf,
     store: SqliteStore,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<CompletedTraining> {
     store.create_training_run(&training_run).await?;
     store
         .acquire_execution_lease(WorkflowKind::Training, training_run.id)
@@ -364,10 +428,10 @@ async fn execute_training(
         .await;
     let completed = result?;
     release?;
-    print_json(&serde_json::json!({
-        "run": completed,
-        "checkpoints": store.list_checkpoints(run_id).await?,
-    }))
+    Ok(CompletedTraining {
+        run: completed,
+        checkpoints: store.list_checkpoints(run_id).await?,
+    })
 }
 
 async fn predict(checkpoint_id: uuid::Uuid, text: &str, store: &SqliteStore) -> anyhow::Result<()> {

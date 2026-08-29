@@ -56,7 +56,7 @@ pub async fn execute(command: EvaluationCommand, store: SqliteStore) -> anyhow::
                 .map(snapshot_split)
                 .or_else(|| configured.as_ref().map(|config| config.evaluation.split));
             let evaluation = configured.as_ref().map(|config| &config.evaluation);
-            run(
+            let completed = run(
                 checkpoint_id,
                 snapshot_id,
                 split.unwrap_or(SnapshotSplit::Test),
@@ -83,7 +83,8 @@ pub async fn execute(command: EvaluationCommand, store: SqliteStore) -> anyhow::
                 },
                 store,
             )
-            .await
+            .await?;
+            print_json(&completed)
         }
         EvaluationCommand::List {
             checkpoint_id,
@@ -286,13 +287,45 @@ pub async fn execute(command: EvaluationCommand, store: SqliteStore) -> anyhow::
     }
 }
 
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct CompletedEvaluation {
+    pub run: EvaluationRun,
+    pub predictions: Vec<evaluation_core::domain::EvaluationPrediction>,
+    pub predictions_truncated: bool,
+}
+
+pub(crate) async fn run_workflow(
+    checkpoint_id: uuid::Uuid,
+    snapshot_id: uuid::Uuid,
+    protocol: &EvaluationProtocol,
+    store: SqliteStore,
+) -> anyhow::Result<CompletedEvaluation> {
+    run(
+        checkpoint_id,
+        Some(snapshot_id),
+        protocol.split,
+        ProtocolOverrides {
+            batch_size: Some(protocol.batch_size),
+            top_k: Some(protocol.top_k.clone()),
+            calibration_bins: Some(protocol.calibration_bins),
+            minimum_slice_support: Some(protocol.minimum_slice_support),
+            bootstrap_samples: Some(protocol.bootstrap_samples),
+            statistical_seed: Some(protocol.statistical_seed),
+            confidence_level: Some(protocol.confidence_level),
+            dimension_intersections: protocol.dimension_intersections.clone(),
+        },
+        store,
+    )
+    .await
+}
+
 async fn run(
     checkpoint_id: uuid::Uuid,
     snapshot_id: Option<uuid::Uuid>,
     split: SnapshotSplit,
     overrides: ProtocolOverrides,
     store: SqliteStore,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<CompletedEvaluation> {
     let checkpoint = store
         .get_checkpoint(checkpoint_id)
         .await?
@@ -412,11 +445,11 @@ async fn run(
     let prediction_preview = store
         .query_predictions(PredictionQuery::page(evaluation_run.id, 100, 0))
         .await?;
-    print_json(&serde_json::json!({
-        "run": completed,
-        "predictions": prediction_preview,
-        "predictions_truncated": evaluation_run.total_examples > 100,
-    }))
+    Ok(CompletedEvaluation {
+        run: completed,
+        predictions: prediction_preview,
+        predictions_truncated: evaluation_run.total_examples > 100,
+    })
 }
 
 const fn snapshot_split(split: SnapshotSplitArg) -> SnapshotSplit {

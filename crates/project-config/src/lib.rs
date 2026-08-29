@@ -470,6 +470,20 @@ pub trait ProjectInitializer: Send + Sync {
     ) -> BoxFuture<'_, Result<(), ProjectStoreError>>;
 }
 
+pub trait ProjectConfigurationStore: Send + Sync {
+    fn get_project_configuration(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<PersistedProjectConfiguration>, ProjectStoreError>>;
+
+    fn list_project_configurations(
+        &self,
+        dataset_id: Option<Uuid>,
+        limit: u32,
+        offset: u32,
+    ) -> BoxFuture<'_, Result<Vec<PersistedProjectConfiguration>, ProjectStoreError>>;
+}
+
 #[cfg(test)]
 mod tests {
     use dataset_core::domain::SnapshotSplit;

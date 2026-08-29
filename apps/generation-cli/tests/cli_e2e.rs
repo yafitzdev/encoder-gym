@@ -303,7 +303,12 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
     let workflow_definition_id = string_at(&workflow_definition, "/id");
     let workflow = run_json(
         &database_url,
-        ["workflow", "start", &workflow_definition_id],
+        [
+            "workflow",
+            "start",
+            &workflow_definition_id,
+            "--initialize-only",
+        ],
     );
     let workflow_id = string_at(&workflow, "/run/id");
     assert_eq!(workflow["attempt"]["stage"], "initial_allocation");
@@ -315,6 +320,40 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
         run_json(&database_url, ["workflow", "cancel", &workflow_id])["cancel_requested"],
         true
     );
+    let automatic_workflow = run_json(
+        &database_url,
+        ["workflow", "start", &workflow_definition_id],
+    );
+    assert_eq!(
+        automatic_workflow["run"]["current_stage"],
+        "acceptance_assessment"
+    );
+    assert_eq!(automatic_workflow["attempt_count"], 12);
+    assert_eq!(automatic_workflow["latest_attempt"]["state"], "completed");
+    let workflow_artifact_kinds = automatic_workflow["attempts"]
+        .as_array()
+        .expect("workflow attempts")
+        .iter()
+        .flat_map(|attempt| {
+            attempt["artifacts"]
+                .as_array()
+                .expect("attempt artifacts")
+                .iter()
+        })
+        .map(|artifact| string_at(artifact, "/kind"))
+        .collect::<Vec<_>>();
+    for kind in [
+        "initial_allocation",
+        "generation_plan",
+        "generation_job",
+        "snapshot",
+        "training_run",
+        "checkpoint",
+        "evaluation_run",
+        "acceptance_assessment",
+    ] {
+        assert!(workflow_artifact_kinds.contains(&kind.to_owned()));
+    }
 
     let analysis = run_json(
         &database_url,
@@ -868,13 +907,13 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
             path(&export_path),
         ],
     );
-    assert_eq!(exported["row_count"], 16);
+    assert_eq!(exported["row_count"], 18);
     assert_eq!(
         std::fs::read_to_string(&export_path)
             .expect("read export")
             .lines()
             .count(),
-        16
+        18
     );
 
     let listed = run_json(

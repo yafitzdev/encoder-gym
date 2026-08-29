@@ -1296,6 +1296,12 @@ pub enum WorkflowCommand {
     },
     Start {
         definition_id: Uuid,
+        /// Persist the initial owned attempt without executing slice work.
+        #[arg(long)]
+        initialize_only: bool,
+    },
+    Resume {
+        id: Uuid,
     },
     Status {
         id: Uuid,

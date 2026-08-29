@@ -102,6 +102,69 @@ pub async fn resume(args: ResumeGenerationArgs, store: SqliteStore) -> anyhow::R
     run_job(job_id, backend, parameters, policy, store, true).await
 }
 
+/// Executes an ordinary generation job for workflow orchestration without
+/// writing presentation output. The returned job is the persisted terminal fact.
+pub(crate) async fn run_workflow(
+    plan_id: uuid::Uuid,
+    configured: &project_config::ResolvedProjectConfig,
+    store: SqliteStore,
+) -> anyhow::Result<GenerationJob> {
+    let plan = store
+        .get_plan(plan_id)
+        .await?
+        .with_context(|| format!("generation plan not found: {plan_id}"))?;
+    let accepted = store
+        .dataset_cell_counts(plan.dataset_id)
+        .await?
+        .into_iter()
+        .map(|(key, counts)| (key, counts.accepted))
+        .collect();
+    let requested_rows = calculate_generation_needs(&plan, &accepted)
+        .iter()
+        .map(|need| u64::from(need.remaining_count))
+        .sum();
+    let options = ExecutionOptions {
+        plan_id: Some(plan_id),
+        job_id: None,
+        backend: None,
+        batch_size: None,
+        max_retries: None,
+        max_attempt_multiplier: None,
+        api_key_env: None,
+        config: None,
+    };
+    let backend_kind = match configured.generation.backend {
+        GenerationBackendKind::Fake => BackendKind::Fake,
+        GenerationBackendKind::OpenaiCompatible => BackendKind::OpenaiCompatible,
+    };
+    let (backend, parameters) =
+        build_backend(backend_kind, &options, Some(configured), &store).await?;
+    let job = GenerationJob::queued(
+        plan.dataset_id,
+        plan.id,
+        backend.name(),
+        backend.model(),
+        requested_rows,
+    );
+    store.create_job(&job).await?;
+    store
+        .acquire_execution_lease(WorkflowKind::Generation, job.id)
+        .await?;
+    let runner = JobRunner::new(
+        Arc::new(store.clone()),
+        backend,
+        runner_policy(&options, Some(configured)),
+        ValidationPipeline::standard(None),
+    );
+    let result = runner.run(job.id, parameters).await;
+    let release = store
+        .release_execution_lease(WorkflowKind::Generation, job.id)
+        .await;
+    let completed = result?;
+    release?;
+    Ok(completed)
+}
+
 async fn run_job(
     job_id: uuid::Uuid,
     backend: Arc<dyn GenerationBackend>,
