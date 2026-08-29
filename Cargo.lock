@@ -2036,6 +2036,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "project-preparation"
+version = "0.1.0"
+dependencies = [
+ "analysis-core",
+ "artifact-core",
+ "chrono",
+ "dataset-core",
+ "evaluation-core",
+ "optimization-core",
+ "project-config",
+ "serde",
+ "serde_json",
+ "synthetic-data-core",
+ "thiserror 2.0.20",
+ "toml",
+ "uuid",
+ "workflow-core",
+]
+
+[[package]]
 name = "pulp"
 version = "0.22.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
