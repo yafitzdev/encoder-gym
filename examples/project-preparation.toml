@@ -1,0 +1,72 @@
+# Replace this placeholder with an immutable snapshot ID created by `synth snapshot create`.
+version = 1
+name = "support-encoder"
+
+[project]
+version = 1
+
+[project.dataset]
+name = "support-training"
+task = "Classify customer support requests"
+labels = ["billing", "fraud", "account", "technical"]
+
+[[project.dataset.dimensions]]
+name = "difficulty"
+values = ["easy", "medium", "hard"]
+
+[[project.dataset.dimensions]]
+name = "writing_style"
+values = ["clean", "messy"]
+
+[[project.dataset.dimensions]]
+name = "ambiguity"
+values = ["obvious", "ambiguous"]
+
+[project.generation]
+target_per_cell = 10
+batch_size = 20
+backend = "fake"
+model = "deterministic-v1"
+
+[development]
+name = "support-development"
+required_model_formats = []
+
+[[development.cohorts]]
+name = "development-test"
+snapshot_id = "00000000-0000-0000-0000-000000000000"
+split = "test"
+origin = "internal_snapshot"
+role = "development"
+disclosure = "predictions"
+adaptation_eligible = true
+
+[development.contract]
+metric_requirements = []
+
+[workflow]
+name = "support-encoder-workflow"
+total_rows = 1000
+reserved_rows = 100
+
+[workflow.allocation_policy]
+kind = "balanced"
+
+[workflow.governance]
+mode = "review_each_iteration"
+
+[workflow.budget]
+maximum_iterations = 2
+maximum_initial_rows = 1000
+maximum_cumulative_rows = 1100
+maximum_generation_attempts = 5000
+maximum_generation_requests = 500
+maximum_advisor_calls = 0
+maximum_stage_attempts = 3
+
+[workflow.policy]
+minimum_improvement = 0.01
+maximum_tolerated_regression = 0.01
+stop_on_inconclusive = true
+stop_on_invalid = true
+enable_advisor = false

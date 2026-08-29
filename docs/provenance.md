@@ -60,6 +60,11 @@ model promotion or rejection
   -> workflow run -> immutable resolved workflow definition
 ```
 
+A declarative preparation is itself immutable and points to the ordinary
+workflow definition it assembled. The definition retains the project,
+dataset, suite, cohort, and snapshot identities; the manifest fingerprint is
+the idempotency key.
+
 Workflow attempts retain iteration, predecessor, usage-after, approval,
 advisor, dataset-diff, and slice-artifact links. Exposure records independently
 show which development evidence was consumed for diagnosis, advising,
@@ -79,6 +84,7 @@ synth provenance optimization-campaign <CAMPAIGN_ID>
 synth provenance optimization-campaign-link <LINK_ID>
 synth provenance optimization-outcome <OUTCOME_ID>
 synth provenance workflow-definition <DEFINITION_ID>
+synth provenance project-preparation <PREPARATION_ID>
 synth provenance workflow-run <RUN_ID>
 synth provenance acceptance-assessment <ASSESSMENT_ID>
 synth provenance advisory-assessment <ASSESSMENT_ID>

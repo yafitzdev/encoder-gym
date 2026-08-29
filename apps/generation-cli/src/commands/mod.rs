@@ -17,6 +17,7 @@ mod ingestion;
 mod inspect;
 mod optimization;
 mod plan;
+mod project_preparation;
 mod provenance;
 mod recovery;
 mod snapshot;
@@ -30,6 +31,7 @@ pub async fn execute(command: Command, store: SqliteStore) -> anyhow::Result<()>
     match command {
         Command::Doctor(args) => doctor::execute(args, &store).await,
         Command::Config { command } => config::execute(command, &store).await,
+        Command::Project { command } => project_preparation::execute(command, &store).await,
         Command::Analysis { command } => analysis::execute(command, &store).await,
         Command::Advisor { command } => advisor::execute(command, &store).await,
         Command::Optimize { command } => optimization::execute(command, &store).await,

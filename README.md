@@ -56,6 +56,27 @@ cargo run -p synthetic-data-cli -- rows --dataset-id <DATASET_ID>
 cargo run -p synthetic-data-cli -- export <DATASET_ID> --format jsonl --file exports/support.jsonl
 ```
 
+## Prepare a complete project from one manifest
+
+After importing benchmark data and creating immutable snapshots, copy
+[`examples/project-preparation.toml`](examples/project-preparation.toml), replace
+its snapshot placeholder, and preview the complete finite project without
+writing any artifacts:
+
+```text
+cargo run -p synthetic-data-cli -- project preview project-preparation.toml
+cargo run -p synthetic-data-cli -- project prepare project-preparation.toml
+cargo run -p synthetic-data-cli -- project list
+cargo run -p synthetic-data-cli -- project show <PREPARATION_ID>
+cargo run -p synthetic-data-cli -- workflow start <DEFINITION_ID>
+```
+
+`project prepare` atomically creates the training dataset configuration,
+cohorts, role decisions, leakage reports, benchmark suites, and finite workflow
+definition. Repeating the same manifest returns the original preparation. It
+does not start generation or training; `workflow start` remains a separate
+authorization. See [`docs/project-preparation.md`](docs/project-preparation.md).
+
 ## Governed encoder workflow
 
 The cross-slice workflow is also CLI-only. After creating immutable development
@@ -71,6 +92,7 @@ cargo run -p synthetic-data-cli -- workflow resume <RUN_ID>
 cargo run -p synthetic-data-cli -- workflow finalize <RUN_ID>
 cargo run -p synthetic-data-cli -- workflow promote <RUN_ID>
 cargo run -p synthetic-data-cli -- provenance model-promotion <PROMOTION_ID>
+cargo run -p synthetic-data-cli -- provenance project-preparation <PREPARATION_ID>
 ```
 
 `start` runs initial allocation, generation, immutable snapshot V1, fresh

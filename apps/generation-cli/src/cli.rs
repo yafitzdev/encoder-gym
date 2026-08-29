@@ -45,6 +45,11 @@ pub enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    /// Preview and atomically prepare a complete finite encoder project.
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommand,
+    },
     /// Create and inspect dataset definitions.
     Dataset {
         #[command(subcommand)]
@@ -206,6 +211,21 @@ pub enum ConfigCommand {
     Show(ConfigResolveArgs),
     /// Atomically create the configured dataset, initial plan, and backend settings.
     Init(ConfigResolveArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProjectCommand {
+    /// Validate and preview a manifest without creating project artifacts.
+    Preview { manifest: PathBuf },
+    /// Atomically create all artifacts required to start the declared workflow.
+    Prepare { manifest: PathBuf },
+    /// Show one prepared project and the workflow definition it created.
+    Show { id: Uuid },
+    /// List prepared projects.
+    List {
+        #[command(flatten)]
+        page: PageArgs,
+    },
 }
 
 #[derive(Debug, clap::Args)]

@@ -27,6 +27,7 @@ generation-fake.workspace = true
 generation-openai-compatible = { package = "synthetic-data-openai-compatible", path = "../../crates/generation-openai-compatible" }
 optimization-core.workspace = true
 project-config.workspace = true
+project-preparation.workspace = true
 recovery-core.workspace = true
 reqwest.workspace = true
 serde.workspace = true

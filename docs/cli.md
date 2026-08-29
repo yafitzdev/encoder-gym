@@ -19,6 +19,23 @@ Transformer-specific command groups are:
 progress is written to stderr; JSON results remain a single value on stdout.
 There is no interactive TUI, graphical UI, or new HTTP endpoint for this work.
 
+Declarative project-preparation commands are:
+
+- `synth project preview <MANIFEST>` to resolve exact initial cell targets,
+  request estimates, cohort disclosures, leakage checks, governance mode, and
+  the finite stage graph without writing project artifacts;
+- `synth project prepare <MANIFEST>` to atomically persist the normal project
+  configuration, cohorts, reports, suites, and workflow definition;
+- `synth project show <PREPARATION_ID>` to inspect the immutable preparation and
+  its resolved workflow definition; and
+- `synth project list` to page preparation summaries.
+
+The manifest may be strict TOML or JSON. Its cohort sources are existing
+immutable snapshot IDs. A repeated manifest fingerprint returns the original
+preparation. Preparation never starts a workflow; run the printed `synth
+workflow start <DEFINITION_ID>` command as a separate authorization. Start from
+`examples/project-preparation.toml` and see `project-preparation.md`.
+
 Exact initial-budget allocation commands are:
 
 - `synth allocation preview <DATASET_ID> --total-rows 20000` for a read-only

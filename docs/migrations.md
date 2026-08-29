@@ -76,6 +76,9 @@ applied automatically when the SQLite store connects.
 - `0035_encoder_workflow_recovery`: expands process leases and interruption
   records to the durable cross-slice encoder workflow while preserving legacy
   generation, training, and evaluation recovery rows.
+- `0036_project_preparations`: immutable manifest-fingerprinted project
+  preparation summaries linking the atomically created dataset configuration,
+  benchmark suites, and workflow definition.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild
