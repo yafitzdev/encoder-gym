@@ -6,6 +6,8 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::allocation::{InitialAllocationPolicy, InitialCellConstraint};
+use analysis_core::protocol::AnalysisProtocol;
+use optimization_core::protocol::OptimizationProtocol;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -21,6 +23,10 @@ pub struct WorkflowDefinitionRequest {
     #[serde(default)]
     pub sealed_suite_fingerprint: Option<String>,
     pub initial_allocation: WorkflowInitialAllocation,
+    #[serde(default)]
+    pub analysis_protocol: Option<AnalysisProtocol>,
+    #[serde(default)]
+    pub optimization_protocol: Option<OptimizationProtocol>,
     pub governance: IterationGovernance,
     pub budget: WorkflowBudget,
     pub policy: WorkflowPolicy,
@@ -97,6 +103,10 @@ pub struct WorkflowDefinition {
     pub sealed_suite_id: Option<Uuid>,
     pub sealed_suite_fingerprint: Option<String>,
     pub initial_allocation: WorkflowInitialAllocation,
+    #[serde(default)]
+    pub analysis_protocol: Option<AnalysisProtocol>,
+    #[serde(default)]
+    pub optimization_protocol: Option<OptimizationProtocol>,
     pub governance: IterationGovernance,
     pub budget: WorkflowBudget,
     pub policy: WorkflowPolicy,
@@ -107,6 +117,30 @@ pub struct WorkflowDefinition {
 impl WorkflowDefinition {
     pub fn new(request: WorkflowDefinitionRequest) -> Result<Self, WorkflowError> {
         validate_request(&request)?;
+        let analysis_protocol = request.analysis_protocol.unwrap_or_default();
+        analysis_protocol
+            .validate()
+            .map_err(|_| WorkflowError::InvalidAnalysisProtocol)?;
+        let optimization_protocol = match request.optimization_protocol {
+            Some(protocol) => protocol
+                .normalize()
+                .map_err(|_| WorkflowError::InvalidOptimizationProtocol)?,
+            None => {
+                let available = request
+                    .budget
+                    .maximum_cumulative_rows
+                    .saturating_sub(request.initial_allocation.total_rows)
+                    .min(request.initial_allocation.reserved_rows);
+                let available = u32::try_from(available)
+                    .map_err(|_| WorkflowError::InvalidOptimizationProtocol)?;
+                if available == 0 {
+                    return Err(WorkflowError::InvalidOptimizationProtocol);
+                }
+                OptimizationProtocol::legacy(available, 1)
+                    .normalize()
+                    .map_err(|_| WorkflowError::InvalidOptimizationProtocol)?
+            }
+        };
         let mut value = Self {
             id: Uuid::new_v4(),
             name: required(request.name, "workflow name")?,
@@ -124,6 +158,8 @@ impl WorkflowDefinition {
             sealed_suite_id: request.sealed_suite_id,
             sealed_suite_fingerprint: request.sealed_suite_fingerprint,
             initial_allocation: request.initial_allocation,
+            analysis_protocol: Some(analysis_protocol),
+            optimization_protocol: Some(optimization_protocol),
             governance: request.governance,
             budget: request.budget,
             policy: request.policy,
@@ -428,6 +464,10 @@ pub enum WorkflowError {
     InvalidBudget,
     #[error("workflow policy contains invalid finite bounds")]
     InvalidPolicy,
+    #[error("workflow analysis protocol is invalid")]
+    InvalidAnalysisProtocol,
+    #[error("workflow optimization protocol is invalid or exceeds the iteration budget")]
+    InvalidOptimizationProtocol,
     #[error("sealed suite id and fingerprint must either both be present or both absent")]
     SealedSuitePair,
     #[error("preauthorization exceeds the workflow budget or has invalid permissions")]
@@ -481,6 +521,19 @@ fn validate_request(request: &WorkflowDefinitionRequest) -> Result<(), WorkflowE
         || request.policy.maximum_tolerated_regression < 0.0
     {
         return Err(WorkflowError::InvalidPolicy);
+    }
+    if let Some(protocol) = &request.optimization_protocol {
+        let normalized = protocol
+            .clone()
+            .normalize()
+            .map_err(|_| WorkflowError::InvalidOptimizationProtocol)?;
+        let available = request
+            .budget
+            .maximum_cumulative_rows
+            .saturating_sub(request.initial_allocation.total_rows);
+        if u64::from(normalized.additional_example_budget) > available {
+            return Err(WorkflowError::InvalidOptimizationProtocol);
+        }
     }
     if let IterationGovernance::PreauthorizedBounded { envelope } = &request.governance {
         if envelope.maximum_iterations == 0
@@ -632,7 +685,7 @@ fn apply_outcome(
 }
 
 fn definition_fingerprint(value: &WorkflowDefinition) -> Result<String, WorkflowError> {
-    artifact_core::fingerprint(&serde_json::json!({
+    let mut document = serde_json::json!({
         "name": value.name, "dataset_id": value.dataset_id,
         "project_configuration_id": value.project_configuration_id,
         "project_configuration_fingerprint": value.project_configuration_fingerprint,
@@ -642,8 +695,24 @@ fn definition_fingerprint(value: &WorkflowDefinition) -> Result<String, Workflow
         "sealed_suite_fingerprint": value.sealed_suite_fingerprint,
         "initial_allocation": value.initial_allocation, "governance": value.governance,
         "budget": value.budget, "policy": value.policy,
-    }))
-    .map_err(|error| WorkflowError::Fingerprint(error.to_string()))
+    });
+    if value.analysis_protocol.is_some() || value.optimization_protocol.is_some() {
+        let object = document
+            .as_object_mut()
+            .expect("definition document object");
+        object.insert(
+            "analysis_protocol".into(),
+            serde_json::to_value(&value.analysis_protocol)
+                .map_err(|error| WorkflowError::Fingerprint(error.to_string()))?,
+        );
+        object.insert(
+            "optimization_protocol".into(),
+            serde_json::to_value(&value.optimization_protocol)
+                .map_err(|error| WorkflowError::Fingerprint(error.to_string()))?,
+        );
+    }
+    artifact_core::fingerprint(&document)
+        .map_err(|error| WorkflowError::Fingerprint(error.to_string()))
 }
 
 fn attempt_fingerprint(value: &WorkflowStageAttempt) -> Result<String, WorkflowError> {
@@ -687,6 +756,8 @@ mod tests {
                 policy: InitialAllocationPolicy::Balanced,
                 constraints: Vec::new(),
             },
+            analysis_protocol: None,
+            optimization_protocol: None,
             governance: IterationGovernance::ReviewEachIteration,
             budget: WorkflowBudget {
                 maximum_iterations: 2,
@@ -789,6 +860,8 @@ mod tests {
             sealed_suite_id: definition.sealed_suite_id,
             sealed_suite_fingerprint: definition.sealed_suite_fingerprint,
             initial_allocation: definition.initial_allocation,
+            analysis_protocol: definition.analysis_protocol,
+            optimization_protocol: definition.optimization_protocol,
             governance: definition.governance,
             budget: definition.budget,
             policy: definition.policy,

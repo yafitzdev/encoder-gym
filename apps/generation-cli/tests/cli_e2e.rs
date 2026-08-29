@@ -326,9 +326,9 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
     );
     assert_eq!(
         automatic_workflow["run"]["current_stage"],
-        "acceptance_assessment"
+        "optimization_proposal"
     );
-    assert_eq!(automatic_workflow["attempt_count"], 12);
+    assert_eq!(automatic_workflow["attempt_count"], 16);
     assert_eq!(automatic_workflow["latest_attempt"]["state"], "completed");
     let workflow_artifact_kinds = automatic_workflow["attempts"]
         .as_array()
@@ -351,6 +351,8 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
         "checkpoint",
         "evaluation_run",
         "acceptance_assessment",
+        "analysis_report",
+        "optimization_proposal",
     ] {
         assert!(workflow_artifact_kinds.contains(&kind.to_owned()));
     }

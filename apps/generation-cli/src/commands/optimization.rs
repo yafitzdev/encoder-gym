@@ -463,6 +463,31 @@ async fn decision_proposal(
     )?)
 }
 
+pub(crate) async fn propose_workflow(
+    store: &SqliteStore,
+    analysis_report_id: uuid::Uuid,
+    protocol: &OptimizationProtocol,
+) -> anyhow::Result<OptimizationProposal> {
+    let protocol = protocol.clone().normalize()?;
+    let protocol_fingerprint = protocol.fingerprint()?;
+    if let Some(existing) = store
+        .query_optimization_proposals(OptimizationProposalQuery {
+            analysis_report_id: Some(analysis_report_id),
+            dataset_id: None,
+            limit: 10_000,
+            offset: 0,
+        })
+        .await?
+        .into_iter()
+        .find(|proposal| proposal.protocol_fingerprint == protocol_fingerprint)
+    {
+        return Ok(existing);
+    }
+    let proposal = decision_proposal(store, analysis_report_id, &protocol, None).await?;
+    store.create_optimization_proposal(&proposal).await?;
+    Ok(proposal)
+}
+
 async fn legacy_proposal(
     store: &SqliteStore,
     analysis_report_id: uuid::Uuid,

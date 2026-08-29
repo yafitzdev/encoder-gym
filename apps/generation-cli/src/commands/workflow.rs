@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, path::Path};
 
+use analysis_core::{ports::AnalysisStore, runner::run_analysis};
 use anyhow::{Context, ensure};
 use evaluation_core::ports::EvaluationStore;
 use generation_core::{
@@ -216,6 +217,11 @@ async fn execute_initial_stage(
         }
         WorkflowStage::Generation => {
             let plan_id = artifact_id(&history, "generation_plan")?;
+            let allocation_id = artifact_id(&history, "initial_allocation")?;
+            let allocation = store
+                .get_initial_allocation(allocation_id)
+                .await?
+                .context("workflow initial allocation not found")?;
             let existing = store
                 .list_jobs(JobQuery {
                     plan_id: Some(plan_id),
@@ -234,7 +240,7 @@ async fn execute_initial_stage(
                 job.state == JobState::Completed,
                 "generation job did not complete"
             );
-            usage.accepted_rows = usage.accepted_rows.saturating_add(job.accepted_rows);
+            usage.accepted_rows = u64::from(allocation.result.initial_target_rows);
             usage.generation_attempts =
                 usage.generation_attempts.saturating_add(job.generated_rows);
             let batch = u64::from(configured.generation.batch_size.max(1));
@@ -425,6 +431,53 @@ async fn execute_initial_stage(
                 &assessment.fingerprint,
             )]
         }
+        WorkflowStage::ErrorAnalysis => {
+            let evaluation_ids = artifact_ids(&history, "evaluation_run");
+            let protocol = definition
+                .analysis_protocol
+                .as_ref()
+                .context("legacy workflow definition has no resolved analysis protocol")?;
+            let protocol_fingerprint = protocol.fingerprint()?;
+            let mut links = Vec::new();
+            for evaluation_id in evaluation_ids {
+                let existing = store
+                    .query_analysis_reports(analysis_core::ports::AnalysisReportQuery {
+                        evaluation_run_id: Some(evaluation_id),
+                        limit: 10_000,
+                        offset: 0,
+                    })
+                    .await?
+                    .into_iter()
+                    .find(|report| report.protocol_fingerprint == protocol_fingerprint);
+                let report = match existing {
+                    Some(report) => report,
+                    None => run_analysis(store, store, evaluation_id, protocol.clone()).await?,
+                };
+                links.push(link("analysis_report", report.id, &report.fingerprint));
+            }
+            ensure!(
+                !links.is_empty(),
+                "development analysis produced no reports"
+            );
+            links
+        }
+        WorkflowStage::OptimizationProposal => {
+            let analysis_report_id = artifact_id(&history, "analysis_report")?;
+            let proposal = super::optimization::propose_workflow(
+                store,
+                analysis_report_id,
+                definition
+                    .optimization_protocol
+                    .as_ref()
+                    .context("legacy workflow definition has no resolved optimization protocol")?,
+            )
+            .await?;
+            vec![link(
+                "optimization_proposal",
+                proposal.id,
+                &proposal.fingerprint,
+            )]
+        }
         other => anyhow::bail!("workflow stage {other:?} is not connected yet"),
     };
     usage.validate_against(&definition.budget)?;
@@ -521,7 +574,9 @@ const fn initial_successor(stage: WorkflowStage) -> Option<WorkflowStage> {
         WorkflowStage::Snapshot => Some(WorkflowStage::Training),
         WorkflowStage::Training => Some(WorkflowStage::DevelopmentEvaluation),
         WorkflowStage::DevelopmentEvaluation => Some(WorkflowStage::AcceptanceAssessment),
-        WorkflowStage::AcceptanceAssessment => None,
+        WorkflowStage::AcceptanceAssessment => Some(WorkflowStage::ErrorAnalysis),
+        WorkflowStage::ErrorAnalysis => Some(WorkflowStage::OptimizationProposal),
+        WorkflowStage::OptimizationProposal => None,
         _ => None,
     }
 }
