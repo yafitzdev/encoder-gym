@@ -5,6 +5,7 @@ use analysis_core::{
     ports::{AnalysisFindingQuery, AnalysisStore, FindingEvidenceQuery},
     runner::{reproduce_report_fingerprint, verify_report_evidence},
 };
+use anyhow::Context;
 use dataset_core::{
     domain::{ImportState, SnapshotSplit, SourceProvenance},
     ports::{ImportStore, SnapshotStore},
