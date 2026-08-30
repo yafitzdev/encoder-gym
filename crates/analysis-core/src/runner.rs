@@ -139,6 +139,7 @@ pub async fn run_analysis(
     })
     .await?;
     overlap.finish(&mut aggregation.findings)?;
+    aggregation.findings = persistence_normalize_findings(aggregation.findings)?;
     refresh_finding_fingerprints(&mut aggregation.findings)?;
     let finding_evidence = persistence_normalize_evidence(aggregation.evidence)?;
 
@@ -299,6 +300,7 @@ pub async fn verify_report_evidence(
     })
     .await?;
     overlap.finish(&mut aggregation.findings)?;
+    aggregation.findings = persistence_normalize_findings(aggregation.findings)?;
     refresh_finding_fingerprints(&mut aggregation.findings)?;
     let finding_evidence = persistence_normalize_evidence(aggregation.evidence)?;
     verify_reproduced(
@@ -345,6 +347,12 @@ fn persistence_normalize_evidence(
     evidence: BTreeMap<String, Vec<FindingEvidenceReference>>,
 ) -> Result<BTreeMap<String, Vec<FindingEvidenceReference>>, AnalysisRunnerError> {
     persistence_normalize(&evidence)
+}
+
+fn persistence_normalize_findings(
+    findings: Vec<AnalysisFinding>,
+) -> Result<Vec<AnalysisFinding>, AnalysisRunnerError> {
+    persistence_normalize(&findings)
 }
 
 fn persistence_normalize<T>(value: &T) -> Result<T, AnalysisRunnerError>
@@ -559,7 +567,10 @@ fn report_fingerprint(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        collections::BTreeMap,
+        sync::{Arc, Mutex},
+    };
 
     use chrono::Utc;
     use evaluation_core::domain::{
@@ -567,9 +578,10 @@ mod tests {
     };
     use uuid::Uuid;
 
-    use super::page_predictions;
+    use super::{page_predictions, persistence_normalize_findings};
     use crate::{
         diagnostics::DiagnosticError,
+        domain::{AnalysisFinding, FindingKind},
         ports::{
             AnalysisEvidenceSource, AnalysisEvidenceSourceError, AnalysisPredictionPage, BoxFuture,
             PairedEvaluationPrediction,
@@ -667,5 +679,44 @@ mod tests {
             vec![0, 1_000, 2_000]
         );
         assert!(pages.iter().all(|page| page.limit <= 1_000));
+    }
+
+    #[test]
+    fn findings_use_the_exact_representation_that_json_persistence_restores() {
+        let persisted_baseline = ((1.0_f64 / 3.0) * 1e12).round() / 1e12;
+        let finding = AnalysisFinding {
+            rank: 1,
+            kind: FindingKind::Cell,
+            key: "cell".into(),
+            attributes: BTreeMap::from([("label".into(), "billing".into())]),
+            support: 1,
+            error_count: 1,
+            error_rate: 1.0,
+            mean_error_confidence: 0.9,
+            median_error_confidence: 0.9,
+            mean_expected_probability: 0.1,
+            mean_prediction_margin: 0.1,
+            mean_entropy: 0.3,
+            error_rate_lift: 0.5 - persisted_baseline,
+            error_share: 1.0,
+            high_confidence_error_severity: 0.81,
+            marginal_error_count: 1,
+            cumulative_error_count: 1,
+            cumulative_error_coverage: 1.0,
+            fingerprint: String::new(),
+        };
+
+        let normalized =
+            persistence_normalize_findings(vec![finding.clone()]).expect("finding normalization");
+        let persisted = serde_json::to_vec(&finding).expect("serialize finding");
+        let restored: AnalysisFinding =
+            serde_json::from_slice(&persisted).expect("restore finding");
+
+        assert_eq!(normalized, vec![restored]);
+        assert_ne!(
+            finding.error_rate_lift.to_bits(),
+            normalized[0].error_rate_lift.to_bits(),
+            "one-half lift over a one-third baseline must exercise adjacent JSON float restoration"
+        );
     }
 }
