@@ -108,6 +108,32 @@ idempotent plan application, scenario persistence, campaign lineage, exact
 workflow allocation, fake advising, V1/V2 iteration, paired stopping, explicit
 sealed assessment, immutable promotion, recovery, workflow provenance, and the
 final doctor audit.
+
+The smaller acceptance scenarios make workflow failure semantics independently
+diagnosable:
+
+- `workflow_resilience_e2e.rs` covers interrupted-process recovery, repeatable
+  resume, cancellation, a deterministic HTTP backend failure, bounded retry
+  exhaustion, append-only attempt lineage, and the no-accepted-rows invariant.
+- `workflow_governance_e2e.rs` proves unsafe sealed-evidence disclosure and an
+  overbroad preauthorization envelope are rejected before project or workflow
+  artifacts are persisted.
+- `project_preparation_cli.rs` covers strict preview, atomic preparation,
+  preparation idempotency, and the handoff to an initialized workflow.
+
+All ordinary acceptance tests use fake or loopback-only backends. An ignored
+OpenAI-compatible smoke boundary exists for deliberate provider verification:
+
+```powershell
+$env:SYNTH_E2E_OPENAI_BASE_URL = "https://provider.example/v1"
+$env:SYNTH_E2E_OPENAI_MODEL = "provider-model-name"
+$env:SYNTH_OPENAI_API_KEY = "..."
+cargo test -p synthetic-data-cli --test workflow_resilience_e2e live_openai_compatible_smoke_is_explicitly_opt_in -- --ignored --nocapture
+```
+
+That command may incur provider cost. Never run it as part of `cargo test-all`
+or CI, and never persist its credential.
+
 `apps/generation-cli/tests/transformer_cli_e2e.rs` independently exercises
 registration, verification, bounded CPU training, checkpoint prediction,
 explicit continuation, evaluation, provenance, and doctor with the tiny local

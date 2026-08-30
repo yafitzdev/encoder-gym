@@ -2,6 +2,8 @@ use std::process::{Command, Output};
 
 use serde_json::Value;
 
+pub mod workflow_fixture;
+
 pub fn run<'a>(database_url: &str, arguments: impl IntoIterator<Item = &'a str>) -> Output {
     Command::new(env!("CARGO_BIN_EXE_synth"))
         .args(["--database-url", database_url, "--output", "json"])
