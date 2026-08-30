@@ -2406,6 +2406,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "research-web"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "research-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"

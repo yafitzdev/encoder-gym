@@ -16,6 +16,7 @@ members = [
     "crates/project-config",
     "crates/project-preparation",
     "crates/research-core",
+    "crates/research-web",
     "crates/recovery-core",
     "crates/semantic-catalog",
     "crates/generation-sqlite",
@@ -72,6 +73,7 @@ optimization-core = { package = "optimization-core", path = "crates/optimization
 project-config = { package = "project-config", path = "crates/project-config" }
 project-preparation = { package = "project-preparation", path = "crates/project-preparation" }
 research-core = { package = "research-core", path = "crates/research-core" }
+research-web = { package = "research-web", path = "crates/research-web" }
 recovery-core = { package = "recovery-core", path = "crates/recovery-core" }
 semantic-catalog = { package = "semantic-catalog", path = "crates/semantic-catalog" }
 workflow-core = { package = "workflow-core", path = "crates/workflow-core" }
