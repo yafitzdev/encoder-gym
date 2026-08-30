@@ -20,7 +20,14 @@ pub enum DomainError {
     UnknownCell(String),
     #[error("generation plan contains the same cell more than once: {0}")]
     DuplicateCell(String),
+    #[error("dataset defines {count} generation cells; maximum supported is {maximum}")]
+    TooManyGenerationCells { count: u64, maximum: u64 },
+    #[error("dataset generation-cell count overflowed")]
+    GenerationCellCountOverflow,
 }
+
+/// Prevents accidental Cartesian explosions from exhausting a local process.
+pub const MAX_GENERATION_CELLS: u64 = 100_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DimensionDefinition {
@@ -101,6 +108,23 @@ impl DatasetDefinition {
                 });
             }
         }
+        let cell_count = dimensions.iter().try_fold(
+            u64::try_from(labels.len()).map_err(|_| DomainError::GenerationCellCountOverflow)?,
+            |count, dimension| {
+                count
+                    .checked_mul(
+                        u64::try_from(dimension.values.len())
+                            .map_err(|_| DomainError::GenerationCellCountOverflow)?,
+                    )
+                    .ok_or(DomainError::GenerationCellCountOverflow)
+            },
+        )?;
+        if cell_count > MAX_GENERATION_CELLS {
+            return Err(DomainError::TooManyGenerationCells {
+                count: cell_count,
+                maximum: MAX_GENERATION_CELLS,
+            });
+        }
 
         Ok(Self {
             id,
@@ -110,6 +134,14 @@ impl DatasetDefinition {
             dimensions,
             created_at,
         })
+    }
+
+    pub fn generation_cell_count(&self) -> u64 {
+        self.dimensions
+            .iter()
+            .fold(self.labels.len() as u64, |count, dimension| {
+                count * dimension.values.len() as u64
+            })
     }
 }
 
@@ -307,6 +339,23 @@ mod tests {
                 value: "billing".into()
             })
         );
+    }
+
+    #[test]
+    fn dataset_rejects_accidental_cartesian_explosions() {
+        let dimensions = (0..6)
+            .map(|index| {
+                DimensionDefinition::new(
+                    format!("dimension_{index}"),
+                    (0..10).map(|value| format!("value_{value}")).collect(),
+                )
+                .expect("dimension")
+            })
+            .collect();
+        assert!(matches!(
+            DatasetDefinition::new("huge", "classify", vec!["label".into()], dimensions),
+            Err(super::DomainError::TooManyGenerationCells { .. })
+        ));
     }
 
     #[test]

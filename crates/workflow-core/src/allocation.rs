@@ -66,6 +66,28 @@ pub struct InitialCellConstraint {
     pub excluded: bool,
 }
 
+/// A partial cell identity used only to compile concise operator rules into
+/// the exact per-cell constraints consumed by the allocator.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CellSelector {
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub dimensions: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CellConstraintRule {
+    pub selector: CellSelector,
+    #[serde(default)]
+    pub minimum_target: u32,
+    pub maximum_target: Option<u32>,
+    #[serde(default)]
+    pub excluded: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InitialAllocationRequest {
     pub total_rows: u32,
@@ -170,6 +192,48 @@ pub struct InitialAllocationResult {
     pub fingerprint: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InitialAllocationPolicyKind {
+    Balanced,
+    Weighted,
+    MinimumThenWeighted,
+    Explicit,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AllocationGroupSummary {
+    pub value: String,
+    pub cell_count: u32,
+    pub current_accepted: u64,
+    pub target_rows: u64,
+    pub additional_required: u64,
+    pub target_share: f64,
+    pub additional_share: f64,
+    pub effective_weight_sum: f64,
+    pub effective_weight_share: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InitialAllocationExplanation {
+    pub dataset_id: uuid::Uuid,
+    pub policy: InitialAllocationPolicyKind,
+    pub feasibility: InitialAllocationFeasibility,
+    pub requested_total_rows: u32,
+    pub initial_target_rows: u32,
+    pub reserved_rows: u32,
+    pub current_accepted_rows: u64,
+    pub additional_required_rows: u64,
+    pub generation_cell_count: u32,
+    pub active_cell_count: u32,
+    pub excluded_cell_count: u32,
+    pub minimum_constrained_cell_count: u32,
+    pub maximum_constrained_cell_count: u32,
+    pub labels: Vec<AllocationGroupSummary>,
+    pub dimensions: BTreeMap<String, Vec<AllocationGroupSummary>>,
+    pub issues: Vec<InitialAllocationIssue>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InitialAllocationRecord {
     pub id: uuid::Uuid,
@@ -232,6 +296,265 @@ impl InitialAllocationResult {
                 .collect(),
         )
         .map_err(|error| InitialAllocationError::Plan(error.to_string()))
+    }
+}
+
+/// Compiles concise, possibly overlapping selector rules into exact cell
+/// constraints. Overlaps combine monotonically: the highest minimum, lowest
+/// maximum, and any exclusion win.
+pub fn compile_constraint_rules(
+    dataset: &DatasetDefinition,
+    rules: &[CellConstraintRule],
+) -> Result<Vec<InitialCellConstraint>, InitialAllocationError> {
+    let labels = dataset.labels.iter().collect::<BTreeSet<_>>();
+    let dimensions = dataset
+        .dimensions
+        .iter()
+        .map(|dimension| (dimension.name.as_str(), &dimension.values))
+        .collect::<BTreeMap<_, _>>();
+    let mut seen = BTreeSet::new();
+    let mut compiled: BTreeMap<String, InitialCellConstraint> = BTreeMap::new();
+    let cells = expand_generation_cells(dataset);
+    for rule in rules {
+        if !seen.insert(rule.selector.clone()) {
+            return Err(InitialAllocationError::DuplicateConstraintSelector(
+                selector_key(&rule.selector),
+            ));
+        }
+        if let Some(label) = &rule.selector.label
+            && !labels.contains(label)
+        {
+            return Err(InitialAllocationError::UnknownSelectorLabel(label.clone()));
+        }
+        for (dimension, value) in &rule.selector.dimensions {
+            let values = dimensions.get(dimension.as_str()).ok_or_else(|| {
+                InitialAllocationError::UnknownSelectorDimension(dimension.clone())
+            })?;
+            if !values.contains(value) {
+                return Err(InitialAllocationError::UnknownSelectorDimensionValue {
+                    dimension: dimension.clone(),
+                    value: value.clone(),
+                });
+            }
+        }
+        let mut matched = 0_u32;
+        for cell in cells
+            .iter()
+            .filter(|cell| selector_matches(&rule.selector, cell))
+        {
+            matched = matched
+                .checked_add(1)
+                .ok_or(InitialAllocationError::CountOverflow)?;
+            let key = cell.key();
+            let constraint = compiled
+                .entry(key)
+                .or_insert_with(|| InitialCellConstraint {
+                    cell: cell.clone(),
+                    minimum_target: 0,
+                    maximum_target: None,
+                    excluded: false,
+                });
+            constraint.minimum_target = constraint.minimum_target.max(rule.minimum_target);
+            constraint.maximum_target = match (constraint.maximum_target, rule.maximum_target) {
+                (Some(current), Some(incoming)) => Some(current.min(incoming)),
+                (None, incoming) => incoming,
+                (current, None) => current,
+            };
+            constraint.excluded |= rule.excluded;
+        }
+        if matched == 0 {
+            return Err(InitialAllocationError::SelectorMatchesNoCells(
+                selector_key(&rule.selector),
+            ));
+        }
+    }
+    Ok(compiled.into_values().collect())
+}
+
+pub fn explain_initial_allocation(
+    result: &InitialAllocationResult,
+) -> InitialAllocationExplanation {
+    let current_accepted_rows = result
+        .cells
+        .iter()
+        .map(|cell| u64::from(cell.current_accepted))
+        .sum();
+    let additional_required_rows = result
+        .cells
+        .iter()
+        .map(|cell| u64::from(cell.additional_required))
+        .sum();
+    let uses_weights = !matches!(result.policy, InitialAllocationPolicy::Explicit { .. });
+    let total_effective_weight = if uses_weights {
+        result
+            .cells
+            .iter()
+            .filter(|cell| !cell.excluded)
+            .map(|cell| cell.effective_weight)
+            .sum::<f64>()
+    } else {
+        0.0
+    };
+    let mut labels: BTreeMap<String, GroupAccumulator> = BTreeMap::new();
+    let mut dimensions: BTreeMap<String, BTreeMap<String, GroupAccumulator>> = BTreeMap::new();
+    for cell in &result.cells {
+        labels
+            .entry(cell.cell.label.clone())
+            .or_default()
+            .add(cell, uses_weights);
+        for (dimension, value) in &cell.cell.dimensions {
+            dimensions
+                .entry(dimension.clone())
+                .or_default()
+                .entry(value.clone())
+                .or_default()
+                .add(cell, uses_weights);
+        }
+    }
+    let summarize = |(value, group): (String, GroupAccumulator)| {
+        group.finish(
+            value,
+            result.allocated_target_rows,
+            additional_required_rows,
+            total_effective_weight,
+        )
+    };
+    InitialAllocationExplanation {
+        dataset_id: result.dataset_id,
+        policy: match result.policy {
+            InitialAllocationPolicy::Balanced => InitialAllocationPolicyKind::Balanced,
+            InitialAllocationPolicy::Weighted { .. } => InitialAllocationPolicyKind::Weighted,
+            InitialAllocationPolicy::MinimumThenWeighted { .. } => {
+                InitialAllocationPolicyKind::MinimumThenWeighted
+            }
+            InitialAllocationPolicy::Explicit { .. } => InitialAllocationPolicyKind::Explicit,
+        },
+        feasibility: result.feasibility,
+        requested_total_rows: result.requested_total_rows,
+        initial_target_rows: result.initial_target_rows,
+        reserved_rows: result.reserved_rows,
+        current_accepted_rows,
+        additional_required_rows,
+        generation_cell_count: result.cells.len().try_into().unwrap_or(u32::MAX),
+        active_cell_count: result
+            .cells
+            .iter()
+            .filter(|cell| !cell.excluded)
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX),
+        excluded_cell_count: result
+            .cells
+            .iter()
+            .filter(|cell| cell.excluded)
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX),
+        minimum_constrained_cell_count: result
+            .cells
+            .iter()
+            .filter(|cell| cell.minimum_target > 0)
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX),
+        maximum_constrained_cell_count: result
+            .cells
+            .iter()
+            .filter(|cell| cell.maximum_target.is_some())
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX),
+        labels: labels.into_iter().map(&summarize).collect(),
+        dimensions: dimensions
+            .into_iter()
+            .map(|(dimension, values)| {
+                (
+                    dimension,
+                    values.into_iter().map(&summarize).collect::<Vec<_>>(),
+                )
+            })
+            .collect(),
+        issues: result.issues.clone(),
+    }
+}
+
+fn selector_matches(selector: &CellSelector, cell: &GenerationCell) -> bool {
+    selector
+        .label
+        .as_ref()
+        .is_none_or(|label| label == &cell.label)
+        && selector.dimensions.iter().all(|(dimension, value)| {
+            cell.dimensions
+                .get(dimension)
+                .is_some_and(|found| found == value)
+        })
+}
+
+fn selector_key(selector: &CellSelector) -> String {
+    let label = selector.label.as_deref().unwrap_or("*");
+    let dimensions = selector
+        .dimensions
+        .iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("label={label};{dimensions}")
+}
+
+#[derive(Default)]
+struct GroupAccumulator {
+    cell_count: u32,
+    current_accepted: u64,
+    target_rows: u64,
+    additional_required: u64,
+    effective_weight_sum: f64,
+}
+
+impl GroupAccumulator {
+    fn add(&mut self, cell: &InitialCellAllocation, uses_weights: bool) {
+        self.cell_count = self.cell_count.saturating_add(1);
+        self.current_accepted = self
+            .current_accepted
+            .saturating_add(u64::from(cell.current_accepted));
+        self.target_rows = self.target_rows.saturating_add(u64::from(cell.target));
+        self.additional_required = self
+            .additional_required
+            .saturating_add(u64::from(cell.additional_required));
+        if uses_weights && !cell.excluded {
+            self.effective_weight_sum += cell.effective_weight;
+        }
+    }
+
+    fn finish(
+        self,
+        value: String,
+        total_targets: u64,
+        total_additional: u64,
+        total_effective_weight: f64,
+    ) -> AllocationGroupSummary {
+        AllocationGroupSummary {
+            value,
+            cell_count: self.cell_count,
+            current_accepted: self.current_accepted,
+            target_rows: self.target_rows,
+            additional_required: self.additional_required,
+            target_share: share(self.target_rows, total_targets),
+            additional_share: share(self.additional_required, total_additional),
+            effective_weight_sum: self.effective_weight_sum,
+            effective_weight_share: if total_effective_weight > 0.0 {
+                self.effective_weight_sum / total_effective_weight
+            } else {
+                0.0
+            },
+        }
+    }
+}
+
+fn share(value: u64, total: u64) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        value as f64 / total as f64
     }
 }
 
@@ -774,6 +1097,16 @@ pub enum InitialAllocationError {
     UnknownConstraintCell(String),
     #[error("cell constraints repeat a cell: {0}")]
     DuplicateConstraintCell(String),
+    #[error("constraint rules repeat selector: {0}")]
+    DuplicateConstraintSelector(String),
+    #[error("constraint selector references an unknown label: {0}")]
+    UnknownSelectorLabel(String),
+    #[error("constraint selector references an unknown dimension: {0}")]
+    UnknownSelectorDimension(String),
+    #[error("constraint selector references an unknown value: {dimension}={value}")]
+    UnknownSelectorDimensionValue { dimension: String, value: String },
+    #[error("constraint selector matches no generation cells: {0}")]
+    SelectorMatchesNoCells(String),
     #[error("an explicit target references an unknown cell: {0}")]
     UnknownExplicitCell(String),
     #[error("explicit targets repeat a cell: {0}")]
@@ -818,10 +1151,11 @@ mod tests {
     };
 
     use super::{
-        AllocationWeights, DimensionValueWeight, ExplicitCellTarget, InitialAllocationError,
-        InitialAllocationFeasibility, InitialAllocationIssue, InitialAllocationPolicy,
-        InitialAllocationRequest, InitialCellConstraint, InitialCellCoverage,
-        allocate_initial_budget,
+        AllocationWeights, CellConstraintRule, CellSelector, DimensionValueWeight,
+        ExplicitCellTarget, InitialAllocationError, InitialAllocationFeasibility,
+        InitialAllocationIssue, InitialAllocationPolicy, InitialAllocationRequest,
+        InitialCellConstraint, InitialCellCoverage, allocate_initial_budget,
+        compile_constraint_rules, explain_initial_allocation,
     };
 
     fn dataset() -> DatasetDefinition {
@@ -1083,5 +1417,116 @@ mod tests {
             allocate_initial_budget(&dataset(), unknown),
             Err(InitialAllocationError::UnknownCoverageCell(_))
         ));
+    }
+
+    #[test]
+    fn selector_rules_compile_overlaps_into_strict_exact_constraints() {
+        let rules = vec![
+            CellConstraintRule {
+                selector: CellSelector {
+                    label: Some("billing".into()),
+                    dimensions: BTreeMap::new(),
+                },
+                minimum_target: 3,
+                maximum_target: Some(10),
+                excluded: false,
+            },
+            CellConstraintRule {
+                selector: CellSelector {
+                    label: Some("billing".into()),
+                    dimensions: BTreeMap::from([("difficulty".into(), "hard".into())]),
+                },
+                minimum_target: 5,
+                maximum_target: Some(8),
+                excluded: false,
+            },
+        ];
+        let constraints = compile_constraint_rules(&dataset(), &rules).expect("constraints");
+        assert_eq!(constraints.len(), 2);
+        let hard = constraints
+            .iter()
+            .find(|constraint| constraint.cell.dimensions["difficulty"] == "hard")
+            .expect("hard constraint");
+        assert_eq!(hard.minimum_target, 5);
+        assert_eq!(hard.maximum_target, Some(8));
+        let easy = constraints
+            .iter()
+            .find(|constraint| constraint.cell.dimensions["difficulty"] == "easy")
+            .expect("easy constraint");
+        assert_eq!(easy.minimum_target, 3);
+        assert_eq!(easy.maximum_target, Some(10));
+    }
+
+    #[test]
+    fn selector_rules_reject_unknown_schema_values_and_duplicates() {
+        let unknown = CellConstraintRule {
+            selector: CellSelector {
+                label: None,
+                dimensions: BTreeMap::from([("difficulty".into(), "impossible".into())]),
+            },
+            minimum_target: 0,
+            maximum_target: None,
+            excluded: false,
+        };
+        assert!(matches!(
+            compile_constraint_rules(&dataset(), &[unknown]),
+            Err(InitialAllocationError::UnknownSelectorDimensionValue { .. })
+        ));
+
+        let duplicate = CellConstraintRule {
+            selector: CellSelector {
+                label: Some("billing".into()),
+                dimensions: BTreeMap::new(),
+            },
+            minimum_target: 0,
+            maximum_target: None,
+            excluded: false,
+        };
+        assert!(matches!(
+            compile_constraint_rules(&dataset(), &[duplicate.clone(), duplicate]),
+            Err(InitialAllocationError::DuplicateConstraintSelector(_))
+        ));
+    }
+
+    #[test]
+    fn explanation_aggregates_exact_label_and_dimension_distributions() {
+        let result = allocate_initial_budget(
+            &dataset(),
+            request(
+                20,
+                InitialAllocationPolicy::Weighted {
+                    weights: AllocationWeights {
+                        labels: BTreeMap::from([("billing".into(), 3.0)]),
+                        dimension_values: vec![],
+                    },
+                },
+            ),
+        )
+        .expect("allocation");
+        let explanation = explain_initial_allocation(&result);
+        assert_eq!(explanation.generation_cell_count, 4);
+        assert_eq!(explanation.additional_required_rows, 20);
+        assert_eq!(
+            explanation
+                .labels
+                .iter()
+                .map(|label| label.target_rows)
+                .sum::<u64>(),
+            20
+        );
+        assert_eq!(
+            explanation
+                .dimensions
+                .get("difficulty")
+                .expect("difficulty")
+                .iter()
+                .map(|value| value.target_rows)
+                .sum::<u64>(),
+            20
+        );
+        assert_eq!(explanation.labels[0].value, "billing");
+        assert_eq!(explanation.labels[0].target_rows, 16);
+        assert!((explanation.labels[0].target_share - 0.8).abs() < f64::EPSILON);
+        assert!((explanation.labels[0].effective_weight_share - 0.75).abs() < f64::EPSILON);
     }
 }

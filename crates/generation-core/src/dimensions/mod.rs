@@ -4,6 +4,36 @@ use std::collections::BTreeMap;
 
 use crate::domain::{DatasetDefinition, GenerationCell};
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DimensionCardinality {
+    pub name: String,
+    pub value_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GenerationSpaceSummary {
+    pub dataset_id: uuid::Uuid,
+    pub label_count: u64,
+    pub dimensions: Vec<DimensionCardinality>,
+    pub generation_cell_count: u64,
+}
+
+pub fn summarize_generation_space(definition: &DatasetDefinition) -> GenerationSpaceSummary {
+    GenerationSpaceSummary {
+        dataset_id: definition.id,
+        label_count: definition.labels.len() as u64,
+        dimensions: definition
+            .dimensions
+            .iter()
+            .map(|dimension| DimensionCardinality {
+                name: dimension.name.clone(),
+                value_count: dimension.values.len() as u64,
+            })
+            .collect(),
+        generation_cell_count: definition.generation_cell_count(),
+    }
+}
+
 pub fn expand_generation_cells(definition: &DatasetDefinition) -> Vec<GenerationCell> {
     let mut combinations = vec![BTreeMap::new()];
 
@@ -36,7 +66,7 @@ pub fn expand_generation_cells(definition: &DatasetDefinition) -> Vec<Generation
 
 #[cfg(test)]
 mod tests {
-    use super::expand_generation_cells;
+    use super::{expand_generation_cells, summarize_generation_space};
     use crate::domain::{DatasetDefinition, DimensionDefinition};
 
     #[test]
@@ -77,5 +107,28 @@ mod tests {
         let cells = expand_generation_cells(&dataset);
         assert_eq!(cells.len(), 2);
         assert!(cells.iter().all(|cell| cell.dimensions.is_empty()));
+    }
+
+    #[test]
+    fn summarizes_the_cartesian_space_without_materializing_it() {
+        let dataset = DatasetDefinition::new(
+            "support",
+            "classify",
+            vec!["billing".into(), "fraud".into()],
+            vec![
+                DimensionDefinition::new("difficulty", vec!["easy".into(), "hard".into()])
+                    .expect("dimension"),
+                DimensionDefinition::new(
+                    "style",
+                    vec!["clean".into(), "messy".into(), "formal".into()],
+                )
+                .expect("dimension"),
+            ],
+        )
+        .expect("dataset");
+        let summary = summarize_generation_space(&dataset);
+        assert_eq!(summary.label_count, 2);
+        assert_eq!(summary.generation_cell_count, 12);
+        assert_eq!(summary.dimensions[1].value_count, 3);
     }
 }
