@@ -216,11 +216,13 @@ fn bootstrapped_pilot_runs_bounded_openai_compatible_generation() {
         fixture.database_url(),
         ["project", "bootstrap", fixture.manifest()],
     );
+    let bootstrap_id = string_at(&created, "/bootstrap/id");
     let definition_id = string_at(&created, "/preparation/workflow_definition_id");
     let status = run_json(
         fixture.database_url(),
         ["workflow", "start", &definition_id],
     );
+    let run_id = string_at(&status, "/run/id");
 
     for kind in [
         "generation_job",
@@ -238,8 +240,63 @@ fn bootstrapped_pilot_runs_bounded_openai_compatible_generation() {
         .as_array()
         .expect("generation status")
         .iter()
-        .flat_map(|generation| generation["jobs"].as_array().expect("generation jobs"));
-    assert!(jobs.into_iter().all(|job| job["state"] == "completed"));
+        .flat_map(|generation| generation["jobs"].as_array().expect("generation jobs"))
+        .collect::<Vec<_>>();
+    assert!(jobs.iter().all(|job| job["state"] == "completed"));
+    assert_eq!(
+        jobs.iter()
+            .map(|job| job["accepted_rows"].as_u64().expect("accepted rows"))
+            .sum::<u64>(),
+        4
+    );
+    assert_eq!(
+        jobs.iter()
+            .map(|job| job["failed_requests"].as_u64().expect("failed requests"))
+            .sum::<u64>(),
+        0
+    );
+    let coverage = status["generation"]
+        .as_array()
+        .expect("generation status")
+        .iter()
+        .flat_map(|generation| generation["coverage"].as_array().expect("coverage"));
+    let (target, accepted, remaining) = coverage.fold((0, 0, 0), |totals, cell| {
+        (
+            totals.0 + cell["target"].as_u64().expect("coverage target"),
+            totals.1 + cell["accepted"].as_u64().expect("coverage accepted"),
+            totals.2 + cell["remaining"].as_u64().expect("coverage remaining"),
+        )
+    });
+    assert_eq!((target, accepted, remaining), (4, 4, 0));
+    assert!(matches!(
+        status["run"]["state"].as_str(),
+        Some("awaiting_approval" | "development_complete")
+    ));
+    let provenance = run_json(
+        fixture.database_url(),
+        ["provenance", "workflow-run", &run_id],
+    );
+    let provenance = serde_json::to_string(&provenance).expect("provenance JSON");
+    for kind in [
+        "project_configuration",
+        "generation_job",
+        "training_run",
+        "checkpoint",
+        "evaluation_run",
+    ] {
+        assert!(provenance.contains(kind), "missing {kind}: {provenance}");
+    }
+    assert_eq!(
+        run_json(
+            fixture.database_url(),
+            ["provenance", "project-bootstrap", &bootstrap_id],
+        )["kind"],
+        "project_bootstrap"
+    );
+    assert_eq!(
+        run_json(fixture.database_url(), ["doctor"])["healthy"],
+        true
+    );
 }
 
 #[test]
@@ -474,7 +531,12 @@ impl PilotFixture {
         manifest.project.generation.base_url = Some(base_url.into());
         manifest.project.generation.model = model.into();
         manifest.project.generation.temperature = Some(0.2);
-        manifest.project.generation.max_tokens = Some(256);
+        manifest.project.generation.max_tokens = Some(1_024);
+        manifest
+            .project
+            .generation
+            .extra
+            .insert("thinking".into(), serde_json::json!({"type": "disabled"}));
         manifest.project.generation.batch_size = 1;
         manifest.project.generation.max_retries = 0;
         manifest.project.generation.max_attempt_multiplier = 1;

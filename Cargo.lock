@@ -2028,6 +2028,7 @@ dependencies = [
  "chrono",
  "dataset-core",
  "serde",
+ "serde_json",
  "synthetic-data-core",
  "thiserror 2.0.20",
  "toml",

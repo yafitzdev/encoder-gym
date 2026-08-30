@@ -129,7 +129,16 @@ impl OpenAICompatibleBackend {
         insert_optional(&mut body, "max_tokens", request.parameters.max_tokens)?;
         insert_optional(&mut body, "seed", request.parameters.seed)?;
         for (key, value) in &request.parameters.extra {
-            if body.contains_key(key) {
+            if [
+                "model",
+                "messages",
+                "response_format",
+                "temperature",
+                "max_tokens",
+                "seed",
+            ]
+            .contains(&key.as_str())
+            {
                 return Err(GenerationBackendError::Configuration(format!(
                     "generation parameter may not override reserved field: {key}"
                 )));

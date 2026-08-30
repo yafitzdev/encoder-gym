@@ -19,7 +19,8 @@ back. The persisted record includes a deterministic SHA-256 fingerprint.
 - `dataset`: name, task, labels, and zero or more arbitrary categorical
   `[[dataset.dimensions]]` entries.
 - `generation`: initial equal target, batching/retry policy, backend, model,
-  normalized generation parameters, and `api_key_env`.
+  normalized generation parameters, generic provider `extra` parameters, and
+  `api_key_env`.
 - `snapshot`: name, description, ratios, and deterministic split seed.
 - `training`: local backend, optional registered `base_model_id`, feature
   dimension, epochs, learning rate, L2, checkpoint cadence, seed, and artifact
@@ -38,6 +39,18 @@ section. `backend = "bert-cpu"` requires a `base_model_id` previously returned
 by `synth encoder register`. See `examples/transformer-project.toml` and
 `docs/transformer-training.md`. Unknown fields are rejected at every level,
 including inside `training.transformer`.
+
+`generation.extra` is a strict map of backend-neutral JSON values copied into
+the normalized generation request. It is intended for replaceable-provider
+controls that have no portable first-class field. It cannot override reserved
+request fields such as `model`, `messages`, `response_format`, `temperature`,
+`max_tokens`, or `seed`. For example, current DeepSeek V4 models can avoid
+spending a bounded JSON-generation budget on reasoning with:
+
+```toml
+[generation.extra.thinking]
+type = "disabled"
+```
 
 Analysis protocols are deliberately resolved on `analysis create` rather than
 read from mutable project defaults. The command persists every selected finding

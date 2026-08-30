@@ -69,12 +69,16 @@ the API key only through `SYNTH_OPENAI_API_KEY`. Those are deliberate external
 smokes and are not part of ordinary tests.
 
 The checked-in, ignored live bootstrap smoke uses four one-row requests at
-most, then requires ordinary training and development-evaluation artifacts:
+most, a 1,024-token ceiling per request, then requires ordinary training and
+development-evaluation artifacts. Provider-specific request controls can be
+passed through the strict `[project.generation.extra]` map; the DeepSeek smoke
+uses `thinking = { type = "disabled" }` so the bounded output budget is spent
+on JSON rows rather than reasoning:
 
 ```powershell
 $env:SYNTH_OPENAI_API_KEY = "..."
-$env:SYNTH_E2E_OPENAI_BASE_URL = "https://api.openai.com/v1"
-$env:SYNTH_E2E_OPENAI_MODEL = "gpt-4.1-mini"
+$env:SYNTH_E2E_OPENAI_BASE_URL = "https://api.deepseek.com"
+$env:SYNTH_E2E_OPENAI_MODEL = "deepseek-v4-flash"
 cargo run -p synthetic-data-cli -- backend check --base-url $env:SYNTH_E2E_OPENAI_BASE_URL --model $env:SYNTH_E2E_OPENAI_MODEL
 cargo test -p synthetic-data-cli --test project_bootstrap_cli bootstrapped_pilot_runs_bounded_openai_compatible_generation -- --ignored --nocapture
 ```

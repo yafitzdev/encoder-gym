@@ -11,6 +11,7 @@ artifact-core.workspace = true
 dataset-core.workspace = true
 generation-core.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 training-core.workspace = true

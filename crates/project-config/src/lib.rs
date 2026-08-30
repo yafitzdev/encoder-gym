@@ -12,6 +12,7 @@ use generation_core::{
     planning::equal_target_plan,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use thiserror::Error;
 use training_core::domain::{TrainingConfiguration, TransformerTrainingConfiguration};
 use uuid::Uuid;
@@ -61,6 +62,7 @@ pub struct GenerationSection {
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
     pub seed: Option<u64>,
+    pub extra: BTreeMap<String, Value>,
     pub api_key_env: String,
 }
 
@@ -77,6 +79,7 @@ impl Default for GenerationSection {
             temperature: None,
             max_tokens: None,
             seed: None,
+            extra: BTreeMap::new(),
             api_key_env: "SYNTH_OPENAI_API_KEY".into(),
         }
     }
@@ -380,7 +383,7 @@ impl ResolvedProjectConfig {
             temperature: self.generation.temperature,
             max_tokens: self.generation.max_tokens,
             seed: self.generation.seed,
-            extra: BTreeMap::new(),
+            extra: self.generation.extra.clone(),
         }
     }
 
@@ -507,6 +510,9 @@ values = ["clean", "messy"]
 [generation]
 target_per_cell = 25
 
+[generation.extra.thinking]
+type = "disabled"
+
 [snapshot]
 name = "baseline"
 train_ratio = 0.7
@@ -535,6 +541,10 @@ split = "test"
         assert_eq!(resolved.training.epochs, 4);
         assert_eq!(resolved.evaluation.split, SnapshotSplit::Validation);
         assert_eq!(resolved.generation.batch_size, 20);
+        assert_eq!(
+            resolved.generation_parameters().extra["thinking"]["type"],
+            "disabled"
+        );
         assert_eq!(
             resolved.dataset_definition().expect("dataset").labels.len(),
             2
