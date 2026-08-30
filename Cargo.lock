@@ -2393,6 +2393,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "research-core"
+version = "0.1.0"
+dependencies = [
+ "artifact-core",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"

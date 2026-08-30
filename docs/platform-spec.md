@@ -54,6 +54,13 @@ Every arrow crosses an explicit, persisted contract. A later slice consumes
 immutable artifacts from the earlier slice and never reaches into its internal
 implementation.
 
+An optional authenticity-research capability may run before synthetic data
+generation. A bounded Pi agent studies permitted external sources through
+application-owned tools and produces an evidence-backed, human-approved,
+immutable authenticity profile. Generation consumes only the explicitly bound
+resolved profile; it never performs live research. See
+[Authenticity Research Agent](research-agent-spec.md).
+
 ## Shared invariants
 
 - IDs are globally unique and timestamps use UTC.
@@ -84,6 +91,7 @@ implementation.
 - [Slice 4 — Evaluation](slice-4-spec.md)
 - [Slice 5 — Error Analysis](slice-5-spec.md)
 - [Slice 6 — Optimization](slice-6-spec.md)
+- [Authenticity Research Agent](research-agent-spec.md)
 
 Cross-slice composition is specified separately in
 [Controlled Workflow and Evaluation Governance](workflow-governance-spec.md).

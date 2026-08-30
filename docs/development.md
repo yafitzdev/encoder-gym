@@ -41,6 +41,14 @@ one atomic SQLite transaction with the existing preparation bundle, CLI process
 verification, and a checked-in offline reference project. Source-content
 fingerprints—not mutable paths or presentation state—own replay idempotency.
 
+Authenticity research follows the same inward-first sequence: specification and
+trust boundary, pure research artifacts and budgets, deterministic fake loop,
+the narrow Pi process adapter, durable SQLite execution, replaceable search and
+fetch adapters, explicit approval/binding, prompt handoff, then CLI acceptance.
+The Pi package has a pinned lockfile and its formatting, type-check, unit-test,
+and build commands run alongside the Rust gates. Ordinary tests never search
+the web or call a paid model.
+
 ## Component loop
 
 For each component:

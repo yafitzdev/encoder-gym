@@ -15,6 +15,7 @@ members = [
     "crates/optimization-core",
     "crates/project-config",
     "crates/project-preparation",
+    "crates/research-core",
     "crates/recovery-core",
     "crates/semantic-catalog",
     "crates/generation-sqlite",
@@ -57,6 +58,7 @@ tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["serde", "v4"] }
+url = "2"
 
 generation-core = { package = "synthetic-data-core", path = "crates/generation-core" }
 generation-fake = { package = "synthetic-data-fake", path = "crates/generation-fake" }
@@ -69,6 +71,7 @@ artifact-core = { package = "artifact-core", path = "crates/artifact-core" }
 optimization-core = { package = "optimization-core", path = "crates/optimization-core" }
 project-config = { package = "project-config", path = "crates/project-config" }
 project-preparation = { package = "project-preparation", path = "crates/project-preparation" }
+research-core = { package = "research-core", path = "crates/research-core" }
 recovery-core = { package = "recovery-core", path = "crates/recovery-core" }
 semantic-catalog = { package = "semantic-catalog", path = "crates/semantic-catalog" }
 workflow-core = { package = "workflow-core", path = "crates/workflow-core" }

@@ -31,6 +31,8 @@ generation-core / workflow-core ──> semantic-catalog
 dataset-import ─────────> dataset-core + generation-core
 workflow-core ──────────> narrow artifact contracts from slice cores
 project-preparation ─────> project-config + workflow-core + slice artifact shapes
+research adapters / apps ─> research-core
+generation-core ──────────> research-core (resolved authenticity context only)
 ```
 
 `artifact-core` only canonicalizes fingerprint inputs and describes provenance
@@ -43,6 +45,14 @@ context. It imports only `artifact-core`; it knows no prompt, provider, SQLite,
 CLI, workflow, or dataset implementation. Generation prompt construction and
 the bounded workflow advisor consume its resolved context through their own
 contracts. SQLite stores the artifacts in the existing local database.
+
+`research-core` separately owns strict research briefs, finite budgets,
+evidence/claim integrity, durable lifecycle rules, authenticity profiles,
+append-only reviews, approved bindings, and the normalized resolved context
+consumed by generation. It imports only provider-neutral libraries and
+`artifact-core`. Pi, search, fetching, SQLite, process protocols, CLI parsing,
+and prompt rendering remain adapters. Pi is the required reasoning/tool-loop
+runtime, but Pi types never cross the core boundary.
 
 `workflow-core` owns only cross-slice policy: initial finite allocation,
 evaluation roles and exposure rules, benchmark acceptance contracts, durable
@@ -108,6 +118,13 @@ Owns reusable semantic profile and explicit binding contracts. It validates and
 fingerprints immutable versions, resolves reusable guidance before
 dataset-specific overrides, and exposes a small persistence port. It does not
 perform automatic attachment or model calls.
+
+### `research-core`
+
+Owns authenticity-research policy and immutable handoff contracts. It treats
+external content as untrusted evidence, requires finite persisted budgets and
+explicit profile approval, and exposes replaceable agent/search/fetch/store
+ports. It neither generates dataset rows nor knows a generation backend.
 
 ### `synthetic-data-sqlite`
 
