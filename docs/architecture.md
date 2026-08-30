@@ -308,7 +308,11 @@ marks a `running` workflow interrupted when that exact process identity is no
 longer alive. Generation is eligible for in-place resume because planning reads
 persisted accepted coverage. Its immutable execution specification pins the
 initial needs, backend identity, parameters, policy, prompt template, and
-semantic context. Every provider call has an append-only lifecycle record;
+semantic context. When a dataset has an explicitly approved authenticity
+binding, the same specification also pins a job-specific resolved context and
+the normalized research-excerpt novelty guard. Only abstract profile guidance
+enters prompt construction; evidence excerpts remain validation-only inputs.
+Every provider call has an append-only lifecycle record;
 attempt completion, rows, accepted source membership, and reconciled counters
 are one SQLite transaction. An open request becomes `interrupted` during
 recovery and still consumes the cumulative attempt ceiling because its remote

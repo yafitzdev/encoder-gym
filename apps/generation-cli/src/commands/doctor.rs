@@ -31,6 +31,7 @@ use optimization_core::{
 };
 use project_config::{GenerationBackendKind, ResolvedProjectConfig};
 use project_preparation::{BootstrapStore, PreparationStore};
+use research_core::ports::ResearchStore;
 use semantic_catalog::{
     GenerationSemanticAssignment, SemanticBindingDecision, SemanticCatalogStore, resolve_semantics,
 };
@@ -301,6 +302,31 @@ async fn generation_execution_facts_check(store: &SqliteStore) -> DoctorCheck {
                 "generation execution {} semantic fingerprint differs",
                 job.id
             );
+            let authenticity = store.get_generation_authenticity(job.id).await?;
+            anyhow::ensure!(
+                execution.authenticity_context_fingerprint.as_deref()
+                    == authenticity
+                        .as_ref()
+                        .map(|value| value.context.fingerprint.as_str()),
+                "generation execution {} authenticity fingerprint differs",
+                job.id
+            );
+            if let Some(assignment) = authenticity {
+                let guard =
+                    super::authenticity::source_novelty_guard(store, Some(&assignment.context))
+                        .await?
+                        .context("approved authenticity context has no novelty guard")?;
+                anyhow::ensure!(
+                    assignment.context.dataset_id == job.dataset_id
+                        && assignment.context.reproduce_fingerprint()?
+                            == assignment.context.fingerprint
+                        && assignment.reproduce_fingerprint()? == assignment.fingerprint
+                        && execution.source_novelty_guard_fingerprint.as_deref()
+                            == Some(guard.fingerprint()),
+                    "generation execution {} authenticity provenance is invalid",
+                    job.id
+                );
+            }
             let job_attempts = store.list_generation_attempts(job.id).await?;
             if job_attempts.iter().any(|attempt| {
                 attempt.kind

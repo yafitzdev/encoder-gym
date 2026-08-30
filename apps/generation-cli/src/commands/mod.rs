@@ -1,6 +1,7 @@
 mod advisor;
 mod allocation;
 mod analysis;
+mod authenticity;
 mod backend;
 mod benchmark;
 mod campaign;

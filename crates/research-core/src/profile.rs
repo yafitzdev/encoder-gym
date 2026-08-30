@@ -150,8 +150,18 @@ impl AuthenticityProfile {
                 )));
             }
         }
+        if evidence.is_empty() || claims.is_empty() {
+            return Err(ResearchError::Validation(
+                "an authenticity profile requires persisted evidence and claims".into(),
+            ));
+        }
         let claim_ids = claims.iter().map(|claim| claim.id).collect::<BTreeSet<_>>();
-        for section in sections.values() {
+        for (name, section) in &sections {
+            if section.claim_ids.is_empty() {
+                return Err(ResearchError::Validation(format!(
+                    "profile section {name:?} must cite at least one research claim"
+                )));
+            }
             if let Some(missing) = section.claim_ids.iter().find(|id| !claim_ids.contains(id)) {
                 return Err(ResearchError::Validation(format!(
                     "profile section references missing claim {missing}"
@@ -403,6 +413,42 @@ pub struct ResolvedAuthenticityContext {
     pub fingerprint: String,
 }
 
+/// Immutable handoff from an approved dataset binding to one generation job.
+///
+/// The context intentionally contains abstract profile guidance only. Raw page
+/// content, evidence excerpts, and research claims remain on the research side
+/// of the boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GenerationAuthenticityAssignment {
+    pub job_id: Uuid,
+    pub context: ResolvedAuthenticityContext,
+    pub created_at: DateTime<Utc>,
+    pub fingerprint: String,
+}
+
+impl GenerationAuthenticityAssignment {
+    pub fn new(job_id: Uuid, context: ResolvedAuthenticityContext) -> Result<Self, ResearchError> {
+        if context.reproduce_fingerprint()? != context.fingerprint {
+            return Err(ResearchError::Integrity(
+                "authenticity context fingerprint mismatch".into(),
+            ));
+        }
+        let mut assignment = Self {
+            job_id,
+            context,
+            created_at: Utc::now(),
+            fingerprint: String::new(),
+        };
+        assignment.fingerprint = assignment.reproduce_fingerprint()?;
+        Ok(assignment)
+    }
+
+    pub fn reproduce_fingerprint(&self) -> Result<String, ResearchError> {
+        fingerprint(&(self.job_id, &self.context, self.created_at))
+            .map_err(|error| ResearchError::Fingerprint(error.to_string()))
+    }
+}
+
 impl ResolvedAuthenticityContext {
     pub fn resolve(
         binding: &ProfileBinding,
@@ -463,7 +509,11 @@ impl ResolvedAuthenticityContext {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::{brief::*, lifecycle::ResearchStopReason};
+    use crate::{
+        brief::*,
+        evidence::{EvidenceConfidence, ResearchClaimDraft, ResearchEvidenceDraft},
+        lifecycle::ResearchStopReason,
+    };
 
     use super::*;
 
@@ -514,12 +564,42 @@ mod tests {
 
     fn profile() -> AuthenticityProfile {
         let (brief, run) = brief_and_run();
+        let evidence = ResearchEvidence::create(
+            run.id,
+            Uuid::new_v4(),
+            &brief.source_policy,
+            ResearchEvidenceDraft {
+                url: "https://example.com/messages".into(),
+                title: "Messages".into(),
+                query: "authentic messages".into(),
+                source_class: "documentation".into(),
+                content_hash: "sha256:page".into(),
+                excerpt: "short fragment".into(),
+                location: None,
+                observation: "Fragments are common.".into(),
+                applicability: "English support chat".into(),
+                confidence: EvidenceConfidence::Medium,
+            },
+        )
+        .unwrap();
+        let claim = ResearchClaim::create(
+            run.id,
+            std::slice::from_ref(&evidence),
+            ResearchClaimDraft {
+                statement: "Fragments are common.".into(),
+                confidence: EvidenceConfidence::Medium,
+                supporting_evidence_ids: vec![evidence.id],
+                conflicting_evidence_ids: vec![],
+                inference: false,
+            },
+        )
+        .unwrap();
         AuthenticityProfile::create(
             &brief,
             &run,
             None,
-            &[],
-            vec![],
+            std::slice::from_ref(&evidence),
+            vec![claim.clone()],
             AuthenticityProfileDraft {
                 schema_version: 1,
                 predecessor_id: None,
@@ -529,7 +609,7 @@ mod tests {
                     AuthenticitySection {
                         observations: vec!["Fragments are common.".into()],
                         generation_instructions: vec!["Use occasional fragments.".into()],
-                        claim_ids: vec![],
+                        claim_ids: vec![claim.id],
                     },
                 )]),
                 generation_instructions: vec!["Vary message length.".into()],

@@ -8,6 +8,7 @@ use generation_core::{
     },
     prompting::PromptBuilder,
 };
+use research_core::ports::ResearchStore;
 use semantic_catalog::SemanticCatalogStore;
 use synthetic_data_sqlite::SqliteStore;
 use uuid::Uuid;
@@ -82,8 +83,18 @@ pub async fn job(command: JobCommand, store: &SqliteStore) -> anyhow::Result<()>
                 .get_generation_semantics(id)
                 .await?
                 .with_context(|| format!("generation semantic assignment not found: {id}"))?;
+            let authenticity = store.get_generation_authenticity(id).await?;
+            let novelty_guard = super::authenticity::source_novelty_guard(
+                store,
+                authenticity.as_ref().map(|value| &value.context),
+            )
+            .await?;
             let expected_template = if execution.construction_plan.is_some() {
-                PromptBuilder::template_identity()?
+                if authenticity.is_some() {
+                    PromptBuilder::authenticity_template_identity()?
+                } else {
+                    PromptBuilder::template_identity()?
+                }
             } else {
                 PromptBuilder::legacy_template_identity()?
             };
@@ -91,6 +102,18 @@ pub async fn job(command: JobCommand, store: &SqliteStore) -> anyhow::Result<()>
                 assignment.context.fingerprint == execution.semantic_context_fingerprint
                     && assignment.context.reproduce_fingerprint()?
                         == assignment.context.fingerprint
+                    && execution.authenticity_context_fingerprint.as_deref()
+                        == authenticity
+                            .as_ref()
+                            .map(|value| value.context.fingerprint.as_str())
+                    && authenticity.as_ref().is_none_or(|value| {
+                        value.reproduce_fingerprint().ok().as_ref() == Some(&value.fingerprint)
+                            && value.context.reproduce_fingerprint().ok().as_ref()
+                                == Some(&value.context.fingerprint)
+                            && value.context.dataset_id == job.dataset_id
+                    })
+                    && execution.source_novelty_guard_fingerprint.as_deref()
+                        == novelty_guard.as_ref().map(|guard| guard.fingerprint())
                     && execution.prompt_template == expected_template,
                 "job execution provenance failed its integrity check"
             );
@@ -102,7 +125,10 @@ pub async fn job(command: JobCommand, store: &SqliteStore) -> anyhow::Result<()>
                 .min(execution.policy.batch_size);
             let count = requested_count.unwrap_or(default_count);
             anyhow::ensure!(count > 0, "requested count must be greater than zero");
-            let prompt_builder = PromptBuilder::with_semantics(assignment.context);
+            let mut prompt_builder = PromptBuilder::with_semantics(assignment.context);
+            if let Some(authenticity) = authenticity {
+                prompt_builder = prompt_builder.attach_authenticity(authenticity.context);
+            }
             let attempts = store.list_generation_attempts(id).await?;
             let start_index = attempts
                 .iter()

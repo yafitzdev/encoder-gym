@@ -1,7 +1,18 @@
 use std::collections::BTreeMap;
 
-use artifact_core::fingerprint;
-use generation_core::{domain::DatasetDefinition, ports::DatasetStore};
+use artifact_core::{ArtifactKind, ProvenanceStore, fingerprint};
+use generation_core::{
+    construction::RowConstructionPlan,
+    domain::{DatasetDefinition, GenerationParameters},
+    jobs::{
+        GenerationBackendIdentity, GenerationExecutionPolicy, GenerationExecutionSpec,
+        GenerationJob,
+    },
+    planning::{calculate_generation_needs, equal_target_plan},
+    ports::{DatasetStore, PlanStore},
+    prompting::PromptBuilder,
+    validation::SourceExcerptNoveltyValidator,
+};
 use research_core::{
     brief::{
         ArtifactReference, ResearchBriefDraft, ResearchBudgets, ResearchProviderConfiguration,
@@ -16,10 +27,11 @@ use research_core::{
     },
     ports::ResearchStore,
     profile::{
-        AuthenticityProfile, AuthenticityProfileDraft, AuthenticitySection, ProfileBinding,
-        ProfileReview, ProfileReviewDecision,
+        AuthenticityProfile, AuthenticityProfileDraft, AuthenticitySection,
+        GenerationAuthenticityAssignment, ProfileBinding, ProfileReview, ProfileReviewDecision,
     },
 };
+use semantic_catalog::{GenerationSemanticAssignment, SemanticDatasetSchema, resolve_semantics};
 use synthetic_data_sqlite::SqliteStore;
 
 async fn store() -> (tempfile::TempDir, SqliteStore) {
@@ -255,6 +267,81 @@ async fn research_artifacts_reviews_and_binding_are_durable_and_append_only() {
     assert_eq!(
         context.reproduce_fingerprint().unwrap(),
         context.fingerprint
+    );
+
+    let plan = equal_target_plan(&dataset, 1).expect("generation plan");
+    store.create_plan(&plan).await.expect("persist plan");
+    let job = GenerationJob::queued(
+        dataset.id,
+        plan.id,
+        "fake",
+        "fake-v1",
+        plan.total_target_count(),
+    );
+    let assignment = GenerationAuthenticityAssignment::new(job.id, context).expect("assignment");
+    let novelty_guard =
+        SourceExcerptNoveltyValidator::new([evidence.excerpt.as_str()]).expect("novelty guard");
+    let semantic_context = resolve_semantics(
+        &SemanticDatasetSchema {
+            dataset_id: dataset.id,
+            labels: dataset.labels.clone(),
+            dimensions: BTreeMap::new(),
+        },
+        &[],
+        &BTreeMap::new(),
+    )
+    .expect("semantic context");
+    let semantics =
+        GenerationSemanticAssignment::new(job.id, semantic_context.clone()).expect("semantics");
+    let spec = GenerationExecutionSpec::new_with_construction_and_authenticity(
+        job.id,
+        dataset.id,
+        plan.id,
+        calculate_generation_needs(&plan, &BTreeMap::new()),
+        GenerationBackendIdentity {
+            name: "fake".into(),
+            model: "fake-v1".into(),
+            endpoint: None,
+        },
+        GenerationParameters::default(),
+        GenerationExecutionPolicy {
+            batch_size: 1,
+            max_request_retries: 0,
+            max_attempt_multiplier: 1,
+            retry_delay_milliseconds: 0,
+        },
+        PromptBuilder::authenticity_template_identity().expect("template"),
+        semantic_context.fingerprint,
+        Some(assignment.context.fingerprint.clone()),
+        Some(novelty_guard.fingerprint().to_owned()),
+        RowConstructionPlan::llm_text_default().expect("construction"),
+    )
+    .expect("execution spec");
+    store
+        .create_generation_execution_bundle_with_authenticity(
+            &job,
+            &spec,
+            &semantics,
+            Some(&assignment),
+        )
+        .await
+        .expect("persist generation bundle");
+    assert_eq!(
+        store.get_generation_authenticity(job.id).await.unwrap(),
+        Some(assignment.clone())
+    );
+    let trace = store
+        .trace_provenance(ArtifactKind::GenerationAuthenticityContext, job.id)
+        .await
+        .expect("trace provenance")
+        .expect("generation authenticity trace");
+    assert_eq!(
+        trace.fingerprint.as_deref(),
+        Some(assignment.fingerprint.as_str())
+    );
+    assert_eq!(
+        trace.parents[0].kind,
+        ArtifactKind::AuthenticityProfileBinding
     );
 }
 

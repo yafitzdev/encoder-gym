@@ -13,10 +13,11 @@ pub fn run<'a>(database_url: &str, arguments: impl IntoIterator<Item = &'a str>)
 }
 
 pub fn run_json<'a>(database_url: &str, arguments: impl IntoIterator<Item = &'a str>) -> Value {
-    let output = run(database_url, arguments);
+    let arguments = arguments.into_iter().collect::<Vec<_>>();
+    let output = run(database_url, arguments.iter().copied());
     assert!(
         output.status.success(),
-        "CLI failed\nstdout: {}\nstderr: {}",
+        "CLI failed for {arguments:?}\nstdout: {}\nstderr: {}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -29,14 +30,15 @@ pub fn run_json<'a>(database_url: &str, arguments: impl IntoIterator<Item = &'a 
 }
 
 pub fn run_text<'a>(database_url: &str, arguments: impl IntoIterator<Item = &'a str>) -> String {
+    let arguments = arguments.into_iter().collect::<Vec<_>>();
     let output = Command::new(env!("CARGO_BIN_EXE_synth"))
         .args(["--database-url", database_url, "--output", "human"])
-        .args(arguments)
+        .args(&arguments)
         .output()
         .expect("CLI starts");
     assert!(
         output.status.success(),
-        "CLI failed\nstdout: {}\nstderr: {}",
+        "CLI failed for {arguments:?}\nstdout: {}\nstderr: {}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );

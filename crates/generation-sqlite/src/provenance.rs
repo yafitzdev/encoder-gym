@@ -16,6 +16,11 @@ use optimization_core::{
     reviews::ProposalReviewRecord,
 };
 use project_preparation::{BootstrapStore, PreparationStore};
+use research_core::{
+    evidence::{ResearchClaim, ResearchEvidence},
+    ports::ResearchStore,
+    profile::{ProfileBinding, ProfileReview},
+};
 use semantic_catalog::{SemanticBindingDecision, SemanticCatalogStore};
 use serde::Serialize;
 use serde_json::json;
@@ -44,6 +49,18 @@ impl ProvenanceStore for SqliteStore {
                 ArtifactKind::SemanticProfile => self.semantic_profile_node(id).await,
                 ArtifactKind::SemanticBinding => self.semantic_binding_node(id).await,
                 ArtifactKind::GenerationSemanticContext => self.semantic_context_node(id).await,
+                ArtifactKind::ResearchBrief => self.research_brief_node(id).await,
+                ArtifactKind::ResearchRun => self.research_run_node(id).await,
+                ArtifactKind::ResearchEvidence => self.research_evidence_node(id).await,
+                ArtifactKind::ResearchClaim => self.research_claim_node(id).await,
+                ArtifactKind::AuthenticityProfile => self.authenticity_profile_node(id).await,
+                ArtifactKind::AuthenticityProfileReview => self.authenticity_review_node(id).await,
+                ArtifactKind::AuthenticityProfileBinding => {
+                    self.authenticity_binding_node(id).await
+                }
+                ArtifactKind::GenerationAuthenticityContext => {
+                    self.generation_authenticity_node(id).await
+                }
                 ArtifactKind::InitialAllocation => self.initial_allocation_node(id).await,
                 ArtifactKind::GenerationPlan => self.plan_node(id).await,
                 ArtifactKind::GenerationJob => self.job_node(id).await,
@@ -161,6 +178,267 @@ impl SqliteStore {
             &assignment,
             parents,
         )?))
+    }
+
+    async fn research_brief_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(brief) = self.get_brief(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let parents = self
+            .dataset_node(brief.dataset.id)
+            .await?
+            .into_iter()
+            .collect();
+        Ok(Some(node(
+            ArtifactKind::ResearchBrief,
+            id,
+            Some(brief.fingerprint.clone()),
+            &brief,
+            parents,
+        )?))
+    }
+
+    async fn research_run_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(run) = self.get_run(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let parents = self
+            .research_brief_node(run.brief_id)
+            .await?
+            .into_iter()
+            .collect();
+        Ok(Some(node(
+            ArtifactKind::ResearchRun,
+            id,
+            Some(run.specification_fingerprint.clone()),
+            &run,
+            parents,
+        )?))
+    }
+
+    async fn research_evidence_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(evidence) = self
+            .research_artifact::<ResearchEvidence>(
+                "SELECT evidence_json FROM research_evidence WHERE id = ?",
+                id,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        if evidence.reproduce_fingerprint().map_err(store_error)? != evidence.fingerprint {
+            return Err(store_error("research evidence fingerprint mismatch"));
+        }
+        let parents = self
+            .research_run_node(evidence.run_id)
+            .await?
+            .into_iter()
+            .collect();
+        Ok(Some(node(
+            ArtifactKind::ResearchEvidence,
+            id,
+            Some(evidence.fingerprint.clone()),
+            &evidence,
+            parents,
+        )?))
+    }
+
+    async fn research_claim_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(claim) = self
+            .research_artifact::<ResearchClaim>(
+                "SELECT claim_json FROM research_claims WHERE id = ?",
+                id,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        if claim.reproduce_fingerprint().map_err(store_error)? != claim.fingerprint {
+            return Err(store_error("research claim fingerprint mismatch"));
+        }
+        let mut parents = self
+            .research_run_node(claim.run_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        for evidence_id in claim
+            .supporting_evidence_ids
+            .iter()
+            .chain(claim.conflicting_evidence_ids.iter())
+        {
+            if let Some(evidence) = self.research_evidence_node(*evidence_id).await? {
+                parents.push(evidence);
+            }
+        }
+        Ok(Some(node(
+            ArtifactKind::ResearchClaim,
+            id,
+            Some(claim.fingerprint.clone()),
+            &claim,
+            parents,
+        )?))
+    }
+
+    async fn authenticity_profile_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(profile) = self.get_profile(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let mut parents = self
+            .research_run_node(profile.run_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        for claim in &profile.claims {
+            if let Some(claim) = self.research_claim_node(claim.id).await? {
+                parents.push(claim);
+            }
+        }
+        if let Some(predecessor_id) = profile.predecessor_id
+            && let Some(predecessor) =
+                Box::pin(self.authenticity_profile_node(predecessor_id)).await?
+        {
+            parents.push(predecessor);
+        }
+        Ok(Some(node(
+            ArtifactKind::AuthenticityProfile,
+            id,
+            Some(profile.fingerprint.clone()),
+            &profile,
+            parents,
+        )?))
+    }
+
+    async fn authenticity_review_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(review) = self
+            .research_artifact::<ProfileReview>(
+                "SELECT review_json FROM authenticity_profile_reviews WHERE id = ?",
+                id,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        if review.reproduce_fingerprint().map_err(store_error)? != review.fingerprint {
+            return Err(store_error("authenticity review fingerprint mismatch"));
+        }
+        let mut parents = self
+            .authenticity_profile_node(review.profile_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(predecessor_id) = review.predecessor_id
+            && let Some(predecessor) =
+                Box::pin(self.authenticity_review_node(predecessor_id)).await?
+        {
+            parents.push(predecessor);
+        }
+        Ok(Some(node(
+            ArtifactKind::AuthenticityProfileReview,
+            id,
+            Some(review.fingerprint.clone()),
+            &review,
+            parents,
+        )?))
+    }
+
+    async fn authenticity_binding_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(binding) = self
+            .research_artifact::<ProfileBinding>(
+                "SELECT binding_json FROM authenticity_profile_bindings WHERE id = ?",
+                id,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        if binding.reproduce_fingerprint().map_err(store_error)? != binding.fingerprint {
+            return Err(store_error("authenticity binding fingerprint mismatch"));
+        }
+        let mut parents = self
+            .dataset_node(binding.dataset_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(profile) = self.authenticity_profile_node(binding.profile_id).await? {
+            parents.push(profile);
+        }
+        if let Some(review) = self.authenticity_review_node(binding.approval_id).await? {
+            parents.push(review);
+        }
+        if let Some(predecessor_id) = binding.predecessor_id
+            && let Some(predecessor) =
+                Box::pin(self.authenticity_binding_node(predecessor_id)).await?
+        {
+            parents.push(predecessor);
+        }
+        Ok(Some(node(
+            ArtifactKind::AuthenticityProfileBinding,
+            id,
+            Some(binding.fingerprint.clone()),
+            &binding,
+            parents,
+        )?))
+    }
+
+    async fn generation_authenticity_node(
+        &self,
+        job_id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(assignment) = self
+            .get_generation_authenticity(job_id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let parents = self
+            .authenticity_binding_node(assignment.context.binding_id)
+            .await?
+            .into_iter()
+            .collect();
+        Ok(Some(node(
+            ArtifactKind::GenerationAuthenticityContext,
+            job_id,
+            Some(assignment.fingerprint.clone()),
+            &assignment,
+            parents,
+        )?))
+    }
+
+    async fn research_artifact<T: serde::de::DeserializeOwned>(
+        &self,
+        query: &str,
+        id: Uuid,
+    ) -> Result<Option<T>, ProvenanceStoreError> {
+        let value = sqlx::query_scalar::<_, String>(query)
+            .bind(id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(store_error)?;
+        value
+            .map(|value| serde_json::from_str(&value).map_err(store_error))
+            .transpose()
     }
 
     async fn project_bootstrap_node(
@@ -809,6 +1087,9 @@ impl SqliteStore {
             .into_iter()
             .collect::<Vec<_>>();
         if let Some(context) = self.semantic_context_node(id).await? {
+            parents.push(context);
+        }
+        if let Some(context) = Box::pin(self.generation_authenticity_node(id)).await? {
             parents.push(context);
         }
         let execution = self

@@ -10,7 +10,10 @@ use crate::{
         FetchRequest, ResearchClaim, ResearchEvidence, SearchRequest, SearchResult, UntrustedPage,
     },
     lifecycle::{ResearchRun, ResearchToolCall},
-    profile::{AuthenticityProfile, ProfileBinding, ProfileReview, ResolvedAuthenticityContext},
+    profile::{
+        AuthenticityProfile, GenerationAuthenticityAssignment, ProfileBinding, ProfileReview,
+        ResolvedAuthenticityContext,
+    },
 };
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -154,4 +157,14 @@ pub trait ResearchStore: Send + Sync {
         &self,
         dataset_id: Uuid,
     ) -> BoxFuture<'_, Result<Option<ResolvedAuthenticityContext>, ResearchAdapterError>>;
+
+    fn save_generation_authenticity(
+        &self,
+        assignment: &GenerationAuthenticityAssignment,
+    ) -> BoxFuture<'_, Result<(), ResearchAdapterError>>;
+
+    fn get_generation_authenticity(
+        &self,
+        job_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<GenerationAuthenticityAssignment>, ResearchAdapterError>>;
 }

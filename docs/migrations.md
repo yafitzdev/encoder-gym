@@ -91,6 +91,13 @@ applied automatically when the SQLite store connects.
 - `0040_hybrid_row_construction`: typed arbitrary generated/source/snapshot row
   fields and optional per-field construction provenance, with empty defaults
   for every legacy row.
+- `0041_authenticity_research`: immutable research briefs/runs, append-only tool
+  calls, evidence and claims, versioned authenticity profiles, append-only
+  reviews, and approval-gated dataset bindings.
+- `0042_generation_authenticity_contexts`: immutable job-specific authenticity
+  assignments linking a generation execution to its approved profile and
+  binding; the execution JSON pins the resolved context and source-novelty
+  guard fingerprints.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

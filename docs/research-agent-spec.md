@@ -100,9 +100,14 @@ fingerprint can create a binding.
 
 A resolved authenticity context pins the dataset, binding, approval, profile
 version, profile fingerprint, sections, instructions, caveats, and resolution
-fingerprint. Generation execution pins that context. Prompt preview exposes it.
-No search or Pi call occurs during generation, and generation without a bound
-profile remains backward compatible.
+fingerprint. Generation copies it into an immutable job assignment and pins the
+context fingerprint, prompt-template version, and normalized source-excerpt
+guard fingerprint in the execution specification. Prompt construction receives
+only abstract profile guidance: it never receives evidence excerpts or page
+content. Validation receives the separately reconstructed excerpt guard and
+rejects an exact normalized source match. Prompt preview exposes the same pinned
+guidance. No search or Pi call occurs during generation, and generation without
+a bound profile remains backward compatible.
 
 ## Durability
 

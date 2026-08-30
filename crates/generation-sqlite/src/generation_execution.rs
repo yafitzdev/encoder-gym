@@ -5,6 +5,7 @@ use generation_core::{
     },
     ports::{BoxFuture, GenerationExecutionStore, StoreError},
 };
+use research_core::profile::GenerationAuthenticityAssignment;
 use semantic_catalog::GenerationSemanticAssignment;
 use sqlx::FromRow;
 use uuid::Uuid;
@@ -21,6 +22,19 @@ impl SqliteStore {
         spec: &GenerationExecutionSpec,
         semantics: &GenerationSemanticAssignment,
     ) -> Result<(), StoreError> {
+        self.create_generation_execution_bundle_with_authenticity(job, spec, semantics, None)
+            .await
+    }
+
+    /// Atomically creates a runnable job and pins an optional approved
+    /// authenticity context beside its semantic context.
+    pub async fn create_generation_execution_bundle_with_authenticity(
+        &self,
+        job: &GenerationJob,
+        spec: &GenerationExecutionSpec,
+        semantics: &GenerationSemanticAssignment,
+        authenticity: Option<&GenerationAuthenticityAssignment>,
+    ) -> Result<(), StoreError> {
         validate_execution(job, spec)?;
         if semantics.job_id != job.id
             || semantics.context.fingerprint != spec.semantic_context_fingerprint
@@ -35,6 +49,26 @@ impl SqliteStore {
                 "generation semantic assignment and execution specification are inconsistent"
                     .into(),
             ));
+        }
+        match (authenticity, &spec.authenticity_context_fingerprint) {
+            (None, None) => {}
+            (Some(assignment), Some(expected))
+                if assignment.job_id == job.id
+                    && assignment.context.dataset_id == job.dataset_id
+                    && assignment.context.fingerprint == *expected
+                    && assignment
+                        .context
+                        .reproduce_fingerprint()
+                        .map_err(store_error)?
+                        == assignment.context.fingerprint
+                    && assignment.reproduce_fingerprint().map_err(store_error)?
+                        == assignment.fingerprint => {}
+            _ => {
+                return Err(StoreError(
+                    "generation authenticity assignment and execution specification are inconsistent"
+                        .into(),
+                ));
+            }
         }
         let mut transaction = self.pool().begin().await.map_err(store_error)?;
         insert_generation_job(&mut transaction, job).await?;
@@ -52,6 +86,24 @@ impl SqliteStore {
         .execute(&mut *transaction)
         .await
         .map_err(store_error)?;
+        if let Some(assignment) = authenticity {
+            sqlx::query(
+                "INSERT INTO generation_job_authenticity (job_id, dataset_id, profile_id, \
+                 binding_id, context_fingerprint, assignment_fingerprint, assignment_json, \
+                 created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(assignment.job_id)
+            .bind(assignment.context.dataset_id)
+            .bind(assignment.context.profile_id)
+            .bind(assignment.context.binding_id)
+            .bind(&assignment.context.fingerprint)
+            .bind(&assignment.fingerprint)
+            .bind(to_json(assignment)?)
+            .bind(assignment.created_at)
+            .execute(&mut *transaction)
+            .await
+            .map_err(store_error)?;
+        }
         transaction.commit().await.map_err(store_error)?;
         Ok(())
     }

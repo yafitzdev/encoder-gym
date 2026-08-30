@@ -4,8 +4,8 @@ use research_core::{
     lifecycle::{ResearchRun, ResearchRunState, ResearchToolCall, ToolCallState},
     ports::{BoxFuture, ResearchAdapterError, ResearchStore},
     profile::{
-        AuthenticityProfile, ProfileBinding, ProfileReview, ProfileReviewDecision,
-        ResolvedAuthenticityContext,
+        AuthenticityProfile, GenerationAuthenticityAssignment, ProfileBinding, ProfileReview,
+        ProfileReviewDecision, ResolvedAuthenticityContext,
     },
 };
 use sqlx::Row;
@@ -509,6 +509,72 @@ impl ResearchStore for SqliteStore {
                 .map_err(domain_error)
         })
     }
+
+    fn save_generation_authenticity(
+        &self,
+        assignment: &GenerationAuthenticityAssignment,
+    ) -> BoxFuture<'_, Result<(), ResearchAdapterError>> {
+        let assignment = assignment.clone();
+        Box::pin(async move {
+            validate_generation_assignment(&assignment)?;
+            sqlx::query(
+                "INSERT INTO generation_job_authenticity (job_id, dataset_id, profile_id, \
+                 binding_id, context_fingerprint, assignment_fingerprint, assignment_json, \
+                 created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(assignment.job_id)
+            .bind(assignment.context.dataset_id)
+            .bind(assignment.context.profile_id)
+            .bind(assignment.context.binding_id)
+            .bind(&assignment.context.fingerprint)
+            .bind(&assignment.fingerprint)
+            .bind(encode(&assignment)?)
+            .bind(assignment.created_at)
+            .execute(self.pool())
+            .await
+            .map_err(sql_error)?;
+            Ok(())
+        })
+    }
+
+    fn get_generation_authenticity(
+        &self,
+        job_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<GenerationAuthenticityAssignment>, ResearchAdapterError>> {
+        Box::pin(async move {
+            let value: Option<String> = sqlx::query_scalar(
+                "SELECT assignment_json FROM generation_job_authenticity WHERE job_id = ?",
+            )
+            .bind(job_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(sql_error)?;
+            value
+                .map(|value| {
+                    let assignment: GenerationAuthenticityAssignment = decode(&value)?;
+                    validate_generation_assignment(&assignment)?;
+                    Ok(assignment)
+                })
+                .transpose()
+        })
+    }
+}
+
+fn validate_generation_assignment(
+    assignment: &GenerationAuthenticityAssignment,
+) -> Result<(), ResearchAdapterError> {
+    if assignment
+        .context
+        .reproduce_fingerprint()
+        .map_err(domain_error)?
+        != assignment.context.fingerprint
+        || assignment.reproduce_fingerprint().map_err(domain_error)? != assignment.fingerprint
+    {
+        return Err(adapter_error(
+            "generation authenticity assignment fingerprint mismatch",
+        ));
+    }
+    Ok(())
 }
 
 async fn latest_review_in(

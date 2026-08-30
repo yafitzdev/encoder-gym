@@ -1,7 +1,12 @@
 //! Small, composable generated-row validators.
 
+use std::collections::BTreeSet;
+
+use artifact_core::{FingerprintError, fingerprint};
+
 use crate::{
     construction::RowConstructionPlan,
+    deduplication::normalize_text,
     domain::{DatasetDefinition, GeneratedCandidate, GenerationCell},
 };
 
@@ -54,6 +59,11 @@ impl ValidationPipeline {
         Self::new(validators)
     }
 
+    pub fn with_validator(mut self, validator: impl RowValidator + 'static) -> Self {
+        self.validators.push(Box::new(validator));
+        self
+    }
+
     pub fn validate(
         &self,
         context: &ValidationContext<'_>,
@@ -67,6 +77,51 @@ impl ValidationPipeline {
         ValidationResult {
             is_valid: issues.is_empty(),
             issues,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceExcerptNoveltyValidator {
+    normalized_excerpts: BTreeSet<String>,
+    fingerprint: String,
+}
+
+impl SourceExcerptNoveltyValidator {
+    pub fn new<'a>(excerpts: impl IntoIterator<Item = &'a str>) -> Result<Self, FingerprintError> {
+        let normalized_excerpts = excerpts
+            .into_iter()
+            .map(normalize_text)
+            .filter(|value| !value.is_empty())
+            .collect::<BTreeSet<_>>();
+        let fingerprint = fingerprint(&normalized_excerpts)?;
+        Ok(Self {
+            normalized_excerpts,
+            fingerprint,
+        })
+    }
+
+    pub fn fingerprint(&self) -> &str {
+        &self.fingerprint
+    }
+}
+
+impl RowValidator for SourceExcerptNoveltyValidator {
+    fn validate(
+        &self,
+        _context: &ValidationContext<'_>,
+        candidate: &GeneratedCandidate,
+    ) -> Vec<ValidationIssue> {
+        if self
+            .normalized_excerpts
+            .contains(&normalize_text(&candidate.text))
+        {
+            vec![issue(
+                "research_source_overlap",
+                "normalized text exactly matches a persisted research excerpt",
+            )]
+        } else {
+            vec![]
         }
     }
 }
@@ -260,7 +315,9 @@ fn issue(code: &'static str, message: impl Into<String>) -> ValidationIssue {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{TextLengthValidator, ValidationContext, ValidationPipeline};
+    use super::{
+        SourceExcerptNoveltyValidator, TextLengthValidator, ValidationContext, ValidationPipeline,
+    };
     use crate::domain::{
         DatasetDefinition, DimensionDefinition, GeneratedCandidate, GenerationCell,
     };
@@ -336,5 +393,35 @@ mod tests {
             &candidate,
         );
         assert!(result.is_valid);
+    }
+
+    #[test]
+    fn normalized_research_excerpt_overlap_is_rejected() {
+        let (dataset, target) = fixtures();
+        let candidate = GeneratedCandidate {
+            text: " CHARGED   twice pls HELP ".into(),
+            label: "billing".into(),
+            dimensions: target.dimensions.clone(),
+            fields: BTreeMap::new(),
+            construction: None,
+        };
+        let guard =
+            SourceExcerptNoveltyValidator::new(["charged twice pls help"]).expect("novelty guard");
+        let result = ValidationPipeline::standard(None)
+            .with_validator(guard)
+            .validate(
+                &ValidationContext {
+                    dataset: &dataset,
+                    target: &target,
+                    construction_plan: None,
+                },
+                &candidate,
+            );
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|issue| issue.code == "research_source_overlap")
+        );
     }
 }

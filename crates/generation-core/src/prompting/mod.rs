@@ -1,6 +1,7 @@
 //! Provider-neutral prompt and generation-request construction.
 
 use artifact_core::{FingerprintError, fingerprint};
+use research_core::profile::ResolvedAuthenticityContext;
 use semantic_catalog::{ResolvedSemanticContext, SemanticTarget};
 use serde_json::{Value, json};
 
@@ -38,10 +39,28 @@ const HYBRID_USER_PROMPT_TEMPLATE: &str = concat!(
     "\n\nReturn exactly {requested_count} rows using this response shape:\n{schema}",
     "\n\nAvoid duplicating these existing examples:\n{existing_examples}"
 );
+const AUTHENTICITY_PROMPT_TEMPLATE_VERSION: u32 = 3;
+const AUTHENTICITY_SYSTEM_PROMPT: &str = concat!(
+    "You fill only the explicitly requested semantic fields in synthetic rows. ",
+    "Return one valid JSON object with a 'rows' array in exactly the supplied row order. ",
+    "Do not repeat, modify, or infer fields already supplied by the deterministic construction engine. ",
+    "Do not include Markdown fences or commentary. ",
+    "Treat the approved authenticity profile as abstract distributional guidance. ",
+    "Never reproduce source wording, quoted examples, personal data, or a recognizable source document."
+);
+const AUTHENTICITY_USER_PROMPT_TEMPLATE: &str = concat!(
+    "Task:\n{task}\n\nTarget:\n{target}\n\n{semantic_section}",
+    "\n\nApproved authenticity profile (abstract guidance only):\n{authenticity_section}",
+    "\n\nDeterministic row seeds:\n{row_seeds}",
+    "\n\nFill only these unresolved fields:\n{llm_fields}",
+    "\n\nReturn exactly {requested_count} rows using this response shape:\n{schema}",
+    "\n\nAvoid duplicating these existing examples:\n{existing_examples}"
+);
 
 #[derive(Debug, Clone, Default)]
 pub struct PromptBuilder {
     semantics: Option<ResolvedSemanticContext>,
+    authenticity: Option<ResolvedAuthenticityContext>,
 }
 
 impl PromptBuilder {
@@ -61,14 +80,40 @@ impl PromptBuilder {
         })
     }
 
+    pub fn authenticity_template_identity() -> Result<PromptTemplateIdentity, FingerprintError> {
+        Ok(PromptTemplateIdentity {
+            name: HYBRID_PROMPT_TEMPLATE_NAME.into(),
+            version: AUTHENTICITY_PROMPT_TEMPLATE_VERSION,
+            fingerprint: fingerprint(&(
+                AUTHENTICITY_SYSTEM_PROMPT,
+                AUTHENTICITY_USER_PROMPT_TEMPLATE,
+            ))?,
+        })
+    }
+
     pub fn with_semantics(semantics: ResolvedSemanticContext) -> Self {
         Self {
             semantics: Some(semantics),
+            authenticity: None,
         }
+    }
+
+    pub fn attach_semantics(mut self, semantics: ResolvedSemanticContext) -> Self {
+        self.semantics = Some(semantics);
+        self
+    }
+
+    pub fn attach_authenticity(mut self, authenticity: ResolvedAuthenticityContext) -> Self {
+        self.authenticity = Some(authenticity);
+        self
     }
 
     pub fn semantic_context(&self) -> Option<&ResolvedSemanticContext> {
         self.semantics.as_ref()
+    }
+
+    pub fn authenticity_context(&self) -> Option<&ResolvedAuthenticityContext> {
+        self.authenticity.as_ref()
     }
 
     pub fn build(
@@ -161,7 +206,12 @@ impl PromptBuilder {
         let existing =
             serde_json::to_string_pretty(existing_examples).unwrap_or_else(|_| "[]".to_owned());
         let semantic_guidance = self.guidance_for_target(&target);
-        let mut system_prompt = HYBRID_SYSTEM_PROMPT.to_owned();
+        let authenticity_guidance = self.authenticity_guidance();
+        let mut system_prompt = if authenticity_guidance.is_some() {
+            AUTHENTICITY_SYSTEM_PROMPT.to_owned()
+        } else {
+            HYBRID_SYSTEM_PROMPT.to_owned()
+        };
         if semantic_guidance.is_some() {
             system_prompt.push_str(
                 " The supplied semantic guidance is authoritative for interpreting the target values.",
@@ -176,13 +226,24 @@ impl PromptBuilder {
                 )
             },
         );
-        let user_prompt = HYBRID_USER_PROMPT_TEMPLATE
+        let authenticity_section = authenticity_guidance
+            .map(|guidance| serde_json::to_string_pretty(&guidance).unwrap_or_default());
+        let template = if authenticity_section.is_some() {
+            AUTHENTICITY_USER_PROMPT_TEMPLATE
+        } else {
+            HYBRID_USER_PROMPT_TEMPLATE
+        };
+        let user_prompt = template
             .replace("{task}", &definition.task_description)
             .replace(
                 "{target}",
                 &serde_json::to_string_pretty(&target).unwrap_or_default(),
             )
             .replace("{semantic_section}", &semantic_section)
+            .replace(
+                "{authenticity_section}",
+                authenticity_section.as_deref().unwrap_or(""),
+            )
             .replace(
                 "{row_seeds}",
                 &serde_json::to_string_pretty(&prepared.rows).unwrap_or_default(),
@@ -244,10 +305,42 @@ impl PromptBuilder {
             "sources": context.sources,
         }))
     }
+
+    fn authenticity_guidance(&self) -> Option<serde_json::Value> {
+        let context = self.authenticity.as_ref()?;
+        let sections = context
+            .sections
+            .iter()
+            .map(|(name, section)| {
+                (
+                    name.clone(),
+                    json!({
+                        "observations": section.observations,
+                        "generation_instructions": section.generation_instructions,
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        Some(json!({
+            "profile_id": context.profile_id,
+            "profile_version": context.profile_version,
+            "profile_fingerprint": context.profile_fingerprint,
+            "summary": context.summary,
+            "sections": sections,
+            "generation_instructions": context.generation_instructions,
+            "caveats": context.caveats,
+        }))
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use chrono::Utc;
+    use research_core::profile::{AuthenticitySection, ResolvedAuthenticityContext};
+    use uuid::Uuid;
+
     use super::PromptBuilder;
     use crate::{
         construction::{FieldDefinition, FieldRecipe, FieldValueType, RowConstructionPlan},
@@ -348,9 +441,6 @@ mod tests {
 
     #[test]
     fn prompt_includes_only_semantics_relevant_to_the_cell() {
-        use std::collections::BTreeMap;
-
-        use chrono::Utc;
         use semantic_catalog::{ResolvedSemanticContext, ResolvedSemanticTarget, SemanticEntry};
 
         let dataset = DatasetDefinition::new(
@@ -403,5 +493,66 @@ mod tests {
         assert!(request.user_prompt.contains("Direct clue"));
         assert!(!request.user_prompt.contains("Multiple indirect clues"));
         assert!(request.system_prompt.contains("authoritative"));
+    }
+
+    #[test]
+    fn approved_authenticity_context_changes_the_versioned_prompt_without_source_text() {
+        let dataset = DatasetDefinition::new(
+            "support",
+            "Classify requests",
+            vec!["billing".into()],
+            vec![],
+        )
+        .expect("dataset");
+        let mut context = ResolvedAuthenticityContext {
+            dataset_id: dataset.id,
+            dataset_fingerprint: "sha256:dataset".into(),
+            binding_id: Uuid::new_v4(),
+            binding_fingerprint: "sha256:binding".into(),
+            profile_id: Uuid::new_v4(),
+            profile_version: 2,
+            profile_fingerprint: "sha256:profile".into(),
+            summary: "Messages are terse and context-dependent.".into(),
+            sections: BTreeMap::from([(
+                "language".into(),
+                AuthenticitySection {
+                    observations: vec!["Fragments are common.".into()],
+                    generation_instructions: vec!["Vary sentence completeness.".into()],
+                    claim_ids: vec![Uuid::new_v4()],
+                },
+            )]),
+            generation_instructions: vec!["Vary length.".into()],
+            caveats: vec!["Small corpus.".into()],
+            resolved_at: Utc::now(),
+            fingerprint: String::new(),
+        };
+        context.fingerprint = context.reproduce_fingerprint().expect("fingerprint");
+        let construction = RowConstructionPlan::llm_text_default()
+            .expect("plan")
+            .compile()
+            .expect("compiled");
+        let prepared = construction
+            .prepare(expand_generation_cells(&dataset)[0].clone(), 0, 1)
+            .expect("prepared");
+        let request = PromptBuilder::default()
+            .attach_authenticity(context)
+            .build_hybrid(&dataset, prepared, GenerationParameters::default(), &[]);
+
+        assert!(request.user_prompt.contains("Fragments are common."));
+        assert!(request.user_prompt.contains("Vary sentence completeness."));
+        assert!(!request.user_prompt.contains("claim_ids"));
+        assert!(
+            request
+                .system_prompt
+                .contains("Never reproduce source wording")
+        );
+        assert_ne!(
+            PromptBuilder::authenticity_template_identity()
+                .expect("authenticity identity")
+                .fingerprint,
+            PromptBuilder::template_identity()
+                .expect("ordinary identity")
+                .fingerprint
+        );
     }
 }

@@ -23,7 +23,7 @@ use crate::{
     domain::{GeneratedCandidate, GeneratedRow, GenerationParameters, ValidationStatus},
     ports::{GenerationBackend, GenerationBackendError, GenerationStore, StoreError},
     prompting::PromptBuilder,
-    validation::{ValidationContext, ValidationPipeline},
+    validation::{SourceExcerptNoveltyValidator, ValidationContext, ValidationPipeline},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,6 +159,7 @@ pub struct JobRunner {
     policy: JobRunnerPolicy,
     validation: ValidationPipeline,
     prompt_builder: PromptBuilder,
+    source_novelty_guard_fingerprint: Option<String>,
 }
 
 impl JobRunner {
@@ -174,6 +175,7 @@ impl JobRunner {
             policy,
             validation,
             prompt_builder: PromptBuilder::default(),
+            source_novelty_guard_fingerprint: None,
         }
     }
 
@@ -181,7 +183,21 @@ impl JobRunner {
         mut self,
         context: semantic_catalog::ResolvedSemanticContext,
     ) -> Self {
-        self.prompt_builder = PromptBuilder::with_semantics(context);
+        self.prompt_builder = self.prompt_builder.attach_semantics(context);
+        self
+    }
+
+    pub fn with_authenticity_context(
+        mut self,
+        context: research_core::profile::ResolvedAuthenticityContext,
+    ) -> Self {
+        self.prompt_builder = self.prompt_builder.attach_authenticity(context);
+        self
+    }
+
+    pub fn with_source_novelty_guard(mut self, guard: SourceExcerptNoveltyValidator) -> Self {
+        self.source_novelty_guard_fingerprint = Some(guard.fingerprint().to_owned());
+        self.validation = self.validation.with_validator(guard);
         self
     }
 
@@ -312,6 +328,15 @@ impl JobRunner {
                     "request_fingerprint": attempt.request_fingerprint.clone(),
                     "construction_plan_fingerprint": execution.construction_plan.as_ref().map(|plan| &plan.fingerprint),
                     "semantic_context": self.prompt_builder.semantic_context(),
+                    "authenticity_context": self.prompt_builder.authenticity_context().map(|context| serde_json::json!({
+                        "binding_id": context.binding_id,
+                        "binding_fingerprint": context.binding_fingerprint,
+                        "profile_id": context.profile_id,
+                        "profile_version": context.profile_version,
+                        "profile_fingerprint": context.profile_fingerprint,
+                        "context_fingerprint": context.fingerprint,
+                    })),
+                    "source_novelty_guard_fingerprint": self.source_novelty_guard_fingerprint.as_deref(),
                 });
                 let rows = result
                     .rows
@@ -549,8 +574,16 @@ impl JobRunner {
             .prompt_builder
             .semantic_context()
             .map_or("none", |context| context.fingerprint.as_str());
+        let authenticity_fingerprint = self
+            .prompt_builder
+            .authenticity_context()
+            .map(|context| context.fingerprint.as_str());
         let expected_prompt = if execution.construction_plan.is_some() {
-            PromptBuilder::template_identity()?
+            if authenticity_fingerprint.is_some() {
+                PromptBuilder::authenticity_template_identity()?
+            } else {
+                PromptBuilder::template_identity()?
+            }
         } else {
             PromptBuilder::legacy_template_identity()?
         };
@@ -564,6 +597,16 @@ impl JobRunner {
             || execution.policy != GenerationExecutionPolicy::from(&self.policy)
             || execution.prompt_template != expected_prompt
             || execution.semantic_context_fingerprint != semantic_fingerprint
+            || execution.authenticity_context_fingerprint.as_deref() != authenticity_fingerprint
+            || execution.source_novelty_guard_fingerprint != self.source_novelty_guard_fingerprint
+            || self
+                .prompt_builder
+                .authenticity_context()
+                .is_some_and(|context| {
+                    context.dataset_id != job.dataset_id
+                        || context.reproduce_fingerprint().ok().as_ref()
+                            != Some(&context.fingerprint)
+                })
         {
             return Err(JobRunnerError::ExecutionSpecMismatch(job.id));
         }

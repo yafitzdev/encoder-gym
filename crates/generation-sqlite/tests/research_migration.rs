@@ -4,7 +4,7 @@ use sqlx::{Connection, SqliteConnection, migrate::Migrator, sqlite::SqliteConnec
 use uuid::Uuid;
 
 #[tokio::test]
-async fn migration_0041_preserves_existing_data_and_adds_empty_research_history() {
+async fn migrations_0041_and_0042_preserve_existing_data_and_add_research_history() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let database = directory.path().join("research-upgrade.db");
     let options = SqliteConnectOptions::from_str(&format!(
@@ -57,6 +57,13 @@ async fn migration_0041_preserves_existing_data_and_adds_empty_research_history(
             .fetch_one(&mut connection)
             .await
             .expect("research count"),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM generation_job_authenticity")
+            .fetch_one(&mut connection)
+            .await
+            .expect("generation authenticity count"),
         0
     );
     assert!(
