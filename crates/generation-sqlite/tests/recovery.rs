@@ -76,6 +76,7 @@ async fn detects_dead_owners_preserves_live_work_and_resumes_generation_from_cov
         target: plan.cells[0].cell.clone(),
         requested_count: 1,
         parameters: GenerationParameters::default(),
+        construction: None,
     };
     let open_attempt =
         GenerationAttempt::start(generation.id, 1, 0, &open_request).expect("attempt");

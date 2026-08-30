@@ -39,6 +39,10 @@ pub fn to_csv(rows: &[GeneratedRow]) -> Result<String, ExportError> {
         .iter()
         .flat_map(|row| row.dimensions.keys().cloned())
         .collect::<BTreeSet<_>>();
+    let field_names = accepted
+        .iter()
+        .flat_map(|row| row.fields.keys().cloned())
+        .collect::<BTreeSet<_>>();
 
     let mut writer = csv::Writer::from_writer(Vec::new());
     let mut header = vec!["id".to_owned(), "text".to_owned(), "label".to_owned()];
@@ -47,10 +51,12 @@ pub fn to_csv(rows: &[GeneratedRow]) -> Result<String, ExportError> {
             .iter()
             .map(|name| format!("dimension.{name}")),
     );
+    header.extend(field_names.iter().map(|name| format!("field.{name}")));
     header.extend([
         "generation_job_id".to_owned(),
         "generator_backend".to_owned(),
         "generator_model".to_owned(),
+        "construction_provenance".to_owned(),
         "created_at".to_owned(),
     ]);
     writer.write_record(&header)?;
@@ -62,10 +68,22 @@ pub fn to_csv(rows: &[GeneratedRow]) -> Result<String, ExportError> {
                 .iter()
                 .map(|name| row.dimensions.get(name).cloned().unwrap_or_default()),
         );
+        record.extend(field_names.iter().map(|name| {
+            row.fields.get(name).map_or_else(String::new, |value| {
+                value
+                    .as_str()
+                    .map_or_else(|| value.to_string(), str::to_owned)
+            })
+        }));
         record.extend([
             row.generation_job_id.to_string(),
             row.generator_backend.clone(),
             row.generator_model.clone(),
+            row.construction
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?
+                .unwrap_or_default(),
             row.created_at.to_rfc3339(),
         ]);
         writer.write_record(&record)?;
@@ -116,6 +134,8 @@ mod tests {
             normalized_text: "why was i charged twice?".into(),
             label: "billing".into(),
             dimensions: BTreeMap::from([("style".into(), "clean".into())]),
+            fields: BTreeMap::from([("ticket_id".into(), serde_json::json!("T-1"))]),
+            construction: None,
             generator_backend: "fake".into(),
             generator_model: "fake-v1".into(),
             created_at: Utc::now(),

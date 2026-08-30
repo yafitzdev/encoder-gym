@@ -3,6 +3,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use generation_core::{
+    construction::FieldValueType,
     domain::{GeneratedCandidate, GenerationRequest, GenerationResult},
     ports::{BoxFuture, GenerationBackend, GenerationBackendError},
 };
@@ -51,6 +52,32 @@ impl GenerationBackend for FakeGenerationBackend {
             let rows = (0..request.requested_count)
                 .map(|_| {
                     let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
+                    let fields = request
+                        .construction
+                        .as_ref()
+                        .map(|construction| {
+                            construction
+                                .llm_fields
+                                .iter()
+                                .filter(|field| field.name != "text")
+                                .map(|field| {
+                                    let value = match field.value_type {
+                                        FieldValueType::String => json!(format!(
+                                            "Synthetic {name} {sequence}",
+                                            name = field.name
+                                        )),
+                                        FieldValueType::Integer => json!(sequence),
+                                        FieldValueType::Number => json!(sequence as f64),
+                                        FieldValueType::Boolean => json!(sequence % 2 == 0),
+                                        FieldValueType::Object => json!({"sequence": sequence}),
+                                        FieldValueType::Array => json!([sequence]),
+                                        FieldValueType::Any => json!(format!("value-{sequence}")),
+                                    };
+                                    (field.name.clone(), value)
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
                     GeneratedCandidate {
                         text: format!(
                             "Synthetic example {} {sequence} for label {}",
@@ -58,6 +85,8 @@ impl GenerationBackend for FakeGenerationBackend {
                         ),
                         label: request.target.label.clone(),
                         dimensions: request.target.dimensions.clone(),
+                        fields,
+                        construction: None,
                     }
                 })
                 .collect();
@@ -96,6 +125,7 @@ mod tests {
                 },
                 requested_count: 2,
                 parameters: GenerationParameters::default(),
+                construction: None,
             })
             .await
             .expect("fake generation succeeds");

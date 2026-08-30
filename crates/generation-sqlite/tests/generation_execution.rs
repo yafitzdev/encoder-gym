@@ -72,6 +72,7 @@ async fn execution_attempt_rows_and_job_counters_commit_as_one_fact() {
         target: plan.cells[0].cell.clone(),
         requested_count: 2,
         parameters: GenerationParameters::default(),
+        construction: None,
     };
     let mut attempt = GenerationAttempt::start(job.id, 1, 0, &request).expect("attempt");
     store
@@ -194,6 +195,7 @@ async fn open_provider_calls_become_durable_unknown_outcomes_on_recovery() {
         target: plan.cells[0].cell.clone(),
         requested_count: 1,
         parameters: GenerationParameters::default(),
+        construction: None,
     };
     let attempt = GenerationAttempt::start(job.id, 1, 0, &request).expect("attempt");
     store
@@ -234,6 +236,8 @@ fn generated_row(
         normalized_text: text.into(),
         label: plan.cells[0].cell.label.clone(),
         dimensions: BTreeMap::new(),
+        fields: BTreeMap::new(),
+        construction: None,
         generator_backend: job.backend_name.clone(),
         generator_model: job.backend_model.clone(),
         created_at: Utc::now(),

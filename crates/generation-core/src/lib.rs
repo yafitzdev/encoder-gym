@@ -3,6 +3,7 @@
 //! This crate must remain independent of SQLite, HTTP clients, CLI parsing, and
 //! graphical presentation.
 
+pub mod construction;
 pub mod coverage;
 pub mod deduplication;
 pub mod dimensions;

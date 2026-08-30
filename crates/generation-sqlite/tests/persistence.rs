@@ -228,6 +228,8 @@ fn row(
         normalized_text: normalize_text(&text),
         label: plan.cells[0].cell.label.clone(),
         dimensions: BTreeMap::from([("style".into(), "clean".into())]),
+        fields: BTreeMap::from([("ticket_id".into(), serde_json::json!(sequence))]),
+        construction: None,
         generator_backend: "fake".into(),
         generator_model: "fake-v1".into(),
         created_at: Utc::now(),

@@ -48,6 +48,7 @@ pub fn build_snapshot(
             text: row.text,
             label: row.label,
             dimensions: row.dimensions,
+            fields: row.fields,
             source_provenance: row.provenance,
             source_created_at: row.created_at,
         });
@@ -155,7 +156,16 @@ struct SnapshotFingerprintInput<'a> {
 }
 
 #[derive(Serialize)]
-struct SnapshotMemberFingerprintInput<'a> {
+struct LegacySnapshotFingerprintInput<'a> {
+    source_dataset_id: Uuid,
+    name: &'a str,
+    description: &'a Option<String>,
+    split_configuration: SplitConfiguration,
+    members: Vec<LegacySnapshotMemberFingerprintInput<'a>>,
+}
+
+#[derive(Serialize)]
+struct LegacySnapshotMemberFingerprintInput<'a> {
     source_row_id: Uuid,
     split: SnapshotSplit,
     text: &'a str,
@@ -165,10 +175,43 @@ struct SnapshotMemberFingerprintInput<'a> {
     source_created_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[derive(Serialize)]
+struct SnapshotMemberFingerprintInput<'a> {
+    source_row_id: Uuid,
+    split: SnapshotSplit,
+    text: &'a str,
+    label: &'a str,
+    dimensions: &'a BTreeMap<String, String>,
+    fields: &'a BTreeMap<String, serde_json::Value>,
+    provenance: &'a crate::domain::SourceProvenance,
+    source_created_at: chrono::DateTime<chrono::Utc>,
+}
+
 fn snapshot_fingerprint(
     snapshot: &DatasetSnapshot,
     members: &[SnapshotMember],
 ) -> Result<String, DatasetError> {
+    if members.iter().all(|member| member.fields.is_empty()) {
+        return artifact_core::fingerprint(&LegacySnapshotFingerprintInput {
+            source_dataset_id: snapshot.source_dataset_id,
+            name: &snapshot.name,
+            description: &snapshot.description,
+            split_configuration: snapshot.split_configuration.clone(),
+            members: members
+                .iter()
+                .map(|member| LegacySnapshotMemberFingerprintInput {
+                    source_row_id: member.source_row_id,
+                    split: member.split,
+                    text: &member.text,
+                    label: &member.label,
+                    dimensions: &member.dimensions,
+                    provenance: &member.source_provenance,
+                    source_created_at: member.source_created_at,
+                })
+                .collect(),
+        })
+        .map_err(|error| DatasetError::Fingerprint(error.to_string()));
+    }
     artifact_core::fingerprint(&SnapshotFingerprintInput {
         source_dataset_id: snapshot.source_dataset_id,
         name: &snapshot.name,
@@ -182,6 +225,7 @@ fn snapshot_fingerprint(
                 text: &member.text,
                 label: &member.label,
                 dimensions: &member.dimensions,
+                fields: &member.fields,
                 provenance: &member.source_provenance,
                 source_created_at: member.source_created_at,
             })
@@ -238,7 +282,9 @@ mod tests {
     use chrono::Utc;
     use uuid::Uuid;
 
-    use super::build_snapshot;
+    use super::{
+        LegacySnapshotFingerprintInput, LegacySnapshotMemberFingerprintInput, build_snapshot,
+    };
     use crate::domain::{SnapshotSplit, SourceRow, SplitConfiguration, SplitRatios};
 
     fn rows(dataset_id: Uuid) -> Vec<SourceRow> {
@@ -252,10 +298,12 @@ mod tests {
                     "style".into(),
                     if index % 2 == 0 { "clean" } else { "messy" }.into(),
                 )]),
+                fields: BTreeMap::new(),
                 provenance: crate::domain::SourceProvenance::Generated {
                     generation_job_id: Uuid::nil(),
                     backend: "fixture".into(),
                     model: "fixture-v1".into(),
+                    construction_plan_fingerprint: None,
                 },
                 created_at: Utc::now(),
             })
@@ -284,6 +332,61 @@ mod tests {
         };
         assert_eq!(assignments(&first), assignments(&second));
         assert_eq!(first_snapshot.fingerprint, second_snapshot.fingerprint);
+    }
+
+    #[test]
+    fn empty_fields_keep_the_legacy_fingerprint_while_typed_fields_are_preserved() {
+        let dataset_id = Uuid::new_v4();
+        let configuration =
+            SplitConfiguration::new(SplitRatios::new(0.6, 0.2, 0.2).expect("ratios"), 42);
+        let (legacy_snapshot, legacy_members) = build_snapshot(
+            dataset_id,
+            "legacy-compatible",
+            None,
+            configuration.clone(),
+            rows(dataset_id),
+        )
+        .expect("legacy snapshot");
+        let expected = artifact_core::fingerprint(&LegacySnapshotFingerprintInput {
+            source_dataset_id: legacy_snapshot.source_dataset_id,
+            name: &legacy_snapshot.name,
+            description: &legacy_snapshot.description,
+            split_configuration: legacy_snapshot.split_configuration.clone(),
+            members: legacy_members
+                .iter()
+                .map(|member| LegacySnapshotMemberFingerprintInput {
+                    source_row_id: member.source_row_id,
+                    split: member.split,
+                    text: &member.text,
+                    label: &member.label,
+                    dimensions: &member.dimensions,
+                    provenance: &member.source_provenance,
+                    source_created_at: member.source_created_at,
+                })
+                .collect(),
+        })
+        .expect("legacy fingerprint");
+        assert_eq!(legacy_snapshot.fingerprint, expected);
+
+        let mut enriched = rows(dataset_id);
+        for row in &mut enriched {
+            row.fields
+                .insert("channel".into(), serde_json::json!("chat"));
+        }
+        let (enriched_snapshot, enriched_members) = build_snapshot(
+            dataset_id,
+            "legacy-compatible",
+            None,
+            configuration,
+            enriched,
+        )
+        .expect("enriched snapshot");
+        assert_ne!(enriched_snapshot.fingerprint, legacy_snapshot.fingerprint);
+        assert!(
+            enriched_members
+                .iter()
+                .all(|member| member.fields["channel"] == "chat")
+        );
     }
 
     #[test]

@@ -22,6 +22,7 @@ struct JsonlMember<'a> {
     text: &'a str,
     label: &'a str,
     dimensions: &'a std::collections::BTreeMap<String, String>,
+    fields: &'a std::collections::BTreeMap<String, serde_json::Value>,
     source_provenance: &'a SourceProvenance,
     source_created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -36,6 +37,7 @@ pub fn to_jsonl(members: &[SnapshotMember]) -> Result<String, SnapshotExportErro
             text: &member.text,
             label: &member.label,
             dimensions: &member.dimensions,
+            fields: &member.fields,
             source_provenance: &member.source_provenance,
             source_created_at: member.source_created_at,
         };
@@ -53,6 +55,10 @@ pub fn to_csv(members: &[SnapshotMember]) -> Result<String, SnapshotExportError>
         .iter()
         .flat_map(|member| member.dimensions.keys().cloned())
         .collect::<BTreeSet<_>>();
+    let fields = members
+        .iter()
+        .flat_map(|member| member.fields.keys().cloned())
+        .collect::<BTreeSet<_>>();
     let mut writer = csv::Writer::from_writer(Vec::new());
     let mut header = vec![
         "snapshot_id".to_owned(),
@@ -62,6 +68,7 @@ pub fn to_csv(members: &[SnapshotMember]) -> Result<String, SnapshotExportError>
         "label".to_owned(),
     ];
     header.extend(dimensions.iter().map(|name| format!("dimension:{name}")));
+    header.extend(fields.iter().map(|name| format!("field:{name}")));
     header.push("source_created_at".to_owned());
     header.extend(["source_kind".to_owned(), "source_provenance".to_owned()]);
     writer
@@ -81,6 +88,13 @@ pub fn to_csv(members: &[SnapshotMember]) -> Result<String, SnapshotExportError>
                 .iter()
                 .map(|name| member.dimensions.get(name).cloned().unwrap_or_default()),
         );
+        record.extend(fields.iter().map(|name| {
+            member.fields.get(name).map_or_else(String::new, |value| {
+                value
+                    .as_str()
+                    .map_or_else(|| value.to_string(), str::to_owned)
+            })
+        }));
         record.push(member.source_created_at.to_rfc3339());
         let source_kind = match member.source_provenance {
             SourceProvenance::Generated { .. } => "generated",
@@ -121,6 +135,7 @@ mod tests {
             text: "charged twice".into(),
             label: "billing".into(),
             dimensions: BTreeMap::from([("difficulty".into(), "hard".into())]),
+            fields: BTreeMap::from([("ticket_id".into(), serde_json::json!("T-1"))]),
             source_provenance: SourceProvenance::Imported {
                 import_id: Uuid::new_v4(),
                 source_path: "fixtures/support.jsonl".into(),

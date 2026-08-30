@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs::File,
     io::{BufReader, Read},
     path::{Path, PathBuf},
@@ -203,6 +204,7 @@ fn load_source(
             text: row.text.clone(),
             label: row.label.clone(),
             dimensions: row.dimensions.clone(),
+            fields: BTreeMap::new(),
             provenance: SourceProvenance::Imported {
                 import_id: dataset_import.id,
                 source_path: dataset_import.source_path.clone(),

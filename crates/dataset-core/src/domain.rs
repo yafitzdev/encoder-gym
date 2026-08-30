@@ -123,6 +123,8 @@ pub struct SourceRow {
     pub text: String,
     pub label: String,
     pub dimensions: BTreeMap<String, String>,
+    #[serde(default)]
+    pub fields: BTreeMap<String, serde_json::Value>,
     pub provenance: SourceProvenance,
     pub created_at: DateTime<Utc>,
 }
@@ -134,6 +136,8 @@ pub enum SourceProvenance {
         generation_job_id: Uuid,
         backend: String,
         model: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        construction_plan_fingerprint: Option<String>,
     },
     Imported {
         import_id: Uuid,
@@ -340,6 +344,8 @@ pub struct SnapshotMember {
     pub text: String,
     pub label: String,
     pub dimensions: BTreeMap<String, String>,
+    #[serde(default)]
+    pub fields: BTreeMap<String, serde_json::Value>,
     pub source_provenance: SourceProvenance,
     pub source_created_at: DateTime<Utc>,
 }

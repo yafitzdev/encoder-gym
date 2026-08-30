@@ -389,6 +389,7 @@ mod tests {
                     seed: Some(7),
                     extra: BTreeMap::from([("top_p".into(), json!(0.9))]),
                 },
+                construction: None,
             })
             .expect("valid request");
 
@@ -426,6 +427,27 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_hybrid_rows_without_requiring_provider_owned_dimensions() {
+        let raw = json!({
+            "id": "request-hybrid",
+            "model": "served-model",
+            "choices": [{
+                "message": {
+                    "content": "{\"rows\":[{\"text\":\"charged twice\",\"fields\":{\"rationale\":\"duplicate charge\"}}]}"
+                },
+                "finish_reason": "stop"
+            }]
+        })
+        .to_string();
+
+        let result = OpenAICompatibleBackend::normalize_response(&raw).expect("hybrid response");
+        assert_eq!(result.rows[0].text, "charged twice");
+        assert_eq!(result.rows[0].label, "");
+        assert!(result.rows[0].dimensions.is_empty());
+        assert_eq!(result.rows[0].fields["rationale"], "duplicate charge");
+    }
+
+    #[test]
     fn rejects_reserved_parameter_overrides() {
         let request = GenerationRequest {
             system_prompt: "system".into(),
@@ -439,6 +461,7 @@ mod tests {
                 extra: BTreeMap::from([("model".into(), json!("other"))]),
                 ..GenerationParameters::default()
             },
+            construction: None,
         };
         assert!(backend().request_body(&request).is_err());
     }
@@ -532,6 +555,7 @@ mod tests {
                 temperature: Some(0.3),
                 ..GenerationParameters::default()
             },
+            construction: None,
         };
 
         let result = backend

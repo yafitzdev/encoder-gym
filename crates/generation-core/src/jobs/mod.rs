@@ -3,7 +3,7 @@
 mod execution;
 
 pub use execution::{
-    GenerationAttempt, GenerationAttemptFailureKind, GenerationAttemptState,
+    GenerationAttempt, GenerationAttemptFailureKind, GenerationAttemptKind, GenerationAttemptState,
     GenerationBackendIdentity, GenerationExecutionError, GenerationExecutionPolicy,
     GenerationExecutionSpec, PromptTemplateIdentity,
 };
@@ -18,6 +18,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
+    construction::{CompiledRowConstructionPlan, ConstructionError},
     deduplication::{NormalizedTextDeduplicator, normalize_text},
     domain::{GeneratedCandidate, GeneratedRow, GenerationParameters, ValidationStatus},
     ports::{GenerationBackend, GenerationBackendError, GenerationStore, StoreError},
@@ -212,6 +213,11 @@ impl JobRunner {
             .await?
             .ok_or(JobRunnerError::ExecutionSpecNotFound(job_id))?;
         self.validate_execution(&job, &execution, &parameters)?;
+        let construction = execution
+            .construction_plan
+            .as_ref()
+            .map(|plan| plan.compile())
+            .transpose()?;
         if job.state != JobState::Queued {
             return Err(JobRunnerError::JobNotQueued(job.state));
         }
@@ -260,7 +266,15 @@ impl JobRunner {
             let mut attempted_rows = historical_attempts
                 .iter()
                 .filter(|attempt| attempt.cell == planned.cell)
-                .map(|attempt| attempt.requested_count)
+                .map(|attempt| {
+                    if attempt.kind == GenerationAttemptKind::DeterministicConstruction
+                        && attempt.state != GenerationAttemptState::Succeeded
+                    {
+                        0
+                    } else {
+                        attempt.requested_count
+                    }
+                })
                 .fold(0_u32, u32::saturating_add);
 
             while remaining > 0 && attempted_rows < max_attempted_rows {
@@ -270,18 +284,16 @@ impl JobRunner {
                 let requested_count = remaining
                     .min(self.policy.batch_size.max(1))
                     .min(max_attempted_rows - attempted_rows);
-                let request = self.prompt_builder.build(
-                    &dataset,
-                    planned.cell.clone(),
-                    requested_count,
-                    parameters.clone(),
-                    &[],
-                );
-
-                let (result, mut attempt) = match self
-                    .generate_with_retries(
+                let start_index = u64::from(attempted_rows);
+                let (result, mut attempt, produced_rows) = match self
+                    .execute_batch(
                         &mut job,
-                        request,
+                        &dataset,
+                        planned,
+                        construction.as_ref(),
+                        requested_count,
+                        start_index,
+                        &parameters,
                         &mut next_attempt_sequence,
                         &mut attempted_rows,
                         max_attempted_rows,
@@ -291,13 +303,14 @@ impl JobRunner {
                     Some(result) => result,
                     None => return Ok(job),
                 };
-                let provider_returned_rows = result.rows.len().try_into().unwrap_or(u32::MAX);
                 let metadata = json!({
                     "backend": result.backend_metadata.clone(),
                     "usage": result.usage.clone(),
                     "backend_errors": result.errors.clone(),
                     "generation_attempt_id": attempt.id,
+                    "generation_attempt_kind": attempt.kind,
                     "request_fingerprint": attempt.request_fingerprint.clone(),
+                    "construction_plan_fingerprint": execution.construction_plan.as_ref().map(|plan| &plan.fingerprint),
                     "semantic_context": self.prompt_builder.semantic_context(),
                 });
                 let rows = result
@@ -312,6 +325,7 @@ impl JobRunner {
                             candidate,
                             &mut deduplicator,
                             metadata.clone(),
+                            execution.construction_plan.as_ref(),
                         )
                     })
                     .collect::<Vec<_>>();
@@ -322,7 +336,7 @@ impl JobRunner {
                     .count() as u64;
                 let rejected = rows.len() as u64 - accepted;
                 attempt.succeed(
-                    provider_returned_rows,
+                    produced_rows,
                     rows.len().try_into().unwrap_or(u32::MAX),
                     accepted.try_into().unwrap_or(u32::MAX),
                     rejected.try_into().unwrap_or(u32::MAX),
@@ -358,6 +372,96 @@ impl JobRunner {
         }
         self.store.save_job(&job).await?;
         Ok(job)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_batch(
+        &self,
+        job: &mut GenerationJob,
+        dataset: &crate::domain::DatasetDefinition,
+        planned: &crate::domain::PlannedCell,
+        construction: Option<&CompiledRowConstructionPlan>,
+        requested_count: u32,
+        start_index: u64,
+        parameters: &GenerationParameters,
+        next_attempt_sequence: &mut u64,
+        attempted_rows: &mut u32,
+        max_attempted_rows: u32,
+    ) -> Result<Option<(crate::domain::GenerationResult, GenerationAttempt, u32)>, JobRunnerError>
+    {
+        let Some(construction) = construction else {
+            let request = self.prompt_builder.build(
+                dataset,
+                planned.cell.clone(),
+                requested_count,
+                parameters.clone(),
+                &[],
+            );
+            return Ok(self
+                .generate_with_retries(
+                    job,
+                    request,
+                    next_attempt_sequence,
+                    attempted_rows,
+                    max_attempted_rows,
+                )
+                .await?
+                .map(|(result, attempt)| {
+                    let produced = result.rows.len().try_into().unwrap_or(u32::MAX);
+                    (result, attempt, produced)
+                }));
+        };
+
+        let prepared = construction.prepare(planned.cell.clone(), start_index, requested_count)?;
+        if prepared.requires_llm() {
+            let request = self.prompt_builder.build_hybrid(
+                dataset,
+                prepared.clone(),
+                parameters.clone(),
+                &[],
+            );
+            let Some((mut result, attempt)) = self
+                .generate_with_retries(
+                    job,
+                    request,
+                    next_attempt_sequence,
+                    attempted_rows,
+                    max_attempted_rows,
+                )
+                .await?
+            else {
+                return Ok(None);
+            };
+            let provider_rows = result.rows.len().try_into().unwrap_or(u32::MAX);
+            result.rows = construction.complete(&prepared, std::mem::take(&mut result.rows))?;
+            Ok(Some((result, attempt, provider_rows)))
+        } else {
+            if attempted_rows.saturating_add(requested_count) > max_attempted_rows {
+                return Ok(None);
+            }
+            *attempted_rows = attempted_rows.saturating_add(requested_count);
+            let attempt =
+                GenerationAttempt::start_deterministic(job.id, *next_attempt_sequence, &prepared)?;
+            *next_attempt_sequence = next_attempt_sequence.checked_add(1).ok_or(
+                GenerationExecutionError::InvalidAttempt("attempt sequence overflowed".into()),
+            )?;
+            self.store.start_generation_attempt(&attempt).await?;
+            let rows = construction.complete(&prepared, vec![])?;
+            let produced_rows = rows.len().try_into().unwrap_or(u32::MAX);
+            Ok(Some((
+                crate::domain::GenerationResult {
+                    rows,
+                    usage: None,
+                    backend_metadata: json!({
+                        "provider_called": false,
+                        "construction_plan_fingerprint": construction.plan().fingerprint,
+                    }),
+                    errors: vec![],
+                },
+                attempt,
+                produced_rows,
+            )))
+        }
     }
 
     async fn fail_running_job(&self, job_id: Uuid, error: &JobRunnerError) {
@@ -445,6 +549,11 @@ impl JobRunner {
             .prompt_builder
             .semantic_context()
             .map_or("none", |context| context.fingerprint.as_str());
+        let expected_prompt = if execution.construction_plan.is_some() {
+            PromptBuilder::template_identity()?
+        } else {
+            PromptBuilder::legacy_template_identity()?
+        };
         if execution.reproduce_fingerprint()? != execution.fingerprint
             || execution.job_id != job.id
             || execution.dataset_id != job.dataset_id
@@ -453,7 +562,7 @@ impl JobRunner {
             || execution.backend.model != self.backend.model()
             || &execution.parameters != parameters
             || execution.policy != GenerationExecutionPolicy::from(&self.policy)
-            || execution.prompt_template != PromptBuilder::template_identity()?
+            || execution.prompt_template != expected_prompt
             || execution.semantic_context_fingerprint != semantic_fingerprint
         {
             return Err(JobRunnerError::ExecutionSpecMismatch(job.id));
@@ -461,6 +570,7 @@ impl JobRunner {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_row(
         &self,
         job: &GenerationJob,
@@ -469,11 +579,13 @@ impl JobRunner {
         candidate: GeneratedCandidate,
         deduplicator: &mut NormalizedTextDeduplicator,
         generation_metadata: serde_json::Value,
+        construction_plan: Option<&crate::construction::RowConstructionPlan>,
     ) -> GeneratedRow {
         let result = self.validation.validate(
             &ValidationContext {
                 dataset,
                 target: &planned.cell,
+                construction_plan,
             },
             &candidate,
         );
@@ -501,6 +613,8 @@ impl JobRunner {
             text: candidate.text,
             label: candidate.label,
             dimensions: candidate.dimensions,
+            fields: candidate.fields,
+            construction: candidate.construction,
             generator_backend: self.backend.name().to_owned(),
             generator_model: self.backend.model().to_owned(),
             created_at: Utc::now(),
@@ -521,6 +635,8 @@ pub enum JobRunnerError {
     Execution(#[from] GenerationExecutionError),
     #[error(transparent)]
     Fingerprint(#[from] FingerprintError),
+    #[error(transparent)]
+    Construction(#[from] ConstructionError),
     #[error("generation job not found: {0}")]
     JobNotFound(Uuid),
     #[error("generation execution specification not found: {0}")]

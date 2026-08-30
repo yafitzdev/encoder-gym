@@ -423,10 +423,12 @@ mod tests {
             text: text.into(),
             label: "billing".into(),
             dimensions: BTreeMap::from([("account".into(), group.into())]),
+            fields: BTreeMap::new(),
             source_provenance: SourceProvenance::Generated {
                 generation_job_id: Uuid::nil(),
                 backend: "fake".into(),
                 model: "fake-v1".into(),
+                construction_plan_fingerprint: None,
             },
             source_created_at: Utc::now(),
         };

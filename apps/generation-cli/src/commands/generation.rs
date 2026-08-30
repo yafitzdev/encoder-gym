@@ -64,7 +64,12 @@ pub async fn execute(args: GenerateArgs, store: SqliteStore) -> anyhow::Result<(
         requested_rows,
     );
     let policy = runner_policy(&options, configured.as_ref());
-    let execution = GenerationExecutionSpec::new(
+    let construction_plan = configured
+        .as_ref()
+        .map(|config| config.row_construction_plan())
+        .transpose()?
+        .unwrap_or(generation_core::construction::RowConstructionPlan::llm_text_default()?);
+    let execution = GenerationExecutionSpec::new_with_construction(
         job.id,
         job.dataset_id,
         job.plan_id,
@@ -78,6 +83,7 @@ pub async fn execute(args: GenerateArgs, store: SqliteStore) -> anyhow::Result<(
         GenerationExecutionPolicy::from(&policy),
         PromptBuilder::template_identity()?,
         semantic_context.fingerprint.clone(),
+        construction_plan,
     )?;
     let semantics = GenerationSemanticAssignment::new(job.id, semantic_context)?;
     store
@@ -188,7 +194,7 @@ pub(crate) async fn run_workflow(
         requested_rows,
     );
     let policy = runner_policy(&options, Some(configured));
-    let execution = GenerationExecutionSpec::new(
+    let execution = GenerationExecutionSpec::new_with_construction(
         job.id,
         job.dataset_id,
         job.plan_id,
@@ -202,6 +208,7 @@ pub(crate) async fn run_workflow(
         GenerationExecutionPolicy::from(&policy),
         PromptBuilder::template_identity()?,
         semantic_context.fingerprint.clone(),
+        configured.row_construction_plan()?,
     )?;
     let semantics = GenerationSemanticAssignment::new(job.id, semantic_context.clone())?;
     store

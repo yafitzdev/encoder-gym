@@ -1,6 +1,9 @@
 //! Small, composable generated-row validators.
 
-use crate::domain::{DatasetDefinition, GeneratedCandidate, GenerationCell};
+use crate::{
+    construction::RowConstructionPlan,
+    domain::{DatasetDefinition, GeneratedCandidate, GenerationCell},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationIssue {
@@ -17,6 +20,7 @@ pub struct ValidationResult {
 pub struct ValidationContext<'a> {
     pub dataset: &'a DatasetDefinition,
     pub target: &'a GenerationCell,
+    pub construction_plan: Option<&'a RowConstructionPlan>,
 }
 
 pub trait RowValidator: Send + Sync {
@@ -42,6 +46,7 @@ impl ValidationPipeline {
             Box::new(NonEmptyTextValidator),
             Box::new(ValidLabelValidator),
             Box::new(TargetDimensionsValidator),
+            Box::new(ConstructionFieldsValidator),
         ];
         if let Some(validator) = text_length {
             validators.push(Box::new(validator));
@@ -63,6 +68,77 @@ impl ValidationPipeline {
             is_valid: issues.is_empty(),
             issues,
         }
+    }
+}
+
+pub struct ConstructionFieldsValidator;
+
+impl RowValidator for ConstructionFieldsValidator {
+    fn validate(
+        &self,
+        context: &ValidationContext<'_>,
+        candidate: &GeneratedCandidate,
+    ) -> Vec<ValidationIssue> {
+        let Some(plan) = context.construction_plan else {
+            return vec![];
+        };
+        let mut issues = Vec::new();
+        let expected = plan
+            .fields
+            .iter()
+            .filter(|field| field.name != "text")
+            .map(|field| field.name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let actual = candidate
+            .fields
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        for missing in expected.difference(&actual) {
+            issues.push(issue(
+                "missing_constructed_field",
+                format!("missing constructed field {missing}"),
+            ));
+        }
+        for unexpected in actual.difference(&expected) {
+            issues.push(issue(
+                "unexpected_constructed_field",
+                format!("unexpected constructed field {unexpected}"),
+            ));
+        }
+        for field in &plan.fields {
+            let value = if field.name == "text" {
+                serde_json::Value::String(candidate.text.clone())
+            } else if let Some(value) = candidate.fields.get(&field.name) {
+                value.clone()
+            } else {
+                continue;
+            };
+            if !field.value_type.accepts(&value) {
+                issues.push(issue(
+                    "constructed_field_type",
+                    format!("constructed field {} has the wrong value type", field.name),
+                ));
+            }
+        }
+        match &candidate.construction {
+            Some(trace) => {
+                if plan
+                    .verify_trace(&candidate.text, &candidate.fields, trace)
+                    .is_err()
+                {
+                    issues.push(issue(
+                        "invalid_construction_trace",
+                        "row construction trace does not reproduce from the pinned plan and row values",
+                    ));
+                }
+            }
+            None => issues.push(issue(
+                "missing_construction_trace",
+                "row is missing construction provenance",
+            )),
+        }
+        issues
     }
 }
 
@@ -214,6 +290,8 @@ mod tests {
             text: " ".into(),
             label: "unknown".into(),
             dimensions: BTreeMap::from([("style".into(), "other".into())]),
+            fields: BTreeMap::new(),
+            construction: None,
         };
         let pipeline = ValidationPipeline::standard(Some(TextLengthValidator {
             min_chars: Some(5),
@@ -223,6 +301,7 @@ mod tests {
             &ValidationContext {
                 dataset: &dataset,
                 target: &target,
+                construction_plan: None,
             },
             &candidate,
         );
@@ -245,11 +324,14 @@ mod tests {
             text: "Why was I charged twice?".into(),
             label: "billing".into(),
             dimensions: target.dimensions.clone(),
+            fields: BTreeMap::new(),
+            construction: None,
         };
         let result = ValidationPipeline::standard(None).validate(
             &ValidationContext {
                 dataset: &dataset,
                 target: &target,
+                construction_plan: None,
             },
             &candidate,
         );

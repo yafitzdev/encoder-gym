@@ -76,10 +76,12 @@ mod tests {
             text: "example".into(),
             label: label.into(),
             dimensions: BTreeMap::from([("style".into(), style.into())]),
+            fields: BTreeMap::new(),
             source_provenance: crate::domain::SourceProvenance::Generated {
                 generation_job_id: Uuid::nil(),
                 backend: "fixture".into(),
                 model: "fixture-v1".into(),
+                construction_plan_fingerprint: None,
             },
             source_created_at: Utc::now(),
         }

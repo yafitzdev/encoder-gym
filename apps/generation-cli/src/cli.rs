@@ -216,6 +216,21 @@ pub enum ConfigCommand {
     Show(ConfigResolveArgs),
     /// Atomically create the configured dataset, initial plan, and backend settings.
     Init(ConfigResolveArgs),
+    /// Compile row recipes and preview provider work without making an external call.
+    ConstructionPreview(ConstructionPreviewArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct ConstructionPreviewArgs {
+    pub file: PathBuf,
+    #[arg(long)]
+    pub label: String,
+    #[arg(long = "dimension", value_name = "NAME=VALUE")]
+    pub dimensions: Vec<String>,
+    #[arg(long, default_value_t = 0)]
+    pub start_index: u64,
+    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u32).range(1..=1_000))]
+    pub count: u32,
 }
 
 #[derive(Debug, Subcommand)]

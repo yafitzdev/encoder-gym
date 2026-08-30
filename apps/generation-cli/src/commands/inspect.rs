@@ -82,11 +82,16 @@ pub async fn job(command: JobCommand, store: &SqliteStore) -> anyhow::Result<()>
                 .get_generation_semantics(id)
                 .await?
                 .with_context(|| format!("generation semantic assignment not found: {id}"))?;
+            let expected_template = if execution.construction_plan.is_some() {
+                PromptBuilder::template_identity()?
+            } else {
+                PromptBuilder::legacy_template_identity()?
+            };
             anyhow::ensure!(
                 assignment.context.fingerprint == execution.semantic_context_fingerprint
                     && assignment.context.reproduce_fingerprint()?
                         == assignment.context.fingerprint
-                    && execution.prompt_template == PromptBuilder::template_identity()?,
+                    && execution.prompt_template == expected_template,
                 "job execution provenance failed its integrity check"
             );
             let default_count = execution
@@ -97,16 +102,67 @@ pub async fn job(command: JobCommand, store: &SqliteStore) -> anyhow::Result<()>
                 .min(execution.policy.batch_size);
             let count = requested_count.unwrap_or(default_count);
             anyhow::ensure!(count > 0, "requested count must be greater than zero");
-            let request = PromptBuilder::with_semantics(assignment.context).build(
-                &dataset,
-                planned.cell.clone(),
-                count,
-                execution.parameters.clone(),
-                &[],
-            );
+            let prompt_builder = PromptBuilder::with_semantics(assignment.context);
+            let attempts = store.list_generation_attempts(id).await?;
+            let start_index = attempts
+                .iter()
+                .filter(|attempt| attempt.cell == planned.cell)
+                .map(|attempt| {
+                    if attempt.kind
+                        == generation_core::jobs::GenerationAttemptKind::DeterministicConstruction
+                        && attempt.state != generation_core::jobs::GenerationAttemptState::Succeeded
+                    {
+                        0
+                    } else {
+                        u64::from(attempt.requested_count)
+                    }
+                })
+                .sum();
+            let (provider_required, prepared_rows, completed_rows, request) =
+                if let Some(construction_plan) = &execution.construction_plan {
+                    let construction = construction_plan.compile()?;
+                    let prepared =
+                        construction.prepare(planned.cell.clone(), start_index, count)?;
+                    if prepared.requires_llm() {
+                        let rows = prepared.rows.clone();
+                        (
+                            true,
+                            rows,
+                            None,
+                            Some(prompt_builder.build_hybrid(
+                                &dataset,
+                                prepared,
+                                execution.parameters.clone(),
+                                &[],
+                            )),
+                        )
+                    } else {
+                        let rows = prepared.rows.clone();
+                        let completed = construction.complete(&prepared, Vec::new())?;
+                        (false, rows, Some(completed), None)
+                    }
+                } else {
+                    (
+                        true,
+                        Vec::new(),
+                        None,
+                        Some(prompt_builder.build(
+                            &dataset,
+                            planned.cell.clone(),
+                            count,
+                            execution.parameters.clone(),
+                            &[],
+                        )),
+                    )
+                };
             crate::presentation::print(&serde_json::json!({
                 "execution_fingerprint": execution.fingerprint,
                 "prompt_template": execution.prompt_template,
+                "construction_plan": execution.construction_plan,
+                "start_index": start_index,
+                "provider_required": provider_required,
+                "prepared_rows": prepared_rows,
+                "completed_rows": completed_rows,
                 "request": request,
             }))?;
         }

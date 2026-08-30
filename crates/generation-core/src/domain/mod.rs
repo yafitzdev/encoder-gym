@@ -228,14 +228,22 @@ pub struct GenerationRequest {
     pub target: GenerationCell,
     pub requested_count: u32,
     pub parameters: GenerationParameters,
+    #[serde(default)]
+    pub construction: Option<crate::construction::PreparedConstructionBatch>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GeneratedCandidate {
+    #[serde(default)]
     pub text: String,
+    #[serde(default)]
     pub label: String,
     #[serde(default)]
     pub dimensions: BTreeMap<String, String>,
+    #[serde(default)]
+    pub fields: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub construction: Option<crate::construction::RowConstructionTrace>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -283,6 +291,10 @@ pub struct GeneratedRow {
     pub normalized_text: String,
     pub label: String,
     pub dimensions: BTreeMap<String, String>,
+    #[serde(default)]
+    pub fields: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub construction: Option<crate::construction::RowConstructionTrace>,
     pub generator_backend: String,
     pub generator_model: String,
     pub created_at: DateTime<Utc>,

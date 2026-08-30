@@ -302,7 +302,8 @@ impl RowStore for SqliteStore {
             let mut builder = QueryBuilder::<Sqlite>::new(
                 "SELECT id, dataset_id, plan_id, generation_job_id, cell_key, text, normalized_text, \
                  label, dimensions_json, generator_backend, generator_model, created_at, \
-                 validation_status, validation_errors_json, generation_metadata_json \
+                 validation_status, validation_errors_json, generation_metadata_json, \
+                 fields_json, construction_json \
                  FROM generated_rows WHERE 1 = 1",
             );
             if let Some(dataset_id) = query.dataset_id {
@@ -462,7 +463,7 @@ impl AcceptedRowSource for SqliteStore {
     ) -> DatasetBoxFuture<'_, Result<Vec<SourceRow>, DatasetStoreError>> {
         Box::pin(async move {
             sqlx::query_as::<_, SourceRowRecord>(
-                "SELECT id, dataset_id, text, label, dimensions_json, provenance_json, created_at \
+                "SELECT id, dataset_id, text, label, dimensions_json, fields_json, provenance_json, created_at \
                  FROM dataset_source_rows WHERE dataset_id = ? \
                  ORDER BY created_at, id",
             )
@@ -484,7 +485,7 @@ impl AcceptedRowSource for SqliteStore {
     ) -> DatasetBoxFuture<'_, Result<Vec<SourceRow>, DatasetStoreError>> {
         Box::pin(async move {
             sqlx::query_as::<_, SourceRowRecord>(
-                "SELECT id, dataset_id, text, label, dimensions_json, provenance_json, created_at \
+                "SELECT id, dataset_id, text, label, dimensions_json, fields_json, provenance_json, created_at \
                  FROM dataset_source_rows WHERE dataset_id = ? ORDER BY created_at, id \
                  LIMIT ? OFFSET ?",
             )
@@ -587,7 +588,7 @@ impl SnapshotStore for SqliteStore {
     ) -> DatasetBoxFuture<'_, Result<Vec<SnapshotMember>, DatasetStoreError>> {
         Box::pin(async move {
             sqlx::query_as::<_, SnapshotMemberRecord>(
-                "SELECT id, snapshot_id, source_row_id, split, text, label, dimensions_json, \
+                "SELECT id, snapshot_id, source_row_id, split, text, label, dimensions_json, fields_json, \
                  source_provenance_json, source_created_at FROM dataset_snapshot_members \
                  WHERE snapshot_id = ? ORDER BY source_row_id",
             )
@@ -609,7 +610,7 @@ impl SnapshotStore for SqliteStore {
     ) -> DatasetBoxFuture<'_, Result<Vec<SnapshotMember>, DatasetStoreError>> {
         Box::pin(async move {
             sqlx::query_as::<_, SnapshotMemberRecord>(
-                "SELECT id, snapshot_id, source_row_id, split, text, label, dimensions_json, \
+                "SELECT id, snapshot_id, source_row_id, split, text, label, dimensions_json, fields_json, \
                  source_provenance_json, source_created_at FROM dataset_snapshot_members \
                  WHERE snapshot_id = ? ORDER BY source_row_id LIMIT ? OFFSET ?",
             )
@@ -665,8 +666,8 @@ pub(crate) async fn insert_snapshot(
     for member in members {
         sqlx::query(
             "INSERT INTO dataset_snapshot_members \
-             (id, snapshot_id, source_row_id, split, text, label, dimensions_json, \
-              source_provenance_json, source_created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             (id, snapshot_id, source_row_id, split, text, label, dimensions_json, fields_json, \
+              source_provenance_json, source_created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(member.id)
         .bind(member.snapshot_id)
@@ -675,6 +676,7 @@ pub(crate) async fn insert_snapshot(
         .bind(&member.text)
         .bind(&member.label)
         .bind(dataset_to_json(&member.dimensions)?)
+        .bind(dataset_to_json(&member.fields)?)
         .bind(dataset_to_json(&member.source_provenance)?)
         .bind(member.source_created_at)
         .execute(&mut *connection)
@@ -691,6 +693,7 @@ struct SourceRowRecord {
     text: String,
     label: String,
     dimensions_json: String,
+    fields_json: String,
     provenance_json: String,
     created_at: DateTime<Utc>,
 }
@@ -703,6 +706,7 @@ impl SourceRowRecord {
             text: self.text,
             label: self.label,
             dimensions: dataset_from_json(&self.dimensions_json)?,
+            fields: dataset_from_json(&self.fields_json)?,
             provenance: dataset_from_json(&self.provenance_json)?,
             created_at: self.created_at,
         })
@@ -749,6 +753,7 @@ struct SnapshotMemberRecord {
     text: String,
     label: String,
     dimensions_json: String,
+    fields_json: String,
     source_provenance_json: String,
     source_created_at: DateTime<Utc>,
 }
@@ -763,6 +768,7 @@ impl SnapshotMemberRecord {
             text: self.text,
             label: self.label,
             dimensions: dataset_from_json(&self.dimensions_json)?,
+            fields: dataset_from_json(&self.fields_json)?,
             source_provenance: dataset_from_json(&self.source_provenance_json)?,
             source_created_at: self.source_created_at,
         })
@@ -871,6 +877,8 @@ struct RowRecord {
     validation_status: String,
     validation_errors_json: String,
     generation_metadata_json: String,
+    fields_json: String,
+    construction_json: Option<String>,
 }
 
 impl RowRecord {
@@ -885,6 +893,12 @@ impl RowRecord {
             normalized_text: self.normalized_text,
             label: self.label,
             dimensions: from_json(&self.dimensions_json)?,
+            fields: from_json(&self.fields_json)?,
+            construction: self
+                .construction_json
+                .as_deref()
+                .map(from_json)
+                .transpose()?,
             generator_backend: self.generator_backend,
             generator_model: self.generator_model,
             created_at: self.created_at,
@@ -1004,8 +1018,9 @@ pub(crate) async fn insert_generated_rows(
             "INSERT INTO generated_rows \
              (id, dataset_id, plan_id, generation_job_id, cell_key, text, normalized_text, \
               label, dimensions_json, generator_backend, generator_model, created_at, \
-              validation_status, validation_errors_json, generation_metadata_json) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              validation_status, validation_errors_json, generation_metadata_json, fields_json, \
+              construction_json) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(row.id)
         .bind(row.dataset_id)
@@ -1022,6 +1037,8 @@ pub(crate) async fn insert_generated_rows(
         .bind(validation_status_text(row.validation_status))
         .bind(to_json(&row.validation_errors)?)
         .bind(to_json(&row.generation_metadata)?)
+        .bind(to_json(&row.fields)?)
+        .bind(row.construction.as_ref().map(to_json).transpose()?)
         .execute(&mut **transaction)
         .await
         .map_err(store_error)?;
@@ -1030,12 +1047,16 @@ pub(crate) async fn insert_generated_rows(
                 generation_job_id: row.generation_job_id,
                 backend: row.generator_backend.clone(),
                 model: row.generator_model.clone(),
+                construction_plan_fingerprint: row
+                    .construction
+                    .as_ref()
+                    .map(|trace| trace.plan_fingerprint.clone()),
             };
             sqlx::query(
                 "INSERT INTO dataset_source_rows \
                  (id, dataset_id, source_kind, source_ref, cell_key, text, normalized_text, \
-                  label, dimensions_json, provenance_json, created_at) \
-                 VALUES (?, ?, 'generated', ?, ?, ?, ?, ?, ?, ?, ?)",
+                  label, dimensions_json, provenance_json, created_at, fields_json) \
+                 VALUES (?, ?, 'generated', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(row.id)
             .bind(row.dataset_id)
@@ -1047,6 +1068,7 @@ pub(crate) async fn insert_generated_rows(
             .bind(to_json(&row.dimensions)?)
             .bind(to_json(&provenance)?)
             .bind(row.created_at)
+            .bind(to_json(&row.fields)?)
             .execute(&mut **transaction)
             .await
             .map_err(store_error)?;

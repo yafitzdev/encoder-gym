@@ -7,6 +7,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
+    construction::{ConstructionError, PreparedConstructionBatch, RowConstructionPlan},
     domain::{GenerationCell, GenerationParameters, GenerationRequest, UsageMetadata},
     planning::GenerationNeed,
 };
@@ -61,6 +62,8 @@ pub struct GenerationExecutionSpec {
     pub policy: GenerationExecutionPolicy,
     pub prompt_template: PromptTemplateIdentity,
     pub semantic_context_fingerprint: String,
+    #[serde(default)]
+    pub construction_plan: Option<RowConstructionPlan>,
     pub created_at: DateTime<Utc>,
     pub fingerprint: String,
 }
@@ -78,7 +81,35 @@ impl GenerationExecutionSpec {
         prompt_template: PromptTemplateIdentity,
         semantic_context_fingerprint: impl Into<String>,
     ) -> Result<Self, GenerationExecutionError> {
+        Self::new_with_construction(
+            job_id,
+            dataset_id,
+            plan_id,
+            initial_needs,
+            backend,
+            parameters,
+            policy,
+            prompt_template,
+            semantic_context_fingerprint,
+            RowConstructionPlan::llm_text_default()?,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_construction(
+        job_id: Uuid,
+        dataset_id: Uuid,
+        plan_id: Uuid,
+        initial_needs: Vec<GenerationNeed>,
+        backend: GenerationBackendIdentity,
+        parameters: GenerationParameters,
+        policy: GenerationExecutionPolicy,
+        prompt_template: PromptTemplateIdentity,
+        semantic_context_fingerprint: impl Into<String>,
+        construction_plan: RowConstructionPlan,
+    ) -> Result<Self, GenerationExecutionError> {
         policy.validate()?;
+        construction_plan.compile()?;
         let mut need_keys = std::collections::BTreeSet::new();
         for need in &initial_needs {
             if need.remaining_count
@@ -130,6 +161,7 @@ impl GenerationExecutionSpec {
             policy,
             prompt_template,
             semantic_context_fingerprint,
+            construction_plan: Some(construction_plan),
             created_at: Utc::now(),
             fingerprint: String::new(),
         };
@@ -138,19 +170,38 @@ impl GenerationExecutionSpec {
     }
 
     pub fn reproduce_fingerprint(&self) -> Result<String, GenerationExecutionError> {
-        fingerprint(&(
-            self.job_id,
-            self.dataset_id,
-            self.plan_id,
-            &self.initial_needs,
-            &self.backend,
-            &self.parameters,
-            &self.policy,
-            &self.prompt_template,
-            &self.semantic_context_fingerprint,
-            self.created_at,
-        ))
-        .map_err(Into::into)
+        if let Some(construction_plan) = &self.construction_plan {
+            fingerprint(&(
+                self.job_id,
+                self.dataset_id,
+                self.plan_id,
+                &self.initial_needs,
+                &self.backend,
+                &self.parameters,
+                &self.policy,
+                &self.prompt_template,
+                &self.semantic_context_fingerprint,
+                construction_plan,
+                self.created_at,
+            ))
+            .map_err(Into::into)
+        } else {
+            // Compatibility with execution specifications persisted before the
+            // hybrid construction plan became a pinned runtime input.
+            fingerprint(&(
+                self.job_id,
+                self.dataset_id,
+                self.plan_id,
+                &self.initial_needs,
+                &self.backend,
+                &self.parameters,
+                &self.policy,
+                &self.prompt_template,
+                &self.semantic_context_fingerprint,
+                self.created_at,
+            ))
+            .map_err(Into::into)
+        }
     }
 }
 
@@ -161,6 +212,14 @@ pub enum GenerationAttemptState {
     Succeeded,
     Failed,
     Interrupted,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GenerationAttemptKind {
+    #[default]
+    ProviderRequest,
+    DeterministicConstruction,
 }
 
 impl GenerationAttemptState {
@@ -183,6 +242,8 @@ pub struct GenerationAttempt {
     pub id: Uuid,
     pub job_id: Uuid,
     pub sequence: u64,
+    #[serde(default)]
+    pub kind: GenerationAttemptKind,
     pub cell: GenerationCell,
     pub requested_count: u32,
     pub retry_index: u32,
@@ -224,10 +285,53 @@ impl GenerationAttempt {
             id: Uuid::new_v4(),
             job_id,
             sequence,
+            kind: GenerationAttemptKind::ProviderRequest,
             cell: request.target.clone(),
             requested_count: request.requested_count,
             retry_index,
             request_fingerprint: fingerprint(request)?,
+            state: GenerationAttemptState::Started,
+            provider_returned_rows: 0,
+            persisted_rows: 0,
+            accepted_rows: 0,
+            rejected_rows: 0,
+            usage: None,
+            backend_metadata: serde_json::Value::Null,
+            backend_errors: vec![],
+            failure_kind: None,
+            failure_message: None,
+            retryable: None,
+            started_at: Utc::now(),
+            finished_at: None,
+            outcome_fingerprint: None,
+        })
+    }
+
+    pub fn start_deterministic(
+        job_id: Uuid,
+        sequence: u64,
+        batch: &PreparedConstructionBatch,
+    ) -> Result<Self, GenerationExecutionError> {
+        if sequence == 0 {
+            return Err(GenerationExecutionError::InvalidAttempt(
+                "attempt sequence must be greater than zero".into(),
+            ));
+        }
+        let requested_count = batch.requested_count();
+        if requested_count == 0 || batch.requires_llm() {
+            return Err(GenerationExecutionError::InvalidAttempt(
+                "deterministic attempt requires a non-empty batch without LLM fields".into(),
+            ));
+        }
+        Ok(Self {
+            id: Uuid::new_v4(),
+            job_id,
+            sequence,
+            kind: GenerationAttemptKind::DeterministicConstruction,
+            cell: batch.target.clone(),
+            requested_count,
+            retry_index: 0,
+            request_fingerprint: fingerprint(batch)?,
             state: GenerationAttemptState::Started,
             provider_returned_rows: 0,
             persisted_rows: 0,
@@ -337,6 +441,8 @@ pub enum GenerationExecutionError {
     AttemptNotTerminal,
     #[error("generation execution fingerprint failed: {0}")]
     Fingerprint(#[from] FingerprintError),
+    #[error(transparent)]
+    Construction(#[from] ConstructionError),
 }
 
 fn required(value: String, field: &str) -> Result<String, GenerationExecutionError> {
@@ -410,6 +516,7 @@ mod tests {
             },
             requested_count: 2,
             parameters: GenerationParameters::default(),
+            construction: None,
         };
         let mut succeeded =
             GenerationAttempt::start(Uuid::new_v4(), 1, 0, &request).expect("attempt");

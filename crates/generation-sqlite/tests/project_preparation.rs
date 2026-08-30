@@ -183,6 +183,7 @@ async fn fixture(store: &SqliteStore) -> (PreparationManifest, PreparationEviden
         text: "Why was I charged twice?".into(),
         label: "billing".into(),
         dimensions: BTreeMap::from([("style".into(), "clean".into())]),
+        fields: BTreeMap::new(),
         source_provenance: provenance,
         source_created_at: now,
     };

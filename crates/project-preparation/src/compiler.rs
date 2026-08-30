@@ -882,6 +882,7 @@ batch_size = 20
             text: "Why was I charged twice?".into(),
             label: "billing".into(),
             dimensions: BTreeMap::from([("style".into(), "clean".into())]),
+            fields: BTreeMap::new(),
             source_provenance: SourceProvenance::Imported {
                 import_id: Uuid::new_v4(),
                 source_path: "benchmark.jsonl".into(),

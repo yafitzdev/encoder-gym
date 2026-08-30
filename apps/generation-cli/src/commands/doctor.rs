@@ -17,7 +17,7 @@ use evaluation_core::{
 };
 use generation_core::ports::{
     BackendConfigurationStore, DatasetStore, GenerationExecutionStore, JobQuery, JobStore,
-    PlanStore, RowStore,
+    PlanStore, RowQuery, RowStore,
 };
 use optimization_core::{
     campaigns::{
@@ -225,7 +225,7 @@ async fn database_checks(store: &SqliteStore) -> Vec<DoctorCheck> {
 }
 
 async fn generation_execution_facts_check(store: &SqliteStore) -> DoctorCheck {
-    let result: anyhow::Result<(usize, usize)> = async {
+    let result: anyhow::Result<(usize, usize, usize)> = async {
         let jobs = store
             .list_jobs(JobQuery {
                 dataset_id: None,
@@ -237,6 +237,7 @@ async fn generation_execution_facts_check(store: &SqliteStore) -> DoctorCheck {
             .await?;
         let mut executions = 0_usize;
         let mut attempts = 0_usize;
+        let mut constructed_rows = 0_usize;
         for job in jobs {
             let Some(execution) = store.get_generation_execution_spec(job.id).await? else {
                 continue;
@@ -258,6 +259,39 @@ async fn generation_execution_facts_check(store: &SqliteStore) -> DoctorCheck {
                 "generation execution {} does not reproduce its job",
                 job.id
             );
+            if let Some(construction_plan) = &execution.construction_plan {
+                construction_plan.compile()?;
+                let dataset = store
+                    .get_dataset(job.dataset_id)
+                    .await?
+                    .with_context(|| format!("generation dataset {} is missing", job.dataset_id))?;
+                construction_plan.validate_for_dataset(&dataset)?;
+                let mut offset = 0_u32;
+                loop {
+                    let rows = store
+                        .list_rows(RowQuery {
+                            job_id: Some(job.id),
+                            limit: 10_000,
+                            offset,
+                            ..RowQuery::default()
+                        })
+                        .await?;
+                    let returned = rows.len();
+                    for row in rows {
+                        let trace = row.construction.as_ref().with_context(|| {
+                            format!("constructed generation row {} has no field trace", row.id)
+                        })?;
+                        construction_plan.verify_trace(&row.text, &row.fields, trace)?;
+                        constructed_rows += 1;
+                    }
+                    if returned < 10_000 {
+                        break;
+                    }
+                    offset = offset
+                        .checked_add(10_000)
+                        .context("generation row audit offset overflowed")?;
+                }
+            }
             let assignment = store
                 .get_generation_semantics(job.id)
                 .await?
@@ -268,6 +302,25 @@ async fn generation_execution_facts_check(store: &SqliteStore) -> DoctorCheck {
                 job.id
             );
             let job_attempts = store.list_generation_attempts(job.id).await?;
+            if job_attempts.iter().any(|attempt| {
+                attempt.kind
+                    == generation_core::jobs::GenerationAttemptKind::DeterministicConstruction
+            }) {
+                let construction = execution.construction_plan.as_ref().with_context(|| {
+                    format!(
+                        "generation job {} has an unpinned deterministic attempt",
+                        job.id
+                    )
+                })?;
+                anyhow::ensure!(
+                    construction
+                        .fields
+                        .iter()
+                        .all(|field| !field.recipe.is_llm()),
+                    "generation job {} records deterministic attempts for a plan with LLM fields",
+                    job.id
+                );
+            }
             attempts += job_attempts.len();
             anyhow::ensure!(
                 !job.state.is_terminal()
@@ -309,14 +362,14 @@ async fn generation_execution_facts_check(store: &SqliteStore) -> DoctorCheck {
                 job.id
             );
         }
-        Ok((executions, attempts))
+        Ok((executions, attempts, constructed_rows))
     }
     .await;
     match result {
-        Ok((executions, attempts)) => pass(
+        Ok((executions, attempts, constructed_rows)) => pass(
             "generation_execution_facts",
             format!(
-                "verified {executions} execution specification(s) and {attempts} provider request attempt(s)"
+                "verified {executions} execution specification(s), {attempts} durable attempt(s), and {constructed_rows} constructed row trace(s)"
             ),
         ),
         Err(error) => fail("generation_execution_facts", error.to_string()),

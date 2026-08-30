@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     sync::{
         Arc,
         atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -6,21 +7,31 @@ use std::{
     time::Duration,
 };
 
+use dataset_core::{domain::SourceProvenance, ports::AcceptedRowSource};
 use generation_core::{
+    construction::{
+        FieldDefinition, FieldRecipe, FieldSourceKind, FieldValueType, RowConstructionPlan,
+    },
     coverage::calculate_coverage,
     domain::{
         DatasetDefinition, DimensionDefinition, GeneratedCandidate, GenerationParameters,
         GenerationRequest, GenerationResult, ValidationStatus,
     },
-    jobs::{GenerationJob, JobRunner, JobRunnerPolicy, JobState},
+    jobs::{
+        GenerationAttempt, GenerationAttemptKind, GenerationAttemptState, GenerationJob, JobRunner,
+        JobRunnerPolicy, JobState,
+    },
     planning::equal_target_plan,
     ports::{
-        BoxFuture, DatasetStore, GenerationBackend, GenerationBackendError, JobStore, PlanStore,
-        RowQuery, RowStore,
+        BoxFuture, DatasetStore, GenerationBackend, GenerationBackendError,
+        GenerationExecutionStore, JobStore, PlanStore, RowQuery, RowStore,
     },
     validation::ValidationPipeline,
 };
-use generation_test_support::{FakeGenerationBackend, persist_test_generation_execution};
+use generation_test_support::{
+    FakeGenerationBackend, persist_test_generation_execution,
+    persist_test_generation_execution_with_construction,
+};
 use synthetic_data_sqlite::SqliteStore;
 use tokio::sync::Notify;
 
@@ -85,6 +96,8 @@ impl GenerationBackend for ScriptedBackend {
                         text,
                         label: request.target.label.clone(),
                         dimensions: request.target.dimensions.clone(),
+                        fields: BTreeMap::new(),
+                        construction: None,
                     }
                 })
                 .collect();
@@ -125,6 +138,8 @@ impl GenerationBackend for BlockingBackend {
                     text: "row generated before cancellation was observed".into(),
                     label: request.target.label,
                     dimensions: request.target.dimensions,
+                    fields: BTreeMap::new(),
+                    construction: None,
                 }],
                 usage: None,
                 backend_metadata: serde_json::json!({"blocking": true}),
@@ -189,6 +204,250 @@ async fn fake_backend_fills_every_cell_and_persists_progress() {
     let coverage = calculate_coverage(&plan, &store.cell_counts(plan.id).await.expect("counts"));
     assert!(coverage.iter().all(|cell| cell.accepted == 3));
     assert!(coverage.iter().all(|cell| cell.remaining == 0));
+}
+
+#[tokio::test]
+async fn deterministic_construction_completes_without_calling_the_backend() {
+    let (_directory, store) = store().await;
+    let (_dataset, plan, job) = persisted_single_cell_job(&store, 2).await;
+    let policy = JobRunnerPolicy::default();
+    let construction = RowConstructionPlan::new(
+        17,
+        vec![
+            FieldDefinition {
+                name: "ticket_id".into(),
+                value_type: FieldValueType::String,
+                recipe: FieldRecipe::Sequence {
+                    prefix: "T-".into(),
+                    start: 100,
+                    step: 1,
+                    width: Some(4),
+                },
+            },
+            FieldDefinition {
+                name: "text".into(),
+                value_type: FieldValueType::String,
+                recipe: FieldRecipe::Template {
+                    template: "support ticket ${ticket_id}".into(),
+                },
+            },
+        ],
+    )
+    .expect("construction plan");
+    persist_test_generation_execution_with_construction(
+        &store,
+        &job,
+        &plan,
+        &policy,
+        construction.clone(),
+    )
+    .await
+    .expect("execution");
+    let backend = Arc::new(ScriptedBackend::new(0, BackendBehavior::Valid));
+    let completed = JobRunner::new(
+        Arc::new(store.clone()),
+        backend.clone(),
+        policy,
+        ValidationPipeline::standard(None),
+    )
+    .run(job.id, GenerationParameters::default())
+    .await
+    .expect("deterministic construction succeeds");
+
+    assert_eq!(completed.state, JobState::Completed);
+    assert_eq!(backend.row_sequence.load(Ordering::SeqCst), 0);
+    let rows = store
+        .list_rows(RowQuery {
+            job_id: Some(job.id),
+            limit: 10,
+            ..RowQuery::default()
+        })
+        .await
+        .expect("rows");
+    assert_eq!(rows[0].text, "support ticket T-0100");
+    assert_eq!(rows[0].fields["ticket_id"], serde_json::json!("T-0100"));
+    assert_eq!(
+        rows[0].construction.as_ref().expect("trace").fields["text"].source,
+        FieldSourceKind::Deterministic
+    );
+    let attempts = store
+        .list_generation_attempts(job.id)
+        .await
+        .expect("attempts");
+    assert_eq!(
+        attempts[0].kind,
+        GenerationAttemptKind::DeterministicConstruction
+    );
+    assert_eq!(attempts[0].backend_metadata["provider_called"], false);
+    let source_rows = store
+        .list_accepted_source_rows(job.dataset_id)
+        .await
+        .expect("accepted source rows");
+    assert_eq!(source_rows[0].fields["ticket_id"], "T-0100");
+    assert!(matches!(
+        &source_rows[0].provenance,
+        SourceProvenance::Generated {
+            construction_plan_fingerprint: Some(fingerprint),
+            ..
+        } if fingerprint == &construction.fingerprint
+    ));
+}
+
+#[tokio::test]
+async fn hybrid_construction_merges_llm_text_with_trusted_deterministic_fields() {
+    let (_directory, store) = store().await;
+    let dataset = DatasetDefinition::new(
+        "support",
+        "classify",
+        vec!["billing".into()],
+        vec![DimensionDefinition::new("style", vec!["messy".into()]).expect("dimension")],
+    )
+    .expect("dataset");
+    store.create_dataset(&dataset).await.expect("dataset");
+    let plan = equal_target_plan(&dataset, 2).expect("plan");
+    store.create_plan(&plan).await.expect("plan");
+    let job = GenerationJob::queued(dataset.id, plan.id, "scripted", "test-v1", 2);
+    let policy = JobRunnerPolicy::default();
+    let construction = RowConstructionPlan::new(
+        0,
+        vec![
+            FieldDefinition {
+                name: "text".into(),
+                value_type: FieldValueType::String,
+                recipe: FieldRecipe::Llm {
+                    instruction: "Generate a support request.".into(),
+                },
+            },
+            FieldDefinition {
+                name: "label_copy".into(),
+                value_type: FieldValueType::String,
+                recipe: FieldRecipe::CellLabel,
+            },
+            FieldDefinition {
+                name: "style_copy".into(),
+                value_type: FieldValueType::String,
+                recipe: FieldRecipe::CellDimension {
+                    name: "style".into(),
+                },
+            },
+        ],
+    )
+    .expect("construction plan");
+    persist_test_generation_execution_with_construction(
+        &store,
+        &job,
+        &plan,
+        &policy,
+        construction.clone(),
+    )
+    .await
+    .expect("execution");
+    let backend = Arc::new(ScriptedBackend::new(0, BackendBehavior::Valid));
+    let completed = JobRunner::new(
+        Arc::new(store.clone()),
+        backend.clone(),
+        policy,
+        ValidationPipeline::standard(None),
+    )
+    .run(job.id, GenerationParameters::default())
+    .await
+    .expect("hybrid generation succeeds");
+
+    assert_eq!(completed.accepted_rows, 2);
+    assert_eq!(backend.row_sequence.load(Ordering::SeqCst), 2);
+    let rows = store
+        .list_rows(RowQuery {
+            job_id: Some(job.id),
+            limit: 10,
+            ..RowQuery::default()
+        })
+        .await
+        .expect("rows");
+    assert!(rows.iter().all(|row| row.label == "billing"));
+    assert!(rows.iter().all(|row| row.dimensions["style"] == "messy"));
+    assert!(rows.iter().all(|row| row.fields["label_copy"] == "billing"));
+    assert!(rows.iter().all(|row| row.fields["style_copy"] == "messy"));
+    assert!(rows.iter().all(|row| {
+        let trace = row.construction.as_ref().expect("trace");
+        trace.plan_fingerprint == construction.fingerprint
+            && trace.fields["text"].source == FieldSourceKind::Llm
+            && trace.fields["label_copy"].source == FieldSourceKind::Deterministic
+    }));
+}
+
+#[tokio::test]
+async fn interrupted_deterministic_batches_replay_without_consuming_external_attempt_budget() {
+    let (_directory, store) = store().await;
+    let (_dataset, plan, job) = persisted_single_cell_job(&store, 1).await;
+    let policy = JobRunnerPolicy {
+        batch_size: 1,
+        max_request_retries: 0,
+        max_attempt_multiplier: 1,
+        retry_delay: Duration::ZERO,
+    };
+    let construction = RowConstructionPlan::new(
+        0,
+        vec![FieldDefinition {
+            name: "text".into(),
+            value_type: FieldValueType::String,
+            recipe: FieldRecipe::Template {
+                template: "row ${row_index}".into(),
+            },
+        }],
+    )
+    .expect("construction");
+    persist_test_generation_execution_with_construction(
+        &store,
+        &job,
+        &plan,
+        &policy,
+        construction.clone(),
+    )
+    .await
+    .expect("execution");
+    let prepared = construction
+        .compile()
+        .expect("compile")
+        .prepare(plan.cells[0].cell.clone(), 0, 1)
+        .expect("prepare");
+    let attempt = GenerationAttempt::start_deterministic(job.id, 1, &prepared).expect("attempt");
+    store
+        .start_generation_attempt(&attempt)
+        .await
+        .expect("open deterministic attempt");
+    store
+        .interrupt_open_generation_attempts(job.id)
+        .await
+        .expect("interrupt attempt");
+
+    let completed = JobRunner::new(
+        Arc::new(store.clone()),
+        Arc::new(ScriptedBackend::new(0, BackendBehavior::Valid)),
+        policy,
+        ValidationPipeline::standard(None),
+    )
+    .run(job.id, GenerationParameters::default())
+    .await
+    .expect("deterministic replay succeeds");
+
+    assert_eq!(completed.state, JobState::Completed);
+    assert_eq!(completed.accepted_rows, 1);
+    let attempts = store
+        .list_generation_attempts(job.id)
+        .await
+        .expect("attempts");
+    assert_eq!(attempts.len(), 2);
+    assert_eq!(attempts[0].state, GenerationAttemptState::Interrupted);
+    assert_eq!(attempts[1].state, GenerationAttemptState::Succeeded);
+    let rows = store
+        .list_rows(RowQuery {
+            job_id: Some(job.id),
+            limit: 10,
+            ..RowQuery::default()
+        })
+        .await
+        .expect("rows");
+    assert_eq!(rows[0].text, "row 0");
 }
 
 #[tokio::test]

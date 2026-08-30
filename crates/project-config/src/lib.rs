@@ -5,6 +5,7 @@ use std::{collections::BTreeMap, future::Future, path::PathBuf, pin::Pin};
 use chrono::Utc;
 use dataset_core::domain::{SnapshotSplit, SplitConfiguration, SplitRatios};
 use generation_core::{
+    construction::{FieldDefinition, RowConstructionPlan},
     domain::{
         BackendConfiguration, DatasetDefinition, DimensionDefinition, GenerationParameters,
         GenerationPlan,
@@ -64,6 +65,15 @@ pub struct GenerationSection {
     pub seed: Option<u64>,
     pub extra: BTreeMap<String, Value>,
     pub api_key_env: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub construction: Option<ConstructionSection>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConstructionSection {
+    pub seed: u64,
+    pub fields: Vec<FieldDefinition>,
 }
 
 impl Default for GenerationSection {
@@ -81,6 +91,7 @@ impl Default for GenerationSection {
             seed: None,
             extra: BTreeMap::new(),
             api_key_env: "SYNTH_OPENAI_API_KEY".into(),
+            construction: None,
         }
     }
 }
@@ -271,7 +282,7 @@ impl ResolvedProjectConfig {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        self.dataset_definition()?;
+        let dataset = self.dataset_definition()?;
         self.split_configuration()?;
         self.training_configuration()?;
         self.training.transformer.validate()?;
@@ -295,6 +306,9 @@ impl ResolvedProjectConfig {
                 "generation.api_key_env must not be empty".into(),
             ));
         }
+        self.row_construction_plan()?
+            .validate_for_dataset(&dataset)
+            .map_err(|error| ConfigError::Invalid(error.to_string()))?;
         if self.training.artifact_root.as_os_str().is_empty() {
             return Err(ConfigError::Invalid(
                 "training.artifact_root must not be empty".into(),
@@ -385,6 +399,17 @@ impl ResolvedProjectConfig {
             seed: self.generation.seed,
             extra: self.generation.extra.clone(),
         }
+    }
+
+    pub fn row_construction_plan(&self) -> Result<RowConstructionPlan, ConfigError> {
+        self.generation
+            .construction
+            .as_ref()
+            .filter(|construction| !construction.fields.is_empty())
+            .map_or_else(RowConstructionPlan::llm_text_default, |construction| {
+                RowConstructionPlan::new(construction.seed, construction.fields.clone())
+            })
+            .map_err(|error| ConfigError::Invalid(error.to_string()))
     }
 
     pub fn backend_configuration(&self) -> Option<BackendConfiguration> {
@@ -490,6 +515,7 @@ pub trait ProjectConfigurationStore: Send + Sync {
 #[cfg(test)]
 mod tests {
     use dataset_core::domain::SnapshotSplit;
+    use generation_core::construction::FieldRecipe;
     use training_core::domain::EncoderTrainingMode;
     use uuid::Uuid;
 
@@ -571,6 +597,119 @@ split = "test"
             "target_per_cell = 25\napi_key = \"must-not-be-stored\"",
         );
         assert!(ProjectConfig::parse(&source).is_err());
+    }
+
+    #[test]
+    fn resolves_strict_hybrid_row_construction() {
+        let source = CONFIG.replace(
+            "[snapshot]",
+            r#"[generation.construction]
+seed = 42
+
+[[generation.construction.fields]]
+name = "ticket_id"
+value_type = "string"
+
+[generation.construction.fields.recipe]
+type = "sequence"
+prefix = "T-"
+start = 100
+step = 1
+width = 5
+
+[[generation.construction.fields]]
+name = "style_copy"
+value_type = "string"
+
+[generation.construction.fields.recipe]
+type = "cell_dimension"
+name = "style"
+
+[[generation.construction.fields]]
+name = "text"
+value_type = "string"
+
+[generation.construction.fields.recipe]
+type = "llm"
+instruction = "Generate the support request for ${style_copy}."
+
+[snapshot]"#,
+        );
+        let resolved = ProjectConfig::parse(&source)
+            .expect("parse hybrid config")
+            .resolve(ProjectOverrides::default())
+            .expect("resolve hybrid config");
+        let plan = resolved.row_construction_plan().expect("construction plan");
+
+        assert_eq!(plan.seed, 42);
+        assert_eq!(plan.fields.len(), 3);
+        assert!(matches!(
+            plan.field("text").expect("text").recipe,
+            FieldRecipe::Llm { .. }
+        ));
+        assert!(resolved.generation.construction.is_some());
+    }
+
+    #[test]
+    fn rejects_construction_cycles_and_unknown_dimensions() {
+        let cycle = CONFIG.replace(
+            "[snapshot]",
+            r#"[generation.construction]
+[[generation.construction.fields]]
+name = "text"
+value_type = "string"
+[generation.construction.fields.recipe]
+type = "template"
+template = "${other}"
+
+[[generation.construction.fields]]
+name = "other"
+value_type = "string"
+[generation.construction.fields.recipe]
+type = "template"
+template = "${text}"
+
+[snapshot]"#,
+        );
+        assert!(
+            ProjectConfig::parse(&cycle)
+                .expect("TOML parses")
+                .resolve(ProjectOverrides::default())
+                .is_err()
+        );
+
+        let unknown_dimension = CONFIG.replace(
+            "[snapshot]",
+            r#"[generation.construction]
+[[generation.construction.fields]]
+name = "text"
+value_type = "string"
+[generation.construction.fields.recipe]
+type = "cell_dimension"
+name = "missing"
+
+[snapshot]"#,
+        );
+        assert!(
+            ProjectConfig::parse(&unknown_dimension)
+                .expect("TOML parses")
+                .resolve(ProjectOverrides::default())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn default_construction_stays_absent_from_serialized_legacy_configuration() {
+        let resolved = ProjectConfig::parse(CONFIG)
+            .expect("parse")
+            .resolve(ProjectOverrides::default())
+            .expect("resolve");
+        assert!(resolved.generation.construction.is_none());
+        assert!(
+            serde_json::to_value(&resolved).expect("serialize")["generation"]
+                .get("construction")
+                .is_none()
+        );
     }
 
     #[test]
