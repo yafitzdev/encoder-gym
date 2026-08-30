@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 use tempfile::TempDir;
 
-use support::run_json;
+use support::{run, run_json};
 
 #[test]
 fn full_offline_pi_architecture_review_application_and_generation_handoff() {
@@ -140,6 +140,27 @@ fn full_offline_pi_architecture_review_application_and_generation_handoff() {
     assert_eq!(before["tool_calls"], after["tool_calls"]);
     let doctor = run_json(&database_url, ["doctor"]);
     assert_eq!(doctor["healthy"], true);
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let pool = sqlx::SqlitePool::connect(&database_url).await.unwrap();
+        sqlx::query("UPDATE generation_strategy_contexts SET context_json = '{}'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    });
+    let tampered = run(&database_url, ["doctor"]);
+    assert!(!tampered.status.success());
+    let report: Value = serde_json::from_slice(&tampered.stdout).unwrap();
+    assert_eq!(report["healthy"], false);
+    assert!(
+        report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| { check["name"] == "architect_facts" && check["status"] == "fail" })
+    );
 }
 
 fn text(value: &Value, field: &str) -> String {
