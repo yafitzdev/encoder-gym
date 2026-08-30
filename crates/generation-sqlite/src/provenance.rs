@@ -69,16 +69,22 @@ impl ProvenanceStore for SqliteStore {
                 ArtifactKind::GenerationAuthenticityContext => {
                     self.generation_authenticity_node(id).await
                 }
-                ArtifactKind::DatasetArchitectBrief => self.architect_brief_node(id).await,
-                ArtifactKind::DatasetArchitectRun => self.architect_run_node(id).await,
+                ArtifactKind::DatasetArchitectBrief => {
+                    Box::pin(self.architect_brief_node(id)).await
+                }
+                ArtifactKind::DatasetArchitectRun => Box::pin(self.architect_run_node(id)).await,
                 ArtifactKind::DatasetArchitectureProposal => {
-                    self.architecture_proposal_node(id).await
+                    Box::pin(self.architecture_proposal_node(id)).await
                 }
-                ArtifactKind::DatasetArchitectureReview => self.architecture_review_node(id).await,
+                ArtifactKind::DatasetArchitectureReview => {
+                    Box::pin(self.architecture_review_node(id)).await
+                }
                 ArtifactKind::DatasetArchitectureApplication => {
-                    self.architecture_application_node(id).await
+                    Box::pin(self.architecture_application_node(id)).await
                 }
-                ArtifactKind::GenerationStrategyContext => self.generation_strategy_node(id).await,
+                ArtifactKind::GenerationStrategyContext => {
+                    Box::pin(self.generation_strategy_node(id)).await
+                }
                 ArtifactKind::InitialAllocation => self.initial_allocation_node(id).await,
                 ArtifactKind::GenerationPlan => self.plan_node(id).await,
                 ArtifactKind::GenerationJob => self.job_node(id).await,
@@ -148,8 +154,7 @@ impl SqliteStore {
                 .map_err(store_error)?;
         let Some(value) = value else { return Ok(None) };
         let artifact: ArchitectRun = serde_json::from_str(&value).map_err(store_error)?;
-        let parents = self
-            .architect_brief_node(artifact.brief_id)
+        let parents = Box::pin(self.architect_brief_node(artifact.brief_id))
             .await?
             .into_iter()
             .collect();
@@ -176,8 +181,7 @@ impl SqliteStore {
         let Some(value) = value else { return Ok(None) };
         let artifact: DatasetArchitectureProposal =
             serde_json::from_str(&value).map_err(store_error)?;
-        let parents = self
-            .architect_run_node(artifact.run_id)
+        let parents = Box::pin(self.architect_run_node(artifact.run_id))
             .await?
             .into_iter()
             .collect();
@@ -203,8 +207,7 @@ impl SqliteStore {
         let Some(value) = value else { return Ok(None) };
         let artifact: ArchitectProposalReview =
             serde_json::from_str(&value).map_err(store_error)?;
-        let mut parents = self
-            .architecture_proposal_node(artifact.proposal_id)
+        let mut parents = Box::pin(self.architecture_proposal_node(artifact.proposal_id))
             .await?
             .into_iter()
             .collect::<Vec<_>>();
@@ -236,12 +239,11 @@ impl SqliteStore {
         let Some(value) = value else { return Ok(None) };
         let artifact: DatasetArchitectureApplication =
             serde_json::from_str(&value).map_err(store_error)?;
-        let mut parents = self
-            .architecture_proposal_node(artifact.proposal_id)
+        let mut parents = Box::pin(self.architecture_proposal_node(artifact.proposal_id))
             .await?
             .into_iter()
             .collect::<Vec<_>>();
-        if let Some(review) = self.architecture_review_node(artifact.approval_id).await? {
+        if let Some(review) = Box::pin(self.architecture_review_node(artifact.approval_id)).await? {
             parents.push(review);
         }
         Ok(Some(node(
@@ -275,8 +277,7 @@ impl SqliteStore {
         .await
         .map_err(store_error)?;
         let parents = match application_id {
-            Some(id) => self
-                .architecture_application_node(id)
+            Some(id) => Box::pin(self.architecture_application_node(id))
                 .await?
                 .into_iter()
                 .collect(),
@@ -1254,7 +1255,8 @@ impl SqliteStore {
         .await
         .map_err(store_error)?;
         if let Some(application_id) = architecture_application_id
-            && let Some(application) = self.architecture_application_node(application_id).await?
+            && let Some(application) =
+                Box::pin(self.architecture_application_node(application_id)).await?
         {
             parents.push(application);
         }
