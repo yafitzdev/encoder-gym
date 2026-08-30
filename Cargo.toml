@@ -8,6 +8,7 @@ members = [
     "crates/artifact-core",
     "crates/dataset-core",
     "crates/dataset-import",
+    "crates/dataset-architect-core",
     "crates/evaluation-core",
     "crates/generation-core",
     "crates/generation-fake",
@@ -67,6 +68,7 @@ generation-core = { package = "synthetic-data-core", path = "crates/generation-c
 generation-fake = { package = "synthetic-data-fake", path = "crates/generation-fake" }
 dataset-core = { package = "dataset-core", path = "crates/dataset-core" }
 dataset-import = { package = "dataset-import", path = "crates/dataset-import" }
+dataset-architect-core = { package = "dataset-architect-core", path = "crates/dataset-architect-core" }
 training-core = { package = "training-core", path = "crates/training-core" }
 evaluation-core = { package = "evaluation-core", path = "crates/evaluation-core" }
 analysis-core = { package = "analysis-core", path = "crates/analysis-core" }

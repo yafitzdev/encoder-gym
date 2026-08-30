@@ -658,6 +658,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "dataset-architect-core"
+version = "0.1.0"
+dependencies = [
+ "analysis-core",
+ "artifact-core",
+ "chrono",
+ "research-core",
+ "semantic-catalog",
+ "serde",
+ "serde_json",
+ "synthetic-data-core",
+ "thiserror 2.0.20",
+ "uuid",
+ "workflow-core",
+]
+
+[[package]]
 name = "dataset-core"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,21 @@
+[package]
+name = "dataset-architect-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+analysis-core.workspace = true
+artifact-core.workspace = true
+chrono.workspace = true
+generation-core.workspace = true
+research-core.workspace = true
+semantic-catalog.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+workflow-core.workspace = true
+
+[lints]
+workspace = true

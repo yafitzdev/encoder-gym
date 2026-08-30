@@ -33,6 +33,8 @@ workflow-core ──────────> narrow artifact contracts from sli
 project-preparation ─────> project-config + workflow-core + slice artifact shapes
 research adapters / apps ─> research-core
 generation-core ──────────> research-core (resolved authenticity context only)
+dataset architect adapters / apps ─> dataset-architect-core
+dataset-architect-core ────> generation/allocation and governed evidence contracts
 ```
 
 `artifact-core` only canonicalizes fingerprint inputs and describes provenance
@@ -53,6 +55,14 @@ consumed by generation. It imports only provider-neutral libraries and
 `artifact-core`. Pi, search, fetching, SQLite, process protocols, CLI parsing,
 and prompt rendering remain adapters. Pi is the required reasoning/tool-loop
 runtime, but Pi types never cross the core boundary.
+
+`dataset-architect-core` owns immutable planning briefs, bounded run policy,
+agent proposal validation, strategy directives, append-only reviews, and the
+approved application contract. It consumes normalized semantic, authenticity,
+coverage, deterministic-allocation, and governed diagnostic artifacts. It does
+not own generation-planning mathematics, prompt transport, persistence, Pi, or
+sealed evidence. An architect proposal is untrusted until the ordinary initial
+allocator reproduces it and an operator approves it.
 
 `workflow-core` owns only cross-slice policy: initial finite allocation,
 evaluation roles and exposure rules, benchmark acceptance contracts, durable
@@ -125,6 +135,14 @@ Owns authenticity-research policy and immutable handoff contracts. It treats
 external content as untrusted evidence, requires finite persisted budgets and
 explicit profile approval, and exposes replaceable agent/search/fetch/store
 ports. It neither generates dataset rows nor knows a generation backend.
+
+### `dataset-architect-core`
+
+Owns the provider-neutral Dataset Architect boundary. Pi may inspect pinned
+facts, compare deterministic allocation previews, estimate a generation budget,
+and submit one explicit proposal. The core rejects missing or duplicate cells,
+infeasible totals, unknown strategy selectors, stale coverage, and any sealed
+or retired diagnostic evidence before a normal generation plan can be created.
 
 ### `synthetic-data-sqlite`
 

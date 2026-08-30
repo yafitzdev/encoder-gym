@@ -61,6 +61,14 @@ immutable authenticity profile. Generation consumes only the explicitly bound
 resolved profile; it never performs live research. See
 [Authenticity Research Agent](research-agent-spec.md).
 
+An optional dataset-architecture capability may then turn the dataset schema,
+semantic and authenticity context, current coverage, operator priorities, and
+eligible development diagnostics into a reviewable allocation and generation-
+strategy proposal. Pi explores proposals through read-only application tools;
+the existing deterministic initial allocator remains the feasibility authority.
+Only an explicitly approved, non-stale proposal can create a normal Slice 1
+plan. See [Dataset Architect](dataset-architect-spec.md).
+
 ## Shared invariants
 
 - IDs are globally unique and timestamps use UTC.
@@ -92,6 +100,7 @@ resolved profile; it never performs live research. See
 - [Slice 5 — Error Analysis](slice-5-spec.md)
 - [Slice 6 — Optimization](slice-6-spec.md)
 - [Authenticity Research Agent](research-agent-spec.md)
+- [Dataset Architect](dataset-architect-spec.md)
 
 Cross-slice composition is specified separately in
 [Controlled Workflow and Evaluation Governance](workflow-governance-spec.md).
