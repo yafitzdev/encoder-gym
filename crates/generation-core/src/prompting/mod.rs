@@ -10,6 +10,7 @@ use crate::domain::{
     DatasetDefinition, GeneratedCandidate, GenerationCell, GenerationParameters, GenerationRequest,
 };
 use crate::jobs::PromptTemplateIdentity;
+use crate::strategy::ResolvedGenerationStrategyContext;
 
 const PROMPT_TEMPLATE_NAME: &str = "text-classification-json";
 const PROMPT_TEMPLATE_VERSION: u32 = 1;
@@ -40,6 +41,8 @@ const HYBRID_USER_PROMPT_TEMPLATE: &str = concat!(
     "\n\nAvoid duplicating these existing examples:\n{existing_examples}"
 );
 const AUTHENTICITY_PROMPT_TEMPLATE_VERSION: u32 = 3;
+const STRATEGY_PROMPT_TEMPLATE_VERSION: u32 = 4;
+const STRATEGY_PROMPT_SECTION: &str = "Approved per-cell generation strategy (apply proportionally across this cell):\n{strategy_section}";
 const AUTHENTICITY_SYSTEM_PROMPT: &str = concat!(
     "You fill only the explicitly requested semantic fields in synthetic rows. ",
     "Return one valid JSON object with a 'rows' array in exactly the supplied row order. ",
@@ -61,6 +64,7 @@ const AUTHENTICITY_USER_PROMPT_TEMPLATE: &str = concat!(
 pub struct PromptBuilder {
     semantics: Option<ResolvedSemanticContext>,
     authenticity: Option<ResolvedAuthenticityContext>,
+    strategy: Option<ResolvedGenerationStrategyContext>,
 }
 
 impl PromptBuilder {
@@ -91,10 +95,29 @@ impl PromptBuilder {
         })
     }
 
+    pub fn strategy_template_identity(
+        with_authenticity: bool,
+    ) -> Result<PromptTemplateIdentity, FingerprintError> {
+        let base = if with_authenticity {
+            (
+                AUTHENTICITY_SYSTEM_PROMPT,
+                AUTHENTICITY_USER_PROMPT_TEMPLATE,
+            )
+        } else {
+            (HYBRID_SYSTEM_PROMPT, HYBRID_USER_PROMPT_TEMPLATE)
+        };
+        Ok(PromptTemplateIdentity {
+            name: HYBRID_PROMPT_TEMPLATE_NAME.into(),
+            version: STRATEGY_PROMPT_TEMPLATE_VERSION,
+            fingerprint: fingerprint(&(base, STRATEGY_PROMPT_SECTION))?,
+        })
+    }
+
     pub fn with_semantics(semantics: ResolvedSemanticContext) -> Self {
         Self {
             semantics: Some(semantics),
             authenticity: None,
+            strategy: None,
         }
     }
 
@@ -108,12 +131,21 @@ impl PromptBuilder {
         self
     }
 
+    pub fn attach_strategy(mut self, strategy: ResolvedGenerationStrategyContext) -> Self {
+        self.strategy = Some(strategy);
+        self
+    }
+
     pub fn semantic_context(&self) -> Option<&ResolvedSemanticContext> {
         self.semantics.as_ref()
     }
 
     pub fn authenticity_context(&self) -> Option<&ResolvedAuthenticityContext> {
         self.authenticity.as_ref()
+    }
+
+    pub fn strategy_context(&self) -> Option<&ResolvedGenerationStrategyContext> {
+        self.strategy.as_ref()
     }
 
     pub fn build(
@@ -151,14 +183,29 @@ impl PromptBuilder {
             },
         );
 
+        let strategy_section = self.strategy_guidance(&target);
+        if strategy_section.is_some() {
+            system_prompt.push_str(" Follow the approved per-cell strategy while preserving the exact target label and dimensions.");
+        }
+        let strategy_section = strategy_section.map_or_else(
+            || "No approved per-cell generation strategy is attached.".to_owned(),
+            |guidance| {
+                STRATEGY_PROMPT_SECTION.replace(
+                    "{strategy_section}",
+                    &serde_json::to_string_pretty(&guidance).unwrap_or_default(),
+                )
+            },
+        );
+
         GenerationRequest {
             system_prompt,
             user_prompt: format!(
-                "Task:\n{}\n\nGenerate exactly {} rows for this target:\n{}\n\n{}\n\nOutput schema:\n{}\n\nAvoid duplicating these existing examples:\n{}",
+                "Task:\n{}\n\nGenerate exactly {} rows for this target:\n{}\n\n{}\n\n{}\n\nOutput schema:\n{}\n\nAvoid duplicating these existing examples:\n{}",
                 definition.task_description,
                 requested_count,
                 serde_json::to_string_pretty(&target).unwrap_or_default(),
                 semantic_section,
+                strategy_section,
                 serde_json::to_string_pretty(&schema).unwrap_or_default(),
                 existing,
             ),
@@ -228,6 +275,10 @@ impl PromptBuilder {
         );
         let authenticity_section = authenticity_guidance
             .map(|guidance| serde_json::to_string_pretty(&guidance).unwrap_or_default());
+        let strategy_section = self.strategy_guidance(&target);
+        if strategy_section.is_some() {
+            system_prompt.push_str(" Follow the approved per-cell strategy while preserving the exact target label and dimensions.");
+        }
         let template = if authenticity_section.is_some() {
             AUTHENTICITY_USER_PROMPT_TEMPLATE
         } else {
@@ -258,6 +309,16 @@ impl PromptBuilder {
                 &serde_json::to_string_pretty(&schema).unwrap_or_default(),
             )
             .replace("{existing_examples}", &existing);
+        let user_prompt = match strategy_section {
+            Some(guidance) => format!(
+                "{user_prompt}\n\n{}",
+                STRATEGY_PROMPT_SECTION.replace(
+                    "{strategy_section}",
+                    &serde_json::to_string_pretty(&guidance).unwrap_or_default(),
+                )
+            ),
+            None => user_prompt,
+        };
 
         GenerationRequest {
             system_prompt,
@@ -331,6 +392,18 @@ impl PromptBuilder {
             "caveats": context.caveats,
         }))
     }
+
+    fn strategy_guidance(&self, target: &GenerationCell) -> Option<serde_json::Value> {
+        let context = self.strategy.as_ref()?;
+        let directives = context.for_cell(target);
+        (!directives.is_empty()).then(|| {
+            json!({
+                "context_id": context.id,
+                "context_fingerprint": context.fingerprint,
+                "directives": directives,
+            })
+        })
+    }
 }
 
 #[cfg(test)]
@@ -345,7 +418,11 @@ mod tests {
     use crate::{
         construction::{FieldDefinition, FieldRecipe, FieldValueType, RowConstructionPlan},
         dimensions::expand_generation_cells,
-        domain::{DatasetDefinition, DimensionDefinition, GenerationParameters},
+        domain::{
+            DatasetDefinition, DimensionDefinition, GenerationParameters, GenerationPlan,
+            PlannedCell,
+        },
+        strategy::{GenerationStrategyDirective, ResolvedGenerationStrategyContext},
     };
 
     #[test]
@@ -437,6 +514,76 @@ mod tests {
         assert!(request.user_prompt.contains("25"));
         assert!(request.user_prompt.contains("messy"));
         assert!(!request.user_prompt.contains("OpenAI"));
+    }
+
+    #[test]
+    fn approved_strategy_is_scoped_to_its_exact_generation_cell() {
+        let dataset = DatasetDefinition::new(
+            "support",
+            "Classify requests",
+            vec!["billing".into(), "fraud".into()],
+            vec![],
+        )
+        .unwrap();
+        let cells = expand_generation_cells(&dataset);
+        let plan = GenerationPlan::new(
+            dataset.id,
+            cells
+                .iter()
+                .cloned()
+                .map(|cell| PlannedCell {
+                    cell,
+                    target_count: 5,
+                })
+                .collect(),
+        )
+        .unwrap();
+        let context = ResolvedGenerationStrategyContext::create(
+            &dataset,
+            &plan,
+            Uuid::new_v4(),
+            "sha256:proposal".into(),
+            Uuid::new_v4(),
+            "sha256:approval".into(),
+            BTreeMap::from([(
+                cells[0].key(),
+                vec![GenerationStrategyDirective {
+                    source_directive_id: Uuid::new_v4(),
+                    kind: "boundary_case".into(),
+                    share_basis_points: 2_500,
+                    instructions: vec!["Use indirect but decisive billing clues.".into()],
+                    related_labels: vec!["fraud".into()],
+                    rationale: "Strengthen the class boundary.".into(),
+                    confidence: "high".into(),
+                }],
+            )]),
+        )
+        .unwrap();
+        let builder = PromptBuilder::default().attach_strategy(context);
+        let matching = builder.build(
+            &dataset,
+            cells[0].clone(),
+            1,
+            GenerationParameters::default(),
+            &[],
+        );
+        let other = builder.build(
+            &dataset,
+            cells[1].clone(),
+            1,
+            GenerationParameters::default(),
+            &[],
+        );
+        assert!(
+            matching
+                .user_prompt
+                .contains("indirect but decisive billing clues")
+        );
+        assert!(
+            !other
+                .user_prompt
+                .contains("indirect but decisive billing clues")
+        );
     }
 
     #[test]

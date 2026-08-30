@@ -229,6 +229,7 @@ struct MemoryStore {
     run: Mutex<Option<ArchitectRun>>,
     calls: Mutex<Vec<ArchitectToolCall>>,
     proposal: Mutex<Option<DatasetArchitectureProposal>>,
+    application: Mutex<Option<dataset_architect_core::proposal::DatasetArchitectureApplication>>,
     reviews: Mutex<Vec<ArchitectProposalReview>>,
 }
 
@@ -381,6 +382,39 @@ impl ArchitectStore for MemoryStore {
                 .filter(|value| value.proposal_id == proposal_id)
                 .max_by_key(|value| (value.created_at, value.id))
                 .cloned())
+        })
+    }
+
+    fn save_application(
+        &self,
+        application: &dataset_architect_core::proposal::DatasetArchitectureApplication,
+        _plan: &generation_core::domain::GenerationPlan,
+        _strategy: &generation_core::strategy::ResolvedGenerationStrategyContext,
+    ) -> BoxFuture<'_, Result<(), ArchitectAdapterError>> {
+        let application = application.clone();
+        Box::pin(async move {
+            *self.application.lock().unwrap() = Some(application);
+            Ok(())
+        })
+    }
+
+    fn get_application(
+        &self,
+        proposal_id: Uuid,
+    ) -> BoxFuture<
+        '_,
+        Result<
+            Option<dataset_architect_core::proposal::DatasetArchitectureApplication>,
+            ArchitectAdapterError,
+        >,
+    > {
+        Box::pin(async move {
+            Ok(self
+                .application
+                .lock()
+                .unwrap()
+                .clone()
+                .filter(|value| value.proposal_id == proposal_id))
         })
     }
 }

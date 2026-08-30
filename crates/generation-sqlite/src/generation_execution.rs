@@ -4,6 +4,7 @@ use generation_core::{
         GenerationAttempt, GenerationAttemptState, GenerationExecutionSpec, GenerationJob, JobState,
     },
     ports::{BoxFuture, GenerationExecutionStore, StoreError},
+    strategy::GenerationStrategyAssignment,
 };
 use research_core::profile::GenerationAuthenticityAssignment;
 use semantic_catalog::GenerationSemanticAssignment;
@@ -34,6 +35,25 @@ impl SqliteStore {
         spec: &GenerationExecutionSpec,
         semantics: &GenerationSemanticAssignment,
         authenticity: Option<&GenerationAuthenticityAssignment>,
+    ) -> Result<(), StoreError> {
+        self.create_generation_execution_bundle_with_contexts(
+            job,
+            spec,
+            semantics,
+            authenticity,
+            None,
+        )
+        .await
+    }
+
+    /// Atomically creates a runnable job with every immutable prompt input.
+    pub async fn create_generation_execution_bundle_with_contexts(
+        &self,
+        job: &GenerationJob,
+        spec: &GenerationExecutionSpec,
+        semantics: &GenerationSemanticAssignment,
+        authenticity: Option<&GenerationAuthenticityAssignment>,
+        strategy: Option<&GenerationStrategyAssignment>,
     ) -> Result<(), StoreError> {
         validate_execution(job, spec)?;
         if semantics.job_id != job.id
@@ -66,6 +86,27 @@ impl SqliteStore {
             _ => {
                 return Err(StoreError(
                     "generation authenticity assignment and execution specification are inconsistent"
+                        .into(),
+                ));
+            }
+        }
+        match (strategy, &spec.strategy_context_fingerprint) {
+            (None, None) => {}
+            (Some(assignment), Some(expected))
+                if assignment.job_id == job.id
+                    && assignment.context.dataset_id == job.dataset_id
+                    && assignment.context.plan_id == job.plan_id
+                    && assignment.context.fingerprint == *expected
+                    && assignment
+                        .context
+                        .reproduce_fingerprint()
+                        .map_err(store_error)?
+                        == assignment.context.fingerprint
+                    && assignment.reproduce_fingerprint().map_err(store_error)?
+                        == assignment.fingerprint => {}
+            _ => {
+                return Err(StoreError(
+                    "generation strategy assignment and execution specification are inconsistent"
                         .into(),
                 ));
             }
@@ -104,8 +145,52 @@ impl SqliteStore {
             .await
             .map_err(store_error)?;
         }
+        if let Some(assignment) = strategy {
+            sqlx::query(
+                "INSERT INTO generation_job_strategies (job_id, context_id, \
+                 context_fingerprint, assignment_fingerprint, assignment_json, created_at) \
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(assignment.job_id)
+            .bind(assignment.context.id)
+            .bind(&assignment.context.fingerprint)
+            .bind(&assignment.fingerprint)
+            .bind(to_json(assignment)?)
+            .bind(assignment.created_at)
+            .execute(&mut *transaction)
+            .await
+            .map_err(store_error)?;
+        }
         transaction.commit().await.map_err(store_error)?;
         Ok(())
+    }
+
+    pub async fn generation_strategy_assignment(
+        &self,
+        job_id: Uuid,
+    ) -> Result<Option<GenerationStrategyAssignment>, StoreError> {
+        let value: Option<String> = sqlx::query_scalar(
+            "SELECT assignment_json FROM generation_job_strategies WHERE job_id = ?",
+        )
+        .bind(job_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(store_error)?;
+        let Some(value) = value else { return Ok(None) };
+        let assignment: GenerationStrategyAssignment =
+            serde_json::from_str(&value).map_err(store_error)?;
+        if assignment.reproduce_fingerprint().map_err(store_error)? != assignment.fingerprint
+            || assignment
+                .context
+                .reproduce_fingerprint()
+                .map_err(store_error)?
+                != assignment.context.fingerprint
+        {
+            return Err(StoreError(
+                "generation strategy assignment fingerprint mismatch".into(),
+            ));
+        }
+        Ok(Some(assignment))
     }
 }
 

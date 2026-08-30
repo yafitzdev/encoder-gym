@@ -3219,6 +3219,7 @@ dependencies = [
  "analysis-core",
  "artifact-core",
  "chrono",
+ "dataset-architect-core",
  "dataset-core",
  "dataset-import",
  "evaluation-core",

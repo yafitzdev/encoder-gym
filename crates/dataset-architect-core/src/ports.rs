@@ -10,7 +10,9 @@ use uuid::Uuid;
 use crate::{
     brief::ResolvedArchitectBrief,
     lifecycle::{ArchitectRun, ArchitectToolCall},
-    proposal::{ArchitectProposalReview, DatasetArchitectureProposal},
+    proposal::{
+        ArchitectProposalReview, DatasetArchitectureApplication, DatasetArchitectureProposal,
+    },
 };
 
 pub trait ArchitectStore: Send + Sync {
@@ -68,4 +70,16 @@ pub trait ArchitectStore: Send + Sync {
         &self,
         proposal_id: Uuid,
     ) -> BoxFuture<'_, Result<Option<ArchitectProposalReview>, ArchitectAdapterError>>;
+
+    fn save_application(
+        &self,
+        application: &DatasetArchitectureApplication,
+        plan: &generation_core::domain::GenerationPlan,
+        strategy: &generation_core::strategy::ResolvedGenerationStrategyContext,
+    ) -> BoxFuture<'_, Result<(), ArchitectAdapterError>>;
+
+    fn get_application(
+        &self,
+        proposal_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<DatasetArchitectureApplication>, ArchitectAdapterError>>;
 }

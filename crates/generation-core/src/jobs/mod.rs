@@ -195,6 +195,14 @@ impl JobRunner {
         self
     }
 
+    pub fn with_strategy_context(
+        mut self,
+        context: crate::strategy::ResolvedGenerationStrategyContext,
+    ) -> Self {
+        self.prompt_builder = self.prompt_builder.attach_strategy(context);
+        self
+    }
+
     pub fn with_source_novelty_guard(mut self, guard: SourceExcerptNoveltyValidator) -> Self {
         self.source_novelty_guard_fingerprint = Some(guard.fingerprint().to_owned());
         self.validation = self.validation.with_validator(guard);
@@ -337,6 +345,13 @@ impl JobRunner {
                         "context_fingerprint": context.fingerprint,
                     })),
                     "source_novelty_guard_fingerprint": self.source_novelty_guard_fingerprint.as_deref(),
+                    "generation_strategy_context": self.prompt_builder.strategy_context().map(|context| serde_json::json!({
+                        "id": context.id,
+                        "proposal_id": context.proposal_id,
+                        "approval_id": context.approval_id,
+                        "fingerprint": context.fingerprint,
+                        "directives": context.for_cell(&planned.cell),
+                    })),
                 });
                 let rows = result
                     .rows
@@ -578,8 +593,14 @@ impl JobRunner {
             .prompt_builder
             .authenticity_context()
             .map(|context| context.fingerprint.as_str());
+        let strategy_fingerprint = self
+            .prompt_builder
+            .strategy_context()
+            .map(|context| context.fingerprint.as_str());
         let expected_prompt = if execution.construction_plan.is_some() {
-            if authenticity_fingerprint.is_some() {
+            if strategy_fingerprint.is_some() {
+                PromptBuilder::strategy_template_identity(authenticity_fingerprint.is_some())?
+            } else if authenticity_fingerprint.is_some() {
                 PromptBuilder::authenticity_template_identity()?
             } else {
                 PromptBuilder::template_identity()?
@@ -599,11 +620,21 @@ impl JobRunner {
             || execution.semantic_context_fingerprint != semantic_fingerprint
             || execution.authenticity_context_fingerprint.as_deref() != authenticity_fingerprint
             || execution.source_novelty_guard_fingerprint != self.source_novelty_guard_fingerprint
+            || execution.strategy_context_fingerprint.as_deref() != strategy_fingerprint
             || self
                 .prompt_builder
                 .authenticity_context()
                 .is_some_and(|context| {
                     context.dataset_id != job.dataset_id
+                        || context.reproduce_fingerprint().ok().as_ref()
+                            != Some(&context.fingerprint)
+                })
+            || self
+                .prompt_builder
+                .strategy_context()
+                .is_some_and(|context| {
+                    context.dataset_id != job.dataset_id
+                        || context.plan_id != job.plan_id
                         || context.reproduce_fingerprint().ok().as_ref()
                             != Some(&context.fingerprint)
                 })

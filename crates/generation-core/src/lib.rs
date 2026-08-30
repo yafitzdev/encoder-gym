@@ -14,4 +14,5 @@ pub mod parsing;
 pub mod planning;
 pub mod ports;
 pub mod prompting;
+pub mod strategy;
 pub mod validation;

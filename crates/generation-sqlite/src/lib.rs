@@ -3,6 +3,7 @@
 mod advisor;
 mod analysis;
 mod approval;
+mod architect;
 mod benchmark;
 mod contamination;
 mod evaluation;

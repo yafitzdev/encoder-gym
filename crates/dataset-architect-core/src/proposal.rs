@@ -4,6 +4,9 @@ use chrono::{DateTime, Utc};
 use generation_core::{
     dimensions::expand_generation_cells,
     domain::{GenerationCell, GenerationPlan},
+    strategy::{
+        GenerationStrategyDirective as AppliedStrategyDirective, ResolvedGenerationStrategyContext,
+    },
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -216,6 +219,112 @@ pub fn proposal_to_generation_plan(
         .validated_allocation
         .to_generation_plan(&brief.dataset)
         .map_err(|error| ArchitectError::Allocation(error.to_string()))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DatasetArchitectureApplication {
+    pub id: Uuid,
+    pub proposal_id: Uuid,
+    pub proposal_fingerprint: String,
+    pub approval_id: Uuid,
+    pub approval_fingerprint: String,
+    pub plan_id: Uuid,
+    pub plan_fingerprint: String,
+    pub strategy_context_id: Uuid,
+    pub strategy_context_fingerprint: String,
+    pub created_at: DateTime<Utc>,
+    pub fingerprint: String,
+}
+
+impl DatasetArchitectureApplication {
+    pub fn reproduce_fingerprint(&self) -> Result<String, ArchitectError> {
+        let mut value = self.clone();
+        value.fingerprint.clear();
+        fingerprint(&value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AppliedArchitecture {
+    pub plan: GenerationPlan,
+    pub strategy_context: ResolvedGenerationStrategyContext,
+    pub application: DatasetArchitectureApplication,
+}
+
+/// Converts a human-approved advisory proposal into ordinary generation inputs.
+/// Coverage is checked again at application time so stale advice cannot be applied.
+pub fn apply_approved_proposal(
+    proposal: &DatasetArchitectureProposal,
+    brief: &ResolvedArchitectBrief,
+    approval: &ArchitectProposalReview,
+    current_coverage: &[workflow_core::allocation::InitialCellCoverage],
+) -> Result<AppliedArchitecture, ArchitectError> {
+    validate_proposal_context(proposal, brief)?;
+    if approval.reproduce_fingerprint()? != approval.fingerprint
+        || approval.proposal_id != proposal.id
+        || approval.proposal_fingerprint != proposal.fingerprint
+        || approval.decision != ArchitectReviewDecision::Approve
+    {
+        return Err(ArchitectError::Integrity(
+            "proposal requires its latest reproducible human approval".into(),
+        ));
+    }
+    if fingerprint(&current_coverage.to_vec())? != proposal.coverage_fingerprint {
+        return Err(ArchitectError::Integrity(
+            "dataset coverage changed after the proposal was produced".into(),
+        ));
+    }
+    let plan = proposal_to_generation_plan(proposal, brief)?;
+    let per_cell = plan
+        .cells
+        .iter()
+        .filter_map(|planned| {
+            let directives = proposal
+                .strategies
+                .iter()
+                .filter(|directive| selector_matches(&directive.selector, &planned.cell))
+                .map(|directive| AppliedStrategyDirective {
+                    source_directive_id: directive.id,
+                    kind: format!("{:?}", directive.kind).to_lowercase(),
+                    share_basis_points: directive.share_basis_points,
+                    instructions: directive.instructions.clone(),
+                    related_labels: directive.related_labels.clone(),
+                    rationale: directive.rationale.clone(),
+                    confidence: format!("{:?}", directive.confidence).to_lowercase(),
+                })
+                .collect::<Vec<_>>();
+            (!directives.is_empty()).then(|| (planned.cell.key(), directives))
+        })
+        .collect();
+    let strategy_context = ResolvedGenerationStrategyContext::create(
+        &brief.dataset,
+        &plan,
+        proposal.id,
+        proposal.fingerprint.clone(),
+        approval.id,
+        approval.fingerprint.clone(),
+        per_cell,
+    )
+    .map_err(|error| ArchitectError::Integrity(error.to_string()))?;
+    let mut application = DatasetArchitectureApplication {
+        id: Uuid::new_v4(),
+        proposal_id: proposal.id,
+        proposal_fingerprint: proposal.fingerprint.clone(),
+        approval_id: approval.id,
+        approval_fingerprint: approval.fingerprint.clone(),
+        plan_id: plan.id,
+        plan_fingerprint: fingerprint(&plan)?,
+        strategy_context_id: strategy_context.id,
+        strategy_context_fingerprint: strategy_context.fingerprint.clone(),
+        created_at: Utc::now(),
+        fingerprint: String::new(),
+    };
+    application.fingerprint = application.reproduce_fingerprint()?;
+    Ok(AppliedArchitecture {
+        plan,
+        strategy_context,
+        application,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -525,5 +634,36 @@ mod tests {
             DatasetArchitectureProposal::create(&brief, &run, value),
             Err(ArchitectError::Validation(message)) if message.contains("every generation cell")
         ));
+    }
+
+    #[test]
+    fn only_an_approved_current_proposal_compiles_to_generation_inputs() {
+        let brief = brief();
+        let mut run = ArchitectRun::queue(&brief, 1, "sha256:protocol".into()).unwrap();
+        run.start().unwrap();
+        let proposal = DatasetArchitectureProposal::create(&brief, &run, draft(&brief)).unwrap();
+        let approval = ArchitectProposalReview::create(
+            &proposal,
+            None,
+            ArchitectReviewDecision::Approve,
+            "operator".into(),
+            "The budget and tradeoffs are acceptable.".into(),
+        )
+        .unwrap();
+        let applied =
+            apply_approved_proposal(&proposal, &brief, &approval, &brief.current_coverage).unwrap();
+        assert_eq!(applied.plan.total_target_count(), 40);
+        assert_eq!(applied.strategy_context.per_cell.len(), 2);
+        assert_eq!(
+            applied.application.strategy_context_fingerprint,
+            applied.strategy_context.fingerprint
+        );
+
+        let mut stale = brief.current_coverage.clone();
+        stale.push(workflow_core::allocation::InitialCellCoverage {
+            cell: expand_generation_cells(&brief.dataset)[0].clone(),
+            accepted: 1,
+        });
+        assert!(apply_approved_proposal(&proposal, &brief, &approval, &stale).is_err());
     }
 }

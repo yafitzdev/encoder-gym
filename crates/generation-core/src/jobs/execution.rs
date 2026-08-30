@@ -66,6 +66,8 @@ pub struct GenerationExecutionSpec {
     pub authenticity_context_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_novelty_guard_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_context_fingerprint: Option<String>,
     #[serde(default)]
     pub construction_plan: Option<RowConstructionPlan>,
     pub created_at: DateTime<Utc>,
@@ -143,6 +145,39 @@ impl GenerationExecutionSpec {
         source_novelty_guard_fingerprint: Option<String>,
         construction_plan: RowConstructionPlan,
     ) -> Result<Self, GenerationExecutionError> {
+        Self::new_with_all_contexts(
+            job_id,
+            dataset_id,
+            plan_id,
+            initial_needs,
+            backend,
+            parameters,
+            policy,
+            prompt_template,
+            semantic_context_fingerprint,
+            authenticity_context_fingerprint,
+            source_novelty_guard_fingerprint,
+            None,
+            construction_plan,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_all_contexts(
+        job_id: Uuid,
+        dataset_id: Uuid,
+        plan_id: Uuid,
+        initial_needs: Vec<GenerationNeed>,
+        backend: GenerationBackendIdentity,
+        parameters: GenerationParameters,
+        policy: GenerationExecutionPolicy,
+        prompt_template: PromptTemplateIdentity,
+        semantic_context_fingerprint: impl Into<String>,
+        authenticity_context_fingerprint: Option<String>,
+        source_novelty_guard_fingerprint: Option<String>,
+        strategy_context_fingerprint: Option<String>,
+        construction_plan: RowConstructionPlan,
+    ) -> Result<Self, GenerationExecutionError> {
         policy.validate()?;
         construction_plan.compile()?;
         let mut need_keys = std::collections::BTreeSet::new();
@@ -192,6 +227,9 @@ impl GenerationExecutionSpec {
         let source_novelty_guard_fingerprint = source_novelty_guard_fingerprint
             .map(|value| required(value, "source novelty guard fingerprint"))
             .transpose()?;
+        let strategy_context_fingerprint = strategy_context_fingerprint
+            .map(|value| required(value, "strategy context fingerprint"))
+            .transpose()?;
         if authenticity_context_fingerprint.is_some() != source_novelty_guard_fingerprint.is_some()
         {
             return Err(GenerationExecutionError::InvalidIdentity(
@@ -210,6 +248,7 @@ impl GenerationExecutionSpec {
             semantic_context_fingerprint,
             authenticity_context_fingerprint,
             source_novelty_guard_fingerprint,
+            strategy_context_fingerprint,
             construction_plan: Some(construction_plan),
             created_at: Utc::now(),
             fingerprint: String::new(),
@@ -225,6 +264,25 @@ impl GenerationExecutionSpec {
             return Err(GenerationExecutionError::InvalidIdentity(
                 "authenticity context and source novelty guard must be pinned together".into(),
             ));
+        }
+        if let Some(strategy_fingerprint) = &self.strategy_context_fingerprint {
+            return fingerprint(&(
+                self.job_id,
+                self.dataset_id,
+                self.plan_id,
+                &self.initial_needs,
+                &self.backend,
+                &self.parameters,
+                &self.policy,
+                &self.prompt_template,
+                &self.semantic_context_fingerprint,
+                &self.authenticity_context_fingerprint,
+                &self.source_novelty_guard_fingerprint,
+                strategy_fingerprint,
+                &self.construction_plan,
+                self.created_at,
+            ))
+            .map_err(Into::into);
         }
         if let (
             Some(construction_plan),
