@@ -30,6 +30,20 @@ OpenAI-compatible backend commands are:
 `backend check` accepts `--base-url` and `--model` overrides and reads the key
 only from the named `--api-key-env` environment variable.
 
+Semantic catalog commands are:
+
+- `synth semantic profile-create <FILE>` and `profile-revise <ID> <FILE>` for
+  immutable reusable or dataset-scoped profile versions;
+- `profile-list|profile-show` for exact version inspection;
+- `suggest <DATASET_ID>` for read-only compatible reusable candidates;
+- `bind <DATASET_ID> <PROFILE_ID>` and `unbind ... --layer ...` for explicit,
+  append-only attachment decisions;
+- `bindings|resolve <DATASET_ID>` for active layers and effective semantics; and
+- `job-context <JOB_ID>` for the exact context pinned before generation.
+
+There is no automatic name-based binding. With no explicit binding, ordinary
+task/schema inference remains the fallback. See `semantic-catalog.md`.
+
 Declarative project-preparation commands are:
 
 - `synth project preview <MANIFEST>` to resolve exact initial cell targets,

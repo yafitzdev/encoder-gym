@@ -38,6 +38,13 @@ The initial output is text-classification data:
 Dimension names and values are user-defined categorical data. Example names in
 this specification must never be hard-coded.
 
+Optional semantic profiles may enrich labels, dimensions, and dimension values
+with descriptions, examples, counterexamples, and inclusion/exclusion rules.
+Profiles are immutable and versioned; reusable and dataset-specific layers are
+attached explicitly and resolved deterministically. Dataset definitions remain
+valid and independently useful without profiles. Generation jobs pin the exact
+resolved profile versions used by prompt construction.
+
 ## Explicit coverage
 
 Generation is cell-based rather than random. Labels and dimension values form a

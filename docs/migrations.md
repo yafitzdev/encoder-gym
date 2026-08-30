@@ -82,6 +82,8 @@ applied automatically when the SQLite store connects.
 - `0037_project_bootstraps`: content-fingerprinted local-source bootstrap
   summaries linking atomically created import/snapshot artifacts to one existing
   project preparation.
+- `0038_semantic_catalog`: immutable semantic profile versions, append-only
+  dataset binding decisions, and exact generation-job semantic assignments.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

@@ -27,6 +27,7 @@ Cross-cutting contracts remain small and inward-facing:
 apps / SQLite adapter ──> project-config
 apps / SQLite adapter ──> recovery-core
 slice cores / adapters ──> artifact-core
+generation-core / workflow-core ──> semantic-catalog
 dataset-import ─────────> dataset-core + generation-core
 workflow-core ──────────> narrow artifact contracts from slice cores
 project-preparation ─────> project-config + workflow-core + slice artifact shapes
@@ -35,6 +36,13 @@ project-preparation ─────> project-config + workflow-core + slice arti
 `artifact-core` only canonicalizes fingerprint inputs and describes provenance
 trees. `recovery-core` only describes process leases and interruption records.
 Neither crate orchestrates slice business logic.
+
+`semantic-catalog` owns immutable reusable/dataset-scoped profiles, append-only
+bindings, deterministic layered resolution, and the provider-neutral resolved
+context. It imports only `artifact-core`; it knows no prompt, provider, SQLite,
+CLI, workflow, or dataset implementation. Generation prompt construction and
+the bounded workflow advisor consume its resolved context through their own
+contracts. SQLite stores the artifacts in the existing local database.
 
 `workflow-core` owns only cross-slice policy: initial finite allocation,
 evaluation roles and exposure rules, benchmark acceptance contracts, durable
@@ -78,6 +86,13 @@ application executable.
 
 Owns Slice 1 business rules and project-owned interfaces. Its modules are
 organized by a clear reason to change rather than by generic technical labels.
+
+### `semantic-catalog`
+
+Owns reusable semantic profile and explicit binding contracts. It validates and
+fingerprints immutable versions, resolves reusable guidance before
+dataset-specific overrides, and exposes a small persistence port. It does not
+perform automatic attachment or model calls.
 
 ### `synthetic-data-sqlite`
 

@@ -4,6 +4,23 @@ Provenance is derived from persisted foreign keys and cryptographic artifact
 identities. It is not reconstructed from CLI output or current filesystem
 timestamps.
 
+Synthetic generation includes the semantic interpretation used at request
+time:
+
+```text
+generation job
+  -> generation semantic context (job-pinned assignment)
+    -> append-only binding decision
+      -> exact semantic profile version -> predecessor profile version
+      -> predecessor binding decision
+      -> dataset definition
+  -> generation plan
+```
+
+Generated rows also embed the resolved context in generation metadata. A
+workflow advisory assessment links to the same generation semantic context,
+so its prompt cannot silently pick up a later catalog revision.
+
 For transformer evaluation, the dependency path is:
 
 ```text
@@ -75,6 +92,9 @@ Inspect a chain with:
 
 ```text
 synth provenance checkpoint <CHECKPOINT_ID>
+synth provenance semantic-profile <PROFILE_ID>
+synth provenance semantic-binding <BINDING_ID>
+synth provenance generation-semantic-context <JOB_ID>
 synth --output json provenance checkpoint <CHECKPOINT_ID>
 synth provenance analysis-report <ANALYSIS_REPORT_ID>
 synth provenance analysis-finding-review <REVIEW_ID>
