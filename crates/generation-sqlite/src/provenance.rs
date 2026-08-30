@@ -15,7 +15,7 @@ use optimization_core::{
     ports::OptimizationStore,
     reviews::ProposalReviewRecord,
 };
-use project_preparation::PreparationStore;
+use project_preparation::{BootstrapStore, PreparationStore};
 use serde::Serialize;
 use serde_json::json;
 use sqlx::FromRow;
@@ -36,6 +36,7 @@ impl ProvenanceStore for SqliteStore {
     ) -> BoxFuture<'_, Result<Option<ProvenanceNode>, ProvenanceStoreError>> {
         Box::pin(async move {
             match kind {
+                ArtifactKind::ProjectBootstrap => self.project_bootstrap_node(id).await,
                 ArtifactKind::ProjectPreparation => self.project_preparation_node(id).await,
                 ArtifactKind::ProjectConfiguration => self.configuration_node(id).await,
                 ArtifactKind::Dataset => self.dataset_node(id).await,
@@ -69,6 +70,32 @@ impl ProvenanceStore for SqliteStore {
 }
 
 impl SqliteStore {
+    async fn project_bootstrap_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(value) = self.get_bootstrap(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let mut parents = self
+            .project_preparation_node(value.preparation_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        for source in &value.sources {
+            if let Some(snapshot) = self.snapshot_node(source.snapshot_id).await? {
+                parents.push(snapshot);
+            }
+        }
+        Ok(Some(node(
+            ArtifactKind::ProjectBootstrap,
+            id,
+            Some(value.fingerprint.clone()),
+            &value,
+            parents,
+        )?))
+    }
+
     async fn project_preparation_node(
         &self,
         id: Uuid,

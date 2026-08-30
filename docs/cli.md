@@ -105,6 +105,23 @@ aggregate, adaptation-ineligible disclosure and a separate
 `--authorize-sealed` acknowledgement. Repeating an identical assessment returns
 the existing artifact.
 
+Project bootstrap commands are:
+
+- `synth project bootstrap-preview <MANIFEST>` to validate local JSONL/CSV
+  development and sealed sources, source-content fingerprints, mappings,
+  contamination, exact allocation, and workflow eligibility without mutation;
+- `synth project bootstrap <MANIFEST>` to atomically persist ordinary completed
+  imports, immutable all-test cohort snapshots, and the existing preparation
+  bundle, then print the separate workflow-start command;
+- `synth project bootstrap-show <ID>` to inspect the immutable bootstrap,
+  preparation, source dataset/import/snapshot identities, and next command; and
+- `synth project bootstrap-list` for bounded, stable bootstrap history.
+
+Unchanged manifests and source bytes return the original bootstrap. Source
+changes produce a new fingerprint and immutable artifact set. Existing
+`project preview|prepare` remains the lower-level path for operator-managed
+snapshot IDs.
+
 Finite-workflow commands are:
 
 - `synth workflow define --definition workflow.toml` (start from

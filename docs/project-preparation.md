@@ -4,6 +4,43 @@ Project preparation turns one strict TOML or JSON manifest into the existing
 slice artifacts needed to start a finite encoder-development workflow. It is a
 compiler and transaction boundary, not a new workflow engine.
 
+## Bootstrap directly from local files
+
+For a new project, start with
+`examples/pilot-support/project-bootstrap.toml`. Its development and optional
+sealed cohorts declare local JSONL or CSV sources, text/label fields, and a
+mapping for every arbitrary categorical dimension. Relative paths resolve from
+the manifest directory.
+
+```text
+synth project bootstrap-preview examples/pilot-support/project-bootstrap.toml
+synth project bootstrap examples/pilot-support/project-bootstrap.toml
+synth project bootstrap-list
+synth project bootstrap-show <BOOTSTRAP_ID>
+synth workflow start <DEFINITION_ID>
+```
+
+Bootstrap preview streams and validates every source but writes nothing. It
+reports SHA-256 content identities, processed/accepted/rejected counts, exact
+initial allocation, contamination, disclosures, budgets, stage graph, and
+eligibility. Benchmark ingestion is strict: one rejected or empty source blocks
+creation instead of silently changing evaluation evidence.
+
+Bootstrap creation performs one SQLite transaction containing ordinary source
+datasets, completed imports, accepted source rows, immutable all-test snapshots,
+the preparation bundle described below, and one small bootstrap summary. A late
+failure rolls back every artifact. Idempotency binds the canonical manifest and
+source-content hashes: unchanged bytes return the original record, while changed
+bytes create new immutable history. Paths are retained as import provenance but
+do not substitute for content identity.
+
+Bootstrap never starts a workflow, trains, evaluates, or calls a provider. The
+printed `workflow start` command is a separate authorization. Sealed cohorts
+still must be aggregate-only and adaptation-ineligible, and all existing
+contamination and budget checks run through the same preparation compiler.
+
+## Prepare from existing snapshots
+
 The manifest owns:
 
 - the synthetic training-dataset schema and replaceable generation backend;
@@ -15,7 +52,8 @@ The manifest owns:
 - training/evaluation settings, iteration governance, stop policy, and finite
   row/request/advisor/stage budgets.
 
-Start from `examples/project-preparation.toml`. First create or import the
+For existing benchmark artifacts, start from `examples/project-preparation.toml`.
+First create or import the
 benchmark dataset and an immutable snapshot, then replace the example snapshot
 UUID. Snapshot labels must match the project label order exactly, and the
 selected split must contain rows.

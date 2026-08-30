@@ -23,57 +23,7 @@ impl PreparationStore for SqliteStore {
                 transaction.rollback().await.map_err(store_error)?;
                 return Ok(existing);
             }
-
-            crate::insert_dataset(&mut transaction, &bundle.dataset)
-                .await
-                .map_err(store_error)?;
-            crate::insert_plan(&mut transaction, &bundle.default_generation_plan)
-                .await
-                .map_err(store_error)?;
-            if let Some(backend) = &bundle.backend_configuration {
-                crate::upsert_backend(&mut transaction, backend)
-                    .await
-                    .map_err(store_error)?;
-            }
-            crate::project::insert_project_configuration(
-                &mut transaction,
-                &bundle.project_configuration,
-            )
-            .await
-            .map_err(store_error)?;
-            let roles = bundle
-                .role_decisions
-                .iter()
-                .map(|role| (role.cohort_id, role))
-                .collect::<BTreeMap<_, _>>();
-            for cohort in &bundle.cohorts {
-                let role = roles.get(&cohort.id).ok_or_else(|| {
-                    PreparationStoreError(format!("cohort has no initial role: {}", cohort.id))
-                })?;
-                crate::governance::insert_cohort_with_initial_role(&mut transaction, cohort, role)
-                    .await
-                    .map_err(store_error)?;
-            }
-            for report in &bundle.contamination_reports {
-                crate::contamination::insert_contamination_report(&mut transaction, report)
-                    .await
-                    .map_err(store_error)?;
-            }
-            crate::benchmark::insert_benchmark_suite(&mut transaction, &bundle.development_suite)
-                .await
-                .map_err(store_error)?;
-            if let Some(suite) = &bundle.sealed_suite {
-                crate::benchmark::insert_benchmark_suite(&mut transaction, suite)
-                    .await
-                    .map_err(store_error)?;
-            }
-            crate::workflow_run::insert_workflow_definition(
-                &mut transaction,
-                &bundle.workflow_definition,
-            )
-            .await
-            .map_err(store_error)?;
-            insert_preparation(&mut transaction, &bundle.preparation).await?;
+            insert_preparation_bundle(&mut transaction, &bundle).await?;
             transaction.commit().await.map_err(store_error)?;
             Ok(bundle.preparation)
         })
@@ -124,6 +74,57 @@ impl PreparationStore for SqliteStore {
             .collect()
         })
     }
+}
+
+pub(crate) async fn insert_preparation_bundle(
+    connection: &mut SqliteConnection,
+    bundle: &PreparationBundle,
+) -> Result<(), PreparationStoreError> {
+    validate_bundle(bundle)?;
+    crate::insert_dataset(connection, &bundle.dataset)
+        .await
+        .map_err(store_error)?;
+    crate::insert_plan(connection, &bundle.default_generation_plan)
+        .await
+        .map_err(store_error)?;
+    if let Some(backend) = &bundle.backend_configuration {
+        crate::upsert_backend(connection, backend)
+            .await
+            .map_err(store_error)?;
+    }
+    crate::project::insert_project_configuration(connection, &bundle.project_configuration)
+        .await
+        .map_err(store_error)?;
+    let roles = bundle
+        .role_decisions
+        .iter()
+        .map(|role| (role.cohort_id, role))
+        .collect::<BTreeMap<_, _>>();
+    for cohort in &bundle.cohorts {
+        let role = roles.get(&cohort.id).ok_or_else(|| {
+            PreparationStoreError(format!("cohort has no initial role: {}", cohort.id))
+        })?;
+        crate::governance::insert_cohort_with_initial_role(connection, cohort, role)
+            .await
+            .map_err(store_error)?;
+    }
+    for report in &bundle.contamination_reports {
+        crate::contamination::insert_contamination_report(connection, report)
+            .await
+            .map_err(store_error)?;
+    }
+    crate::benchmark::insert_benchmark_suite(connection, &bundle.development_suite)
+        .await
+        .map_err(store_error)?;
+    if let Some(suite) = &bundle.sealed_suite {
+        crate::benchmark::insert_benchmark_suite(connection, suite)
+            .await
+            .map_err(store_error)?;
+    }
+    crate::workflow_run::insert_workflow_definition(connection, &bundle.workflow_definition)
+        .await
+        .map_err(store_error)?;
+    insert_preparation(connection, &bundle.preparation).await
 }
 
 async fn insert_preparation(

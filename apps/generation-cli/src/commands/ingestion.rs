@@ -234,7 +234,7 @@ fn record_counts(
     }
 }
 
-fn open_reader(
+pub(crate) fn open_reader(
     path: &Path,
     format: ImportFormat,
     mapping: ImportFieldMapping,

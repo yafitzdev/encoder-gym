@@ -14,6 +14,14 @@ use crate::cli::ProjectCommand;
 
 pub async fn execute(command: ProjectCommand, store: &SqliteStore) -> anyhow::Result<()> {
     match command {
+        ProjectCommand::BootstrapPreview { manifest } => {
+            super::project_bootstrap::preview(&manifest, store).await
+        }
+        ProjectCommand::Bootstrap { manifest } => {
+            super::project_bootstrap::create(&manifest, store).await
+        }
+        ProjectCommand::BootstrapShow { id } => super::project_bootstrap::show(id, store).await,
+        ProjectCommand::BootstrapList { page } => super::project_bootstrap::list(page, store).await,
         ProjectCommand::Preview { manifest } => {
             let manifest = load_manifest(&manifest)?;
             let evidence = load_evidence(store, &manifest).await?;

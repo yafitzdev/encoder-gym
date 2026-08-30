@@ -215,6 +215,17 @@ pub enum ConfigCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum ProjectCommand {
+    /// Preview local benchmark imports and complete project preparation without writing state.
+    BootstrapPreview { manifest: PathBuf },
+    /// Atomically import local benchmarks and prepare a startable project.
+    Bootstrap { manifest: PathBuf },
+    /// Show one immutable local-file bootstrap record.
+    BootstrapShow { id: Uuid },
+    /// List local-file bootstrap records.
+    BootstrapList {
+        #[command(flatten)]
+        page: PageArgs,
+    },
     /// Validate and preview a manifest without creating project artifacts.
     Preview { manifest: PathBuf },
     /// Atomically create all artifacts required to start the declared workflow.
@@ -1489,6 +1500,7 @@ pub enum WorkflowKindArg {
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ArtifactKindArg {
+    ProjectBootstrap,
     ProjectPreparation,
     ProjectConfiguration,
     Dataset,

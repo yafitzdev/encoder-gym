@@ -79,6 +79,9 @@ applied automatically when the SQLite store connects.
 - `0036_project_preparations`: immutable manifest-fingerprinted project
   preparation summaries linking the atomically created dataset configuration,
   benchmark suites, and workflow definition.
+- `0037_project_bootstraps`: content-fingerprinted local-source bootstrap
+  summaries linking atomically created import/snapshot artifacts to one existing
+  project preparation.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

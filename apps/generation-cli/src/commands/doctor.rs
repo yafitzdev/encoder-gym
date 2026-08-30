@@ -5,7 +5,10 @@ use analysis_core::{
     ports::{AnalysisFindingQuery, AnalysisStore, FindingEvidenceQuery},
     runner::{reproduce_report_fingerprint, verify_report_evidence},
 };
-use dataset_core::ports::SnapshotStore;
+use dataset_core::{
+    domain::{ImportState, SnapshotSplit, SourceProvenance},
+    ports::{ImportStore, SnapshotStore},
+};
 use evaluation_core::{
     comparison::{comparison_fingerprint, selection_fingerprint},
     domain::EvaluationRunState,
@@ -25,6 +28,7 @@ use optimization_core::{
     scenarios::{OptimizationScenario, ScenarioPairComparison},
 };
 use project_config::{GenerationBackendKind, ResolvedProjectConfig};
+use project_preparation::{BootstrapStore, PreparationStore};
 use serde::{Serialize, de::DeserializeOwned};
 use synthetic_data_sqlite::SqliteStore;
 use training_core::ports::{EncoderRegistry, TrainingStore};
@@ -48,7 +52,8 @@ use super::config;
 mod facts;
 
 use facts::{
-    analysis_facts_check, evaluation_facts_check, optimization_facts_check, workflow_facts_check,
+    analysis_facts_check, bootstrap_facts_check, evaluation_facts_check, optimization_facts_check,
+    workflow_facts_check,
 };
 
 #[derive(Debug, Serialize)]
@@ -206,6 +211,7 @@ async fn database_checks(store: &SqliteStore) -> Vec<DoctorCheck> {
     checks.push(evaluation_facts_check(store).await);
     checks.push(analysis_facts_check(store).await);
     checks.push(optimization_facts_check(store).await);
+    checks.push(bootstrap_facts_check(store).await);
     checks.push(workflow_facts_check(store).await);
     checks
 }

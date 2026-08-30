@@ -3018,6 +3018,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "synthetic-data-core",
  "synthetic-data-fake",

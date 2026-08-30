@@ -10,6 +10,7 @@ mod governance;
 mod imports;
 mod optimization;
 mod project;
+mod project_bootstrap;
 mod project_preparation;
 mod promotion;
 mod provenance;
@@ -582,59 +583,8 @@ impl SnapshotStore for SqliteStore {
         let snapshot = snapshot.clone();
         let members = members.to_vec();
         Box::pin(async move {
-            if snapshot.member_count != members.len() as u64 {
-                return Err(DatasetStoreError(format!(
-                    "snapshot declares {} members but {} were supplied",
-                    snapshot.member_count,
-                    members.len()
-                )));
-            }
-            if members
-                .iter()
-                .any(|member| member.snapshot_id != snapshot.id)
-            {
-                return Err(DatasetStoreError(
-                    "all members must reference the persisted snapshot".into(),
-                ));
-            }
-
             let mut transaction = self.pool.begin().await.map_err(dataset_store_error)?;
-            sqlx::query(
-                "INSERT INTO dataset_snapshots \
-                 (id, source_dataset_id, name, description, split_configuration_json, \
-                  member_count, fingerprint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(snapshot.id)
-            .bind(snapshot.source_dataset_id)
-            .bind(snapshot.name)
-            .bind(snapshot.description)
-            .bind(dataset_to_json(&snapshot.split_configuration)?)
-            .bind(i64::try_from(snapshot.member_count).map_err(dataset_store_error)?)
-            .bind(snapshot.fingerprint)
-            .bind(snapshot.created_at)
-            .execute(&mut *transaction)
-            .await
-            .map_err(dataset_store_error)?;
-
-            for member in members {
-                sqlx::query(
-                    "INSERT INTO dataset_snapshot_members \
-                     (id, snapshot_id, source_row_id, split, text, label, dimensions_json, \
-                      source_provenance_json, source_created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                )
-                .bind(member.id)
-                .bind(member.snapshot_id)
-                .bind(member.source_row_id)
-                .bind(member.split.as_str())
-                .bind(member.text)
-                .bind(member.label)
-                .bind(dataset_to_json(&member.dimensions)?)
-                .bind(dataset_to_json(&member.source_provenance)?)
-                .bind(member.source_created_at)
-                .execute(&mut *transaction)
-                .await
-                .map_err(dataset_store_error)?;
-            }
+            insert_snapshot(&mut transaction, &snapshot, &members).await?;
             transaction.commit().await.map_err(dataset_store_error)?;
             Ok(())
         })
@@ -747,6 +697,64 @@ impl SnapshotStore for SqliteStore {
             .collect()
         })
     }
+}
+
+pub(crate) async fn insert_snapshot(
+    connection: &mut SqliteConnection,
+    snapshot: &DatasetSnapshot,
+    members: &[SnapshotMember],
+) -> Result<(), DatasetStoreError> {
+    if snapshot.member_count != members.len() as u64 {
+        return Err(DatasetStoreError(format!(
+            "snapshot declares {} members but {} were supplied",
+            snapshot.member_count,
+            members.len()
+        )));
+    }
+    if members
+        .iter()
+        .any(|member| member.snapshot_id != snapshot.id)
+    {
+        return Err(DatasetStoreError(
+            "all members must reference the persisted snapshot".into(),
+        ));
+    }
+    sqlx::query(
+        "INSERT INTO dataset_snapshots \
+         (id, source_dataset_id, name, description, split_configuration_json, \
+          member_count, fingerprint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(snapshot.id)
+    .bind(snapshot.source_dataset_id)
+    .bind(&snapshot.name)
+    .bind(&snapshot.description)
+    .bind(dataset_to_json(&snapshot.split_configuration)?)
+    .bind(i64::try_from(snapshot.member_count).map_err(dataset_store_error)?)
+    .bind(&snapshot.fingerprint)
+    .bind(snapshot.created_at)
+    .execute(&mut *connection)
+    .await
+    .map_err(dataset_store_error)?;
+    for member in members {
+        sqlx::query(
+            "INSERT INTO dataset_snapshot_members \
+             (id, snapshot_id, source_row_id, split, text, label, dimensions_json, \
+              source_provenance_json, source_created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(member.id)
+        .bind(member.snapshot_id)
+        .bind(member.source_row_id)
+        .bind(member.split.as_str())
+        .bind(&member.text)
+        .bind(&member.label)
+        .bind(dataset_to_json(&member.dimensions)?)
+        .bind(dataset_to_json(&member.source_provenance)?)
+        .bind(member.source_created_at)
+        .execute(&mut *connection)
+        .await
+        .map_err(dataset_store_error)?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, FromRow)]

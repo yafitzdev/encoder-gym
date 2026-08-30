@@ -49,6 +49,7 @@ fn canonicalize(value: Value) -> Value {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtifactKind {
+    ProjectBootstrap,
     ProjectPreparation,
     ProjectConfiguration,
     Dataset,
@@ -81,6 +82,7 @@ pub enum ArtifactKind {
 impl ArtifactKind {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ProjectBootstrap => "project_bootstrap",
             Self::ProjectPreparation => "project_preparation",
             Self::ProjectConfiguration => "project_configuration",
             Self::Dataset => "dataset",

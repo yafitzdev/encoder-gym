@@ -240,6 +240,32 @@ async fn drive_initial_pipeline(
     run: WorkflowRun,
     attempt: WorkflowStageAttempt,
 ) -> anyhow::Result<WorkflowRun> {
+    const WORKFLOW_STACK_BYTES: usize = 16 * 1024 * 1024;
+
+    let store = store.clone();
+    let runtime = tokio::runtime::Handle::current();
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("encoder-workflow".into())
+        .stack_size(WORKFLOW_STACK_BYTES)
+        .spawn(move || {
+            let result = runtime.block_on(drive_initial_pipeline_on_thread(
+                &store, definition, run, attempt,
+            ));
+            let _ = sender.send(result);
+        })
+        .context("could not start workflow execution thread")?;
+    receiver
+        .await
+        .context("workflow execution thread exited unexpectedly")?
+}
+
+async fn drive_initial_pipeline_on_thread(
+    store: &SqliteStore,
+    definition: WorkflowDefinition,
+    run: WorkflowRun,
+    attempt: WorkflowStageAttempt,
+) -> anyhow::Result<WorkflowRun> {
     let run_id = run.id;
     store
         .acquire_execution_lease(WorkflowKind::EncoderWorkflow, run_id)

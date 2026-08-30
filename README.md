@@ -43,6 +43,25 @@ See [`docs/configuration.md`](docs/configuration.md) and
 [`docs/provenance.md`](docs/provenance.md). The complete advisory optimization
 workflow is in [`docs/optimization.md`](docs/optimization.md).
 
+The fastest complete offline journey starts from the checked-in local benchmark
+files and requires no copied UUIDs:
+
+```text
+cargo run -p synthetic-data-cli -- project bootstrap-preview examples/pilot-support/project-bootstrap.toml
+cargo run -p synthetic-data-cli -- project bootstrap examples/pilot-support/project-bootstrap.toml
+cargo run -p synthetic-data-cli -- workflow start <DEFINITION_ID>
+cargo run -p synthetic-data-cli -- workflow approve <RUN_ID>
+cargo run -p synthetic-data-cli -- workflow finalize <RUN_ID>
+cargo run -p synthetic-data-cli -- workflow promote <RUN_ID>
+cargo run -p synthetic-data-cli -- doctor
+```
+
+Bootstrap imports the declared development JSONL and sealed CSV as ordinary
+immutable Dataset Management artifacts, runs all preparation/governance checks,
+and prints the exact workflow-start command. Preview writes nothing; unchanged
+source bytes replay the original bootstrap. Read
+[`docs/pilot-quickstart.md`](docs/pilot-quickstart.md).
+
 A minimal fake-backend workflow is:
 
 ```text
@@ -58,7 +77,7 @@ cargo run -p synthetic-data-cli -- export <DATASET_ID> --format jsonl --file exp
 
 ## Prepare a complete project from one manifest
 
-After importing benchmark data and creating immutable snapshots, copy
+For an advanced setup that already owns immutable benchmark snapshots, copy
 [`examples/project-preparation.toml`](examples/project-preparation.toml), replace
 its snapshot placeholder, and preview the complete finite project without
 writing any artifacts:

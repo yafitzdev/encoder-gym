@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use dataset_core::domain::{DatasetSnapshot, SnapshotMember};
+use dataset_core::domain::{DatasetImport, DatasetSnapshot, ImportedRow, SnapshotMember};
 use generation_core::domain::{
     BackendConfiguration, DatasetDefinition, GenerationCell, GenerationPlan,
 };
@@ -25,6 +25,71 @@ pub struct CohortEvidence {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PreparationEvidence {
     pub cohorts: BTreeMap<Uuid, CohortEvidence>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BootstrapSourceBundle {
+    pub key: String,
+    pub content_fingerprint: String,
+    pub dataset: DatasetDefinition,
+    pub dataset_import: DatasetImport,
+    pub imported_rows: Vec<ImportedRow>,
+    pub snapshot: DatasetSnapshot,
+    pub members: Vec<SnapshotMember>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BootstrapSourcePreview {
+    pub key: String,
+    pub cohort_name: String,
+    pub declared_path: String,
+    pub content_fingerprint: String,
+    pub processed_rows: u64,
+    pub accepted_rows: u64,
+    pub rejected_rows: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BootstrapPreview {
+    pub bootstrap_fingerprint: String,
+    pub sources: Vec<BootstrapSourcePreview>,
+    pub preparation: PreparationPreview,
+    pub eligible: bool,
+    pub issues: Vec<PreparationIssue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BootstrapSourceSummary {
+    pub key: String,
+    pub content_fingerprint: String,
+    pub dataset_id: Uuid,
+    pub import_id: Uuid,
+    pub snapshot_id: Uuid,
+    pub accepted_rows: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectBootstrap {
+    pub id: Uuid,
+    pub name: String,
+    pub bootstrap_fingerprint: String,
+    pub preparation_id: Uuid,
+    pub sources: Vec<BootstrapSourceSummary>,
+    pub created_at: DateTime<Utc>,
+    pub fingerprint: String,
+}
+
+impl ProjectBootstrap {
+    pub fn reproduce_fingerprint(&self) -> Result<String, artifact_core::FingerprintError> {
+        bootstrap_fingerprint(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BootstrapBundle {
+    pub sources: Vec<BootstrapSourceBundle>,
+    pub preparation: PreparationBundle,
+    pub bootstrap: ProjectBootstrap,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +181,19 @@ pub(crate) fn prepared_fingerprint(
         "development_suite_id": value.development_suite_id,
         "sealed_suite_id": value.sealed_suite_id,
         "workflow_definition_id": value.workflow_definition_id,
+        "created_at": value.created_at,
+    }))
+}
+
+pub(crate) fn bootstrap_fingerprint(
+    value: &ProjectBootstrap,
+) -> Result<String, artifact_core::FingerprintError> {
+    artifact_core::fingerprint(&serde_json::json!({
+        "id": value.id,
+        "name": value.name,
+        "bootstrap_fingerprint": value.bootstrap_fingerprint,
+        "preparation_id": value.preparation_id,
+        "sources": value.sources,
         "created_at": value.created_at,
     }))
 }

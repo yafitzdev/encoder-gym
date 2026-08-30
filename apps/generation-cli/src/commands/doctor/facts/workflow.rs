@@ -1,5 +1,89 @@
 use super::super::*;
 
+pub(in crate::commands::doctor) async fn bootstrap_facts_check(store: &SqliteStore) -> DoctorCheck {
+    let bootstraps = match store.list_bootstraps(10_000, 0).await {
+        Ok(values) => values,
+        Err(error) => return fail("project_bootstrap_facts", error.to_string()),
+    };
+    let mut failures = Vec::new();
+    let mut source_count = 0_usize;
+    for bootstrap in &bootstraps {
+        if bootstrap.reproduce_fingerprint().ok().as_deref() != Some(bootstrap.fingerprint.as_str())
+        {
+            failures.push(format!("bootstrap {} fingerprint mismatch", bootstrap.id));
+            continue;
+        }
+        match store.get_preparation(bootstrap.preparation_id).await {
+            Ok(Some(_)) => {}
+            Ok(None) => failures.push(format!(
+                "bootstrap {} preparation is missing: {}",
+                bootstrap.id, bootstrap.preparation_id
+            )),
+            Err(error) => failures.push(format!("bootstrap {}: {error}", bootstrap.id)),
+        }
+        for source in &bootstrap.sources {
+            source_count += 1;
+            let dataset = store.get_dataset(source.dataset_id).await;
+            let dataset_import = store.get_import(source.import_id).await;
+            let snapshot = store.get_snapshot(source.snapshot_id).await;
+            let members = store.list_snapshot_members(source.snapshot_id).await;
+            match (dataset, dataset_import, snapshot, members) {
+                (
+                    Ok(Some(dataset)),
+                    Ok(Some(dataset_import)),
+                    Ok(Some(snapshot)),
+                    Ok(members),
+                ) if dataset_import.dataset_id == dataset.id
+                    && dataset_import.state == ImportState::Completed
+                    && dataset_import.accepted_rows == source.accepted_rows
+                    && snapshot.source_dataset_id == dataset.id
+                    && snapshot.member_count == source.accepted_rows
+                    && members.len() as u64 == source.accepted_rows
+                    && members.iter().all(|member| {
+                        member.split == SnapshotSplit::Test
+                            && matches!(
+                                member.source_provenance,
+                                SourceProvenance::Imported { import_id, .. }
+                                    if import_id == dataset_import.id
+                            )
+                    }) => {}
+                (Ok(Some(_)), Ok(Some(_)), Ok(Some(_)), Ok(_)) => failures.push(format!(
+                    "bootstrap {} source {} references or counts differ",
+                    bootstrap.id, source.key
+                )),
+                (dataset, dataset_import, snapshot, members) => failures.push(format!(
+                    "bootstrap {} source {} is incomplete (dataset={}, import={}, snapshot={}, members={})",
+                    bootstrap.id,
+                    source.key,
+                    result_state(&dataset),
+                    result_state(&dataset_import),
+                    result_state(&snapshot),
+                    if members.is_ok() { "ok" } else { "error" },
+                )),
+            }
+        }
+    }
+    if failures.is_empty() {
+        pass(
+            "project_bootstrap_facts",
+            format!(
+                "{} bootstrap(s) and {source_count} immutable local source(s) verified",
+                bootstraps.len()
+            ),
+        )
+    } else {
+        fail("project_bootstrap_facts", failures.join("; "))
+    }
+}
+
+fn result_state<T, E>(result: &Result<Option<T>, E>) -> &'static str {
+    match result {
+        Ok(Some(_)) => "ok",
+        Ok(None) => "missing",
+        Err(_) => "error",
+    }
+}
+
 pub(in crate::commands::doctor) async fn workflow_facts_check(store: &SqliteStore) -> DoctorCheck {
     let definitions = match store
         .query_workflow_definitions(WorkflowDefinitionQuery {

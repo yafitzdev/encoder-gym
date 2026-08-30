@@ -6,7 +6,7 @@ use dataset_core::{
     },
     ports::{BoxFuture, DatasetStoreError, ImportStore},
 };
-use sqlx::{FromRow, QueryBuilder, Sqlite};
+use sqlx::{FromRow, QueryBuilder, Sqlite, SqliteConnection};
 use uuid::Uuid;
 
 use super::SqliteStore;
@@ -18,27 +18,8 @@ impl ImportStore for SqliteStore {
     ) -> BoxFuture<'_, Result<(), DatasetStoreError>> {
         let dataset_import = dataset_import.clone();
         Box::pin(async move {
-            sqlx::query(
-                "INSERT INTO dataset_imports \
-                 (id, dataset_id, source_path, source_format, mapping_json, state, \
-                  processed_rows, accepted_rows, rejected_rows, error_message, created_at, updated_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(dataset_import.id)
-            .bind(dataset_import.dataset_id)
-            .bind(dataset_import.source_path)
-            .bind(dataset_import.format.as_str())
-            .bind(to_json(&dataset_import.mapping)?)
-            .bind(import_state_text(dataset_import.state))
-            .bind(to_i64(dataset_import.processed_rows)?)
-            .bind(to_i64(dataset_import.accepted_rows)?)
-            .bind(to_i64(dataset_import.rejected_rows)?)
-            .bind(dataset_import.error_message)
-            .bind(dataset_import.created_at)
-            .bind(dataset_import.updated_at)
-            .execute(&self.pool)
-            .await
-            .map_err(store_error)?;
+            let mut connection = self.pool.acquire().await.map_err(store_error)?;
+            insert_import(&mut connection, &dataset_import).await?;
             Ok(())
         })
     }
@@ -132,64 +113,7 @@ impl ImportStore for SqliteStore {
         let rows = rows.to_vec();
         Box::pin(async move {
             let mut transaction = self.pool.begin().await.map_err(store_error)?;
-            for row in rows {
-                if row.import_id != dataset_import.id || row.dataset_id != dataset_import.dataset_id
-                {
-                    return Err(DatasetStoreError(
-                        "imported row does not belong to the supplied import".into(),
-                    ));
-                }
-                let inserted = sqlx::query(
-                    "INSERT INTO imported_rows \
-                     (id, import_id, dataset_id, source_row_number, cell_key, text, normalized_text, \
-                      label, dimensions_json, validation_status, validation_errors_json, created_at) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                     ON CONFLICT(import_id, source_row_number) DO NOTHING",
-                )
-                .bind(row.id)
-                .bind(row.import_id)
-                .bind(row.dataset_id)
-                .bind(to_i64(row.source_row_number)?)
-                .bind(row.cell_key.clone())
-                .bind(row.text.clone())
-                .bind(row.normalized_text.clone())
-                .bind(row.label.clone())
-                .bind(to_json(&row.dimensions)?)
-                .bind(row_status_text(row.status))
-                .bind(to_json(&row.issues)?)
-                .bind(row.created_at)
-                .execute(&mut *transaction)
-                .await
-                .map_err(store_error)?;
-                if inserted.rows_affected() == 1 && row.status == ImportRowStatus::Accepted {
-                    let provenance = SourceProvenance::Imported {
-                        import_id: dataset_import.id,
-                        source_path: dataset_import.source_path.clone(),
-                        source_row_number: row.source_row_number,
-                    };
-                    sqlx::query(
-                        "INSERT INTO dataset_source_rows \
-                         (id, dataset_id, source_kind, source_ref, cell_key, text, normalized_text, \
-                          label, dimensions_json, provenance_json, created_at) \
-                         VALUES (?, ?, 'imported', ?, ?, ?, ?, ?, ?, ?, ?)",
-                    )
-                    .bind(row.id)
-                    .bind(row.dataset_id)
-                    .bind(row.id)
-                    .bind(row.cell_key.as_deref().ok_or_else(|| {
-                        DatasetStoreError("accepted imported row has no valid cell key".into())
-                    })?)
-                    .bind(row.text)
-                    .bind(row.normalized_text)
-                    .bind(row.label)
-                    .bind(to_json(&row.dimensions)?)
-                    .bind(to_json(&provenance)?)
-                    .bind(row.created_at)
-                    .execute(&mut *transaction)
-                    .await
-                    .map_err(store_error)?;
-                }
-            }
+            insert_import_rows(&mut transaction, &dataset_import, &rows).await?;
             transaction.commit().await.map_err(store_error)?;
             Ok(())
         })
@@ -234,6 +158,108 @@ impl ImportStore for SqliteStore {
             .map_err(store_error)
         })
     }
+}
+
+pub(crate) async fn insert_import_bundle(
+    connection: &mut SqliteConnection,
+    dataset_import: &DatasetImport,
+    rows: &[ImportedRow],
+) -> Result<(), DatasetStoreError> {
+    insert_import(connection, dataset_import).await?;
+    insert_import_rows(connection, dataset_import, rows).await
+}
+
+async fn insert_import(
+    connection: &mut SqliteConnection,
+    dataset_import: &DatasetImport,
+) -> Result<(), DatasetStoreError> {
+    sqlx::query(
+        "INSERT INTO dataset_imports \
+         (id, dataset_id, source_path, source_format, mapping_json, state, \
+          processed_rows, accepted_rows, rejected_rows, error_message, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(dataset_import.id)
+    .bind(dataset_import.dataset_id)
+    .bind(&dataset_import.source_path)
+    .bind(dataset_import.format.as_str())
+    .bind(to_json(&dataset_import.mapping)?)
+    .bind(import_state_text(dataset_import.state))
+    .bind(to_i64(dataset_import.processed_rows)?)
+    .bind(to_i64(dataset_import.accepted_rows)?)
+    .bind(to_i64(dataset_import.rejected_rows)?)
+    .bind(&dataset_import.error_message)
+    .bind(dataset_import.created_at)
+    .bind(dataset_import.updated_at)
+    .execute(&mut *connection)
+    .await
+    .map_err(store_error)?;
+    Ok(())
+}
+
+async fn insert_import_rows(
+    connection: &mut SqliteConnection,
+    dataset_import: &DatasetImport,
+    rows: &[ImportedRow],
+) -> Result<(), DatasetStoreError> {
+    for row in rows {
+        if row.import_id != dataset_import.id || row.dataset_id != dataset_import.dataset_id {
+            return Err(DatasetStoreError(
+                "imported row does not belong to the supplied import".into(),
+            ));
+        }
+        let inserted = sqlx::query(
+            "INSERT INTO imported_rows \
+             (id, import_id, dataset_id, source_row_number, cell_key, text, normalized_text, \
+              label, dimensions_json, validation_status, validation_errors_json, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(import_id, source_row_number) DO NOTHING",
+        )
+        .bind(row.id)
+        .bind(row.import_id)
+        .bind(row.dataset_id)
+        .bind(to_i64(row.source_row_number)?)
+        .bind(&row.cell_key)
+        .bind(&row.text)
+        .bind(&row.normalized_text)
+        .bind(&row.label)
+        .bind(to_json(&row.dimensions)?)
+        .bind(row_status_text(row.status))
+        .bind(to_json(&row.issues)?)
+        .bind(row.created_at)
+        .execute(&mut *connection)
+        .await
+        .map_err(store_error)?;
+        if inserted.rows_affected() == 1 && row.status == ImportRowStatus::Accepted {
+            let provenance = SourceProvenance::Imported {
+                import_id: dataset_import.id,
+                source_path: dataset_import.source_path.clone(),
+                source_row_number: row.source_row_number,
+            };
+            sqlx::query(
+                "INSERT INTO dataset_source_rows \
+                 (id, dataset_id, source_kind, source_ref, cell_key, text, normalized_text, \
+                  label, dimensions_json, provenance_json, created_at) \
+                 VALUES (?, ?, 'imported', ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(row.id)
+            .bind(row.dataset_id)
+            .bind(row.id)
+            .bind(row.cell_key.as_deref().ok_or_else(|| {
+                DatasetStoreError("accepted imported row has no valid cell key".into())
+            })?)
+            .bind(&row.text)
+            .bind(&row.normalized_text)
+            .bind(&row.label)
+            .bind(to_json(&row.dimensions)?)
+            .bind(to_json(&provenance)?)
+            .bind(row.created_at)
+            .execute(&mut *connection)
+            .await
+            .map_err(store_error)?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, FromRow)]

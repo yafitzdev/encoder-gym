@@ -17,6 +17,7 @@ mod ingestion;
 mod inspect;
 mod optimization;
 mod plan;
+mod project_bootstrap;
 mod project_preparation;
 mod provenance;
 mod recovery;

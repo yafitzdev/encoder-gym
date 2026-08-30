@@ -1,0 +1,16 @@
+{"text":"Why did my monthly charge increase?","label":"billing","dimensions":{"difficulty":"easy","writing_style":"clean"}}
+{"text":"charged 2x pls fix","label":"billing","dimensions":{"difficulty":"easy","writing_style":"messy"}}
+{"text":"Can you explain the prorated credit and tax adjustment?","label":"billing","dimensions":{"difficulty":"hard","writing_style":"clean"}}
+{"text":"bill changed after refund idk why","label":"billing","dimensions":{"difficulty":"hard","writing_style":"messy"}}
+{"text":"I do not recognize this card purchase.","label":"fraud","dimensions":{"difficulty":"easy","writing_style":"clean"}}
+{"text":"someone used card help","label":"fraud","dimensions":{"difficulty":"easy","writing_style":"messy"}}
+{"text":"A reversed cash withdrawal reappeared as a settled transaction.","label":"fraud","dimensions":{"difficulty":"hard","writing_style":"clean"}}
+{"text":"cash thing vanished then came back not mine","label":"fraud","dimensions":{"difficulty":"hard","writing_style":"messy"}}
+{"text":"How do I update the email address on my account?","label":"account","dimensions":{"difficulty":"easy","writing_style":"clean"}}
+{"text":"cant get into profile","label":"account","dimensions":{"difficulty":"easy","writing_style":"messy"}}
+{"text":"My identity review succeeded but account restrictions remain.","label":"account","dimensions":{"difficulty":"hard","writing_style":"clean"}}
+{"text":"verified already still locked tho","label":"account","dimensions":{"difficulty":"hard","writing_style":"messy"}}
+{"text":"The mobile application closes when I open settings.","label":"technical","dimensions":{"difficulty":"easy","writing_style":"clean"}}
+{"text":"app crash on settings","label":"technical","dimensions":{"difficulty":"easy","writing_style":"messy"}}
+{"text":"Notifications stopped after reinstalling and restoring device data.","label":"technical","dimensions":{"difficulty":"hard","writing_style":"clean"}}
+{"text":"reinstalled now alerts gone tried everything","label":"technical","dimensions":{"difficulty":"hard","writing_style":"messy"}}

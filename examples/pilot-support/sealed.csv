@@ -1,0 +1,11 @@
+text,label,difficulty,writing_style
+Please clarify the fee attached to my latest invoice,billing,easy,clean
+fee on bill makes no sense,billing,easy,messy
+The merchant credit and currency conversion produced an unexpected balance,billing,hard,clean
+refund plus exchange rate got weird,billing,hard,messy
+There is a transfer to a recipient I have never added,fraud,easy,clean
+unknown transfer wasnt me,fraud,easy,messy
+My passkey works on the website but the recovery flow still suspends access,account,hard,clean
+site login works recovery still blocks me,account,hard,messy
+The desktop client remains offline although other applications have connectivity,technical,easy,clean
+desktop says offline internet fine,technical,easy,messy
