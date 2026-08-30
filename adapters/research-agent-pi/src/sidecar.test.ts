@@ -31,7 +31,7 @@ function request(): PiRunRequest {
         toolCalls: [
           {
             name: "draft_profile",
-            arguments: { profile: { summary: "Short and noisy" } },
+            arguments: { claims: [], profile: { summary: "Short and noisy" } },
           },
         ],
       },

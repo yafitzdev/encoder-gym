@@ -385,10 +385,18 @@ impl ResearchToolCall {
     }
 
     pub fn fail(&mut self, message: String) -> Result<(), ResearchError> {
+        self.fail_with_usage(message, ResearchUsage::default())
+    }
+
+    pub fn fail_with_usage(
+        &mut self,
+        message: String,
+        usage: ResearchUsage,
+    ) -> Result<(), ResearchError> {
         self.finish(
             ToolCallState::Failed,
             None,
-            ResearchUsage::default(),
+            usage,
             Some(nonempty(message, "tool error")?),
         )
     }
@@ -500,6 +508,50 @@ mod tests {
         );
         assert!(matches!(result, Err(ResearchError::BudgetExhausted(_))));
         assert_eq!(run.usage.searches, 0);
+    }
+
+    #[test]
+    fn every_metered_hard_budget_rejects_before_commit() {
+        let brief = brief();
+        let deltas = [
+            ResearchUsage {
+                model_turns: brief.budgets.max_model_turns + 1,
+                ..ResearchUsage::default()
+            },
+            ResearchUsage {
+                searches: brief.budgets.max_searches + 1,
+                ..ResearchUsage::default()
+            },
+            ResearchUsage {
+                fetched_pages: brief.budgets.max_fetched_pages + 1,
+                ..ResearchUsage::default()
+            },
+            ResearchUsage {
+                fetched_bytes: brief.budgets.max_fetched_bytes + 1,
+                ..ResearchUsage::default()
+            },
+            ResearchUsage {
+                input_tokens: brief.budgets.max_input_tokens + 1,
+                ..ResearchUsage::default()
+            },
+            ResearchUsage {
+                output_tokens: brief.budgets.max_output_tokens + 1,
+                ..ResearchUsage::default()
+            },
+            ResearchUsage {
+                cost_microusd: brief.budgets.max_cost_microusd + 1,
+                ..ResearchUsage::default()
+            },
+        ];
+        for delta in deltas {
+            let mut run = ResearchRun::queue(&brief, 1, "sha256:protocol".into()).unwrap();
+            run.start().unwrap();
+            assert!(matches!(
+                run.record_usage(&brief, delta),
+                Err(ResearchError::BudgetExhausted(_))
+            ));
+            assert_eq!(run.usage, ResearchUsage::default());
+        }
     }
 
     #[test]

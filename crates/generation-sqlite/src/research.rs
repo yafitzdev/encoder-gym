@@ -366,6 +366,83 @@ impl ResearchStore for SqliteStore {
         })
     }
 
+    fn save_profile_bundle(
+        &self,
+        claims: &[ResearchClaim],
+        profile: &AuthenticityProfile,
+    ) -> BoxFuture<'_, Result<(), ResearchAdapterError>> {
+        let claims = claims.to_vec();
+        let profile = profile.clone();
+        Box::pin(async move {
+            if profile.reproduce_fingerprint().map_err(domain_error)? != profile.fingerprint
+                || profile.claims != claims
+            {
+                return Err(adapter_error(
+                    "authenticity profile bundle integrity mismatch",
+                ));
+            }
+            for claim in &claims {
+                if claim.run_id != profile.run_id
+                    || claim.reproduce_fingerprint().map_err(domain_error)? != claim.fingerprint
+                {
+                    return Err(adapter_error("research claim bundle integrity mismatch"));
+                }
+            }
+
+            let mut transaction = self.pool().begin().await.map_err(sql_error)?;
+            for claim in &claims {
+                sqlx::query(
+                    "INSERT INTO research_claims (id, run_id, fingerprint, claim_json, created_at) \
+                     VALUES (?, ?, ?, ?, ?)",
+                )
+                .bind(claim.id)
+                .bind(claim.run_id)
+                .bind(&claim.fingerprint)
+                .bind(encode(claim)?)
+                .bind(claim.created_at)
+                .execute(&mut *transaction)
+                .await
+                .map_err(sql_error)?;
+            }
+            sqlx::query(
+                "INSERT INTO authenticity_profiles (id, run_id, dataset_id, version, \
+                 predecessor_id, fingerprint, profile_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(profile.id)
+            .bind(profile.run_id)
+            .bind(profile.dataset_id)
+            .bind(i64::from(profile.version))
+            .bind(profile.predecessor_id)
+            .bind(&profile.fingerprint)
+            .bind(encode(&profile)?)
+            .bind(profile.created_at)
+            .execute(&mut *transaction)
+            .await
+            .map_err(sql_error)?;
+            transaction.commit().await.map_err(sql_error)?;
+            Ok(())
+        })
+    }
+
+    fn latest_profile_for_run(
+        &self,
+        run_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<AuthenticityProfile>, ResearchAdapterError>> {
+        Box::pin(async move {
+            let value: Option<String> = sqlx::query_scalar(
+                "SELECT profile_json FROM authenticity_profiles WHERE run_id = ? \
+                 ORDER BY version DESC, created_at DESC, id DESC LIMIT 1",
+            )
+            .bind(run_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(sql_error)?;
+            value
+                .map(|value| decode_checked_profile(&value))
+                .transpose()
+        })
+    }
+
     fn append_review(
         &self,
         review: &ProfileReview,

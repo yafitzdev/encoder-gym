@@ -62,6 +62,7 @@ export type PiRunEvent =
       outputTokens: number;
       costMicrousd: number;
     }
+  | { type: "agent_text"; runId: string; text: string }
   | {
       type: "tool_started";
       runId: string;

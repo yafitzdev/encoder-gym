@@ -27,7 +27,7 @@ test("compiled sidecar exchanges one JSON object per line", { timeout: 10_000 },
         toolCalls: [
           {
             name: "draft_profile",
-            arguments: { profile: { summary: "Natural fragments" } },
+            arguments: { claims: [], profile: { summary: "Natural fragments" } },
           },
         ],
       },

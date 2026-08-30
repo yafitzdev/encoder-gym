@@ -1,0 +1,24 @@
+[package]
+name = "research-runner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+artifact-core.workspace = true
+research-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+generation-core.workspace = true
+research-web.workspace = true
+synthetic-data-sqlite = { path = "../generation-sqlite" }
+tempfile.workspace = true

@@ -40,7 +40,7 @@ function request(): PiRunRequest {
         toolCalls: [
           {
             name: "draft_profile",
-            arguments: { profile: { summary: "Messages use short fragments." } },
+            arguments: { claims: [], profile: { summary: "Messages use short fragments." } },
           },
         ],
       },

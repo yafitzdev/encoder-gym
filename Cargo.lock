@@ -2393,6 +2393,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "research-agent-pi-process"
+version = "0.1.0"
+dependencies = [
+ "research-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "research-core"
 version = "0.1.0"
 dependencies = [
@@ -2402,6 +2414,23 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "research-runner"
+version = "0.1.0"
+dependencies = [
+ "artifact-core",
+ "research-core",
+ "research-web",
+ "serde",
+ "serde_json",
+ "synthetic-data-core",
+ "synthetic-data-sqlite",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
  "uuid",
 ]
 
@@ -3054,7 +3083,10 @@ dependencies = [
  "project-preparation",
  "recovery-core",
  "reqwest",
+ "research-agent-pi-process",
  "research-core",
+ "research-runner",
+ "research-web",
  "semantic-catalog",
  "serde",
  "serde_json",

@@ -189,9 +189,17 @@ function mapEvent(
       };
     case "agent_end":
       return { type: "agent_finished", runId, turns, aborted: abortRequested };
+    case "message_end": {
+      if (event.message.role !== "assistant") return undefined;
+      const text = event.message.content
+        .filter((content) => content.type === "text")
+        .map((content) => content.text)
+        .join("\n")
+        .trim();
+      return text.length > 0 ? { type: "agent_text", runId, text } : undefined;
+    }
     case "message_start":
     case "message_update":
-    case "message_end":
     case "tool_execution_update":
       return undefined;
   }

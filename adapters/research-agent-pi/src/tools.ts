@@ -16,6 +16,7 @@ const schemas = {
     maximumBytes: Type.Integer({ minimum: 1 }),
   }),
   record_evidence: Type.Object({
+    key: Type.String({ minLength: 1 }),
     url: Type.String({ minLength: 1 }),
     title: Type.String({ minLength: 1 }),
     query: Type.String({ minLength: 1 }),
@@ -32,6 +33,7 @@ const schemas = {
     confidence: Type.Optional(confidence),
   }),
   draft_profile: Type.Object({
+    claims: Type.Array(Type.Record(Type.String(), Type.Unknown())),
     profile: Type.Record(Type.String(), Type.Unknown()),
   }),
   finish_research: Type.Object({

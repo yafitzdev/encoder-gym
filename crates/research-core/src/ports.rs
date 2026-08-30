@@ -41,16 +41,18 @@ pub struct ResearchAgentRequest {
     pub protocol_version: u32,
     pub run_id: Uuid,
     pub run_specification_fingerprint: String,
-    pub brief: ResolvedResearchBrief,
-    pub enabled_tools: Vec<String>,
+    pub provider: String,
+    pub model: String,
+    pub api_key_env: Option<String>,
+    pub system_prompt: String,
+    pub initial_prompt: String,
+    pub max_model_turns: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResearchAgentEvent {
-    Plan {
-        steps: Vec<String>,
-    },
+    AgentStarted,
     ModelTurnStarted {
         sequence: u32,
     },
@@ -60,25 +62,73 @@ pub enum ResearchAgentEvent {
         output_tokens: u64,
         cost_microusd: u64,
     },
-    ToolCallRequested {
-        call: ResearchToolCall,
+    AgentText {
+        text: String,
     },
-    Status {
-        message: String,
+    ToolStarted {
+        external_call_id: String,
+        name: String,
     },
-    ProfileReady,
-    Finished {
-        reason: String,
+    ToolCompleted {
+        external_call_id: String,
+        name: String,
+        failed: bool,
+    },
+    AgentFinished {
+        turns: u32,
+        aborted: bool,
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentToolRequest {
+    pub external_call_id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResearchAgentMessage {
+    Event { event: ResearchAgentEvent },
+    ToolRequest { request: AgentToolRequest },
+    Completed,
+    Failed { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentToolResult {
+    pub content: serde_json::Value,
+    #[serde(default)]
+    pub details: serde_json::Value,
+    #[serde(default)]
+    pub terminate: bool,
+}
+
+pub trait ResearchAgentSession: Send {
+    fn next_message(&mut self)
+    -> BoxFuture<'_, Result<ResearchAgentMessage, ResearchAdapterError>>;
+
+    fn send_tool_result(
+        &mut self,
+        external_call_id: &str,
+        result: AgentToolResult,
+    ) -> BoxFuture<'_, Result<(), ResearchAdapterError>>;
+
+    fn send_tool_error(
+        &mut self,
+        external_call_id: &str,
+        message: &str,
+    ) -> BoxFuture<'_, Result<(), ResearchAdapterError>>;
+
+    fn cancel(&mut self, run_id: Uuid) -> BoxFuture<'_, Result<(), ResearchAdapterError>>;
+}
+
 pub trait ResearchAgentRuntime: Send + Sync {
-    fn run(
+    fn start(
         &self,
         request: ResearchAgentRequest,
-    ) -> BoxFuture<'_, Result<Vec<ResearchAgentEvent>, ResearchAdapterError>>;
-
-    fn cancel(&self, run_id: Uuid) -> BoxFuture<'_, Result<(), ResearchAdapterError>>;
+    ) -> BoxFuture<'_, Result<Box<dyn ResearchAgentSession>, ResearchAdapterError>>;
 }
 
 pub trait ResearchStore: Send + Sync {
@@ -136,6 +186,17 @@ pub trait ResearchStore: Send + Sync {
     fn get_profile(
         &self,
         id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<AuthenticityProfile>, ResearchAdapterError>>;
+
+    fn save_profile_bundle(
+        &self,
+        claims: &[ResearchClaim],
+        profile: &AuthenticityProfile,
+    ) -> BoxFuture<'_, Result<(), ResearchAdapterError>>;
+
+    fn latest_profile_for_run(
+        &self,
+        run_id: Uuid,
     ) -> BoxFuture<'_, Result<Option<AuthenticityProfile>, ResearchAdapterError>>;
 
     fn append_review(
