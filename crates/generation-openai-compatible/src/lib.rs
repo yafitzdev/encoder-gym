@@ -7,7 +7,7 @@ use generation_core::{
     parsing::parse_generated_candidates,
     ports::{BoxFuture, GenerationBackend, GenerationBackendError},
 };
-use reqwest::{Client, StatusCode, Url};
+use reqwest::{Client, StatusCode, Url, header::HeaderMap};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
@@ -56,14 +56,13 @@ impl OpenAICompatibleBackend {
             .await
             .map_err(|error| GenerationBackendError::Request(error.to_string()))?;
         let status = response.status();
+        let retry_after_milliseconds = retry_after_milliseconds(response.headers());
         let raw = response
             .text()
             .await
             .map_err(|error| GenerationBackendError::Request(error.to_string()))?;
         if !status.is_success() {
-            return Err(GenerationBackendError::Request(provider_error(
-                status, &raw,
-            )));
+            return Err(provider_failure(status, &raw, retry_after_milliseconds));
         }
         let models: ModelList = serde_json::from_str(&raw).map_err(|error| {
             GenerationBackendError::InvalidResponse(format!(
@@ -202,14 +201,13 @@ impl GenerationBackend for OpenAICompatibleBackend {
                 .await
                 .map_err(|error| GenerationBackendError::Request(error.to_string()))?;
             let status = response.status();
+            let retry_after_milliseconds = retry_after_milliseconds(response.headers());
             let raw = response
                 .text()
                 .await
                 .map_err(|error| GenerationBackendError::Request(error.to_string()))?;
             if !status.is_success() {
-                return Err(GenerationBackendError::Request(provider_error(
-                    status, &raw,
-                )));
+                return Err(provider_failure(status, &raw, retry_after_milliseconds));
             }
             Self::normalize_response(&raw)
         })
@@ -316,6 +314,38 @@ fn provider_error(status: StatusCode, raw: &str) -> String {
     }
 }
 
+fn provider_failure(
+    status: StatusCode,
+    raw: &str,
+    retry_after_milliseconds: Option<u64>,
+) -> GenerationBackendError {
+    let message = provider_error(status, raw);
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        GenerationBackendError::RateLimited {
+            message,
+            retry_after_milliseconds,
+        }
+    } else if status == StatusCode::REQUEST_TIMEOUT
+        || status == StatusCode::TOO_EARLY
+        || status.is_server_error()
+    {
+        GenerationBackendError::Request(message)
+    } else {
+        GenerationBackendError::Rejected(message)
+    }
+}
+
+fn retry_after_milliseconds(headers: &HeaderMap) -> Option<u64> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()?
+        .checked_mul(1_000)
+}
+
 fn safe_identifier(value: &str) -> String {
     value
         .chars()
@@ -330,11 +360,12 @@ mod tests {
 
     use axum::{Json, Router, extract::State, http::HeaderMap, routing::post};
     use generation_core::domain::{GenerationCell, GenerationParameters, GenerationRequest};
-    use generation_core::ports::GenerationBackend;
+    use generation_core::ports::{GenerationBackend, GenerationBackendError};
+    use reqwest::StatusCode;
     use serde_json::json;
     use tokio::{net::TcpListener, sync::mpsc};
 
-    use super::{OpenAICompatibleBackend, provider_error};
+    use super::{OpenAICompatibleBackend, provider_error, provider_failure};
 
     fn backend() -> OpenAICompatibleBackend {
         OpenAICompatibleBackend::new("http://localhost:8080/v1/", None, "test-model")
@@ -431,6 +462,20 @@ mod tests {
         assert!(error.contains("provider rejected authentication"));
         assert!(!error.contains("sk-secret-fragment"));
         assert!(!error.contains("Incorrect API key"));
+    }
+
+    #[test]
+    fn classifies_retryable_and_permanent_http_failures() {
+        let unauthorized = provider_failure(StatusCode::UNAUTHORIZED, "{}", None);
+        assert!(!unauthorized.is_retryable());
+        assert!(matches!(unauthorized, GenerationBackendError::Rejected(_)));
+
+        let rate_limited = provider_failure(StatusCode::TOO_MANY_REQUESTS, "{}", Some(2_000));
+        assert!(rate_limited.is_retryable());
+        assert_eq!(rate_limited.retry_after_milliseconds(), Some(2_000));
+
+        let unavailable = provider_failure(StatusCode::SERVICE_UNAVAILABLE, "{}", None);
+        assert!(unavailable.is_retryable());
     }
 
     #[tokio::test]

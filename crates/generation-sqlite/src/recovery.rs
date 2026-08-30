@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use generation_core::ports::GenerationExecutionStore;
 use recovery_core::{
     BoxFuture, RecoveryRecord, RecoveryState, RecoveryStore, RecoveryStoreError, WorkflowKind,
 };
@@ -205,6 +206,9 @@ impl RecoveryStore for SqliteStore {
         job_id: Uuid,
     ) -> BoxFuture<'_, Result<(), RecoveryStoreError>> {
         Box::pin(async move {
+            self.interrupt_open_generation_attempts(job_id)
+                .await
+                .map_err(store_error)?;
             let mut transaction = self.pool.begin().await.map_err(store_error)?;
             let pending: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM workflow_recovery_records \

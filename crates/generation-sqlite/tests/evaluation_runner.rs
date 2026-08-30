@@ -27,10 +27,10 @@ use generation_core::{
     domain::{DatasetDefinition, GenerationParameters},
     jobs::{GenerationJob, JobRunner, JobRunnerPolicy},
     planning::equal_target_plan,
-    ports::{DatasetStore, JobStore, PlanStore, RowStore},
+    ports::{DatasetStore, PlanStore, RowStore},
     validation::ValidationPipeline,
 };
-use generation_test_support::FakeGenerationBackend;
+use generation_test_support::{FakeGenerationBackend, persist_test_generation_execution};
 use optimization_core::{
     application::approved_proposal_to_plan,
     campaigns::{create_campaign, link_generation_plan},
@@ -114,16 +114,19 @@ async fn evaluates_a_checkpoint_and_persists_reproducible_metrics() {
         "deterministic-v1",
         plan.total_target_count(),
     );
-    store.create_job(&generation_job).await.expect("job");
+    let generation_policy = JobRunnerPolicy {
+        batch_size: 5,
+        max_request_retries: 0,
+        max_attempt_multiplier: 1,
+        retry_delay: Duration::ZERO,
+    };
+    persist_test_generation_execution(&store, &generation_job, &plan, &generation_policy)
+        .await
+        .expect("execution");
     JobRunner::new(
         Arc::new(store.clone()),
         Arc::new(FakeGenerationBackend::default()),
-        JobRunnerPolicy {
-            batch_size: 5,
-            max_request_retries: 0,
-            max_attempt_multiplier: 1,
-            retry_delay: Duration::ZERO,
-        },
+        generation_policy,
         ValidationPipeline::standard(None),
     )
     .run(generation_job.id, GenerationParameters::default())

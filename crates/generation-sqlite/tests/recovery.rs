@@ -12,13 +12,16 @@ use evaluation_core::{
     ports::EvaluationStore,
 };
 use generation_core::{
-    domain::{DatasetDefinition, GenerationParameters},
-    jobs::{GenerationJob, JobRunner, JobRunnerPolicy, JobState},
+    domain::{DatasetDefinition, GenerationParameters, GenerationRequest},
+    jobs::{
+        GenerationAttempt, GenerationAttemptState, GenerationJob, JobRunner, JobRunnerPolicy,
+        JobState,
+    },
     planning::equal_target_plan,
-    ports::{DatasetStore, JobStore, PlanStore, RowStore},
+    ports::{DatasetStore, GenerationExecutionStore, JobStore, PlanStore, RowStore},
     validation::ValidationPipeline,
 };
-use generation_test_support::FakeGenerationBackend;
+use generation_test_support::{FakeGenerationBackend, persist_test_generation_execution};
 use optimization_core::{
     domain::{OptimizationProposal, ProposalApplication},
     ports::OptimizationStore,
@@ -56,9 +59,30 @@ async fn detects_dead_owners_preserves_live_work_and_resumes_generation_from_cov
         "deterministic-v1",
         plan.total_target_count(),
     );
-    store.create_job(&generation).await.expect("job persists");
+    let generation_policy = JobRunnerPolicy {
+        batch_size: 1,
+        max_request_retries: 0,
+        max_attempt_multiplier: 2,
+        retry_delay: Duration::ZERO,
+    };
+    persist_test_generation_execution(&store, &generation, &plan, &generation_policy)
+        .await
+        .expect("execution");
     generation.transition(JobState::Running).expect("running");
     store.save_job(&generation).await.expect("running persists");
+    let open_request = GenerationRequest {
+        system_prompt: "system".into(),
+        user_prompt: "user".into(),
+        target: plan.cells[0].cell.clone(),
+        requested_count: 1,
+        parameters: GenerationParameters::default(),
+    };
+    let open_attempt =
+        GenerationAttempt::start(generation.id, 1, 0, &open_request).expect("attempt");
+    store
+        .start_generation_attempt(&open_attempt)
+        .await
+        .expect("open attempt persists");
     store
         .acquire_execution_lease(WorkflowKind::Generation, generation.id)
         .await
@@ -96,15 +120,25 @@ async fn detects_dead_owners_preserves_live_work_and_resumes_generation_from_cov
         .prepare_generation_resume(generation.id)
         .await
         .expect("prepare resume");
+    let attempts = store
+        .list_generation_attempts(generation.id)
+        .await
+        .expect("attempt history");
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0].state, GenerationAttemptState::Interrupted);
+    assert_eq!(
+        store
+            .get_job(generation.id)
+            .await
+            .expect("job query")
+            .expect("job")
+            .failed_requests,
+        1
+    );
     JobRunner::new(
         Arc::new(store.clone()),
         Arc::new(FakeGenerationBackend::default()),
-        JobRunnerPolicy {
-            batch_size: 1,
-            max_request_retries: 0,
-            max_attempt_multiplier: 1,
-            retry_delay: Duration::ZERO,
-        },
+        generation_policy,
         ValidationPipeline::standard(None),
     )
     .run(generation.id, GenerationParameters::default())

@@ -3054,6 +3054,7 @@ dependencies = [
 name = "synthetic-data-core"
 version = "0.1.0"
 dependencies = [
+ "artifact-core",
  "chrono",
  "csv",
  "semantic-catalog",
@@ -3141,6 +3142,7 @@ dependencies = [
 name = "synthetic-data-test-support"
 version = "0.1.0"
 dependencies = [
+ "synthetic-data-core",
  "synthetic-data-fake",
 ]
 

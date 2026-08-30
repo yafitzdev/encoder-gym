@@ -16,7 +16,8 @@ use evaluation_core::{
     ports::EvaluationStore,
 };
 use generation_core::ports::{
-    BackendConfigurationStore, DatasetStore, JobStore, PlanStore, RowStore,
+    BackendConfigurationStore, DatasetStore, GenerationExecutionStore, JobQuery, JobStore,
+    PlanStore, RowStore,
 };
 use optimization_core::{
     campaigns::{
@@ -219,7 +220,107 @@ async fn database_checks(store: &SqliteStore) -> Vec<DoctorCheck> {
     checks.push(bootstrap_facts_check(store).await);
     checks.push(workflow_facts_check(store).await);
     checks.push(semantic_facts_check(store).await);
+    checks.push(generation_execution_facts_check(store).await);
     checks
+}
+
+async fn generation_execution_facts_check(store: &SqliteStore) -> DoctorCheck {
+    let result: anyhow::Result<(usize, usize)> = async {
+        let jobs = store
+            .list_jobs(JobQuery {
+                dataset_id: None,
+                plan_id: None,
+                state: None,
+                limit: 10_000,
+                offset: 0,
+            })
+            .await?;
+        let mut executions = 0_usize;
+        let mut attempts = 0_usize;
+        for job in jobs {
+            let Some(execution) = store.get_generation_execution_spec(job.id).await? else {
+                continue;
+            };
+            executions += 1;
+            anyhow::ensure!(
+                execution.reproduce_fingerprint()? == execution.fingerprint
+                    && execution.job_id == job.id
+                    && execution.dataset_id == job.dataset_id
+                    && execution.plan_id == job.plan_id
+                    && execution.backend.name == job.backend_name
+                    && execution.backend.model == job.backend_model
+                    && execution
+                        .initial_needs
+                        .iter()
+                        .map(|need| u64::from(need.remaining_count))
+                        .sum::<u64>()
+                        == job.requested_rows,
+                "generation execution {} does not reproduce its job",
+                job.id
+            );
+            let assignment = store
+                .get_generation_semantics(job.id)
+                .await?
+                .with_context(|| format!("generation execution {} has no semantics", job.id))?;
+            anyhow::ensure!(
+                assignment.context.fingerprint == execution.semantic_context_fingerprint,
+                "generation execution {} semantic fingerprint differs",
+                job.id
+            );
+            let job_attempts = store.list_generation_attempts(job.id).await?;
+            attempts += job_attempts.len();
+            anyhow::ensure!(
+                !job.state.is_terminal()
+                    || job_attempts
+                        .iter()
+                        .all(|attempt| attempt.state.is_terminal()),
+                "terminal generation job {} has an open provider request",
+                job.id
+            );
+            let failed_requests = job_attempts
+                .iter()
+                .filter(|attempt| {
+                    matches!(
+                        attempt.state,
+                        generation_core::jobs::GenerationAttemptState::Failed
+                            | generation_core::jobs::GenerationAttemptState::Interrupted
+                    )
+                })
+                .count() as u64;
+            anyhow::ensure!(
+                failed_requests == job.failed_requests,
+                "generation job {} failed-request counter differs from persisted attempts",
+                job.id
+            );
+            let persisted_counts = sqlx::query_as::<_, (i64, i64, i64)>(
+                "SELECT COUNT(*), \
+                 COALESCE(SUM(CASE WHEN validation_status = 'accepted' THEN 1 ELSE 0 END), 0), \
+                 COALESCE(SUM(CASE WHEN validation_status = 'rejected' THEN 1 ELSE 0 END), 0) \
+                 FROM generated_rows WHERE generation_job_id = ?",
+            )
+            .bind(job.id)
+            .fetch_one(store.pool())
+            .await?;
+            anyhow::ensure!(
+                u64::try_from(persisted_counts.0)? == job.generated_rows
+                    && u64::try_from(persisted_counts.1)? == job.accepted_rows
+                    && u64::try_from(persisted_counts.2)? == job.rejected_rows,
+                "generation job {} counters differ from persisted rows",
+                job.id
+            );
+        }
+        Ok((executions, attempts))
+    }
+    .await;
+    match result {
+        Ok((executions, attempts)) => pass(
+            "generation_execution_facts",
+            format!(
+                "verified {executions} execution specification(s) and {attempts} provider request attempt(s)"
+            ),
+        ),
+        Err(error) => fail("generation_execution_facts", error.to_string()),
+    }
 }
 
 async fn semantic_facts_check(store: &SqliteStore) -> DoctorCheck {

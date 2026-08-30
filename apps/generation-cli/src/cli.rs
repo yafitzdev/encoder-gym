@@ -1629,6 +1629,22 @@ pub enum JobCommand {
     Status {
         id: Uuid,
     },
+    /// Inspect the immutable non-secret runtime configuration pinned to a job.
+    Execution {
+        id: Uuid,
+    },
+    /// Inspect every persisted provider request and outcome for a job.
+    Attempts {
+        id: Uuid,
+    },
+    /// Reconstruct and inspect a pinned request without calling the provider.
+    Prompt {
+        id: Uuid,
+        #[arg(long, default_value_t = 0)]
+        cell_index: usize,
+        #[arg(long)]
+        requested_count: Option<u32>,
+    },
     Cancel {
         id: Uuid,
     },

@@ -20,7 +20,7 @@ use generation_core::{
     },
     validation::ValidationPipeline,
 };
-use generation_test_support::FakeGenerationBackend;
+use generation_test_support::{FakeGenerationBackend, persist_test_generation_execution};
 use synthetic_data_sqlite::SqliteStore;
 use tokio::sync::Notify;
 
@@ -162,17 +162,20 @@ async fn fake_backend_fills_every_cell_and_persists_progress() {
     let plan = equal_target_plan(&dataset, 3).expect("valid plan");
     store.create_plan(&plan).await.expect("plan persisted");
     let job = GenerationJob::queued(dataset.id, plan.id, "fake", "deterministic-v1", 12);
-    store.create_job(&job).await.expect("job persisted");
+    let policy = JobRunnerPolicy {
+        batch_size: 2,
+        max_request_retries: 1,
+        max_attempt_multiplier: 2,
+        retry_delay: Duration::ZERO,
+    };
+    persist_test_generation_execution(&store, &job, &plan, &policy)
+        .await
+        .expect("execution");
 
     let runner = JobRunner::new(
         Arc::new(store.clone()),
         Arc::new(FakeGenerationBackend::default()),
-        JobRunnerPolicy {
-            batch_size: 2,
-            max_request_retries: 1,
-            max_attempt_multiplier: 2,
-            retry_delay: Duration::ZERO,
-        },
+        policy,
         ValidationPipeline::standard(None),
     );
     let completed = runner
@@ -202,7 +205,14 @@ async fn later_plans_treat_targets_as_absolute_dataset_coverage() {
         .expect("initial plan");
     let initial_job =
         GenerationJob::queued(dataset.id, initial_plan.id, "fake", "deterministic-v1", 2);
-    store.create_job(&initial_job).await.expect("initial job");
+    persist_test_generation_execution(
+        &store,
+        &initial_job,
+        &initial_plan,
+        &JobRunnerPolicy::default(),
+    )
+    .await
+    .expect("execution");
     JobRunner::new(
         Arc::new(store.clone()),
         Arc::new(FakeGenerationBackend::default()),
@@ -220,10 +230,14 @@ async fn later_plans_treat_targets_as_absolute_dataset_coverage() {
         .expect("absolute plan");
     let additional_job =
         GenerationJob::queued(dataset.id, absolute_plan.id, "scripted", "test-v1", 3);
-    store
-        .create_job(&additional_job)
-        .await
-        .expect("additional job");
+    persist_test_generation_execution(
+        &store,
+        &additional_job,
+        &absolute_plan,
+        &JobRunnerPolicy::default(),
+    )
+    .await
+    .expect("execution");
     let completed = JobRunner::new(
         Arc::new(store.clone()),
         Arc::new(ScriptedBackend::new(0, BackendBehavior::Valid)),
@@ -267,7 +281,9 @@ async fn a_pre_requested_cancellation_stops_without_generation() {
     let plan = equal_target_plan(&dataset, 3).expect("valid plan");
     store.create_plan(&plan).await.expect("plan persisted");
     let job = GenerationJob::queued(dataset.id, plan.id, "fake", "deterministic-v1", 3);
-    store.create_job(&job).await.expect("job persisted");
+    persist_test_generation_execution(&store, &job, &plan, &JobRunnerPolicy::default())
+        .await
+        .expect("execution");
     store
         .request_job_cancellation(job.id)
         .await
@@ -290,21 +306,26 @@ async fn a_pre_requested_cancellation_stops_without_generation() {
 #[tokio::test]
 async fn cancellation_requested_while_running_is_observed_between_batches() {
     let (_directory, store) = store().await;
-    let (_dataset, _plan, job) = persisted_single_cell_job(&store, 2).await;
+    let (_dataset, plan, mut job) = persisted_single_cell_job(&store, 2).await;
+    job.backend_name = "blocking-test".into();
     let started = Arc::new(Notify::new());
     let release = Arc::new(Notify::new());
+    let policy = JobRunnerPolicy {
+        batch_size: 1,
+        max_request_retries: 0,
+        max_attempt_multiplier: 1,
+        retry_delay: Duration::ZERO,
+    };
+    persist_test_generation_execution(&store, &job, &plan, &policy)
+        .await
+        .expect("execution");
     let runner = JobRunner::new(
         Arc::new(store.clone()),
         Arc::new(BlockingBackend {
             started: started.clone(),
             release: release.clone(),
         }),
-        JobRunnerPolicy {
-            batch_size: 1,
-            max_request_retries: 0,
-            max_attempt_multiplier: 1,
-            retry_delay: Duration::ZERO,
-        },
+        policy,
         ValidationPipeline::standard(None),
     );
     let job_id = job.id;
@@ -334,15 +355,19 @@ async fn cancellation_requested_while_running_is_observed_between_batches() {
 async fn a_transient_backend_failure_is_retried_and_recorded() {
     let (_directory, store) = store().await;
     let (dataset, plan, job) = persisted_single_cell_job(&store, 1).await;
+    let policy = JobRunnerPolicy {
+        batch_size: 1,
+        max_request_retries: 1,
+        max_attempt_multiplier: 2,
+        retry_delay: Duration::ZERO,
+    };
+    persist_test_generation_execution(&store, &job, &plan, &policy)
+        .await
+        .expect("execution");
     let runner = JobRunner::new(
         Arc::new(store),
         Arc::new(ScriptedBackend::new(1, BackendBehavior::Valid)),
-        JobRunnerPolicy {
-            batch_size: 1,
-            max_request_retries: 1,
-            max_attempt_multiplier: 1,
-            retry_delay: Duration::ZERO,
-        },
+        policy,
         ValidationPipeline::standard(None),
     );
 
@@ -362,15 +387,19 @@ async fn a_transient_backend_failure_is_retried_and_recorded() {
 async fn invalid_rows_are_persisted_as_rejected_and_leave_coverage_incomplete() {
     let (_directory, store) = store().await;
     let (_dataset, plan, job) = persisted_single_cell_job(&store, 1).await;
+    let policy = JobRunnerPolicy {
+        batch_size: 1,
+        max_request_retries: 0,
+        max_attempt_multiplier: 2,
+        retry_delay: Duration::ZERO,
+    };
+    persist_test_generation_execution(&store, &job, &plan, &policy)
+        .await
+        .expect("execution");
     let runner = JobRunner::new(
         Arc::new(store.clone()),
         Arc::new(ScriptedBackend::new(0, BackendBehavior::EmptyText)),
-        JobRunnerPolicy {
-            batch_size: 1,
-            max_request_retries: 0,
-            max_attempt_multiplier: 2,
-            retry_delay: Duration::ZERO,
-        },
+        policy,
         ValidationPipeline::standard(None),
     );
 
@@ -407,16 +436,20 @@ async fn invalid_rows_are_persisted_as_rejected_and_leave_coverage_incomplete() 
 #[tokio::test]
 async fn normalized_duplicates_are_rejected_without_hiding_the_accepted_row() {
     let (_directory, store) = store().await;
-    let (_dataset, _plan, job) = persisted_single_cell_job(&store, 2).await;
+    let (_dataset, plan, job) = persisted_single_cell_job(&store, 2).await;
+    let policy = JobRunnerPolicy {
+        batch_size: 2,
+        max_request_retries: 0,
+        max_attempt_multiplier: 1,
+        retry_delay: Duration::ZERO,
+    };
+    persist_test_generation_execution(&store, &job, &plan, &policy)
+        .await
+        .expect("execution");
     let runner = JobRunner::new(
         Arc::new(store.clone()),
         Arc::new(ScriptedBackend::new(0, BackendBehavior::DuplicateText)),
-        JobRunnerPolicy {
-            batch_size: 2,
-            max_request_retries: 0,
-            max_attempt_multiplier: 1,
-            retry_delay: Duration::ZERO,
-        },
+        policy,
         ValidationPipeline::standard(None),
     );
 
@@ -473,6 +506,5 @@ async fn persisted_single_cell_job(
         "test-v1",
         u64::from(target_count),
     );
-    store.create_job(&job).await.expect("job persisted");
     (dataset, plan, job)
 }

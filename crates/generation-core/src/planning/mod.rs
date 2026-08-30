@@ -7,7 +7,7 @@ use crate::{
     domain::{DatasetDefinition, DomainError, GenerationPlan, PlannedCell},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GenerationNeed {
     pub planned: PlannedCell,
     pub accepted_count: u32,

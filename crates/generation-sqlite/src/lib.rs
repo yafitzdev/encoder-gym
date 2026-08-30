@@ -6,6 +6,7 @@ mod approval;
 mod benchmark;
 mod contamination;
 mod evaluation;
+mod generation_execution;
 mod governance;
 mod imports;
 mod optimization;
@@ -186,31 +187,8 @@ impl JobStore for SqliteStore {
     fn create_job(&self, job: &GenerationJob) -> BoxFuture<'_, Result<(), StoreError>> {
         let job = job.clone();
         Box::pin(async move {
-            sqlx::query(
-                "INSERT INTO generation_jobs \
-                 (id, dataset_id, plan_id, backend_name, backend_model, state, requested_rows, \
-                  generated_rows, accepted_rows, rejected_rows, failed_requests, cancel_requested, \
-                  error_message, created_at, updated_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(job.id)
-            .bind(job.dataset_id)
-            .bind(job.plan_id)
-            .bind(job.backend_name)
-            .bind(job.backend_model)
-            .bind(job_state_text(job.state))
-            .bind(as_i64(job.requested_rows)?)
-            .bind(as_i64(job.generated_rows)?)
-            .bind(as_i64(job.accepted_rows)?)
-            .bind(as_i64(job.rejected_rows)?)
-            .bind(as_i64(job.failed_requests)?)
-            .bind(job.cancel_requested)
-            .bind(job.error_message)
-            .bind(job.created_at)
-            .bind(job.updated_at)
-            .execute(&self.pool)
-            .await
-            .map_err(store_error)?;
+            let mut connection = self.pool.acquire().await.map_err(store_error)?;
+            insert_generation_job(&mut connection, &job).await?;
             Ok(())
         })
     }
@@ -313,59 +291,7 @@ impl RowStore for SqliteStore {
         let rows = rows.to_vec();
         Box::pin(async move {
             let mut transaction = self.pool.begin().await.map_err(store_error)?;
-            for row in rows {
-                sqlx::query(
-                    "INSERT INTO generated_rows \
-                     (id, dataset_id, plan_id, generation_job_id, cell_key, text, normalized_text, \
-                      label, dimensions_json, generator_backend, generator_model, created_at, \
-                      validation_status, validation_errors_json, generation_metadata_json) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                )
-                .bind(row.id)
-                .bind(row.dataset_id)
-                .bind(row.plan_id)
-                .bind(row.generation_job_id)
-                .bind(&row.cell_key)
-                .bind(&row.text)
-                .bind(&row.normalized_text)
-                .bind(&row.label)
-                .bind(to_json(&row.dimensions)?)
-                .bind(&row.generator_backend)
-                .bind(&row.generator_model)
-                .bind(row.created_at)
-                .bind(validation_status_text(row.validation_status))
-                .bind(to_json(&row.validation_errors)?)
-                .bind(to_json(&row.generation_metadata)?)
-                .execute(&mut *transaction)
-                .await
-                .map_err(store_error)?;
-                if row.validation_status == ValidationStatus::Accepted {
-                    let provenance = SourceProvenance::Generated {
-                        generation_job_id: row.generation_job_id,
-                        backend: row.generator_backend.clone(),
-                        model: row.generator_model.clone(),
-                    };
-                    sqlx::query(
-                        "INSERT INTO dataset_source_rows \
-                         (id, dataset_id, source_kind, source_ref, cell_key, text, normalized_text, \
-                          label, dimensions_json, provenance_json, created_at) \
-                         VALUES (?, ?, 'generated', ?, ?, ?, ?, ?, ?, ?, ?)",
-                    )
-                    .bind(row.id)
-                    .bind(row.dataset_id)
-                    .bind(row.id)
-                    .bind(row.cell_key)
-                    .bind(row.text)
-                    .bind(row.normalized_text)
-                    .bind(row.label)
-                    .bind(to_json(&row.dimensions)?)
-                    .bind(to_json(&provenance)?)
-                    .bind(row.created_at)
-                    .execute(&mut *transaction)
-                    .await
-                    .map_err(store_error)?;
-                }
-            }
+            insert_generated_rows(&mut transaction, &rows).await?;
             transaction.commit().await.map_err(store_error)?;
             Ok(())
         })
@@ -1034,6 +960,98 @@ pub(crate) async fn insert_plan(
     .execute(connection)
     .await
     .map_err(store_error)?;
+    Ok(())
+}
+
+pub(crate) async fn insert_generation_job(
+    connection: &mut SqliteConnection,
+    job: &GenerationJob,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO generation_jobs \
+         (id, dataset_id, plan_id, backend_name, backend_model, state, requested_rows, \
+          generated_rows, accepted_rows, rejected_rows, failed_requests, cancel_requested, \
+          error_message, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(job.id)
+    .bind(job.dataset_id)
+    .bind(job.plan_id)
+    .bind(&job.backend_name)
+    .bind(&job.backend_model)
+    .bind(job_state_text(job.state))
+    .bind(as_i64(job.requested_rows)?)
+    .bind(as_i64(job.generated_rows)?)
+    .bind(as_i64(job.accepted_rows)?)
+    .bind(as_i64(job.rejected_rows)?)
+    .bind(as_i64(job.failed_requests)?)
+    .bind(job.cancel_requested)
+    .bind(&job.error_message)
+    .bind(job.created_at)
+    .bind(job.updated_at)
+    .execute(connection)
+    .await
+    .map_err(store_error)?;
+    Ok(())
+}
+
+pub(crate) async fn insert_generated_rows(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    rows: &[GeneratedRow],
+) -> Result<(), StoreError> {
+    for row in rows {
+        sqlx::query(
+            "INSERT INTO generated_rows \
+             (id, dataset_id, plan_id, generation_job_id, cell_key, text, normalized_text, \
+              label, dimensions_json, generator_backend, generator_model, created_at, \
+              validation_status, validation_errors_json, generation_metadata_json) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(row.id)
+        .bind(row.dataset_id)
+        .bind(row.plan_id)
+        .bind(row.generation_job_id)
+        .bind(&row.cell_key)
+        .bind(&row.text)
+        .bind(&row.normalized_text)
+        .bind(&row.label)
+        .bind(to_json(&row.dimensions)?)
+        .bind(&row.generator_backend)
+        .bind(&row.generator_model)
+        .bind(row.created_at)
+        .bind(validation_status_text(row.validation_status))
+        .bind(to_json(&row.validation_errors)?)
+        .bind(to_json(&row.generation_metadata)?)
+        .execute(&mut **transaction)
+        .await
+        .map_err(store_error)?;
+        if row.validation_status == ValidationStatus::Accepted {
+            let provenance = SourceProvenance::Generated {
+                generation_job_id: row.generation_job_id,
+                backend: row.generator_backend.clone(),
+                model: row.generator_model.clone(),
+            };
+            sqlx::query(
+                "INSERT INTO dataset_source_rows \
+                 (id, dataset_id, source_kind, source_ref, cell_key, text, normalized_text, \
+                  label, dimensions_json, provenance_json, created_at) \
+                 VALUES (?, ?, 'generated', ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(row.id)
+            .bind(row.dataset_id)
+            .bind(row.id)
+            .bind(&row.cell_key)
+            .bind(&row.text)
+            .bind(&row.normalized_text)
+            .bind(&row.label)
+            .bind(to_json(&row.dimensions)?)
+            .bind(to_json(&provenance)?)
+            .bind(row.created_at)
+            .execute(&mut **transaction)
+            .await
+            .map_err(store_error)?;
+        }
+    }
     Ok(())
 }
 

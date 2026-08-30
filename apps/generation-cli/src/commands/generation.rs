@@ -3,9 +3,16 @@ use std::{sync::Arc, time::Duration};
 use anyhow::Context;
 use generation_core::{
     domain::GenerationParameters,
-    jobs::{GenerationJob, JobRunner, JobRunnerPolicy},
+    jobs::{
+        GenerationBackendIdentity, GenerationExecutionPolicy, GenerationExecutionSpec,
+        GenerationJob, JobRunner, JobRunnerPolicy,
+    },
     planning::calculate_generation_needs,
-    ports::{BackendConfigurationStore, GenerationBackend, JobStore, PlanStore, RowStore},
+    ports::{
+        BackendConfigurationStore, GenerationBackend, GenerationExecutionStore, JobStore,
+        PlanStore, RowStore,
+    },
+    prompting::PromptBuilder,
     validation::ValidationPipeline,
 };
 use generation_fake::FakeGenerationBackend;
@@ -36,14 +43,15 @@ pub async fn execute(args: GenerateArgs, store: SqliteStore) -> anyhow::Result<(
         .into_iter()
         .map(|(key, counts)| (key, counts.accepted))
         .collect();
-    let requested_rows = calculate_generation_needs(&plan, &accepted)
+    let initial_needs = calculate_generation_needs(&plan, &accepted);
+    let requested_rows = initial_needs
         .iter()
         .map(|need| u64::from(need.remaining_count))
         .sum();
     let backend_kind = options
         .backend
         .unwrap_or_else(|| configured_backend(&configured));
-    let (backend, parameters) =
+    let (backend, parameters, endpoint) =
         build_backend(backend_kind, &options, configured.as_ref(), &store).await?;
     let semantic_context =
         super::semantic::resolve_dataset_semantics(&store, plan.dataset_id).await?;
@@ -55,19 +63,31 @@ pub async fn execute(args: GenerateArgs, store: SqliteStore) -> anyhow::Result<(
         backend.model(),
         requested_rows,
     );
-    store.create_job(&job).await?;
+    let policy = runner_policy(&options, configured.as_ref());
+    let execution = GenerationExecutionSpec::new(
+        job.id,
+        job.dataset_id,
+        job.plan_id,
+        initial_needs,
+        GenerationBackendIdentity {
+            name: backend.name().into(),
+            model: backend.model().into(),
+            endpoint,
+        },
+        parameters.clone(),
+        GenerationExecutionPolicy::from(&policy),
+        PromptBuilder::template_identity()?,
+        semantic_context.fingerprint.clone(),
+    )?;
+    let semantics = GenerationSemanticAssignment::new(job.id, semantic_context)?;
     store
-        .save_generation_semantics(&GenerationSemanticAssignment::new(
-            job.id,
-            semantic_context,
-        )?)
+        .create_generation_execution_bundle(&job, &execution, &semantics)
         .await?;
     eprintln!(
         "generation job {} queued for {} rows",
         job.id, job.requested_rows
     );
 
-    let policy = runner_policy(&options, configured.as_ref());
     run_job(job.id, backend, parameters, policy, store, false).await
 }
 
@@ -89,7 +109,7 @@ pub async fn resume(args: ResumeGenerationArgs, store: SqliteStore) -> anyhow::R
         "openai-compatible" => BackendKind::OpenaiCompatible,
         name => anyhow::bail!("generation backend {name:?} is not available for local resume"),
     };
-    let (backend, parameters) =
+    let (backend, parameters, endpoint) =
         build_backend(backend_kind, &options, configured.as_ref(), &store).await?;
     anyhow::ensure!(
         backend.name() == job.backend_name && backend.model() == job.backend_model,
@@ -100,6 +120,14 @@ pub async fn resume(args: ResumeGenerationArgs, store: SqliteStore) -> anyhow::R
         backend.model()
     );
     let policy = runner_policy(&options, configured.as_ref());
+    let execution = store
+        .get_generation_execution_spec(job_id)
+        .await?
+        .with_context(|| format!("generation execution specification not found: {job_id}"))?;
+    anyhow::ensure!(
+        execution.backend.endpoint == endpoint,
+        "resume backend endpoint identity does not match the pinned execution specification"
+    );
     store
         .acquire_execution_lease(WorkflowKind::Generation, job_id)
         .await?;
@@ -129,7 +157,8 @@ pub(crate) async fn run_workflow(
         .into_iter()
         .map(|(key, counts)| (key, counts.accepted))
         .collect();
-    let requested_rows = calculate_generation_needs(&plan, &accepted)
+    let initial_needs = calculate_generation_needs(&plan, &accepted);
+    let requested_rows = initial_needs
         .iter()
         .map(|need| u64::from(need.remaining_count))
         .sum();
@@ -147,7 +176,7 @@ pub(crate) async fn run_workflow(
         GenerationBackendKind::Fake => BackendKind::Fake,
         GenerationBackendKind::OpenaiCompatible => BackendKind::OpenaiCompatible,
     };
-    let (backend, parameters) =
+    let (backend, parameters, endpoint) =
         build_backend(backend_kind, &options, Some(configured), &store).await?;
     let semantic_context =
         super::semantic::resolve_dataset_semantics(&store, plan.dataset_id).await?;
@@ -158,12 +187,25 @@ pub(crate) async fn run_workflow(
         backend.model(),
         requested_rows,
     );
-    store.create_job(&job).await?;
+    let policy = runner_policy(&options, Some(configured));
+    let execution = GenerationExecutionSpec::new(
+        job.id,
+        job.dataset_id,
+        job.plan_id,
+        initial_needs,
+        GenerationBackendIdentity {
+            name: backend.name().into(),
+            model: backend.model().into(),
+            endpoint,
+        },
+        parameters.clone(),
+        GenerationExecutionPolicy::from(&policy),
+        PromptBuilder::template_identity()?,
+        semantic_context.fingerprint.clone(),
+    )?;
+    let semantics = GenerationSemanticAssignment::new(job.id, semantic_context.clone())?;
     store
-        .save_generation_semantics(&GenerationSemanticAssignment::new(
-            job.id,
-            semantic_context.clone(),
-        )?)
+        .create_generation_execution_bundle(&job, &execution, &semantics)
         .await?;
     store
         .acquire_execution_lease(WorkflowKind::Generation, job.id)
@@ -171,7 +213,7 @@ pub(crate) async fn run_workflow(
     let runner = JobRunner::new(
         Arc::new(store.clone()),
         backend,
-        runner_policy(&options, Some(configured)),
+        policy,
         ValidationPipeline::standard(None),
     )
     .with_semantic_context(semantic_context);
@@ -315,7 +357,11 @@ async fn build_backend(
     options: &ExecutionOptions,
     configured: Option<&project_config::ResolvedProjectConfig>,
     store: &SqliteStore,
-) -> anyhow::Result<(Arc<dyn GenerationBackend>, GenerationParameters)> {
+) -> anyhow::Result<(
+    Arc<dyn GenerationBackend>,
+    GenerationParameters,
+    Option<String>,
+)> {
     match backend_kind {
         BackendKind::Fake => Ok((
             Arc::new(FakeGenerationBackend::with_namespace(
@@ -326,6 +372,7 @@ async fn build_backend(
             configured.map_or_else(GenerationParameters::default, |config| {
                 config.generation_parameters()
             }),
+            None,
         )),
         BackendKind::OpenaiCompatible => {
             let configuration = match configured.and_then(|config| config.backend_configuration()) {
@@ -352,6 +399,7 @@ async fn build_backend(
                     configuration.model.clone(),
                 )?),
                 configuration.parameters,
+                Some(base_url.trim().trim_end_matches('/').to_owned()),
             ))
         }
     }

@@ -9,7 +9,7 @@ use dataset_core::{
     ports::{ImportStore, SnapshotStore},
 };
 use evaluation_core::ports::EvaluationStore;
-use generation_core::ports::{DatasetStore, JobStore, PlanStore};
+use generation_core::ports::{DatasetStore, GenerationExecutionStore, JobStore, PlanStore};
 use optimization_core::{
     campaigns::{CampaignArtifactKind, CampaignArtifactLink, CampaignOutcomeAssessment},
     ports::OptimizationStore,
@@ -811,11 +811,26 @@ impl SqliteStore {
         if let Some(context) = self.semantic_context_node(id).await? {
             parents.push(context);
         }
+        let execution = self
+            .get_generation_execution_spec(id)
+            .await
+            .map_err(store_error)?;
+        let attempts = self
+            .list_generation_attempts(id)
+            .await
+            .map_err(store_error)?;
+        let fingerprint = execution
+            .as_ref()
+            .map(|execution| execution.fingerprint.clone());
         Ok(Some(node(
             ArtifactKind::GenerationJob,
             id,
-            None,
-            &job,
+            fingerprint,
+            &serde_json::json!({
+                "job": job,
+                "execution": execution,
+                "attempts": attempts,
+            }),
             parents,
         )?))
     }

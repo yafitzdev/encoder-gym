@@ -1,11 +1,27 @@
 //! Provider-neutral prompt and generation-request construction.
 
+use artifact_core::{FingerprintError, fingerprint};
 use semantic_catalog::{ResolvedSemanticContext, SemanticTarget};
 use serde_json::json;
 
 use crate::domain::{
     DatasetDefinition, GeneratedCandidate, GenerationCell, GenerationParameters, GenerationRequest,
 };
+use crate::jobs::PromptTemplateIdentity;
+
+const PROMPT_TEMPLATE_NAME: &str = "text-classification-json";
+const PROMPT_TEMPLATE_VERSION: u32 = 1;
+const SYSTEM_PROMPT: &str = concat!(
+    "You generate synthetic text-classification examples. ",
+    "Return only one valid JSON object with a 'rows' array. ",
+    "Every row must match the requested label and dimensions exactly. ",
+    "Create diverse examples and do not include Markdown fences or commentary."
+);
+const USER_PROMPT_TEMPLATE: &str = concat!(
+    "Task:\n{task}\n\nGenerate exactly {requested_count} rows for this target:\n{target}",
+    "\n\n{semantic_section}\n\nOutput schema:\n{schema}",
+    "\n\nAvoid duplicating these existing examples:\n{existing_examples}"
+);
 
 #[derive(Debug, Clone, Default)]
 pub struct PromptBuilder {
@@ -13,6 +29,14 @@ pub struct PromptBuilder {
 }
 
 impl PromptBuilder {
+    pub fn template_identity() -> Result<PromptTemplateIdentity, FingerprintError> {
+        Ok(PromptTemplateIdentity {
+            name: PROMPT_TEMPLATE_NAME.into(),
+            version: PROMPT_TEMPLATE_VERSION,
+            fingerprint: fingerprint(&(SYSTEM_PROMPT, USER_PROMPT_TEMPLATE))?,
+        })
+    }
+
     pub fn with_semantics(semantics: ResolvedSemanticContext) -> Self {
         Self {
             semantics: Some(semantics),
@@ -42,13 +66,7 @@ impl PromptBuilder {
             serde_json::to_string_pretty(existing_examples).unwrap_or_else(|_| "[]".to_owned());
 
         let semantic_guidance = self.guidance_for_target(&target);
-        let mut system_prompt = concat!(
-            "You generate synthetic text-classification examples. ",
-            "Return only one valid JSON object with a 'rows' array. ",
-            "Every row must match the requested label and dimensions exactly. ",
-            "Create diverse examples and do not include Markdown fences or commentary."
-        )
-        .to_owned();
+        let mut system_prompt = SYSTEM_PROMPT.to_owned();
         if semantic_guidance.is_some() {
             system_prompt.push_str(
                 " The supplied semantic guidance is authoritative for interpreting the target values.",

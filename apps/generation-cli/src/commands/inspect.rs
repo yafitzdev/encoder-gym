@@ -3,8 +3,12 @@ use generation_core::{
     coverage::calculate_coverage,
     domain::ValidationStatus,
     jobs::JobState,
-    ports::{JobQuery, JobStore, PlanStore, RowQuery, RowStore},
+    ports::{
+        DatasetStore, GenerationExecutionStore, JobQuery, JobStore, PlanStore, RowQuery, RowStore,
+    },
+    prompting::PromptBuilder,
 };
+use semantic_catalog::SemanticCatalogStore;
 use synthetic_data_sqlite::SqliteStore;
 use uuid::Uuid;
 
@@ -35,6 +39,76 @@ pub async fn job(command: JobCommand, store: &SqliteStore) -> anyhow::Result<()>
                 .await?
                 .with_context(|| format!("job not found: {id}"))?;
             crate::presentation::print(&job)?;
+        }
+        JobCommand::Execution { id } => {
+            let execution = store
+                .get_generation_execution_spec(id)
+                .await?
+                .with_context(|| format!("generation execution specification not found: {id}"))?;
+            crate::presentation::print(&execution)?;
+        }
+        JobCommand::Attempts { id } => {
+            let attempts = store.list_generation_attempts(id).await?;
+            crate::presentation::print(&attempts)?;
+        }
+        JobCommand::Prompt {
+            id,
+            cell_index,
+            requested_count,
+        } => {
+            let job = store
+                .get_job(id)
+                .await?
+                .with_context(|| format!("job not found: {id}"))?;
+            let execution = store
+                .get_generation_execution_spec(id)
+                .await?
+                .with_context(|| format!("generation execution specification not found: {id}"))?;
+            let dataset = store
+                .get_dataset(job.dataset_id)
+                .await?
+                .with_context(|| format!("dataset not found: {}", job.dataset_id))?;
+            let plan = store
+                .get_plan(job.plan_id)
+                .await?
+                .with_context(|| format!("plan not found: {}", job.plan_id))?;
+            let planned = plan.cells.get(cell_index).with_context(|| {
+                format!(
+                    "cell index {cell_index} is outside plan range 0..{}",
+                    plan.cells.len()
+                )
+            })?;
+            let assignment = store
+                .get_generation_semantics(id)
+                .await?
+                .with_context(|| format!("generation semantic assignment not found: {id}"))?;
+            anyhow::ensure!(
+                assignment.context.fingerprint == execution.semantic_context_fingerprint
+                    && assignment.context.reproduce_fingerprint()?
+                        == assignment.context.fingerprint
+                    && execution.prompt_template == PromptBuilder::template_identity()?,
+                "job execution provenance failed its integrity check"
+            );
+            let default_count = execution
+                .initial_needs
+                .iter()
+                .find(|need| need.planned.cell == planned.cell)
+                .map_or(1, |need| need.remaining_count.max(1))
+                .min(execution.policy.batch_size);
+            let count = requested_count.unwrap_or(default_count);
+            anyhow::ensure!(count > 0, "requested count must be greater than zero");
+            let request = PromptBuilder::with_semantics(assignment.context).build(
+                &dataset,
+                planned.cell.clone(),
+                count,
+                execution.parameters.clone(),
+                &[],
+            );
+            crate::presentation::print(&serde_json::json!({
+                "execution_fingerprint": execution.fingerprint,
+                "prompt_template": execution.prompt_template,
+                "request": request,
+            }))?;
         }
         JobCommand::Cancel { id } => {
             let changed = store.request_job_cancellation(id).await?;

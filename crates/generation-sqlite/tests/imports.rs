@@ -13,10 +13,10 @@ use generation_core::{
     domain::{DatasetDefinition, DimensionDefinition, GenerationParameters},
     jobs::{GenerationJob, JobRunner, JobRunnerPolicy},
     planning::equal_target_plan,
-    ports::{DatasetStore, JobStore, PlanStore, RowStore},
+    ports::{DatasetStore, PlanStore, RowStore},
     validation::ValidationPipeline,
 };
-use generation_test_support::FakeGenerationBackend;
+use generation_test_support::{FakeGenerationBackend, persist_test_generation_execution};
 use synthetic_data_sqlite::SqliteStore;
 
 #[tokio::test]
@@ -94,23 +94,20 @@ async fn imported_and_generated_rows_share_snapshots_with_provenance() {
 
     let plan = equal_target_plan(&dataset, 1).expect("plan");
     store.create_plan(&plan).await.expect("plan");
-    let job = GenerationJob::queued(
-        dataset.id,
-        plan.id,
-        "fake",
-        "deterministic-v1",
-        plan.total_target_count(),
-    );
-    store.create_job(&job).await.expect("job");
+    let job = GenerationJob::queued(dataset.id, plan.id, "fake", "deterministic-v1", 3);
+    let policy = JobRunnerPolicy {
+        batch_size: 2,
+        max_request_retries: 0,
+        max_attempt_multiplier: 2,
+        retry_delay: Duration::ZERO,
+    };
+    persist_test_generation_execution(&store, &job, &plan, &policy)
+        .await
+        .expect("execution");
     JobRunner::new(
         Arc::new(store.clone()),
         Arc::new(FakeGenerationBackend::default()),
-        JobRunnerPolicy {
-            batch_size: 2,
-            max_request_retries: 0,
-            max_attempt_multiplier: 2,
-            retry_delay: Duration::ZERO,
-        },
+        policy,
         ValidationPipeline::standard(None),
     )
     .run(job.id, GenerationParameters::default())

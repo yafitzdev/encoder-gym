@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+generation-core.workspace = true
 generation-fake.workspace = true
 
 [lints]

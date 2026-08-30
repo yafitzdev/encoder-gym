@@ -12,10 +12,10 @@ use generation_core::{
     domain::{DatasetDefinition, GenerationParameters},
     jobs::{GenerationJob, JobRunner, JobRunnerPolicy},
     planning::equal_target_plan,
-    ports::{DatasetStore, JobStore, PlanStore},
+    ports::{DatasetStore, PlanStore},
     validation::ValidationPipeline,
 };
-use generation_test_support::FakeGenerationBackend;
+use generation_test_support::{FakeGenerationBackend, persist_test_generation_execution};
 use synthetic_data_sqlite::SqliteStore;
 use training_core::{
     domain::{
@@ -135,19 +135,19 @@ async fn generated_rows_train_into_durable_loadable_checkpoints() {
         "deterministic-v1",
         plan.total_target_count(),
     );
-    store
-        .create_job(&generation_job)
+    let generation_policy = JobRunnerPolicy {
+        batch_size: 5,
+        max_request_retries: 0,
+        max_attempt_multiplier: 1,
+        retry_delay: Duration::ZERO,
+    };
+    persist_test_generation_execution(&store, &generation_job, &plan, &generation_policy)
         .await
-        .expect("persist generation job");
+        .expect("execution");
     let generation_runner = JobRunner::new(
         Arc::new(store.clone()),
         Arc::new(FakeGenerationBackend::default()),
-        JobRunnerPolicy {
-            batch_size: 5,
-            max_request_retries: 0,
-            max_attempt_multiplier: 1,
-            retry_delay: Duration::ZERO,
-        },
+        generation_policy,
         ValidationPipeline::standard(None),
     );
     generation_runner
@@ -357,16 +357,19 @@ async fn generated_snapshot(
         "deterministic-v1",
         plan.total_target_count(),
     );
-    store.create_job(&job).await.expect("job");
+    let generation_policy = JobRunnerPolicy {
+        batch_size: 2,
+        max_request_retries: 0,
+        max_attempt_multiplier: 1,
+        retry_delay: Duration::ZERO,
+    };
+    persist_test_generation_execution(store, &job, &plan, &generation_policy)
+        .await
+        .expect("execution");
     JobRunner::new(
         Arc::new(store.clone()),
         Arc::new(FakeGenerationBackend::default()),
-        JobRunnerPolicy {
-            batch_size: 2,
-            max_request_retries: 0,
-            max_attempt_multiplier: 1,
-            retry_delay: Duration::ZERO,
-        },
+        generation_policy,
         ValidationPipeline::standard(None),
     )
     .run(job.id, GenerationParameters::default())

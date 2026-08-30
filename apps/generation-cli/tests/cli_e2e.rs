@@ -70,6 +70,45 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
     );
     assert_eq!(generated["state"], "completed");
     assert_eq!(generated["accepted_rows"], 2);
+    let generation_job_id = string_at(&generated, "/id");
+    let execution = run_json(&database_url, ["job", "execution", &generation_job_id]);
+    assert_eq!(execution["job_id"], generation_job_id);
+    assert!(string_at(&execution, "/fingerprint").starts_with("sha256:"));
+    assert_eq!(execution["policy"]["batch_size"], 1);
+    let attempts = run_json(&database_url, ["job", "attempts", &generation_job_id]);
+    assert_eq!(attempts.as_array().expect("attempt array").len(), 2);
+    assert!(
+        attempts
+            .as_array()
+            .expect("attempt array")
+            .iter()
+            .all(|attempt| {
+                attempt["state"] == "succeeded"
+                    && attempt["outcome_fingerprint"]
+                        .as_str()
+                        .is_some_and(|fingerprint| fingerprint.starts_with("sha256:"))
+            })
+    );
+    let prompt = run_json(
+        &database_url,
+        [
+            "job",
+            "prompt",
+            &generation_job_id,
+            "--cell-index",
+            "0",
+            "--requested-count",
+            "1",
+        ],
+    );
+    assert_eq!(prompt["execution_fingerprint"], execution["fingerprint"]);
+    assert_eq!(prompt["request"]["requested_count"], 1);
+    assert!(
+        prompt["request"]["user_prompt"]
+            .as_str()
+            .expect("user prompt")
+            .contains("Classify intentionally ambiguous support messages")
+    );
 
     let snapshot_result = run_json(
         &database_url,

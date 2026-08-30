@@ -8,11 +8,15 @@ use axum::{
 };
 use generation_core::{
     domain::GenerationParameters,
-    jobs::{GenerationJob, JobRunner, JobRunnerPolicy},
+    jobs::{
+        GenerationBackendIdentity, GenerationExecutionPolicy, GenerationExecutionSpec,
+        GenerationJob, JobRunner, JobRunnerPolicy,
+    },
     planning::calculate_generation_needs,
     ports::{
         BackendConfigurationStore, DatasetStore, GenerationBackend, JobStore, PlanStore, RowStore,
     },
+    prompting::PromptBuilder,
     validation::ValidationPipeline,
 };
 use generation_fake::FakeGenerationBackend;
@@ -72,7 +76,8 @@ pub async fn start_job(
         .into_iter()
         .map(|(key, counts)| (key, counts.accepted))
         .collect();
-    let requested_rows = calculate_generation_needs(&plan, &accepted)
+    let initial_needs = calculate_generation_needs(&plan, &accepted);
+    let requested_rows = initial_needs
         .iter()
         .map(|need| u64::from(need.remaining_count))
         .sum();
@@ -114,37 +119,45 @@ pub async fn start_job(
     )
     .map_err(ApiError::bad_request)?;
 
-    let (backend, parameters): (Arc<dyn GenerationBackend>, GenerationParameters) =
-        match input.backend.as_str() {
-            "fake" => (
-                Arc::new(FakeGenerationBackend::default()),
-                GenerationParameters::default(),
-            ),
-            "openai-compatible" => {
-                let configuration = state
-                    .store
-                    .get_backend_configuration("openai-compatible")
-                    .await
-                    .map_err(ApiError::internal)?
-                    .ok_or_else(|| ApiError::bad_request("configure the backend first"))?;
-                let base_url = configuration
-                    .base_url
-                    .as_deref()
-                    .ok_or_else(|| ApiError::bad_request("backend base URL is missing"))?;
-                let backend = OpenAICompatibleBackend::new(
-                    base_url,
-                    state.api_key.read().await.clone(),
-                    configuration.model.clone(),
-                )
-                .map_err(ApiError::bad_request)?;
-                (Arc::new(backend), configuration.parameters)
-            }
-            other => {
-                return Err(ApiError::bad_request(format!(
-                    "unsupported generation backend: {other}"
-                )));
-            }
-        };
+    let (backend, parameters, endpoint): (
+        Arc<dyn GenerationBackend>,
+        GenerationParameters,
+        Option<String>,
+    ) = match input.backend.as_str() {
+        "fake" => (
+            Arc::new(FakeGenerationBackend::default()),
+            GenerationParameters::default(),
+            None,
+        ),
+        "openai-compatible" => {
+            let configuration = state
+                .store
+                .get_backend_configuration("openai-compatible")
+                .await
+                .map_err(ApiError::internal)?
+                .ok_or_else(|| ApiError::bad_request("configure the backend first"))?;
+            let base_url = configuration
+                .base_url
+                .as_deref()
+                .ok_or_else(|| ApiError::bad_request("backend base URL is missing"))?;
+            let backend = OpenAICompatibleBackend::new(
+                base_url,
+                state.api_key.read().await.clone(),
+                configuration.model.clone(),
+            )
+            .map_err(ApiError::bad_request)?;
+            (
+                Arc::new(backend),
+                configuration.parameters,
+                Some(base_url.trim().trim_end_matches('/').to_owned()),
+            )
+        }
+        other => {
+            return Err(ApiError::bad_request(format!(
+                "unsupported generation backend: {other}"
+            )));
+        }
+    };
 
     let job = GenerationJob::queued(
         plan.dataset_id,
@@ -153,29 +166,40 @@ pub async fn start_job(
         backend.model(),
         requested_rows,
     );
-    state
-        .store
-        .create_job(&job)
-        .await
+    let policy = JobRunnerPolicy {
+        batch_size: input.batch_size,
+        max_request_retries: input.max_retries,
+        max_attempt_multiplier: input.max_attempt_multiplier,
+        retry_delay: Duration::from_millis(500),
+    };
+    let execution = GenerationExecutionSpec::new(
+        job.id,
+        job.dataset_id,
+        job.plan_id,
+        initial_needs,
+        GenerationBackendIdentity {
+            name: backend.name().into(),
+            model: backend.model().into(),
+            endpoint,
+        },
+        parameters.clone(),
+        GenerationExecutionPolicy::from(&policy),
+        PromptBuilder::template_identity().map_err(ApiError::internal)?,
+        semantic_context.fingerprint.clone(),
+    )
+    .map_err(ApiError::bad_request)?;
+    let semantics = GenerationSemanticAssignment::new(job.id, semantic_context.clone())
         .map_err(ApiError::internal)?;
     state
         .store
-        .save_generation_semantics(
-            &GenerationSemanticAssignment::new(job.id, semantic_context.clone())
-                .map_err(ApiError::internal)?,
-        )
+        .create_generation_execution_bundle(&job, &execution, &semantics)
         .await
         .map_err(ApiError::internal)?;
 
     let runner = JobRunner::new(
         Arc::new(state.store.clone()),
         backend,
-        JobRunnerPolicy {
-            batch_size: input.batch_size,
-            max_request_retries: input.max_retries,
-            max_attempt_multiplier: input.max_attempt_multiplier,
-            retry_delay: Duration::from_millis(500),
-        },
+        policy,
         ValidationPipeline::standard(None),
     )
     .with_semantic_context(semantic_context);
