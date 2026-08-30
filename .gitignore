@@ -24,3 +24,7 @@ Thumbs.db
 # Local logs and coverage output
 *.log
 /coverage/
+
+# Local Pi adapter dependencies and build output
+/adapters/research-agent-pi/node_modules/
+/adapters/research-agent-pi/dist/

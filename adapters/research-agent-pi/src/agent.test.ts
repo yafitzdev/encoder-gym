@@ -1,0 +1,137 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { PiResearchAgent } from "./agent.js";
+import { PROTOCOL_VERSION, type PiRunEvent, type PiRunRequest } from "./protocol.js";
+
+function request(): PiRunRequest {
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    runId: "run-1",
+    runSpecificationFingerprint: "sha256:run",
+    provider: "fake",
+    model: "scripted-research",
+    systemPrompt: "Study authentic support-chat style.",
+    initialPrompt: "Begin the bounded research run.",
+    maxModelTurns: 4,
+    scriptedTurns: [
+      {
+        text: "I will gather evidence first.",
+        toolCalls: [
+          {
+            name: "search_web",
+            arguments: {
+              query: "real support chat language",
+              maximumResults: 3,
+            },
+          },
+        ],
+      },
+      {
+        text: "The first result reveals a gap, so I will inspect it.",
+        toolCalls: [
+          {
+            name: "fetch_page",
+            arguments: { url: "https://example.test/support", maximumBytes: 10000 },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            name: "draft_profile",
+            arguments: { profile: { summary: "Messages use short fragments." } },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            name: "finish_research",
+            arguments: { reason: "sufficient_evidence", summary: "Profile drafted." },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+test("Pi executes an iterative research loop through only the six owned tools", async () => {
+  const calls: string[] = [];
+  const events: PiRunEvent[] = [];
+  const agent = new PiResearchAgent(
+    {
+      async execute(call) {
+        calls.push(call.name);
+        return { content: { accepted: true } };
+      },
+    },
+    (event) => {
+      events.push(event);
+    },
+  );
+
+  await agent.run(request());
+
+  assert.deepEqual(calls, ["search_web", "fetch_page", "draft_profile", "finish_research"]);
+  assert.equal(events.filter((event) => event.type === "turn_completed").length, 4);
+  assert.equal(events.at(-1)?.type, "agent_finished");
+});
+
+test("the adapter refuses scripts for a real provider", async () => {
+  const input = request();
+  input.provider = "openai";
+  const agent = new PiResearchAgent({
+    async execute() {
+      return { content: {} };
+    },
+  });
+  await assert.rejects(agent.run(input), /allowed only with the fake provider/);
+});
+
+test("a hard turn ceiling stops a script before later tools", async () => {
+  const calls: string[] = [];
+  const input = request();
+  input.maxModelTurns = 2;
+  const agent = new PiResearchAgent({
+    async execute(call) {
+      calls.push(call.name);
+      return { content: {} };
+    },
+  });
+  await agent.run(input);
+  assert.deepEqual(calls, ["search_web", "fetch_page"]);
+});
+
+test("cancellation aborts an in-flight host tool", async () => {
+  const input = request();
+  input.maxModelTurns = 1;
+  input.scriptedTurns = input.scriptedTurns?.slice(0, 1) ?? [];
+  let sawAbort = false;
+  let agentReportedAbort = false;
+  let agent: PiResearchAgent;
+  agent = new PiResearchAgent(
+    {
+      execute(_call, signal) {
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => {
+              sawAbort = true;
+              reject(new Error("host tool aborted"));
+            },
+            { once: true },
+          );
+          queueMicrotask(() => agent.cancel(input.runId));
+        });
+      },
+    },
+    (event) => {
+      if (event.type === "agent_finished") agentReportedAbort = event.aborted;
+    },
+  );
+
+  await agent.run(input);
+  assert.equal(sawAbort, true);
+  assert.equal(agentReportedAbort, true);
+});
