@@ -15,6 +15,7 @@ mod project_preparation;
 mod promotion;
 mod provenance;
 mod recovery;
+mod semantic;
 mod stop;
 mod training;
 mod workflow;
