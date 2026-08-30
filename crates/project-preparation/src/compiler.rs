@@ -652,7 +652,6 @@ mod tests {
         DatasetSnapshot, SnapshotMember, SnapshotSplit, SourceProvenance, SplitConfiguration,
         SplitRatios,
     };
-    use generation_core::domain::DatasetDefinition;
     use project_config::{ProjectConfig, ProjectOverrides};
     use uuid::Uuid;
     use workflow_core::{
@@ -963,7 +962,4 @@ batch_size = 20
             regression: None,
         }
     }
-
-    #[allow(dead_code)]
-    fn _assert_dataset_type(_: DatasetDefinition) {}
 }

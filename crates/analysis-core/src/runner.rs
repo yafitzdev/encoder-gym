@@ -74,6 +74,8 @@ pub enum AnalysisRunnerError {
     Fingerprint(String),
     #[error("analysis report {0} does not reproduce from persisted prediction evidence")]
     ReportEvidenceMismatch(Uuid),
+    #[error("analysis report {id} does not reproduce from persisted {reason}")]
+    ReportEvidenceDetail { id: Uuid, reason: &'static str },
 }
 
 pub async fn run_analysis(
@@ -299,15 +301,44 @@ pub async fn verify_report_evidence(
     overlap.finish(&mut aggregation.findings)?;
     refresh_finding_fingerprints(&mut aggregation.findings)?;
     let finding_evidence = persistence_normalize_evidence(aggregation.evidence)?;
-    if aggregation.prediction_count != report.prediction_count
-        || aggregation.error_count != report.error_count
-        || aggregation.findings != report.findings
-        || finding_evidence != report.finding_evidence
-        || reproduced_comparison != report.comparison_diagnosis
-    {
-        return Err(AnalysisRunnerError::ReportEvidenceMismatch(report.id));
-    }
+    verify_reproduced(
+        aggregation.prediction_count == report.prediction_count,
+        report.id,
+        "prediction count",
+    )?;
+    verify_reproduced(
+        aggregation.error_count == report.error_count,
+        report.id,
+        "error count",
+    )?;
+    verify_reproduced(
+        aggregation.findings == report.findings,
+        report.id,
+        "findings",
+    )?;
+    verify_reproduced(
+        finding_evidence == report.finding_evidence,
+        report.id,
+        "finding evidence",
+    )?;
+    verify_reproduced(
+        reproduced_comparison == report.comparison_diagnosis,
+        report.id,
+        "comparison diagnosis",
+    )?;
     Ok(())
+}
+
+fn verify_reproduced(
+    condition: bool,
+    id: Uuid,
+    reason: &'static str,
+) -> Result<(), AnalysisRunnerError> {
+    if condition {
+        Ok(())
+    } else {
+        Err(AnalysisRunnerError::ReportEvidenceDetail { id, reason })
+    }
 }
 
 fn persistence_normalize_evidence(
