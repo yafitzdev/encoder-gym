@@ -26,6 +26,7 @@ use crate::cli::{
     ExportFormat, OptimizationRecommendationKindArg, OptimizeCommand, PageArgs,
     ProposalReviewStateArg,
 };
+use crate::document::read as read_document;
 
 pub async fn execute(command: OptimizeCommand, store: &SqliteStore) -> anyhow::Result<()> {
     match command {
@@ -673,7 +674,7 @@ async fn require_review(
 }
 
 fn read_protocol(path: &Path) -> anyhow::Result<OptimizationProtocol> {
-    let protocol: OptimizationProtocol = read_json_or_toml(path)?;
+    let protocol: OptimizationProtocol = read_document(path)?;
     Ok(protocol.normalize()?)
 }
 
@@ -681,7 +682,7 @@ fn read_optional_training_space(
     path: Option<&Path>,
 ) -> anyhow::Result<Option<TrainingConfigurationSpace>> {
     path.map(|path| {
-        let space: TrainingConfigurationSpace = read_json_or_toml(path)?;
+        let space: TrainingConfigurationSpace = read_document(path)?;
         space.validate()?;
         Ok(space)
     })
@@ -695,22 +696,11 @@ struct TrainingChoicesFile {
 }
 
 fn read_training_choices(path: &Path) -> anyhow::Result<Vec<TrainingConfigurationChoice>> {
-    let file: TrainingChoicesFile = read_json_or_toml(path)?;
+    let file: TrainingChoicesFile = read_document(path)?;
     if file.choices.is_empty() {
         bail!("training choices must contain at least one explicit candidate");
     }
     Ok(file.choices)
-}
-
-fn read_json_or_toml<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
-    let contents = std::fs::read_to_string(path)
-        .with_context(|| format!("could not read {}", path.display()))?;
-    if path.extension().and_then(|value| value.to_str()) == Some("json") {
-        serde_json::from_str(&contents)
-            .with_context(|| format!("invalid JSON in {}", path.display()))
-    } else {
-        toml::from_str(&contents).with_context(|| format!("invalid TOML in {}", path.display()))
-    }
 }
 
 fn parse_dimension_filter(value: &str) -> anyhow::Result<(String, String)> {

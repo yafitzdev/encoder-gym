@@ -1,6 +1,6 @@
-use std::process::Command;
+pub mod support;
 
-use serde_json::Value;
+use support::run_json;
 
 #[test]
 fn exact_initial_budget_is_previewed_and_persisted_as_an_ordinary_plan() {
@@ -100,18 +100,4 @@ fn exact_initial_budget_is_previewed_and_persisted_as_an_ordinary_plan() {
         .len(),
         1
     );
-}
-
-fn run_json<const N: usize>(database_url: &str, arguments: [&str; N]) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_synth"))
-        .args(["--database-url", database_url, "--output", "json"])
-        .args(arguments)
-        .output()
-        .expect("CLI starts");
-    assert!(
-        output.status.success(),
-        "CLI failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).expect("JSON stdout")
 }

@@ -1,8 +1,7 @@
-use std::{collections::BTreeMap, path::Path};
+use std::collections::BTreeMap;
 
 use anyhow::{Context, bail, ensure};
 use evaluation_core::ports::EvaluationStore;
-use serde::de::DeserializeOwned;
 use synthetic_data_sqlite::SqliteStore;
 use uuid::Uuid;
 use workflow_core::{
@@ -18,6 +17,7 @@ use workflow_core::{
 };
 
 use crate::cli::{AcceptanceStateArg, BenchmarkCommand, BenchmarkSuiteKindArg};
+use crate::document::read as read_document;
 
 pub async fn execute(command: BenchmarkCommand, store: &SqliteStore) -> anyhow::Result<()> {
     match command {
@@ -271,18 +271,6 @@ fn parse_uuid_map(values: &[String], kind: &str) -> anyhow::Result<BTreeMap<Uuid
         );
     }
     Ok(parsed)
-}
-
-fn read_document<T: DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
-    let contents = std::fs::read_to_string(path)
-        .with_context(|| format!("could not read {}", path.display()))?;
-    match path.extension().and_then(|value| value.to_str()) {
-        Some("json") => serde_json::from_str(&contents)
-            .with_context(|| format!("invalid JSON in {}", path.display())),
-        _ => {
-            toml::from_str(&contents).with_context(|| format!("invalid TOML in {}", path.display()))
-        }
-    }
 }
 
 const fn suite_kind(value: BenchmarkSuiteKindArg) -> BenchmarkSuiteKind {

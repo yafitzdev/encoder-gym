@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod document;
 mod presentation;
 mod training_examples;
 

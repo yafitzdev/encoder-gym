@@ -1,7 +1,11 @@
-use std::{path::Path, process::Command};
+use std::path::Path;
+
+pub mod support;
 
 use serde_json::Value;
 use training_transformer::fixture::write_tiny_bert_bundle;
+
+use support::run_json;
 
 #[test]
 fn tiny_transformer_cli_trains_continues_evaluates_and_traces_offline() {
@@ -186,26 +190,6 @@ fn final_checkpoint(training: &Value) -> String {
         .and_then(|checkpoint| checkpoint["id"].as_str())
         .expect("final checkpoint")
         .to_owned()
-}
-
-fn run_json<'a>(database_url: &str, arguments: impl IntoIterator<Item = &'a str>) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_synth"))
-        .args(["--database-url", database_url, "--output", "json"])
-        .args(arguments)
-        .output()
-        .expect("CLI starts");
-    assert!(
-        output.status.success(),
-        "CLI failed\nstdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
-        panic!(
-            "stdout was not one JSON value: {error}\n{}",
-            String::from_utf8_lossy(&output.stdout)
-        )
-    })
 }
 
 fn string_at(value: &Value, pointer: &str) -> String {

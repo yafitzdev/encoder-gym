@@ -1,9 +1,13 @@
-use std::{path::Path, process::Command};
+use std::path::Path;
+
+pub mod support;
 
 use optimization_core::protocol::{
     OptimizationProtocol, RecommendationKind, TrainingCandidateRequest,
 };
 use serde_json::Value;
+
+use support::{run_json, run_text};
 
 #[test]
 fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
@@ -1243,40 +1247,6 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
 
     let final_doctor = run_json(&database_url, ["doctor", "--config", path(&config_path)]);
     assert_eq!(final_doctor["healthy"], true);
-}
-
-fn run_json<'a>(database_url: &str, arguments: impl IntoIterator<Item = &'a str>) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_synth"))
-        .args(["--database-url", database_url, "--output", "json"])
-        .args(arguments)
-        .output()
-        .expect("CLI starts");
-    assert!(
-        output.status.success(),
-        "CLI failed\nstdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
-        panic!(
-            "stdout was not one JSON value: {error}\n{}",
-            String::from_utf8_lossy(&output.stdout)
-        )
-    })
-}
-
-fn run_text<'a>(database_url: &str, arguments: impl IntoIterator<Item = &'a str>) -> String {
-    let output = Command::new(env!("CARGO_BIN_EXE_synth"))
-        .args(["--database-url", database_url, "--output", "human"])
-        .args(arguments)
-        .output()
-        .expect("CLI starts");
-    assert!(
-        output.status.success(),
-        "CLI failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).expect("human output is UTF-8")
 }
 
 fn string_at(value: &Value, pointer: &str) -> String {

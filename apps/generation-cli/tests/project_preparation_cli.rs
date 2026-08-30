@@ -1,4 +1,4 @@
-use std::process::{Command, Output};
+pub mod support;
 
 use chrono::Utc;
 use dataset_core::domain::{SplitConfiguration, SplitRatios};
@@ -6,9 +6,10 @@ use generation_core::{
     domain::{DatasetDefinition, DimensionDefinition},
     ports::DatasetStore,
 };
-use serde_json::Value;
 use synthetic_data_sqlite::SqliteStore;
 use uuid::Uuid;
+
+use support::run_json;
 
 #[test]
 fn manifest_previews_prepares_idempotently_and_yields_a_startable_workflow() {
@@ -181,23 +182,4 @@ async fn create_snapshot_fixture(database_url: &str) -> Uuid {
     .await
     .expect("snapshot member persisted");
     snapshot_id
-}
-
-fn run_json<'a>(database_url: &str, arguments: impl IntoIterator<Item = &'a str>) -> Value {
-    let output = run(database_url, arguments);
-    assert!(
-        output.status.success(),
-        "CLI failed\nstdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).expect("JSON stdout")
-}
-
-fn run<'a>(database_url: &str, arguments: impl IntoIterator<Item = &'a str>) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_synth"))
-        .args(["--database-url", database_url, "--output", "json"])
-        .args(arguments)
-        .output()
-        .expect("CLI starts")
 }

@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, future::Future, path::Path, pin::Pin, time::Duration};
+use std::{collections::BTreeMap, future::Future, pin::Pin, time::Duration};
 
 use advisor_fake::FakeAnalysisAdvisor;
 use advisor_openai_compatible::OpenAICompatibleAdvisor;
@@ -17,7 +17,6 @@ use optimization_core::{
 };
 use project_config::ProjectConfigurationStore;
 use recovery_core::{RecoveryState, RecoveryStore, WorkflowKind};
-use serde::de::DeserializeOwned;
 use synthetic_data_sqlite::SqliteStore;
 use workflow_core::{
     advisor::{
@@ -50,6 +49,7 @@ use workflow_core::{
 };
 
 use crate::cli::{WorkflowCommand, WorkflowRunStateArg};
+use crate::document::read as read_document;
 
 mod artifacts;
 mod queries;
@@ -971,18 +971,6 @@ const fn initial_successor(stage: WorkflowStage, advisor: bool) -> Option<Workfl
         WorkflowStage::FollowupAnalysis => Some(WorkflowStage::StopDecision),
         WorkflowStage::StopDecision => Some(WorkflowStage::OptimizationProposal),
         _ => None,
-    }
-}
-
-fn read_document<T: DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
-    let contents = std::fs::read_to_string(path)
-        .with_context(|| format!("could not read {}", path.display()))?;
-    match path.extension().and_then(|value| value.to_str()) {
-        Some("json") => serde_json::from_str(&contents)
-            .with_context(|| format!("invalid JSON in {}", path.display())),
-        _ => {
-            toml::from_str(&contents).with_context(|| format!("invalid TOML in {}", path.display()))
-        }
     }
 }
 

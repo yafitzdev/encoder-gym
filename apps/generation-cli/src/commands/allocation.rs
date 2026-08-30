@@ -5,7 +5,6 @@ use generation_core::{
     dimensions::expand_generation_cells,
     ports::{DatasetStore, RowStore},
 };
-use serde::de::DeserializeOwned;
 use synthetic_data_sqlite::SqliteStore;
 use workflow_core::{
     allocation::{
@@ -17,6 +16,7 @@ use workflow_core::{
 };
 
 use crate::cli::{AllocationCommand, InitialAllocationArgs, InitialAllocationPolicyArg};
+use crate::document::read as read_document;
 
 pub async fn execute(command: AllocationCommand, store: &SqliteStore) -> anyhow::Result<()> {
     match command {
@@ -199,14 +199,4 @@ fn read_constraints(path: &Path) -> anyhow::Result<Vec<InitialCellConstraint>> {
             constraints
         }
     })
-}
-
-fn read_document<T: DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("could not read {}", path.display()))?;
-    if path.extension().and_then(|extension| extension.to_str()) == Some("toml") {
-        toml::from_str(&raw).with_context(|| format!("invalid TOML in {}", path.display()))
-    } else {
-        serde_json::from_str(&raw).with_context(|| format!("invalid JSON in {}", path.display()))
-    }
 }

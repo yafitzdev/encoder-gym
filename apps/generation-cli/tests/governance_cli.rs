@@ -1,11 +1,12 @@
-use std::process::{Command, Output};
+pub mod support;
 
 use chrono::Utc;
 use dataset_core::domain::{SplitConfiguration, SplitRatios};
 use generation_core::{domain::DatasetDefinition, ports::DatasetStore};
-use serde_json::Value;
 use synthetic_data_sqlite::SqliteStore;
 use uuid::Uuid;
+
+use support::{run, run_json};
 
 #[test]
 fn sealed_cohort_exposure_is_governed_from_the_cli() {
@@ -301,23 +302,4 @@ async fn create_snapshot_fixture(database_url: &str) -> Uuid {
     .await
     .expect("snapshot member fixture persisted");
     snapshot_id
-}
-
-fn run_json<'a>(database_url: &str, arguments: impl IntoIterator<Item = &'a str>) -> Value {
-    let output = run(database_url, arguments);
-    assert!(
-        output.status.success(),
-        "CLI failed\nstdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).expect("JSON stdout")
-}
-
-fn run<'a>(database_url: &str, arguments: impl IntoIterator<Item = &'a str>) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_synth"))
-        .args(["--database-url", database_url, "--output", "json"])
-        .args(arguments)
-        .output()
-        .expect("CLI starts")
 }

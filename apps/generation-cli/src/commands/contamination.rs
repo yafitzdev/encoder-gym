@@ -1,8 +1,5 @@
-use std::path::Path;
-
 use anyhow::Context;
 use dataset_core::ports::SnapshotStore;
-use serde::de::DeserializeOwned;
 use synthetic_data_sqlite::SqliteStore;
 use workflow_core::{
     contamination::{
@@ -13,6 +10,7 @@ use workflow_core::{
 };
 
 use crate::cli::{ContaminationCommand, ContaminationStatusArg};
+use crate::document::read as read_document;
 
 pub async fn execute(command: ContaminationCommand, store: &SqliteStore) -> anyhow::Result<()> {
     match command {
@@ -103,18 +101,6 @@ async fn require_report(
         .get_contamination_report(id)
         .await?
         .with_context(|| format!("contamination report not found: {id}"))
-}
-
-fn read_document<T: DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
-    let contents = std::fs::read_to_string(path)
-        .with_context(|| format!("could not read {}", path.display()))?;
-    match path.extension().and_then(|value| value.to_str()) {
-        Some("json") => serde_json::from_str(&contents)
-            .with_context(|| format!("invalid JSON in {}", path.display())),
-        _ => {
-            toml::from_str(&contents).with_context(|| format!("invalid TOML in {}", path.display()))
-        }
-    }
 }
 
 const fn contamination_status(value: ContaminationStatusArg) -> ContaminationStatus {
