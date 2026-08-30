@@ -36,6 +36,14 @@ const fn artifact_kind(kind: ArtifactKindArg) -> ArtifactKind {
         ArtifactKindArg::GenerationAuthenticityContext => {
             ArtifactKind::GenerationAuthenticityContext
         }
+        ArtifactKindArg::DatasetArchitectBrief => ArtifactKind::DatasetArchitectBrief,
+        ArtifactKindArg::DatasetArchitectRun => ArtifactKind::DatasetArchitectRun,
+        ArtifactKindArg::DatasetArchitectureProposal => ArtifactKind::DatasetArchitectureProposal,
+        ArtifactKindArg::DatasetArchitectureReview => ArtifactKind::DatasetArchitectureReview,
+        ArtifactKindArg::DatasetArchitectureApplication => {
+            ArtifactKind::DatasetArchitectureApplication
+        }
+        ArtifactKindArg::GenerationStrategyContext => ArtifactKind::GenerationStrategyContext,
         ArtifactKindArg::InitialAllocation => ArtifactKind::InitialAllocation,
         ArtifactKindArg::GenerationPlan => ArtifactKind::GenerationPlan,
         ArtifactKindArg::GenerationJob => ArtifactKind::GenerationJob,

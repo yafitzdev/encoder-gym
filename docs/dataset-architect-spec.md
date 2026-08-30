@@ -91,3 +91,31 @@ prove that an approved proposal becomes a normal plan, generation pins the
 strategy context, only matching-cell instructions enter prompts, and no
 architect/model call occurs during generation. No HTTP or graphical UI is part
 of this capability.
+
+The concrete flow is:
+
+```text
+synth dataset create ...
+synth architect brief-validate examples/architect/support-architect-brief.json
+synth architect start examples/architect/support-architect-brief.json \
+  --script examples/architect/support-architect-scripted-turns.json
+synth architect proposal <RUN_ID>
+synth architect review <PROPOSAL_ID> --approve --reason "approved budget"
+synth architect apply <PROPOSAL_ID>
+synth architect context <PLAN_ID>
+synth generate <PLAN_ID> --backend fake
+synth job execution <JOB_ID>
+synth job prompt <JOB_ID> --cell-index 0 --requested-count 1
+```
+
+The checked-in script exercises the actual JSONL Pi process with a fake model,
+not an alternate in-process architect. A real provider uses the same command
+without `--script`; its brief names the provider, model, finite budgets, and an
+environment-variable name containing the credential.
+
+If a brief names `analysis_report_id`, the CLI reconstructs a normalized
+diagnostic contract from persisted analysis facts and reviews. It requires the
+report's exact cohort to have one current active `development` or `diagnostic`
+role and appends a `dataset_architecture`/`slices` adaptive exposure. The brief
+file cannot inject a fabricated diagnostic contract and a sealed cohort cannot
+cross this boundary.

@@ -167,6 +167,7 @@ pub enum ExposurePurpose {
     ManualInspection,
     Advisor,
     Optimization,
+    DatasetArchitecture,
 }
 
 impl ExposurePurpose {
@@ -179,6 +180,7 @@ impl ExposurePurpose {
                 | Self::Comparison
                 | Self::Advisor
                 | Self::Optimization
+                | Self::DatasetArchitecture
         )
     }
 }

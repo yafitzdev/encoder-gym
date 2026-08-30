@@ -4,12 +4,20 @@ use analysis_core::ports::AnalysisStore;
 use artifact_core::{
     ArtifactKind, BoxFuture, ProvenanceNode, ProvenanceStore, ProvenanceStoreError,
 };
+use dataset_architect_core::{
+    brief::ResolvedArchitectBrief,
+    lifecycle::ArchitectRun,
+    proposal::{
+        ArchitectProposalReview, DatasetArchitectureApplication, DatasetArchitectureProposal,
+    },
+};
 use dataset_core::{
     domain::SourceProvenance,
     ports::{ImportStore, SnapshotStore},
 };
 use evaluation_core::ports::EvaluationStore;
 use generation_core::ports::{DatasetStore, GenerationExecutionStore, JobStore, PlanStore};
+use generation_core::strategy::ResolvedGenerationStrategyContext;
 use optimization_core::{
     campaigns::{CampaignArtifactKind, CampaignArtifactLink, CampaignOutcomeAssessment},
     ports::OptimizationStore,
@@ -61,6 +69,16 @@ impl ProvenanceStore for SqliteStore {
                 ArtifactKind::GenerationAuthenticityContext => {
                     self.generation_authenticity_node(id).await
                 }
+                ArtifactKind::DatasetArchitectBrief => self.architect_brief_node(id).await,
+                ArtifactKind::DatasetArchitectRun => self.architect_run_node(id).await,
+                ArtifactKind::DatasetArchitectureProposal => {
+                    self.architecture_proposal_node(id).await
+                }
+                ArtifactKind::DatasetArchitectureReview => self.architecture_review_node(id).await,
+                ArtifactKind::DatasetArchitectureApplication => {
+                    self.architecture_application_node(id).await
+                }
+                ArtifactKind::GenerationStrategyContext => self.generation_strategy_node(id).await,
                 ArtifactKind::InitialAllocation => self.initial_allocation_node(id).await,
                 ArtifactKind::GenerationPlan => self.plan_node(id).await,
                 ArtifactKind::GenerationJob => self.job_node(id).await,
@@ -92,6 +110,187 @@ impl ProvenanceStore for SqliteStore {
 }
 
 impl SqliteStore {
+    async fn architect_brief_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let value: Option<String> =
+            sqlx::query_scalar("SELECT brief_json FROM dataset_architect_briefs WHERE id = ?")
+                .bind(id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(store_error)?;
+        let Some(value) = value else { return Ok(None) };
+        let artifact: ResolvedArchitectBrief = serde_json::from_str(&value).map_err(store_error)?;
+        let parents = self
+            .dataset_node(artifact.dataset.id)
+            .await?
+            .into_iter()
+            .collect();
+        Ok(Some(node(
+            ArtifactKind::DatasetArchitectBrief,
+            id,
+            Some(artifact.fingerprint.clone()),
+            &artifact,
+            parents,
+        )?))
+    }
+
+    async fn architect_run_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let value: Option<String> =
+            sqlx::query_scalar("SELECT run_json FROM dataset_architect_runs WHERE id = ?")
+                .bind(id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(store_error)?;
+        let Some(value) = value else { return Ok(None) };
+        let artifact: ArchitectRun = serde_json::from_str(&value).map_err(store_error)?;
+        let parents = self
+            .architect_brief_node(artifact.brief_id)
+            .await?
+            .into_iter()
+            .collect();
+        Ok(Some(node(
+            ArtifactKind::DatasetArchitectRun,
+            id,
+            Some(artifact.specification_fingerprint.clone()),
+            &artifact,
+            parents,
+        )?))
+    }
+
+    async fn architecture_proposal_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let value: Option<String> = sqlx::query_scalar(
+            "SELECT proposal_json FROM dataset_architecture_proposals WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(store_error)?;
+        let Some(value) = value else { return Ok(None) };
+        let artifact: DatasetArchitectureProposal =
+            serde_json::from_str(&value).map_err(store_error)?;
+        let parents = self
+            .architect_run_node(artifact.run_id)
+            .await?
+            .into_iter()
+            .collect();
+        Ok(Some(node(
+            ArtifactKind::DatasetArchitectureProposal,
+            id,
+            Some(artifact.fingerprint.clone()),
+            &artifact,
+            parents,
+        )?))
+    }
+
+    async fn architecture_review_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let value: Option<String> =
+            sqlx::query_scalar("SELECT review_json FROM dataset_architecture_reviews WHERE id = ?")
+                .bind(id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(store_error)?;
+        let Some(value) = value else { return Ok(None) };
+        let artifact: ArchitectProposalReview =
+            serde_json::from_str(&value).map_err(store_error)?;
+        let mut parents = self
+            .architecture_proposal_node(artifact.proposal_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(predecessor) = artifact.predecessor_id
+            && let Some(node) = Box::pin(self.architecture_review_node(predecessor)).await?
+        {
+            parents.push(node);
+        }
+        Ok(Some(node(
+            ArtifactKind::DatasetArchitectureReview,
+            id,
+            Some(artifact.fingerprint.clone()),
+            &artifact,
+            parents,
+        )?))
+    }
+
+    async fn architecture_application_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let value: Option<String> = sqlx::query_scalar(
+            "SELECT application_json FROM dataset_architecture_applications WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(store_error)?;
+        let Some(value) = value else { return Ok(None) };
+        let artifact: DatasetArchitectureApplication =
+            serde_json::from_str(&value).map_err(store_error)?;
+        let mut parents = self
+            .architecture_proposal_node(artifact.proposal_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(review) = self.architecture_review_node(artifact.approval_id).await? {
+            parents.push(review);
+        }
+        Ok(Some(node(
+            ArtifactKind::DatasetArchitectureApplication,
+            id,
+            Some(artifact.fingerprint.clone()),
+            &artifact,
+            parents,
+        )?))
+    }
+
+    async fn generation_strategy_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let value: Option<String> = sqlx::query_scalar(
+            "SELECT context_json FROM generation_strategy_contexts WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(store_error)?;
+        let Some(value) = value else { return Ok(None) };
+        let artifact: ResolvedGenerationStrategyContext =
+            serde_json::from_str(&value).map_err(store_error)?;
+        let application_id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM dataset_architecture_applications WHERE strategy_context_id = ?",
+        )
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(store_error)?;
+        let parents = match application_id {
+            Some(id) => self
+                .architecture_application_node(id)
+                .await?
+                .into_iter()
+                .collect(),
+            None => vec![],
+        };
+        Ok(Some(node(
+            ArtifactKind::GenerationStrategyContext,
+            id,
+            Some(artifact.fingerprint.clone()),
+            &artifact,
+            parents,
+        )?))
+    }
+
     async fn semantic_profile_node(
         &self,
         id: Uuid,
@@ -1047,6 +1246,18 @@ impl SqliteStore {
         {
             parents.push(allocation);
         }
+        let architecture_application_id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM dataset_architecture_applications WHERE plan_id = ?",
+        )
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(store_error)?;
+        if let Some(application_id) = architecture_application_id
+            && let Some(application) = self.architecture_application_node(application_id).await?
+        {
+            parents.push(application);
+        }
         Ok(Some(node(
             ArtifactKind::GenerationPlan,
             id,
@@ -1090,6 +1301,17 @@ impl SqliteStore {
             parents.push(context);
         }
         if let Some(context) = Box::pin(self.generation_authenticity_node(id)).await? {
+            parents.push(context);
+        }
+        let strategy_context_id: Option<Uuid> =
+            sqlx::query_scalar("SELECT context_id FROM generation_job_strategies WHERE job_id = ?")
+                .bind(id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(store_error)?;
+        if let Some(context_id) = strategy_context_id
+            && let Some(context) = Box::pin(self.generation_strategy_node(context_id)).await?
+        {
             parents.push(context);
         }
         let execution = self

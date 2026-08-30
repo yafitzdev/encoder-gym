@@ -71,6 +71,13 @@ not own generation-planning mathematics, prompt transport, persistence, Pi, or
 sealed evidence. An architect proposal is untrusted until the ordinary initial
 allocator reproduces it and an operator approves it.
 
+After approval, `dataset-architect-core` compiles the advisory output into two
+ordinary immutable inputs: a `GenerationPlan` and a provider-neutral
+`ResolvedGenerationStrategyContext`. `synthetic-data-core` owns that normalized
+strategy shape and prompt scoping. A generation job pins it beside semantics,
+authenticity, construction, prompt-template, and backend identities. The job
+runner never imports or invokes the architect runner.
+
 `workflow-core` owns only cross-slice policy: initial finite allocation,
 evaluation roles and exposure rules, benchmark acceptance contracts, durable
 workflow state, approval envelopes, stop decisions, and the ports required to

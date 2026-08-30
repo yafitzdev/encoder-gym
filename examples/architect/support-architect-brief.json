@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "dataset_name": "support-architect",
+  "target_total_rows": 20,
+  "reserved_rows": 0,
+  "constraints": [],
+  "priorities": [
+    {
+      "name": "boundary robustness",
+      "description": "Preserve complete coverage and add realistic ambiguity near billing and fraud.",
+      "weight": 100
+    }
+  ],
+  "use_semantic_context": true,
+  "use_authenticity_context": true,
+  "cost_model": {
+    "rows_per_request": 5,
+    "estimated_input_tokens_per_request": 500,
+    "estimated_output_tokens_per_row": 80,
+    "input_cost_microusd_per_million_tokens": null,
+    "output_cost_microusd_per_million_tokens": null
+  },
+  "budgets": {
+    "max_model_turns": 8,
+    "max_tool_calls": 12,
+    "max_allocation_previews": 3,
+    "max_input_tokens": 50000,
+    "max_output_tokens": 20000,
+    "max_cost_microusd": 1000000,
+    "max_wall_clock_seconds": 60
+  },
+  "provider": {
+    "runtime": "pi",
+    "provider": "fake",
+    "model": "scripted-architect-v1",
+    "api_key_env": null
+  }
+}

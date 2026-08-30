@@ -89,8 +89,11 @@ pub async fn job(command: JobCommand, store: &SqliteStore) -> anyhow::Result<()>
                 authenticity.as_ref().map(|value| &value.context),
             )
             .await?;
+            let strategy = store.generation_strategy_assignment(id).await?;
             let expected_template = if execution.construction_plan.is_some() {
-                if authenticity.is_some() {
+                if strategy.is_some() {
+                    PromptBuilder::strategy_template_identity(authenticity.is_some())?
+                } else if authenticity.is_some() {
                     PromptBuilder::authenticity_template_identity()?
                 } else {
                     PromptBuilder::template_identity()?
@@ -114,6 +117,17 @@ pub async fn job(command: JobCommand, store: &SqliteStore) -> anyhow::Result<()>
                     })
                     && execution.source_novelty_guard_fingerprint.as_deref()
                         == novelty_guard.as_ref().map(|guard| guard.fingerprint())
+                    && execution.strategy_context_fingerprint.as_deref()
+                        == strategy
+                            .as_ref()
+                            .map(|value| value.context.fingerprint.as_str())
+                    && strategy.as_ref().is_none_or(|value| {
+                        value.reproduce_fingerprint().ok().as_ref() == Some(&value.fingerprint)
+                            && value.context.reproduce_fingerprint().ok().as_ref()
+                                == Some(&value.context.fingerprint)
+                            && value.context.dataset_id == job.dataset_id
+                            && value.context.plan_id == job.plan_id
+                    })
                     && execution.prompt_template == expected_template,
                 "job execution provenance failed its integrity check"
             );
@@ -128,6 +142,9 @@ pub async fn job(command: JobCommand, store: &SqliteStore) -> anyhow::Result<()>
             let mut prompt_builder = PromptBuilder::with_semantics(assignment.context);
             if let Some(authenticity) = authenticity {
                 prompt_builder = prompt_builder.attach_authenticity(authenticity.context);
+            }
+            if let Some(strategy) = strategy {
+                prompt_builder = prompt_builder.attach_strategy(strategy.context);
             }
             let attempts = store.list_generation_attempts(id).await?;
             let start_index = attempts

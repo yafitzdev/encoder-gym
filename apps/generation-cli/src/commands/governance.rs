@@ -225,6 +225,7 @@ const fn exposure_purpose(value: ExposurePurposeArg) -> ExposurePurpose {
         ExposurePurposeArg::ManualInspection => ExposurePurpose::ManualInspection,
         ExposurePurposeArg::Advisor => ExposurePurpose::Advisor,
         ExposurePurposeArg::Optimization => ExposurePurpose::Optimization,
+        ExposurePurposeArg::DatasetArchitecture => ExposurePurpose::DatasetArchitecture,
     }
 }
 

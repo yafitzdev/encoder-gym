@@ -1,3 +1,4 @@
+use artifact_core::{ArtifactKind, ProvenanceStore};
 use dataset_architect_core::{
     brief::{
         ArchitectBudgets, ArchitectProviderConfiguration, GenerationCostModel, PlanningPriority,
@@ -133,5 +134,16 @@ async fn persists_reviewed_architecture_and_ordinary_generation_inputs_atomicall
     assert_eq!(
         store.get_application(proposal.id).await.unwrap(),
         Some(applied.application)
+    );
+    let provenance = store
+        .trace_provenance(ArtifactKind::GenerationPlan, applied.plan.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        provenance
+            .parents
+            .iter()
+            .any(|parent| { parent.kind == ArtifactKind::DatasetArchitectureApplication })
     );
 }

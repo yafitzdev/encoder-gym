@@ -58,6 +58,21 @@ pub enum StrategyKind {
     Custom,
 }
 
+impl StrategyKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::HardNegative => "hard_negative",
+            Self::BoundaryCase => "boundary_case",
+            Self::Ambiguity => "ambiguity",
+            Self::Noise => "noise",
+            Self::RarePattern => "rare_pattern",
+            Self::ChannelVariation => "channel_variation",
+            Self::LengthVariation => "length_variation",
+            Self::Custom => "custom",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CellAllocationRecommendation {
     pub cell: GenerationCell,
@@ -285,7 +300,7 @@ pub fn apply_approved_proposal(
                 .filter(|directive| selector_matches(&directive.selector, &planned.cell))
                 .map(|directive| AppliedStrategyDirective {
                     source_directive_id: directive.id,
-                    kind: format!("{:?}", directive.kind).to_lowercase(),
+                    kind: directive.kind.as_str().into(),
                     share_basis_points: directive.share_basis_points,
                     instructions: directive.instructions.clone(),
                     related_labels: directive.related_labels.clone(),

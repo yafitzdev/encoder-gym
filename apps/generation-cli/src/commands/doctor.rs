@@ -59,8 +59,8 @@ use super::config;
 mod facts;
 
 use facts::{
-    analysis_facts_check, bootstrap_facts_check, evaluation_facts_check, optimization_facts_check,
-    research_facts_check, workflow_facts_check,
+    analysis_facts_check, architect_facts_check, bootstrap_facts_check, evaluation_facts_check,
+    optimization_facts_check, research_facts_check, workflow_facts_check,
 };
 
 #[derive(Debug, Serialize)]
@@ -222,6 +222,7 @@ async fn database_checks(store: &SqliteStore) -> Vec<DoctorCheck> {
     checks.push(workflow_facts_check(store).await);
     checks.push(semantic_facts_check(store).await);
     checks.push(research_facts_check(store).await);
+    checks.push(architect_facts_check(store).await);
     checks.push(generation_execution_facts_check(store).await);
     checks
 }
@@ -325,6 +326,27 @@ async fn generation_execution_facts_check(store: &SqliteStore) -> DoctorCheck {
                         && execution.source_novelty_guard_fingerprint.as_deref()
                             == Some(guard.fingerprint()),
                     "generation execution {} authenticity provenance is invalid",
+                    job.id
+                );
+            }
+            let strategy = store.generation_strategy_assignment(job.id).await?;
+            anyhow::ensure!(
+                execution.strategy_context_fingerprint.as_deref()
+                    == strategy
+                        .as_ref()
+                        .map(|value| value.context.fingerprint.as_str()),
+                "generation execution {} strategy fingerprint differs",
+                job.id
+            );
+            if let Some(assignment) = strategy {
+                anyhow::ensure!(
+                    assignment.job_id == job.id
+                        && assignment.context.dataset_id == job.dataset_id
+                        && assignment.context.plan_id == job.plan_id
+                        && assignment.context.reproduce_fingerprint()?
+                            == assignment.context.fingerprint
+                        && assignment.reproduce_fingerprint()? == assignment.fingerprint,
+                    "generation execution {} strategy provenance is invalid",
                     job.id
                 );
             }

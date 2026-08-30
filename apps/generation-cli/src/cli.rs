@@ -65,6 +65,11 @@ pub enum Command {
         #[command(subcommand)]
         command: ResearchCommand,
     },
+    /// Design explicit generation allocations and strategies with a bounded Pi agent.
+    Architect {
+        #[command(subcommand)]
+        command: ArchitectCommand,
+    },
     /// Create and inspect immutable dataset snapshots.
     Snapshot {
         #[command(subcommand)]
@@ -169,6 +174,61 @@ pub enum Command {
     Rows(RowsArgs),
     /// Export accepted rows.
     Export(ExportArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ArchitectCommand {
+    /// Resolve and validate a dataset-architecture brief without persisting it.
+    BriefValidate { file: PathBuf },
+    /// Persist and execute one bounded Dataset Architect run in the foreground.
+    Start(ArchitectStartArgs),
+    /// Show the durable run, brief, proposal, and tool ledger.
+    Status { run_id: Uuid },
+    /// Poll durable status until the run stops.
+    Watch { run_id: Uuid },
+    /// Show the immutable proposal produced by a run.
+    Proposal { run_id: Uuid },
+    /// Request cancellation before more model or tool work.
+    Cancel { run_id: Uuid },
+    /// Mark an interrupted run failed without replaying model/tool calls.
+    Recover { run_id: Uuid },
+    /// Append a human review decision for an immutable proposal.
+    Review(ArchitectReviewArgs),
+    /// Apply the latest exact approval, failing if dataset coverage changed.
+    Apply { proposal_id: Uuid },
+    /// Inspect the approved per-cell strategy context for a generation plan.
+    Context { plan_id: Uuid },
+}
+
+#[derive(Debug, clap::Args)]
+pub struct ArchitectStartArgs {
+    pub file: PathBuf,
+    /// Scripted Pi turns for a deterministic offline fake-provider run.
+    #[arg(long)]
+    pub script: Option<PathBuf>,
+    #[command(flatten)]
+    pub runtime: ResearchRuntimeArgs,
+}
+
+#[derive(Debug, clap::Args)]
+#[command(group(
+    ArgGroup::new("decision")
+        .required(true)
+        .multiple(false)
+        .args(["approve", "reject", "request_revision"])
+))]
+pub struct ArchitectReviewArgs {
+    pub proposal_id: Uuid,
+    #[arg(long)]
+    pub approve: bool,
+    #[arg(long)]
+    pub reject: bool,
+    #[arg(long)]
+    pub request_revision: bool,
+    #[arg(long, default_value = "local-operator")]
+    pub reviewer: String,
+    #[arg(long)]
+    pub reason: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1378,6 +1438,7 @@ pub enum ExposurePurposeArg {
     ManualInspection,
     Advisor,
     Optimization,
+    DatasetArchitecture,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1685,6 +1746,12 @@ pub enum ArtifactKindArg {
     AuthenticityProfileReview,
     AuthenticityProfileBinding,
     GenerationAuthenticityContext,
+    DatasetArchitectBrief,
+    DatasetArchitectRun,
+    DatasetArchitectureProposal,
+    DatasetArchitectureReview,
+    DatasetArchitectureApplication,
+    GenerationStrategyContext,
     InitialAllocation,
     GenerationPlan,
     GenerationJob,

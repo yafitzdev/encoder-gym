@@ -1,0 +1,69 @@
+[
+  {
+    "text": "1. Inspect the pinned dataset and priorities.\n2. Inspect coverage.\n3. Preview a complete allocation.\n4. Estimate cost.\n5. Submit a scoped strategy proposal for human review.",
+    "toolCalls": [
+      { "name": "inspect_dataset", "arguments": {} },
+      { "name": "inspect_coverage", "arguments": {} }
+    ]
+  },
+  {
+    "text": "The dataset has four cells and no accepted coverage, so I will validate five rows per cell.",
+    "toolCalls": [
+      {
+        "name": "preview_allocation",
+        "arguments": {
+          "allocations": [
+            { "cell": { "label": "billing", "dimensions": { "style": "clean" } }, "target": 5 },
+            { "cell": { "label": "billing", "dimensions": { "style": "messy" } }, "target": 5 },
+            { "cell": { "label": "fraud", "dimensions": { "style": "clean" } }, "target": 5 },
+            { "cell": { "label": "fraud", "dimensions": { "style": "messy" } }, "target": 5 }
+          ]
+        }
+      },
+      { "name": "estimate_cost", "arguments": { "additionalRows": 20 } }
+    ]
+  },
+  {
+    "text": "The allocator accepts the complete budget. I will submit the reviewed handoff, with ambiguity guidance scoped only to messy cells.",
+    "toolCalls": [
+      {
+        "name": "submit_proposal",
+        "arguments": {
+          "summary": "Complete baseline coverage with controlled ambiguity in messy-style examples.",
+          "allocations": [
+            { "cell": { "label": "billing", "dimensions": { "style": "clean" } }, "target": 5, "rationale": "Retain a clean billing baseline.", "confidence": "high", "expectedBenefits": ["coverage"] },
+            { "cell": { "label": "billing", "dimensions": { "style": "messy" } }, "target": 5, "rationale": "Exercise noisy billing language.", "confidence": "high", "expectedBenefits": ["coverage", "class_boundary"] },
+            { "cell": { "label": "fraud", "dimensions": { "style": "clean" } }, "target": 5, "rationale": "Retain a clean fraud baseline.", "confidence": "high", "expectedBenefits": ["coverage"] },
+            { "cell": { "label": "fraud", "dimensions": { "style": "messy" } }, "target": 5, "rationale": "Exercise noisy fraud language.", "confidence": "high", "expectedBenefits": ["coverage", "class_boundary"] }
+          ],
+          "strategies": [
+            {
+              "selector": { "dimensions": { "style": "messy" } },
+              "kind": "ambiguity",
+              "shareBasisPoints": 2500,
+              "instructions": ["Use indirect cues that remain consistent with the trusted target label."],
+              "relatedLabels": ["billing", "fraud"],
+              "rationale": "Messy inputs benefit from realistic but resolvable boundary pressure.",
+              "confidence": "high"
+            }
+          ],
+          "tradeoffs": ["Harder examples can increase rejection if instructions become contradictory."],
+          "uncertainties": ["No development diagnostics are available for this initial dataset."]
+        }
+      }
+    ]
+  },
+  {
+    "text": "The deterministic allocator validated the proposal and its declared cost.",
+    "toolCalls": [
+      {
+        "name": "finish_architecture",
+        "arguments": {
+          "reason": "proposal_submitted",
+          "summary": "Validated dataset architecture is ready for human review.",
+          "confidence": "high"
+        }
+      }
+    ]
+  }
+]

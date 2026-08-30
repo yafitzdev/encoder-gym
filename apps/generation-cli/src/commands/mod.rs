@@ -1,6 +1,7 @@
 mod advisor;
 mod allocation;
 mod analysis;
+mod architect;
 mod authenticity;
 mod backend;
 mod benchmark;
@@ -49,6 +50,7 @@ pub async fn execute(command: Command, store: SqliteStore) -> anyhow::Result<()>
         Command::Dataset { command } => dataset::execute(command, &store).await,
         Command::Semantic { command } => semantic::execute(command, &store).await,
         Command::Research { command } => research::execute(command, &store).await,
+        Command::Architect { command } => architect::execute(command, &store).await,
         Command::Snapshot { command } => snapshot::execute(command, &store).await,
         Command::Encoder { command } => encoder::execute(command, &store).await,
         Command::Training { command } => training::execute(command, store).await,

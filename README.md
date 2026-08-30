@@ -54,6 +54,13 @@ approval, and hands only abstract guidance to generation. The complete offline
 and real-provider procedures are in
 [`docs/authenticity-research.md`](docs/authenticity-research.md).
 
+Dataset architecture is a separate optional Pi-agent workflow that recommends
+explicit per-cell budgets and scoped generation strategies from pinned dataset,
+semantic, authenticity, coverage, and eligible development-diagnostic facts.
+Nothing is applied until an operator approves it; stale coverage blocks the
+handoff, and generation consumes only the resulting immutable plan/context.
+See [`docs/dataset-architect-spec.md`](docs/dataset-architect-spec.md).
+
 The fastest complete offline journey starts from the checked-in local benchmark
 files and requires no copied UUIDs:
 

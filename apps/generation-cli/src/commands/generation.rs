@@ -13,6 +13,7 @@ use generation_core::{
         PlanStore, RowStore,
     },
     prompting::PromptBuilder,
+    strategy::GenerationStrategyAssignment,
     validation::ValidationPipeline,
 };
 use generation_fake::FakeGenerationBackend;
@@ -59,6 +60,7 @@ pub async fn execute(args: GenerateArgs, store: SqliteStore) -> anyhow::Result<(
     let authenticity_context = store.resolve_context(plan.dataset_id).await?;
     let novelty_guard =
         super::authenticity::source_novelty_guard(&store, authenticity_context.as_ref()).await?;
+    let strategy_context = store.generation_strategy_context_for_plan(plan.id).await?;
 
     let job = GenerationJob::queued(
         plan.dataset_id,
@@ -73,12 +75,14 @@ pub async fn execute(args: GenerateArgs, store: SqliteStore) -> anyhow::Result<(
         .map(|config| config.row_construction_plan())
         .transpose()?
         .unwrap_or(generation_core::construction::RowConstructionPlan::llm_text_default()?);
-    let prompt_identity = if authenticity_context.is_some() {
+    let prompt_identity = if strategy_context.is_some() {
+        PromptBuilder::strategy_template_identity(authenticity_context.is_some())?
+    } else if authenticity_context.is_some() {
         PromptBuilder::authenticity_template_identity()?
     } else {
         PromptBuilder::template_identity()?
     };
-    let execution = GenerationExecutionSpec::new_with_construction_and_authenticity(
+    let execution = GenerationExecutionSpec::new_with_all_contexts(
         job.id,
         job.dataset_id,
         job.plan_id,
@@ -98,18 +102,25 @@ pub async fn execute(args: GenerateArgs, store: SqliteStore) -> anyhow::Result<(
         novelty_guard
             .as_ref()
             .map(|guard| guard.fingerprint().to_owned()),
+        strategy_context
+            .as_ref()
+            .map(|context| context.fingerprint.clone()),
         construction_plan,
     )?;
     let semantics = GenerationSemanticAssignment::new(job.id, semantic_context)?;
     let authenticity = authenticity_context
         .map(|context| GenerationAuthenticityAssignment::new(job.id, context))
         .transpose()?;
+    let strategy = strategy_context
+        .map(|context| GenerationStrategyAssignment::create(job.id, context))
+        .transpose()?;
     store
-        .create_generation_execution_bundle_with_authenticity(
+        .create_generation_execution_bundle_with_contexts(
             &job,
             &execution,
             &semantics,
             authenticity.as_ref(),
+            strategy.as_ref(),
         )
         .await?;
     eprintln!(
@@ -212,6 +223,7 @@ pub(crate) async fn run_workflow(
     let authenticity_context = store.resolve_context(plan.dataset_id).await?;
     let novelty_guard =
         super::authenticity::source_novelty_guard(&store, authenticity_context.as_ref()).await?;
+    let strategy_context = store.generation_strategy_context_for_plan(plan.id).await?;
     let job = GenerationJob::queued(
         plan.dataset_id,
         plan.id,
@@ -220,12 +232,14 @@ pub(crate) async fn run_workflow(
         requested_rows,
     );
     let policy = runner_policy(&options, Some(configured));
-    let prompt_identity = if authenticity_context.is_some() {
+    let prompt_identity = if strategy_context.is_some() {
+        PromptBuilder::strategy_template_identity(authenticity_context.is_some())?
+    } else if authenticity_context.is_some() {
         PromptBuilder::authenticity_template_identity()?
     } else {
         PromptBuilder::template_identity()?
     };
-    let execution = GenerationExecutionSpec::new_with_construction_and_authenticity(
+    let execution = GenerationExecutionSpec::new_with_all_contexts(
         job.id,
         job.dataset_id,
         job.plan_id,
@@ -245,6 +259,9 @@ pub(crate) async fn run_workflow(
         novelty_guard
             .as_ref()
             .map(|guard| guard.fingerprint().to_owned()),
+        strategy_context
+            .as_ref()
+            .map(|context| context.fingerprint.clone()),
         configured.row_construction_plan()?,
     )?;
     let semantics = GenerationSemanticAssignment::new(job.id, semantic_context.clone())?;
@@ -252,12 +269,17 @@ pub(crate) async fn run_workflow(
         .clone()
         .map(|context| GenerationAuthenticityAssignment::new(job.id, context))
         .transpose()?;
+    let strategy = strategy_context
+        .clone()
+        .map(|context| GenerationStrategyAssignment::create(job.id, context))
+        .transpose()?;
     store
-        .create_generation_execution_bundle_with_authenticity(
+        .create_generation_execution_bundle_with_contexts(
             &job,
             &execution,
             &semantics,
             authenticity.as_ref(),
+            strategy.as_ref(),
         )
         .await?;
     store
@@ -276,6 +298,10 @@ pub(crate) async fn run_workflow(
     };
     let runner = match novelty_guard {
         Some(guard) => runner.with_source_novelty_guard(guard),
+        None => runner,
+    };
+    let runner = match strategy_context {
+        Some(context) => runner.with_strategy_context(context),
         None => runner,
     };
     let result = runner.run(job.id, parameters).await;
@@ -340,6 +366,19 @@ async fn run_job(
     };
     let runner = match novelty_guard {
         Some(guard) => runner.with_source_novelty_guard(guard),
+        None => runner,
+    };
+    let strategy = store.generation_strategy_assignment(job_id).await?;
+    let runner = match strategy {
+        Some(assignment) => {
+            anyhow::ensure!(
+                assignment.reproduce_fingerprint()? == assignment.fingerprint
+                    && assignment.context.reproduce_fingerprint()?
+                        == assignment.context.fingerprint,
+                "generation job {job_id} has invalid strategy provenance"
+            );
+            runner.with_strategy_context(assignment.context)
+        }
         None => runner,
     };
     let mut handle = tokio::spawn(async move { runner.run(job_id, parameters).await });

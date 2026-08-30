@@ -78,6 +78,27 @@ The offline start form adds `--script` and `--corpus`; real research omits both
 and uses `--search-api-key-env`. Research never starts generation. See
 `authenticity-research.md`.
 
+Dataset Architect commands are:
+
+- `synth architect brief-validate <FILE>` to resolve dataset, accepted coverage,
+  semantic context, an optional approved authenticity profile, and optional
+  governed development diagnostics before any model call;
+- `architect start <FILE> [--script <FILE>]` to run the finite Pi loop;
+- `status|watch|proposal`, `cancel`, and `recover` to inspect or control durable
+  execution without replaying uncertain model calls;
+- `review <PROPOSAL_ID> --approve|--reject|--request-revision --reason TEXT` for
+  append-only operator decisions;
+- `apply <PROPOSAL_ID>` to atomically create an ordinary unequal generation plan
+  and immutable per-cell strategy context; and
+- `context <PLAN_ID>` to inspect that exact generation handoff.
+
+Application fails if accepted coverage changed after the proposal. An optional
+`analysis_report_id` must resolve to exactly one active development or diagnostic
+cohort; the CLI records a `dataset_architecture` slices exposure. Sealed evidence
+is structurally ineligible. Generation pins the context and makes no architect
+or Pi call. See `dataset-architect-spec.md` and the checked-in offline example in
+`examples/architect/`.
+
 Declarative project-preparation commands are:
 
 - `synth project preview <MANIFEST>` to resolve exact initial cell targets,
