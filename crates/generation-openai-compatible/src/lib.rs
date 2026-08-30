@@ -8,7 +8,7 @@ use generation_core::{
     ports::{BoxFuture, GenerationBackend, GenerationBackendError},
 };
 use reqwest::{Client, StatusCode, Url};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 #[derive(Clone)]
@@ -19,7 +19,70 @@ pub struct OpenAICompatibleBackend {
     model: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BackendProbe {
+    pub backend: &'static str,
+    pub base_url: String,
+    pub model: String,
+    pub available_model_count: usize,
+}
+
 impl OpenAICompatibleBackend {
+    pub async fn probe(
+        base_url: &str,
+        api_key: Option<String>,
+        model: &str,
+    ) -> Result<BackendProbe, GenerationBackendError> {
+        let model = model.trim();
+        if model.is_empty() {
+            return Err(GenerationBackendError::Configuration(
+                "model must not be empty".into(),
+            ));
+        }
+        let base_url = base_url.trim().trim_end_matches('/');
+        let endpoint = Url::parse(&format!("{base_url}/models")).map_err(|error| {
+            GenerationBackendError::Configuration(format!("invalid base URL: {error}"))
+        })?;
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|error| GenerationBackendError::Configuration(error.to_string()))?;
+        let mut request = client.get(endpoint);
+        if let Some(api_key) = api_key.filter(|key| !key.trim().is_empty()) {
+            request = request.bearer_auth(api_key);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|error| GenerationBackendError::Request(error.to_string()))?;
+        let status = response.status();
+        let raw = response
+            .text()
+            .await
+            .map_err(|error| GenerationBackendError::Request(error.to_string()))?;
+        if !status.is_success() {
+            return Err(GenerationBackendError::Request(provider_error(
+                status, &raw,
+            )));
+        }
+        let models: ModelList = serde_json::from_str(&raw).map_err(|error| {
+            GenerationBackendError::InvalidResponse(format!(
+                "model-list response is not valid JSON: {error}"
+            ))
+        })?;
+        if !models.data.iter().any(|available| available.id == model) {
+            return Err(GenerationBackendError::Configuration(format!(
+                "configured model is not available from the provider: {model}"
+            )));
+        }
+        Ok(BackendProbe {
+            backend: "openai-compatible",
+            base_url: base_url.into(),
+            model: model.into(),
+            available_model_count: models.data.len(),
+        })
+    }
+
     pub fn new(
         base_url: &str,
         api_key: Option<String>,
@@ -175,6 +238,16 @@ struct Usage {
     completion_tokens: Option<u64>,
     #[serde(default)]
     total_tokens: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelList {
+    data: Vec<AvailableModel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AvailableModel {
+    id: String,
 }
 
 fn insert_optional<T: serde::Serialize>(
@@ -427,6 +500,46 @@ mod tests {
         assert_eq!(result.rows.len(), 1);
         assert_eq!(result.rows[0].text, "charged twice");
         assert_eq!(result.backend_metadata["request_id"], "request-over-http");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn probe_authenticates_and_requires_the_configured_model() {
+        async fn handler(headers: HeaderMap) -> Json<serde_json::Value> {
+            assert_eq!(
+                headers
+                    .get("authorization")
+                    .expect("authorization header")
+                    .to_str()
+                    .expect("text header"),
+                "Bearer test-secret"
+            );
+            Json(json!({
+                "object": "list",
+                "data": [{"id": "requested-model"}, {"id": "other-model"}]
+            }))
+        }
+
+        let app = Router::new().route("/v1/models", axum::routing::get(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local mock server");
+        let address = listener.local_addr().expect("local address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("mock server remains available");
+        });
+
+        let probe = OpenAICompatibleBackend::probe(
+            &format!("http://{address}/v1/"),
+            Some("test-secret".into()),
+            "requested-model",
+        )
+        .await
+        .expect("probe succeeds");
+        assert_eq!(probe.model, "requested-model");
+        assert_eq!(probe.available_model_count, 2);
         server.abort();
     }
 }

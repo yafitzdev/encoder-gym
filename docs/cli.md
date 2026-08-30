@@ -19,6 +19,17 @@ Transformer-specific command groups are:
 progress is written to stderr; JSON results remain a single value on stdout.
 There is no interactive TUI, graphical UI, or new HTTP endpoint for this work.
 
+OpenAI-compatible backend commands are:
+
+- `synth backend configure --base-url URL --model MODEL` to persist non-secret
+  provider settings;
+- `synth backend check` to authenticate without generating and verify that the
+  configured model appears in the provider model list; and
+- `synth backend show` to inspect the persisted non-secret configuration.
+
+`backend check` accepts `--base-url` and `--model` overrides and reads the key
+only from the named `--api-key-env` environment variable.
+
 Declarative project-preparation commands are:
 
 - `synth project preview <MANIFEST>` to resolve exact initial cell targets,

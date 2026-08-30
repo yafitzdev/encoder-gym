@@ -1432,6 +1432,18 @@ pub enum BackendCommand {
         #[arg(long)]
         seed: Option<u64>,
     },
+    /// Authenticate without generating and verify that the configured model exists.
+    Check {
+        /// Override the persisted provider base URL.
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Override the persisted provider model.
+        #[arg(long)]
+        model: Option<String>,
+        /// Environment variable containing the API key.
+        #[arg(long, default_value = "SYNTH_OPENAI_API_KEY")]
+        api_key_env: String,
+    },
     Show,
 }
 
