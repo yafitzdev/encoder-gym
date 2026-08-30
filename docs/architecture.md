@@ -53,6 +53,14 @@ the one transaction that inserts the compiled ordinary artifacts plus a small
 preparation record. Repeating the same manifest returns that record by stable
 manifest fingerprint instead of creating another project.
 
+The optional pilot-bootstrap contract in the same core describes local cohort
+source declarations and the resolved ordinary import/snapshot artifacts needed
+by preparation. File reading and JSONL/CSV mapping stay in `dataset-import` and
+the CLI adapter. SQLite atomically inserts those source artifacts, the existing
+preparation bundle, and a small content-fingerprinted bootstrap record. The
+bootstrap layer does not introduce an alternate importer, snapshot builder,
+benchmark compiler, or workflow engine.
+
 The arrows between core crates describe artifact consumption, not access to
 another slice's implementation. Training consumes normalized snapshot examples;
 it does not query generation jobs.

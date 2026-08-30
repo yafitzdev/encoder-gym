@@ -43,6 +43,13 @@ workflow. Preparation is read-only during preview and atomic during creation.
 It derives identities and fingerprints from persisted snapshot evidence; it
 does not import hidden defaults, run a slice, or weaken any governance check.
 
+A pilot bootstrap layer may resolve local JSONL/CSV cohort declarations into
+ordinary completed imports and immutable all-test snapshots before invoking the
+same preparation compiler. Bootstrap preview is read-only. Bootstrap creation
+persists its source artifacts and the existing preparation bundle in one local
+transaction, fingerprints source contents for idempotency, and never starts the
+workflow or calls a provider.
+
 Every arrow crosses an explicit, persisted contract. A later slice consumes
 immutable artifacts from the earlier slice and never reaches into its internal
 implementation.

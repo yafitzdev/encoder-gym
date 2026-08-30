@@ -35,6 +35,12 @@ scriptable CLI, offline process test, doctor/provenance verification, and
 documentation. It may compose constructors and ports, but it must not invoke
 CLI commands internally or start the prepared workflow.
 
+Pilot bootstrap follows preparation's boundary: strict local-source manifest,
+streaming format-adapter validation, ordinary import/snapshot construction,
+one atomic SQLite transaction with the existing preparation bundle, CLI process
+verification, and a checked-in offline reference project. Source-content
+fingerprints—not mutable paths or presentation state—own replay idempotency.
+
 ## Component loop
 
 For each component:
