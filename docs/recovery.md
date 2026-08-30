@@ -38,7 +38,22 @@ synth recovery resume-generation <JOB_ID> --config project.toml
 
 Resume uses the original backend identity and recomputes remaining work from
 persisted per-cell accepted coverage. Existing accepted rows are never deleted
-or silently repeated. A backend/model mismatch aborts before work starts.
+or silently repeated. Backend endpoint, model, generation parameters, batching
+and retry policy, prompt-template identity, and semantic-context identity must
+match the immutable execution specification or resume aborts before work
+starts.
+
+A provider request is recorded before network I/O. If its process disappears,
+recovery marks the still-open attempt `interrupted`; it cannot assume whether
+the provider completed the request. Failed and interrupted requests remain in
+the attempt history and count toward the job's cumulative per-cell attempt
+ceiling. Inspect the exact facts before resuming:
+
+```text
+synth job execution <JOB_ID>
+synth job attempts <JOB_ID>
+synth job prompt <JOB_ID> --cell-index 0
+```
 
 Training and evaluation are not resumed under the same ID: a partial active
 batch is not an immutable continuation point, and an evaluation should not mix

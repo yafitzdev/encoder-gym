@@ -280,8 +280,14 @@ Generation, training, and evaluation runners register a lease containing the
 owning PID and operating-system process start time. Startup reconciliation only
 marks a `running` workflow interrupted when that exact process identity is no
 longer alive. Generation is eligible for in-place resume because planning reads
-persisted accepted coverage. Training and evaluation preserve interrupted
-history and are not silently replayed under the same artifact identity.
+persisted accepted coverage. Its immutable execution specification pins the
+initial needs, backend identity, parameters, policy, prompt template, and
+semantic context. Every provider call has an append-only lifecycle record;
+attempt completion, rows, accepted source membership, and reconciled counters
+are one SQLite transaction. An open request becomes `interrupted` during
+recovery and still consumes the cumulative attempt ceiling because its remote
+outcome is unknowable. Training and evaluation preserve interrupted history and
+are not silently replayed under the same artifact identity.
 
 Snapshots, registered base-model bundles, resolved configurations, evaluation
 inputs, analysis protocols/reports, optimization evidence/proposals, reviews,

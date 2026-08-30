@@ -118,9 +118,17 @@ normalized-text duplication. Semantic deduplication is out of scope.
 ### Persistence
 
 SQLite stores dataset definitions, dimensions, plans, jobs, generated rows,
-validation outcomes, coverage facts, and generation metadata. Accepted and
-rejected rows retain provenance including backend, model, job identifier, and
-creation time. Raw API credentials are never persisted.
+validation outcomes, coverage facts, generation metadata, immutable execution
+specifications, and one append-only record per provider request. Accepted and
+rejected rows retain provenance including backend, model, job identifier,
+request-attempt identifier, and creation time. Raw API credentials are never
+persisted.
+
+The execution specification pins initial per-cell needs, backend/model and
+non-secret endpoint identity, generation parameters, batching/retry limits,
+prompt-template identity, and semantic-context fingerprint before the first
+provider call. Job creation, execution specification, and semantic assignment
+are one transaction.
 
 Sophisticated dataset versioning is not part of this slice.
 
@@ -129,6 +137,15 @@ Sophisticated dataset versioning is not part of this slice.
 One local worker generates manageable batches with reasonable retries. A failed
 request does not destroy the whole job. Jobs support `queued`, `running`,
 `completed`, `failed`, and `cancelled` states and durable progress counters.
+
+Each provider request is persisted as `started` before network I/O and becomes
+`succeeded`, `failed`, or `interrupted`. A successful attempt, its generated
+rows, accepted source rows, and reconciled job counters commit atomically.
+Retries count against a persisted per-cell row-attempt ceiling. Transport,
+timeout, rate-limit, and server failures may retry with bounded backoff;
+configuration, permanent HTTP rejection, and invalid-response failures do not.
+Normalized-text claims in SQLite prevent two local processes from accepting a
+new duplicate while preserving any historical duplicates during migration.
 
 The CLI may execute a job in the foreground while persisting its state. The
 later HTTP process runs the same application job runner without blocking an HTTP
@@ -158,6 +175,8 @@ Prioritize deterministic tests for:
 - duplicate detection
 - backend response normalization
 - failure, retry, and cancellation behavior
+- crash interruption, atomic attempt/row commits, and cumulative attempt limits
+- execution/prompt fingerprint reproduction and migration compatibility
 
 Most tests use the fake backend and require no network access.
 

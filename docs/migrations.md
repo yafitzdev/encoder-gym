@@ -84,6 +84,10 @@ applied automatically when the SQLite store connects.
   project preparation.
 - `0038_semantic_catalog`: immutable semantic profile versions, append-only
   dataset binding decisions, and exact generation-job semantic assignments.
+- `0039_generation_execution_ledger`: immutable generation execution
+  specifications, append-only provider request attempts, and transactional
+  normalized-text claims that preserve legacy duplicates while rejecting new
+  cross-process duplicates.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

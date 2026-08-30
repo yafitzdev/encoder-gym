@@ -9,6 +9,8 @@ time:
 
 ```text
 generation job
+  -> immutable generation execution specification
+    -> ordered provider request attempts and outcome fingerprints
   -> generation semantic context (job-pinned assignment)
     -> append-only binding decision
       -> exact semantic profile version -> predecessor profile version
@@ -33,6 +35,13 @@ stored as mutable presentation state.
 Generated rows also embed the resolved context in generation metadata. A
 workflow advisory assessment links to the same generation semantic context,
 so its prompt cannot silently pick up a later catalog revision.
+
+The execution specification fingerprint covers initial per-cell needs,
+backend/model and non-secret endpoint identity, parameters, bounded execution
+policy, prompt-template identity, and semantic-context fingerprint. Each row
+links to its provider attempt in generation metadata. Usage and backend outcome
+metadata therefore remain inspectable even when a successful response yields no
+accepted rows.
 
 For transformer evaluation, the dependency path is:
 

@@ -30,6 +30,19 @@ OpenAI-compatible backend commands are:
 `backend check` accepts `--base-url` and `--model` overrides and reads the key
 only from the named `--api-key-env` environment variable.
 
+Generation execution inspection commands are:
+
+- `synth job execution <JOB_ID>` for the immutable, non-secret runtime
+  specification and its fingerprint;
+- `synth job attempts <JOB_ID>` for ordered provider requests, outcomes, usage,
+  errors, and request/outcome fingerprints; and
+- `synth job prompt <JOB_ID> --cell-index N [--requested-count N]` to reconstruct
+  a request from the pinned dataset, semantic context, prompt template, and
+  parameters without contacting the provider.
+
+These commands inspect persisted facts; they do not regenerate, retry, or
+silently use current backend configuration.
+
 Semantic catalog commands are:
 
 - `synth semantic profile-create <FILE>` and `profile-revise <ID> <FILE>` for
