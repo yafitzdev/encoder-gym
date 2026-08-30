@@ -16,6 +16,7 @@ members = [
     "crates/project-config",
     "crates/project-preparation",
     "crates/recovery-core",
+    "crates/semantic-catalog",
     "crates/generation-sqlite",
     "crates/generation-test-support",
     "crates/training-core",
@@ -69,6 +70,7 @@ optimization-core = { package = "optimization-core", path = "crates/optimization
 project-config = { package = "project-config", path = "crates/project-config" }
 project-preparation = { package = "project-preparation", path = "crates/project-preparation" }
 recovery-core = { package = "recovery-core", path = "crates/recovery-core" }
+semantic-catalog = { package = "semantic-catalog", path = "crates/semantic-catalog" }
 workflow-core = { package = "workflow-core", path = "crates/workflow-core" }
 advisor-fake = { package = "advisor-fake", path = "crates/advisor-fake" }
 advisor-openai-compatible = { package = "advisor-openai-compatible", path = "crates/advisor-openai-compatible" }
