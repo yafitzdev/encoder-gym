@@ -11,10 +11,25 @@ export const RESEARCH_TOOL_NAMES = [
 
 export type ResearchToolName = (typeof RESEARCH_TOOL_NAMES)[number];
 
+export const ARCHITECT_TOOL_NAMES = [
+  "inspect_dataset",
+  "inspect_semantics",
+  "inspect_authenticity",
+  "inspect_coverage",
+  "inspect_development_evidence",
+  "preview_allocation",
+  "estimate_cost",
+  "submit_proposal",
+  "finish_architecture",
+] as const;
+
+export type ArchitectToolName = (typeof ARCHITECT_TOOL_NAMES)[number];
+export type AgentToolName = ResearchToolName | ArchitectToolName;
+
 export interface ToolExecutionRequest {
   runId: string;
   callId: string;
-  name: ResearchToolName;
+  name: AgentToolName;
   arguments: unknown;
 }
 
@@ -29,7 +44,7 @@ export interface ToolExecutor {
 }
 
 export interface ScriptedToolCall {
-  name: ResearchToolName;
+  name: AgentToolName;
   arguments: Record<string, unknown>;
 }
 
@@ -40,6 +55,7 @@ export interface ScriptedTurn {
 
 export interface PiRunRequest {
   protocolVersion: typeof PROTOCOL_VERSION;
+  capabilitySet: "authenticity_research_v1" | "dataset_architect_v1";
   runId: string;
   runSpecificationFingerprint: string;
   provider: string;

@@ -2,6 +2,7 @@
 
 pub mod brief;
 pub mod lifecycle;
+pub mod ports;
 pub mod proposal;
 
 use thiserror::Error;

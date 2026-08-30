@@ -1,8 +1,11 @@
-use std::{future::Future, pin::Pin};
-
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use uuid::Uuid;
+
+pub use agent_runtime_core::{
+    AgentAdapterError as ResearchAdapterError, AgentEvent as ResearchAgentEvent,
+    AgentMessage as ResearchAgentMessage, AgentRequest as ResearchAgentRequest,
+    AgentRuntime as ResearchAgentRuntime, AgentSession as ResearchAgentSession, AgentToolRequest,
+    AgentToolResult, BoxFuture,
+};
 
 use crate::{
     brief::ResolvedResearchBrief,
@@ -16,12 +19,6 @@ use crate::{
     },
 };
 
-pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-#[error("research adapter failed: {0}")]
-pub struct ResearchAdapterError(pub String);
-
 pub trait SearchProvider: Send + Sync {
     fn search(
         &self,
@@ -34,101 +31,6 @@ pub trait PageFetcher: Send + Sync {
         &self,
         request: FetchRequest,
     ) -> BoxFuture<'_, Result<UntrustedPage, ResearchAdapterError>>;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResearchAgentRequest {
-    pub protocol_version: u32,
-    pub run_id: Uuid,
-    pub run_specification_fingerprint: String,
-    pub provider: String,
-    pub model: String,
-    pub api_key_env: Option<String>,
-    pub system_prompt: String,
-    pub initial_prompt: String,
-    pub max_model_turns: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ResearchAgentEvent {
-    AgentStarted,
-    ModelTurnStarted {
-        sequence: u32,
-    },
-    ModelTurnCompleted {
-        sequence: u32,
-        input_tokens: u64,
-        output_tokens: u64,
-        cost_microusd: u64,
-    },
-    AgentText {
-        text: String,
-    },
-    ToolStarted {
-        external_call_id: String,
-        name: String,
-    },
-    ToolCompleted {
-        external_call_id: String,
-        name: String,
-        failed: bool,
-    },
-    AgentFinished {
-        turns: u32,
-        aborted: bool,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentToolRequest {
-    pub external_call_id: String,
-    pub name: String,
-    pub arguments: serde_json::Value,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ResearchAgentMessage {
-    Event { event: ResearchAgentEvent },
-    ToolRequest { request: AgentToolRequest },
-    Completed,
-    Failed { message: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentToolResult {
-    pub content: serde_json::Value,
-    #[serde(default)]
-    pub details: serde_json::Value,
-    #[serde(default)]
-    pub terminate: bool,
-}
-
-pub trait ResearchAgentSession: Send {
-    fn next_message(&mut self)
-    -> BoxFuture<'_, Result<ResearchAgentMessage, ResearchAdapterError>>;
-
-    fn send_tool_result(
-        &mut self,
-        external_call_id: &str,
-        result: AgentToolResult,
-    ) -> BoxFuture<'_, Result<(), ResearchAdapterError>>;
-
-    fn send_tool_error(
-        &mut self,
-        external_call_id: &str,
-        message: &str,
-    ) -> BoxFuture<'_, Result<(), ResearchAdapterError>>;
-
-    fn cancel(&mut self, run_id: Uuid) -> BoxFuture<'_, Result<(), ResearchAdapterError>>;
-}
-
-pub trait ResearchAgentRuntime: Send + Sync {
-    fn start(
-        &self,
-        request: ResearchAgentRequest,
-    ) -> BoxFuture<'_, Result<Box<dyn ResearchAgentSession>, ResearchAdapterError>>;
 }
 
 pub trait ResearchStore: Send + Sync {

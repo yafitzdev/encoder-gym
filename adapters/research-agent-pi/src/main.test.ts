@@ -15,6 +15,7 @@ test("compiled sidecar exchanges one JSON object per line", { timeout: 10_000 },
   const output: OutputMessage[] = [];
   const request: PiRunRequest = {
     protocolVersion: PROTOCOL_VERSION,
+    capabilitySet: "authenticity_research_v1",
     runId: "process-run",
     runSpecificationFingerprint: "sha256:process",
     provider: "fake",

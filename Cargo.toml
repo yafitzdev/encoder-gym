@@ -2,6 +2,7 @@
 members = [
     "apps/generation-cli",
     "apps/generation-server",
+    "crates/agent-runtime-core",
     "crates/analysis-core",
     "crates/advisor-fake",
     "crates/advisor-openai-compatible",
@@ -9,6 +10,7 @@ members = [
     "crates/dataset-core",
     "crates/dataset-import",
     "crates/dataset-architect-core",
+    "crates/dataset-architect-runner",
     "crates/evaluation-core",
     "crates/generation-core",
     "crates/generation-fake",
@@ -37,6 +39,7 @@ edition = "2024"
 rust-version = "1.85"
 
 [workspace.dependencies]
+agent-runtime-core = { package = "agent-runtime-core", path = "crates/agent-runtime-core" }
 anyhow = "1"
 candle-core = { version = "0.11", default-features = false }
 candle-nn = { version = "0.11", default-features = false }
@@ -69,6 +72,7 @@ generation-fake = { package = "synthetic-data-fake", path = "crates/generation-f
 dataset-core = { package = "dataset-core", path = "crates/dataset-core" }
 dataset-import = { package = "dataset-import", path = "crates/dataset-import" }
 dataset-architect-core = { package = "dataset-architect-core", path = "crates/dataset-architect-core" }
+dataset-architect-runner = { package = "dataset-architect-runner", path = "crates/dataset-architect-runner" }
 training-core = { package = "training-core", path = "crates/training-core" }
 evaluation-core = { package = "evaluation-core", path = "crates/evaluation-core" }
 analysis-core = { package = "analysis-core", path = "crates/analysis-core" }

@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 function request(): PiRunRequest {
   return {
     protocolVersion: PROTOCOL_VERSION,
+    capabilitySet: "authenticity_research_v1",
     runId: "run-protocol",
     runSpecificationFingerprint: "sha256:run",
     provider: "fake",

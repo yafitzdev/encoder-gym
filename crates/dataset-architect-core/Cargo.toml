@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+agent-runtime-core.workspace = true
 analysis-core.workspace = true
 artifact-core.workspace = true
 chrono.workspace = true

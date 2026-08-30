@@ -129,7 +129,7 @@ impl DatasetArchitectureProposal {
         draft: ArchitectProposalDraft,
     ) -> Result<Self, ArchitectError> {
         if brief.reproduce_fingerprint()? != brief.fingerprint
-            || run.reproduce_fingerprint()? != run.fingerprint
+            || run.reproduce_specification_fingerprint()? != run.specification_fingerprint
             || run.brief_id != brief.id
             || run.brief_fingerprint != brief.fingerprint
             || run.state != ArchitectRunState::Running
@@ -178,7 +178,7 @@ impl DatasetArchitectureProposal {
             id: Uuid::new_v4(),
             schema_version: ARCHITECT_PROPOSAL_SCHEMA_VERSION,
             run_id: run.id,
-            run_fingerprint: run.fingerprint.clone(),
+            run_fingerprint: run.specification_fingerprint.clone(),
             brief_id: brief.id,
             brief_fingerprint: brief.fingerprint.clone(),
             dataset_id: brief.dataset.id,

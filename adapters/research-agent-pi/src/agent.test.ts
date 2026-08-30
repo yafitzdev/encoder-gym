@@ -7,6 +7,7 @@ import { PROTOCOL_VERSION, type PiRunEvent, type PiRunRequest } from "./protocol
 function request(): PiRunRequest {
   return {
     protocolVersion: PROTOCOL_VERSION,
+    capabilitySet: "authenticity_research_v1",
     runId: "run-1",
     runSpecificationFingerprint: "sha256:run",
     provider: "fake",
@@ -134,4 +135,62 @@ test("cancellation aborts an in-flight host tool", async () => {
   await agent.run(input);
   assert.equal(sawAbort, true);
   assert.equal(agentReportedAbort, true);
+});
+
+test("the Dataset Architect iterates through only its application-owned tools", async () => {
+  const calls: string[] = [];
+  const input = request();
+  input.capabilitySet = "dataset_architect_v1";
+  input.maxModelTurns = 4;
+  input.scriptedTurns = [
+    {
+      text: "I will inspect the declared planning space first.",
+      toolCalls: [{ name: "inspect_dataset", arguments: {} }],
+    },
+    {
+      text: "I will validate a candidate rather than assume it is feasible.",
+      toolCalls: [{ name: "preview_allocation", arguments: { allocations: [] } }],
+    },
+    {
+      toolCalls: [
+        {
+          name: "submit_proposal",
+          arguments: {
+            summary: "Candidate",
+            allocations: [],
+            strategies: [],
+            tradeoffs: [],
+            uncertainties: [],
+          },
+        },
+      ],
+    },
+    {
+      toolCalls: [
+        {
+          name: "finish_architecture",
+          arguments: {
+            reason: "proposal_submitted",
+            summary: "Proposal submitted.",
+            confidence: "medium",
+          },
+        },
+      ],
+    },
+  ];
+  const agent = new PiResearchAgent({
+    async execute(call) {
+      calls.push(call.name);
+      return { content: { accepted: true } };
+    },
+  });
+
+  await agent.run(input);
+
+  assert.deepEqual(calls, [
+    "inspect_dataset",
+    "preview_allocation",
+    "submit_proposal",
+    "finish_architecture",
+  ]);
 });

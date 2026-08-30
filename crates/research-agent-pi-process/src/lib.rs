@@ -2,9 +2,11 @@
 
 use std::{path::PathBuf, process::Stdio, time::Duration};
 
-use research_core::ports::{
-    AgentToolRequest, AgentToolResult, BoxFuture, ResearchAdapterError, ResearchAgentEvent,
-    ResearchAgentMessage, ResearchAgentRequest, ResearchAgentRuntime, ResearchAgentSession,
+use agent_runtime_core::{
+    AgentAdapterError as ResearchAdapterError, AgentEvent as ResearchAgentEvent,
+    AgentMessage as ResearchAgentMessage, AgentRequest as ResearchAgentRequest,
+    AgentRuntime as ResearchAgentRuntime, AgentSession as ResearchAgentSession, AgentToolRequest,
+    AgentToolResult, BoxFuture,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -104,6 +106,7 @@ impl ResearchAgentRuntime for PiProcessRuntime {
                 .write_input(&InputMessage::Start {
                     request: StartRequest {
                         protocol_version: request.protocol_version,
+                        capability_set: request.capability_set,
                         run_id: request.run_id,
                         run_specification_fingerprint: request.run_specification_fingerprint,
                         provider: request.provider,
@@ -285,6 +288,7 @@ enum InputMessage {
 #[serde(rename_all = "camelCase")]
 struct StartRequest {
     protocol_version: u32,
+    capability_set: String,
     run_id: Uuid,
     run_specification_fingerprint: String,
     provider: String,
@@ -504,5 +508,23 @@ mod tests {
         assert!(encoded.get("call_id").is_none());
         assert!(encoded["result"].get("details").is_none());
         assert!(encoded["result"].get("terminate").is_none());
+
+        let start = serde_json::to_value(InputMessage::Start {
+            request: StartRequest {
+                protocol_version: PROTOCOL_VERSION,
+                capability_set: "dataset_architect_v1".into(),
+                run_id: Uuid::new_v4(),
+                run_specification_fingerprint: "sha256:run".into(),
+                provider: "fake".into(),
+                model: "scripted".into(),
+                api_key_env: None,
+                system_prompt: "policy".into(),
+                initial_prompt: "start".into(),
+                max_model_turns: 4,
+                scripted_turns: None,
+            },
+        })
+        .expect("serialize start");
+        assert_eq!(start["request"]["capabilitySet"], "dataset_architect_v1");
     }
 }

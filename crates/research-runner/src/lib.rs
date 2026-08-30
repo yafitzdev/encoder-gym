@@ -123,6 +123,7 @@ impl ResearchRunner {
             INITIAL_PROMPT_TEMPLATE.replace("{brief}", &serde_json::to_string_pretty(&brief)?);
         let request = ResearchAgentRequest {
             protocol_version: run.protocol_version,
+            capability_set: "authenticity_research_v1".into(),
             run_id: run.id,
             run_specification_fingerprint: run.specification_fingerprint.clone(),
             provider: brief.provider.provider.clone(),

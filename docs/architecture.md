@@ -27,6 +27,7 @@ Cross-cutting contracts remain small and inward-facing:
 apps / SQLite adapter ──> project-config
 apps / SQLite adapter ──> recovery-core
 slice cores / adapters ──> artifact-core
+agentic cores / Pi process adapter ──> agent-runtime-core
 generation-core / workflow-core ──> semantic-catalog
 dataset-import ─────────> dataset-core + generation-core
 workflow-core ──────────> narrow artifact contracts from slice cores
@@ -40,6 +41,12 @@ dataset-architect-core ────> generation/allocation and governed evidence
 `artifact-core` only canonicalizes fingerprint inputs and describes provenance
 trees. `recovery-core` only describes process leases and interruption records.
 Neither crate orchestrates slice business logic.
+
+`agent-runtime-core` is the small product-neutral interactive boundary shared by
+bounded agentic capabilities. A request selects one versioned capability set;
+the Pi sidecar owns the corresponding tool schemas while each product runner
+still validates and executes every request. The generic contract grants no tool
+by itself and contains no research, planning, persistence, or Pi types.
 
 `semantic-catalog` owns immutable reusable/dataset-scoped profiles, append-only
 bindings, deterministic layered resolution, and the provider-neutral resolved
