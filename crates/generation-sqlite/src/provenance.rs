@@ -16,6 +16,7 @@ use optimization_core::{
     reviews::ProposalReviewRecord,
 };
 use project_preparation::{BootstrapStore, PreparationStore};
+use semantic_catalog::{SemanticBindingDecision, SemanticCatalogStore};
 use serde::Serialize;
 use serde_json::json;
 use sqlx::FromRow;
@@ -40,6 +41,9 @@ impl ProvenanceStore for SqliteStore {
                 ArtifactKind::ProjectPreparation => self.project_preparation_node(id).await,
                 ArtifactKind::ProjectConfiguration => self.configuration_node(id).await,
                 ArtifactKind::Dataset => self.dataset_node(id).await,
+                ArtifactKind::SemanticProfile => self.semantic_profile_node(id).await,
+                ArtifactKind::SemanticBinding => self.semantic_binding_node(id).await,
+                ArtifactKind::GenerationSemanticContext => self.semantic_context_node(id).await,
                 ArtifactKind::GenerationPlan => self.plan_node(id).await,
                 ArtifactKind::GenerationJob => self.job_node(id).await,
                 ArtifactKind::DatasetImport => self.import_node(id).await,
@@ -70,6 +74,94 @@ impl ProvenanceStore for SqliteStore {
 }
 
 impl SqliteStore {
+    async fn semantic_profile_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(profile) = self.get_semantic_profile(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let mut parents = Vec::new();
+        if let Some(predecessor_id) = profile.predecessor_id
+            && let Some(predecessor) = Box::pin(self.semantic_profile_node(predecessor_id)).await?
+        {
+            parents.push(predecessor);
+        }
+        Ok(Some(node(
+            ArtifactKind::SemanticProfile,
+            id,
+            Some(profile.fingerprint.clone()),
+            &profile,
+            parents,
+        )?))
+    }
+
+    async fn semantic_binding_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(payload) = sqlx::query_scalar::<_, String>(
+            "SELECT artifact_json FROM dataset_semantic_binding_decisions WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let binding: SemanticBindingDecision =
+            serde_json::from_str(&payload).map_err(store_error)?;
+        let mut parents = self
+            .dataset_node(binding.dataset_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(profile_id) = binding.profile_id
+            && let Some(profile) = self.semantic_profile_node(profile_id).await?
+        {
+            parents.push(profile);
+        }
+        if let Some(predecessor_id) = binding.predecessor_id
+            && let Some(predecessor) = Box::pin(self.semantic_binding_node(predecessor_id)).await?
+        {
+            parents.push(predecessor);
+        }
+        Ok(Some(node(
+            ArtifactKind::SemanticBinding,
+            id,
+            Some(binding.fingerprint.clone()),
+            &binding,
+            parents,
+        )?))
+    }
+
+    async fn semantic_context_node(
+        &self,
+        job_id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(assignment) = self
+            .get_generation_semantics(job_id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let mut parents = Vec::new();
+        for source in &assignment.context.sources {
+            if let Some(binding) = self.semantic_binding_node(source.binding_id).await? {
+                parents.push(binding);
+            }
+        }
+        Ok(Some(node(
+            ArtifactKind::GenerationSemanticContext,
+            job_id,
+            Some(assignment.fingerprint.clone()),
+            &assignment,
+            parents,
+        )?))
+    }
+
     async fn project_bootstrap_node(
         &self,
         id: Uuid,
@@ -243,11 +335,16 @@ impl SqliteStore {
         else {
             return Ok(None);
         };
-        let parents = self
+        let mut parents = self
             .analysis_node(value.request.analysis_report_id)
             .await?
             .into_iter()
-            .collect();
+            .collect::<Vec<_>>();
+        if let Some(job_id) = value.request.semantic_context_job_id
+            && let Some(context) = self.semantic_context_node(job_id).await?
+        {
+            parents.push(context);
+        }
         Ok(Some(node(
             ArtifactKind::AdvisoryAssessment,
             id,
@@ -671,7 +768,14 @@ impl SqliteStore {
         let Some(job) = self.get_job(id).await.map_err(store_error)? else {
             return Ok(None);
         };
-        let parents = self.plan_node(job.plan_id).await?.into_iter().collect();
+        let mut parents = self
+            .plan_node(job.plan_id)
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(context) = self.semantic_context_node(id).await? {
+            parents.push(context);
+        }
         Ok(Some(node(
             ArtifactKind::GenerationJob,
             id,

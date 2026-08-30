@@ -367,6 +367,14 @@ pub(super) fn execute_initial_stage<'a>(
                                 .iter()
                                 .map(|dimension| (dimension.name.clone(), dimension.values.clone()))
                                 .collect(),
+                            semantic_context_job_id: artifact_id(&history, "generation_job").ok(),
+                            semantic_context: match artifact_id(&history, "generation_job").ok() {
+                                Some(job_id) => store
+                                    .get_generation_semantics(job_id)
+                                    .await?
+                                    .map(|assignment| assignment.context),
+                                None => None,
+                            },
                             analysis_report_id: report.id,
                             analysis_report_fingerprint: report.fingerprint.clone(),
                             acceptance_assessment_id: acceptance.id,

@@ -17,6 +17,7 @@ use optimization_core::{
 };
 use project_config::ProjectConfigurationStore;
 use recovery_core::{RecoveryState, RecoveryStore, WorkflowKind};
+use semantic_catalog::SemanticCatalogStore;
 use synthetic_data_sqlite::SqliteStore;
 use workflow_core::{
     advisor::{

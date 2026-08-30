@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use axum::{
     Json,
@@ -10,11 +10,16 @@ use generation_core::{
     domain::GenerationParameters,
     jobs::{GenerationJob, JobRunner, JobRunnerPolicy},
     planning::calculate_generation_needs,
-    ports::{BackendConfigurationStore, GenerationBackend, JobStore, PlanStore, RowStore},
+    ports::{
+        BackendConfigurationStore, DatasetStore, GenerationBackend, JobStore, PlanStore, RowStore,
+    },
     validation::ValidationPipeline,
 };
 use generation_fake::FakeGenerationBackend;
 use generation_openai_compatible::OpenAICompatibleBackend;
+use semantic_catalog::{
+    GenerationSemanticAssignment, SemanticCatalogStore, SemanticDatasetSchema, resolve_semantics,
+};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -71,6 +76,43 @@ pub async fn start_job(
         .iter()
         .map(|need| u64::from(need.remaining_count))
         .sum();
+    let dataset = state
+        .store
+        .get_dataset(plan.dataset_id)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("dataset"))?;
+    let bindings = state
+        .store
+        .current_semantic_bindings(dataset.id)
+        .await
+        .map_err(ApiError::internal)?;
+    let mut profiles = BTreeMap::new();
+    for profile_id in bindings.iter().filter_map(|binding| binding.profile_id) {
+        let profile = state
+            .store
+            .get_semantic_profile(profile_id)
+            .await
+            .map_err(ApiError::internal)?
+            .ok_or_else(|| {
+                ApiError::bad_request(format!("semantic profile missing: {profile_id}"))
+            })?;
+        profiles.insert(profile_id, profile);
+    }
+    let semantic_context = resolve_semantics(
+        &SemanticDatasetSchema {
+            dataset_id: dataset.id,
+            labels: dataset.labels,
+            dimensions: dataset
+                .dimensions
+                .into_iter()
+                .map(|dimension| (dimension.name, dimension.values))
+                .collect(),
+        },
+        &bindings,
+        &profiles,
+    )
+    .map_err(ApiError::bad_request)?;
 
     let (backend, parameters): (Arc<dyn GenerationBackend>, GenerationParameters) =
         match input.backend.as_str() {
@@ -116,6 +158,14 @@ pub async fn start_job(
         .create_job(&job)
         .await
         .map_err(ApiError::internal)?;
+    state
+        .store
+        .save_generation_semantics(
+            &GenerationSemanticAssignment::new(job.id, semantic_context.clone())
+                .map_err(ApiError::internal)?,
+        )
+        .await
+        .map_err(ApiError::internal)?;
 
     let runner = JobRunner::new(
         Arc::new(state.store.clone()),
@@ -127,7 +177,8 @@ pub async fn start_job(
             retry_delay: Duration::from_millis(500),
         },
         ValidationPipeline::standard(None),
-    );
+    )
+    .with_semantic_context(semantic_context);
     let worker = state.worker.clone();
     let job_id = job.id;
     tokio::spawn(async move {

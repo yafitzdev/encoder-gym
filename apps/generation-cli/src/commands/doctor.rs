@@ -29,11 +29,15 @@ use optimization_core::{
 };
 use project_config::{GenerationBackendKind, ResolvedProjectConfig};
 use project_preparation::{BootstrapStore, PreparationStore};
+use semantic_catalog::{
+    GenerationSemanticAssignment, SemanticBindingDecision, SemanticCatalogStore, resolve_semantics,
+};
 use serde::{Serialize, de::DeserializeOwned};
 use synthetic_data_sqlite::SqliteStore;
 use training_core::ports::{EncoderRegistry, TrainingStore};
 use training_linear::verify_file;
 use training_transformer::BertBundle;
+use uuid::Uuid;
 use workflow_core::{
     advisor::AdvisoryAssessment,
     allocation::InitialAllocationRecord,
@@ -213,7 +217,107 @@ async fn database_checks(store: &SqliteStore) -> Vec<DoctorCheck> {
     checks.push(optimization_facts_check(store).await);
     checks.push(bootstrap_facts_check(store).await);
     checks.push(workflow_facts_check(store).await);
+    checks.push(semantic_facts_check(store).await);
     checks
+}
+
+async fn semantic_facts_check(store: &SqliteStore) -> DoctorCheck {
+    let result: anyhow::Result<(usize, usize, usize)> = async {
+        let profiles = store.list_semantic_profiles(None).await?;
+        for profile in &profiles {
+            anyhow::ensure!(
+                profile.reproduce_fingerprint()? == profile.fingerprint,
+                "semantic profile {} has a fingerprint mismatch",
+                profile.id
+            );
+        }
+        let profile_map = profiles
+            .iter()
+            .cloned()
+            .map(|profile| (profile.id, profile))
+            .collect();
+        let datasets = store.list_datasets().await?;
+        let mut binding_count = 0;
+        for dataset in &datasets {
+            let bindings = store.current_semantic_bindings(dataset.id).await?;
+            binding_count += bindings.len();
+            resolve_semantics(
+                &super::semantic::schema_from_dataset(dataset),
+                &bindings,
+                &profile_map,
+            )?;
+        }
+        let payloads = sqlx::query_scalar::<_, String>(
+            "SELECT artifact_json FROM generation_job_semantics ORDER BY created_at, job_id",
+        )
+        .fetch_all(store.pool())
+        .await?;
+        for payload in &payloads {
+            let assignment: GenerationSemanticAssignment = serde_json::from_str(payload)?;
+            anyhow::ensure!(
+                assignment.reproduce_fingerprint()? == assignment.fingerprint,
+                "generation semantic assignment for job {} has a fingerprint mismatch",
+                assignment.job_id
+            );
+            anyhow::ensure!(
+                assignment.context.reproduce_fingerprint()? == assignment.context.fingerprint,
+                "semantic context for job {} has a fingerprint mismatch",
+                assignment.job_id
+            );
+            let dataset_id = sqlx::query_scalar::<_, Uuid>(
+                "SELECT dataset_id FROM generation_jobs WHERE id = ?",
+            )
+            .bind(assignment.job_id)
+            .fetch_one(store.pool())
+            .await?;
+            anyhow::ensure!(
+                assignment.context.dataset_id == dataset_id,
+                "semantic context for job {} references the wrong dataset",
+                assignment.job_id
+            );
+            for source in &assignment.context.sources {
+                let binding_payload = sqlx::query_scalar::<_, String>(
+                    "SELECT artifact_json FROM dataset_semantic_binding_decisions WHERE id = ?",
+                )
+                .bind(source.binding_id)
+                .fetch_one(store.pool())
+                .await?;
+                let binding: SemanticBindingDecision = serde_json::from_str(&binding_payload)?;
+                anyhow::ensure!(
+                    binding.fingerprint == source.binding_fingerprint
+                        && binding.profile_id == Some(source.profile_id)
+                        && binding.target == source.target
+                        && binding.layer == source.layer,
+                    "semantic source binding {} does not reproduce its job assignment",
+                    source.binding_id
+                );
+                let profile = store
+                    .get_semantic_profile(source.profile_id)
+                    .await?
+                    .with_context(|| {
+                        format!("semantic source profile {} is missing", source.profile_id)
+                    })?;
+                anyhow::ensure!(
+                    profile.fingerprint == source.profile_fingerprint
+                        && profile.key == source.profile_key
+                        && profile.version == source.profile_version,
+                    "semantic source profile {} does not reproduce its job assignment",
+                    source.profile_id
+                );
+            }
+        }
+        Ok((profiles.len(), binding_count, payloads.len()))
+    }
+    .await;
+    match result {
+        Ok((profiles, bindings, assignments)) => pass(
+            "semantic_catalog_facts",
+            format!(
+                "verified {profiles} profile(s), {bindings} active binding decision(s), and {assignments} generation assignment(s)"
+            ),
+        ),
+        Err(error) => fail("semantic_catalog_facts", error.to_string()),
+    }
 }
 
 fn artifact_check(configured: Option<&ResolvedProjectConfig>) -> DoctorCheck {

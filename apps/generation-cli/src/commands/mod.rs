@@ -21,6 +21,7 @@ mod project_bootstrap;
 mod project_preparation;
 mod provenance;
 mod recovery;
+mod semantic;
 mod snapshot;
 mod training;
 mod workflow;
@@ -44,6 +45,7 @@ pub async fn execute(command: Command, store: SqliteStore) -> anyhow::Result<()>
         Command::Benchmark { command } => benchmark::execute(command, &store).await,
         Command::Workflow { command } => workflow::execute(command, &store).await,
         Command::Dataset { command } => dataset::execute(command, &store).await,
+        Command::Semantic { command } => semantic::execute(command, &store).await,
         Command::Snapshot { command } => snapshot::execute(command, &store).await,
         Command::Encoder { command } => encoder::execute(command, &store).await,
         Command::Training { command } => training::execute(command, store).await,

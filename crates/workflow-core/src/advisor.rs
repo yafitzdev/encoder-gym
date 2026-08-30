@@ -4,6 +4,7 @@ use std::{collections::BTreeMap, future::Future, pin::Pin};
 
 use chrono::{DateTime, Utc};
 use generation_core::domain::GenerationCell;
+use semantic_catalog::ResolvedSemanticContext;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -87,6 +88,10 @@ pub struct AdvisoryRequest {
     pub task: String,
     pub labels: Vec<String>,
     pub dimensions: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    pub semantic_context_job_id: Option<Uuid>,
+    #[serde(default)]
+    pub semantic_context: Option<ResolvedSemanticContext>,
     pub analysis_report_id: Uuid,
     pub analysis_report_fingerprint: String,
     pub acceptance_assessment_id: Uuid,
@@ -122,6 +127,16 @@ impl AdvisoryRequest {
                 > usize::from(configuration.maximum_representative_errors)
             || self.egress_policy != configuration.egress_policy
         {
+            return Err(AdvisorError::InvalidRequest);
+        }
+        if self.semantic_context_job_id.is_some() != self.semantic_context.is_some() {
+            return Err(AdvisorError::InvalidRequest);
+        }
+        if self.semantic_context.as_ref().is_some_and(|context| {
+            context
+                .reproduce_fingerprint()
+                .map_or(true, |fingerprint| fingerprint != context.fingerprint)
+        }) {
             return Err(AdvisorError::InvalidRequest);
         }
         if self.findings.iter().any(|finding| {
@@ -271,6 +286,8 @@ pub fn build_prompt(
         "task": request.task,
         "labels": request.labels,
         "dimensions": request.dimensions,
+        "semantic_context_job_id": request.semantic_context_job_id,
+        "semantic_context": request.semantic_context,
         "acceptance_state": request.acceptance_state,
         "prediction_count": request.prediction_count,
         "error_count": request.error_count,
@@ -433,6 +450,8 @@ mod tests {
             task: "classify support requests".into(),
             labels: vec!["billing".into(), "fraud".into()],
             dimensions: BTreeMap::from([("difficulty".into(), vec!["easy".into(), "hard".into()])]),
+            semantic_context_job_id: None,
+            semantic_context: None,
             analysis_report_id: Uuid::new_v4(),
             analysis_report_fingerprint: "sha256:analysis".into(),
             acceptance_assessment_id: Uuid::new_v4(),
@@ -500,5 +519,37 @@ mod tests {
             build_prompt(&configuration(), &request),
             Err(AdvisorError::RawTextNotAuthorized)
         );
+    }
+
+    #[test]
+    fn advisor_prompt_uses_the_generation_jobs_pinned_semantics() {
+        use semantic_catalog::{ResolvedSemanticTarget, SemanticEntry};
+
+        let mut context = ResolvedSemanticContext {
+            dataset_id: Uuid::new_v4(),
+            targets: BTreeMap::from([(
+                "dimension:difficulty".into(),
+                ResolvedSemanticTarget {
+                    description: Some("Inference burden".into()),
+                    entries: BTreeMap::from([(
+                        "hard".into(),
+                        SemanticEntry {
+                            description: Some("Multiple indirect clues".into()),
+                            ..SemanticEntry::default()
+                        },
+                    )]),
+                },
+            )]),
+            sources: vec![],
+            resolved_at: Utc::now(),
+            fingerprint: String::new(),
+        };
+        context.fingerprint = context.reproduce_fingerprint().expect("fingerprint");
+        let mut request = request();
+        request.semantic_context_job_id = Some(Uuid::new_v4());
+        request.semantic_context = Some(context);
+        let prompt = build_prompt(&configuration(), &request).expect("prompt");
+        assert!(prompt.user_prompt.contains("Inference burden"));
+        assert!(prompt.user_prompt.contains("Multiple indirect clues"));
     }
 }

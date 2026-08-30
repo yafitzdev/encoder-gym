@@ -152,8 +152,16 @@ impl JobRunner {
             backend,
             policy,
             validation,
-            prompt_builder: PromptBuilder,
+            prompt_builder: PromptBuilder::default(),
         }
+    }
+
+    pub fn with_semantic_context(
+        mut self,
+        context: semantic_catalog::ResolvedSemanticContext,
+    ) -> Self {
+        self.prompt_builder = PromptBuilder::with_semantics(context);
+        self
     }
 
     pub async fn run(
@@ -230,6 +238,7 @@ impl JobRunner {
                     "backend": result.backend_metadata,
                     "usage": result.usage,
                     "backend_errors": result.errors,
+                    "semantic_context": self.prompt_builder.semantic_context(),
                 });
                 let rows = result
                     .rows

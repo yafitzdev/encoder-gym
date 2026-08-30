@@ -55,6 +55,11 @@ pub enum Command {
         #[command(subcommand)]
         command: DatasetCommand,
     },
+    /// Define reusable semantics and explicitly bind them to dataset concepts.
+    Semantic {
+        #[command(subcommand)]
+        command: SemanticCommand,
+    },
     /// Create and inspect immutable dataset snapshots.
     Snapshot {
         #[command(subcommand)]
@@ -305,6 +310,54 @@ pub enum DatasetCommand {
         #[arg(long)]
         summary: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SemanticCommand {
+    /// Create version 1 of an immutable semantic profile from JSON or TOML.
+    ProfileCreate { file: PathBuf },
+    /// Create the next immutable version while retaining profile identity.
+    ProfileRevise { id: Uuid, file: PathBuf },
+    /// List semantic profiles, newest version first within each key.
+    ProfileList {
+        #[arg(long)]
+        key: Option<String>,
+    },
+    /// Show one exact semantic profile version.
+    ProfileShow { id: Uuid },
+    /// Explicitly attach a profile to its matching dataset concept and layer.
+    Bind { dataset_id: Uuid, profile_id: Uuid },
+    /// Append a decision that removes one active semantic layer.
+    Unbind {
+        dataset_id: Uuid,
+        #[arg(value_enum)]
+        target: SemanticTargetArg,
+        /// Required when target is dimension.
+        #[arg(long)]
+        dimension: Option<String>,
+        #[arg(value_enum)]
+        layer: SemanticLayerArg,
+    },
+    /// Show active reusable and dataset-override binding decisions.
+    Bindings { dataset_id: Uuid },
+    /// Resolve the effective semantics a new generation job would pin.
+    Resolve { dataset_id: Uuid },
+    /// Suggest compatible reusable profiles without attaching anything.
+    Suggest { dataset_id: Uuid },
+    /// Show the exact resolved semantics pinned to a generation job.
+    JobContext { job_id: Uuid },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum SemanticTargetArg {
+    Labels,
+    Dimension,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum SemanticLayerArg {
+    Reusable,
+    DatasetOverride,
 }
 
 #[derive(Debug, clap::Args)]
@@ -1516,6 +1569,9 @@ pub enum ArtifactKindArg {
     ProjectPreparation,
     ProjectConfiguration,
     Dataset,
+    SemanticProfile,
+    SemanticBinding,
+    GenerationSemanticContext,
     GenerationPlan,
     GenerationJob,
     DatasetImport,

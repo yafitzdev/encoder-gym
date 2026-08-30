@@ -12,6 +12,7 @@ use generation_fake::FakeGenerationBackend;
 use generation_openai_compatible::OpenAICompatibleBackend;
 use project_config::GenerationBackendKind;
 use recovery_core::{RecoveryState, RecoveryStore, WorkflowKind};
+use semantic_catalog::{GenerationSemanticAssignment, SemanticCatalogStore};
 use synthetic_data_sqlite::SqliteStore;
 
 use crate::cli::{BackendKind, GenerateArgs, ResumeGenerationArgs};
@@ -44,6 +45,8 @@ pub async fn execute(args: GenerateArgs, store: SqliteStore) -> anyhow::Result<(
         .unwrap_or_else(|| configured_backend(&configured));
     let (backend, parameters) =
         build_backend(backend_kind, &options, configured.as_ref(), &store).await?;
+    let semantic_context =
+        super::semantic::resolve_dataset_semantics(&store, plan.dataset_id).await?;
 
     let job = GenerationJob::queued(
         plan.dataset_id,
@@ -53,6 +56,12 @@ pub async fn execute(args: GenerateArgs, store: SqliteStore) -> anyhow::Result<(
         requested_rows,
     );
     store.create_job(&job).await?;
+    store
+        .save_generation_semantics(&GenerationSemanticAssignment::new(
+            job.id,
+            semantic_context,
+        )?)
+        .await?;
     eprintln!(
         "generation job {} queued for {} rows",
         job.id, job.requested_rows
@@ -140,6 +149,8 @@ pub(crate) async fn run_workflow(
     };
     let (backend, parameters) =
         build_backend(backend_kind, &options, Some(configured), &store).await?;
+    let semantic_context =
+        super::semantic::resolve_dataset_semantics(&store, plan.dataset_id).await?;
     let job = GenerationJob::queued(
         plan.dataset_id,
         plan.id,
@@ -149,6 +160,12 @@ pub(crate) async fn run_workflow(
     );
     store.create_job(&job).await?;
     store
+        .save_generation_semantics(&GenerationSemanticAssignment::new(
+            job.id,
+            semantic_context.clone(),
+        )?)
+        .await?;
+    store
         .acquire_execution_lease(WorkflowKind::Generation, job.id)
         .await?;
     let runner = JobRunner::new(
@@ -156,7 +173,8 @@ pub(crate) async fn run_workflow(
         backend,
         runner_policy(&options, Some(configured)),
         ValidationPipeline::standard(None),
-    );
+    )
+    .with_semantic_context(semantic_context);
     let result = runner.run(job.id, parameters).await;
     let release = store
         .release_execution_lease(WorkflowKind::Generation, job.id)
@@ -186,6 +204,19 @@ async fn run_job(
         policy,
         ValidationPipeline::standard(None),
     );
+    let assignment = store.get_generation_semantics(job_id).await?;
+    let runner = match assignment {
+        Some(assignment) => {
+            anyhow::ensure!(
+                assignment.reproduce_fingerprint()? == assignment.fingerprint
+                    && assignment.context.reproduce_fingerprint()?
+                        == assignment.context.fingerprint,
+                "generation job {job_id} has invalid semantic provenance"
+            );
+            runner.with_semantic_context(assignment.context)
+        }
+        None => runner,
+    };
     let mut handle = tokio::spawn(async move { runner.run(job_id, parameters).await });
     let mut interval = tokio::time::interval(Duration::from_millis(250));
     let mut cancellation_sent = false;

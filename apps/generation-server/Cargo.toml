@@ -19,6 +19,7 @@ generation-fake.workspace = true
 generation-openai-compatible = { package = "synthetic-data-openai-compatible", path = "../../crates/generation-openai-compatible" }
 serde.workspace = true
 serde_json.workspace = true
+semantic-catalog.workspace = true
 synthetic-data-sqlite = { path = "../../crates/generation-sqlite" }
 tokio.workspace = true
 tracing.workspace = true
