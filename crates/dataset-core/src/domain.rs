@@ -27,6 +27,8 @@ pub enum DatasetError {
     MissingGroupDimension { row_id: Uuid, dimension: String },
     #[error("could not fingerprint dataset artifact: {0}")]
     Fingerprint(String),
+    #[error("dataset snapshot integrity failed: {0}")]
+    SnapshotIntegrity(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

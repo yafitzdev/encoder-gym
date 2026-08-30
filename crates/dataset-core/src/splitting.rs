@@ -54,7 +54,7 @@ pub fn build_snapshot(
         });
     }
     members.sort_by_key(|member| member.source_row_id);
-    snapshot.fingerprint = snapshot_fingerprint(&snapshot, &members)?;
+    snapshot.fingerprint = reproduce_snapshot_fingerprint(&snapshot, &members)?;
     Ok((snapshot, members))
 }
 
@@ -187,7 +187,8 @@ struct SnapshotMemberFingerprintInput<'a> {
     source_created_at: chrono::DateTime<chrono::Utc>,
 }
 
-fn snapshot_fingerprint(
+/// Reproduces the canonical snapshot fingerprint used by Dataset Management.
+pub fn reproduce_snapshot_fingerprint(
     snapshot: &DatasetSnapshot,
     members: &[SnapshotMember],
 ) -> Result<String, DatasetError> {
@@ -232,6 +233,94 @@ fn snapshot_fingerprint(
             .collect(),
     })
     .map_err(|error| DatasetError::Fingerprint(error.to_string()))
+}
+
+/// Verifies an immutable snapshot, its canonical membership, and the split
+/// assignments produced by the ordinary deterministic Dataset Management
+/// policy. Downstream capabilities should call this instead of trusting a
+/// non-empty snapshot fingerprint.
+pub fn verify_snapshot(
+    snapshot: &DatasetSnapshot,
+    members: &[SnapshotMember],
+) -> Result<(), DatasetError> {
+    let ratios = snapshot.split_configuration.ratios;
+    let ratio_values = [ratios.train, ratios.validation, ratios.test];
+    let ratio_sum = ratio_values.iter().sum::<f64>();
+    let normalized_group = snapshot
+        .split_configuration
+        .group_dimension
+        .as_ref()
+        .is_none_or(|value| !value.is_empty() && value.trim() == value);
+    if snapshot.id.is_nil()
+        || snapshot.source_dataset_id.is_nil()
+        || snapshot.name.is_empty()
+        || snapshot.name.trim() != snapshot.name
+        || snapshot.member_count == 0
+        || snapshot.member_count != members.len() as u64
+        || snapshot.fingerprint.is_empty()
+        || ratio_values
+            .iter()
+            .any(|value| !value.is_finite() || *value < 0.0)
+        || (ratio_sum - 1.0).abs() > 1e-9
+        || !normalized_group
+    {
+        return Err(DatasetError::SnapshotIntegrity(
+            "snapshot identity, configuration, count, or fingerprint is invalid".into(),
+        ));
+    }
+    let mut member_ids = BTreeSet::new();
+    let mut source_ids = BTreeSet::new();
+    for member in members {
+        if member.id.is_nil()
+            || member.snapshot_id != snapshot.id
+            || member.source_row_id.is_nil()
+            || !member_ids.insert(member.id)
+            || !source_ids.insert(member.source_row_id)
+        {
+            return Err(DatasetError::SnapshotIntegrity(
+                "snapshot members contain a nil, duplicate, or foreign identity".into(),
+            ));
+        }
+    }
+    if members
+        .windows(2)
+        .any(|pair| pair[0].source_row_id >= pair[1].source_row_id)
+    {
+        return Err(DatasetError::SnapshotIntegrity(
+            "snapshot members are not in canonical source-row order".into(),
+        ));
+    }
+    let source_rows = members
+        .iter()
+        .map(|member| SourceRow {
+            id: member.source_row_id,
+            dataset_id: snapshot.source_dataset_id,
+            text: member.text.clone(),
+            label: member.label.clone(),
+            dimensions: member.dimensions.clone(),
+            fields: member.fields.clone(),
+            provenance: member.source_provenance.clone(),
+            created_at: member.source_created_at,
+        })
+        .collect::<Vec<_>>();
+    let expected_splits = split_rows(source_rows, snapshot.split_configuration.clone())?
+        .into_iter()
+        .map(|(row, split)| (row.id, split))
+        .collect::<BTreeMap<_, _>>();
+    if members
+        .iter()
+        .any(|member| expected_splits.get(&member.source_row_id) != Some(&member.split))
+    {
+        return Err(DatasetError::SnapshotIntegrity(
+            "snapshot split assignments do not reproduce".into(),
+        ));
+    }
+    if reproduce_snapshot_fingerprint(snapshot, members)? != snapshot.fingerprint {
+        return Err(DatasetError::SnapshotIntegrity(
+            "snapshot fingerprint does not reproduce".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn allocate_counts(size: usize, configuration: &SplitConfiguration) -> [usize; 3] {
@@ -284,6 +373,7 @@ mod tests {
 
     use super::{
         LegacySnapshotFingerprintInput, LegacySnapshotMemberFingerprintInput, build_snapshot,
+        reproduce_snapshot_fingerprint, verify_snapshot,
     };
     use crate::domain::{SnapshotSplit, SourceRow, SplitConfiguration, SplitRatios};
 
@@ -332,6 +422,28 @@ mod tests {
         };
         assert_eq!(assignments(&first), assignments(&second));
         assert_eq!(first_snapshot.fingerprint, second_snapshot.fingerprint);
+        verify_snapshot(&first_snapshot, &first).expect("snapshot verifies");
+    }
+
+    #[test]
+    fn snapshot_verification_rejects_rehashed_non_deterministic_splits() {
+        let dataset_id = Uuid::new_v4();
+        let (mut snapshot, mut members) = build_snapshot(
+            dataset_id,
+            "verified",
+            None,
+            SplitConfiguration::new(SplitRatios::new(0.6, 0.2, 0.2).expect("ratios"), 42),
+            rows(dataset_id),
+        )
+        .expect("snapshot");
+        members[0].split = match members[0].split {
+            SnapshotSplit::Train => SnapshotSplit::Test,
+            _ => SnapshotSplit::Train,
+        };
+        snapshot.fingerprint =
+            reproduce_snapshot_fingerprint(&snapshot, &members).expect("rehashed snapshot");
+
+        assert!(verify_snapshot(&snapshot, &members).is_err());
     }
 
     #[test]
