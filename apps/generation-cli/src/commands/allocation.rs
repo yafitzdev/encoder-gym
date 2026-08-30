@@ -8,9 +8,10 @@ use generation_core::{
 use synthetic_data_sqlite::SqliteStore;
 use workflow_core::{
     allocation::{
-        ExplicitCellTarget, InitialAllocationFeasibility, InitialAllocationPolicy,
-        InitialAllocationRecord, InitialAllocationRequest, InitialCellConstraint,
-        InitialCellCoverage, allocate_initial_budget,
+        CellConstraintRule, ExplicitCellTarget, InitialAllocationFeasibility,
+        InitialAllocationPolicy, InitialAllocationRecord, InitialAllocationRequest,
+        InitialCellConstraint, InitialCellCoverage, allocate_initial_budget,
+        compile_constraint_rules, explain_initial_allocation,
     },
     ports::{InitialAllocationQuery, InitialAllocationStore},
 };
@@ -21,11 +22,21 @@ use crate::document::read as read_document;
 pub async fn execute(command: AllocationCommand, store: &SqliteStore) -> anyhow::Result<()> {
     match command {
         AllocationCommand::Preview(args) => {
+            let explain = args.explain;
             let result = calculate(args, store).await?;
-            crate::presentation::print(&result)
+            if explain {
+                let explanation = explain_initial_allocation(&result);
+                crate::presentation::print(&serde_json::json!({
+                    "allocation": result,
+                    "explanation": explanation,
+                }))
+            } else {
+                crate::presentation::print(&result)
+            }
         }
         AllocationCommand::Create(args) => {
             let dataset_id = args.dataset_id;
+            let explain = args.explain;
             let result = calculate(args, store).await?;
             if result.feasibility != InitialAllocationFeasibility::Feasible {
                 bail!(
@@ -40,7 +51,15 @@ pub async fn execute(command: AllocationCommand, store: &SqliteStore) -> anyhow:
             let plan = result.to_generation_plan(&dataset)?;
             let record = InitialAllocationRecord::new(result, plan.id)?;
             store.create_initial_allocation(&record, &plan).await?;
-            crate::presentation::print(&record)
+            if explain {
+                let explanation = explain_initial_allocation(&record.result);
+                crate::presentation::print(&serde_json::json!({
+                    "allocation": record,
+                    "explanation": explanation,
+                }))
+            } else {
+                crate::presentation::print(&record)
+            }
         }
         AllocationCommand::Show { id } => {
             let allocation = store
@@ -48,6 +67,13 @@ pub async fn execute(command: AllocationCommand, store: &SqliteStore) -> anyhow:
                 .await?
                 .with_context(|| format!("initial allocation not found: {id}"))?;
             crate::presentation::print(&allocation)
+        }
+        AllocationCommand::Explain { id } => {
+            let allocation = store
+                .get_initial_allocation(id)
+                .await?
+                .with_context(|| format!("initial allocation not found: {id}"))?;
+            crate::presentation::print(&explain_initial_allocation(&allocation.result))
         }
         AllocationCommand::List { dataset_id, page } => {
             let allocations = store
@@ -92,7 +118,7 @@ async fn calculate(
     let constraints = args
         .constraints
         .as_deref()
-        .map(read_constraints)
+        .map(|path| read_constraints(path, &dataset))
         .transpose()?
         .unwrap_or_default();
     allocate_initial_budget(
@@ -191,12 +217,19 @@ enum ConstraintsDocument {
     Wrapped {
         constraints: Vec<InitialCellConstraint>,
     },
+    Rules {
+        rules: Vec<CellConstraintRule>,
+    },
 }
 
-fn read_constraints(path: &Path) -> anyhow::Result<Vec<InitialCellConstraint>> {
+fn read_constraints(
+    path: &Path,
+    dataset: &generation_core::domain::DatasetDefinition,
+) -> anyhow::Result<Vec<InitialCellConstraint>> {
     Ok(match read_document(path)? {
         ConstraintsDocument::List(constraints) | ConstraintsDocument::Wrapped { constraints } => {
             constraints
         }
+        ConstraintsDocument::Rules { rules } => compile_constraint_rules(dataset, &rules)?,
     })
 }

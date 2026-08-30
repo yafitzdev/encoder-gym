@@ -23,8 +23,8 @@ use sqlx::FromRow;
 use training_core::ports::{EncoderRegistry, TrainingStore};
 use uuid::Uuid;
 use workflow_core::ports::{
-    AdvisorStore, BenchmarkStore, PromotionStore, StopDecisionStore, WorkflowApprovalStore,
-    WorkflowRunStore,
+    AdvisorStore, BenchmarkStore, InitialAllocationStore, PromotionStore, StopDecisionStore,
+    WorkflowApprovalStore, WorkflowRunStore,
 };
 
 use super::SqliteStore;
@@ -44,6 +44,7 @@ impl ProvenanceStore for SqliteStore {
                 ArtifactKind::SemanticProfile => self.semantic_profile_node(id).await,
                 ArtifactKind::SemanticBinding => self.semantic_binding_node(id).await,
                 ArtifactKind::GenerationSemanticContext => self.semantic_context_node(id).await,
+                ArtifactKind::InitialAllocation => self.initial_allocation_node(id).await,
                 ArtifactKind::GenerationPlan => self.plan_node(id).await,
                 ArtifactKind::GenerationJob => self.job_node(id).await,
                 ArtifactKind::DatasetImport => self.import_node(id).await,
@@ -257,6 +258,7 @@ impl SqliteStore {
                 "generation_plan" | "iteration_generation_plan" => {
                     self.plan_node(artifact.artifact_id).await?
                 }
+                "initial_allocation" => self.initial_allocation_node(artifact.artifact_id).await?,
                 "generation_job" | "dataset_diff_generation_job" => {
                     self.job_node(artifact.artifact_id).await?
                 }
@@ -755,11 +757,44 @@ impl SqliteStore {
                 parents.push(proposal.into_node());
             }
         }
+        let allocation_id = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM workflow_initial_allocations WHERE generation_plan_id = ?",
+        )
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(store_error)?;
+        if let Some(allocation_id) = allocation_id
+            && let Some(allocation) = self.initial_allocation_node(allocation_id).await?
+        {
+            parents.push(allocation);
+        }
         Ok(Some(node(
             ArtifactKind::GenerationPlan,
             id,
             None,
             &plan,
+            parents,
+        )?))
+    }
+
+    async fn initial_allocation_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(allocation) = self.get_initial_allocation(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let parents = self
+            .dataset_node(allocation.result.dataset_id)
+            .await?
+            .into_iter()
+            .collect();
+        Ok(Some(node(
+            ArtifactKind::InitialAllocation,
+            id,
+            Some(allocation.fingerprint.clone()),
+            &allocation,
             parents,
         )?))
     }

@@ -26,6 +26,7 @@ const fn artifact_kind(kind: ArtifactKindArg) -> ArtifactKind {
         ArtifactKindArg::SemanticProfile => ArtifactKind::SemanticProfile,
         ArtifactKindArg::SemanticBinding => ArtifactKind::SemanticBinding,
         ArtifactKindArg::GenerationSemanticContext => ArtifactKind::GenerationSemanticContext,
+        ArtifactKindArg::InitialAllocation => ArtifactKind::InitialAllocation,
         ArtifactKindArg::GenerationPlan => ArtifactKind::GenerationPlan,
         ArtifactKindArg::GenerationJob => ArtifactKind::GenerationJob,
         ArtifactKindArg::DatasetImport => ArtifactKind::DatasetImport,

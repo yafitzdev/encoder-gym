@@ -1,6 +1,6 @@
 use anyhow::{Context, bail};
 use generation_core::{
-    dimensions::expand_generation_cells,
+    dimensions::{expand_generation_cells, summarize_generation_space},
     domain::PlannedCell,
     planning::{equal_target_plan, explicit_target_plan},
     ports::{DatasetStore, PlanStore},
@@ -11,6 +11,14 @@ use crate::cli::PlanCommand;
 
 pub async fn execute(command: PlanCommand, store: &SqliteStore) -> anyhow::Result<()> {
     match command {
+        PlanCommand::Describe { dataset_id } => {
+            let dataset = store
+                .get_dataset(dataset_id)
+                .await?
+                .with_context(|| format!("dataset not found: {dataset_id}"))?;
+            crate::presentation::print(&summarize_generation_space(&dataset))?;
+            Ok(())
+        }
         PlanCommand::Preview { dataset_id } => {
             let dataset = store
                 .get_dataset(dataset_id)

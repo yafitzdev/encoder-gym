@@ -1110,6 +1110,10 @@ pub enum EvaluationRunStateArg {
 
 #[derive(Debug, Subcommand)]
 pub enum PlanCommand {
+    /// Show label/dimension cardinality without materializing every cell.
+    Describe {
+        dataset_id: Uuid,
+    },
     Preview {
         dataset_id: Uuid,
     },
@@ -1135,6 +1139,8 @@ pub enum AllocationCommand {
     Create(InitialAllocationArgs),
     /// Inspect one immutable initial allocation.
     Show { id: Uuid },
+    /// Derive compact label and dimension distributions for a persisted allocation.
+    Explain { id: Uuid },
     /// List immutable initial allocations.
     List {
         #[arg(long)]
@@ -1164,9 +1170,12 @@ pub struct InitialAllocationArgs {
     /// JSON array or TOML/JSON object with a `targets` array for explicit mode.
     #[arg(long)]
     pub targets: Option<PathBuf>,
-    /// JSON array or TOML/JSON object with a `constraints` array.
+    /// Exact constraints, or a TOML/JSON object with concise `rules` selectors.
     #[arg(long)]
     pub constraints: Option<PathBuf>,
+    /// Include compact label/dimension distributions with the command result.
+    #[arg(long)]
+    pub explain: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1572,6 +1581,7 @@ pub enum ArtifactKindArg {
     SemanticProfile,
     SemanticBinding,
     GenerationSemanticContext,
+    InitialAllocation,
     GenerationPlan,
     GenerationJob,
     DatasetImport,
