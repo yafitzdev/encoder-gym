@@ -1,4 +1,4 @@
-use sqlx::{FromRow, QueryBuilder, Sqlite};
+use sqlx::{FromRow, QueryBuilder, Sqlite, SqliteConnection};
 use uuid::Uuid;
 use workflow_core::{
     governance::{
@@ -18,45 +18,8 @@ impl GovernanceStore for SqliteStore {
         let cohort = cohort.clone();
         let initial_role = initial_role.clone();
         Box::pin(async move {
-            validate_cohort(&cohort)?;
-            validate_role(&initial_role)?;
-            if initial_role.cohort_id != cohort.id
-                || initial_role.predecessor_id.is_some()
-                || initial_role.predecessor_fingerprint.is_some()
-            {
-                return Err(WorkflowStoreError(
-                    "initial role does not belong to the cohort or has a predecessor".into(),
-                ));
-            }
-            let persisted_snapshot_fingerprint: Option<String> =
-                sqlx::query_scalar("SELECT fingerprint FROM dataset_snapshots WHERE id = ?")
-                    .bind(cohort.snapshot_id)
-                    .fetch_optional(self.pool())
-                    .await
-                    .map_err(store_error)?;
-            if persisted_snapshot_fingerprint.as_deref() != Some(&cohort.snapshot_fingerprint) {
-                return Err(WorkflowStoreError(
-                    "cohort snapshot fingerprint does not match persistence".into(),
-                ));
-            }
             let mut transaction = self.pool().begin().await.map_err(store_error)?;
-            sqlx::query(
-                "INSERT INTO workflow_evaluation_cohorts \
-                 (id, snapshot_id, split, origin, name, fingerprint, artifact_json, created_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(cohort.id)
-            .bind(cohort.snapshot_id)
-            .bind(enum_string(&cohort.split)?)
-            .bind(enum_string(&cohort.origin)?)
-            .bind(&cohort.name)
-            .bind(&cohort.fingerprint)
-            .bind(to_json(&cohort)?)
-            .bind(cohort.created_at)
-            .execute(&mut *transaction)
-            .await
-            .map_err(store_error)?;
-            insert_role(&mut transaction, &initial_role, 0).await?;
+            insert_cohort_with_initial_role(&mut transaction, &cohort, &initial_role).await?;
             transaction.commit().await.map_err(store_error)?;
             Ok(())
         })
@@ -262,7 +225,7 @@ where
 }
 
 async fn insert_role(
-    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    connection: &mut SqliteConnection,
     decision: &CohortRoleDecision,
     sequence: i64,
 ) -> Result<(), WorkflowStoreError> {
@@ -280,10 +243,55 @@ async fn insert_role(
     .bind(&decision.fingerprint)
     .bind(to_json(decision)?)
     .bind(decision.created_at)
-    .execute(&mut **transaction)
+    .execute(connection)
     .await
     .map_err(store_error)?;
     Ok(())
+}
+
+pub(crate) async fn insert_cohort_with_initial_role(
+    connection: &mut SqliteConnection,
+    cohort: &EvaluationCohort,
+    initial_role: &CohortRoleDecision,
+) -> Result<(), WorkflowStoreError> {
+    validate_cohort(cohort)?;
+    validate_role(initial_role)?;
+    if initial_role.cohort_id != cohort.id
+        || initial_role.predecessor_id.is_some()
+        || initial_role.predecessor_fingerprint.is_some()
+    {
+        return Err(WorkflowStoreError(
+            "initial role does not belong to the cohort or has a predecessor".into(),
+        ));
+    }
+    let persisted_snapshot_fingerprint: Option<String> =
+        sqlx::query_scalar("SELECT fingerprint FROM dataset_snapshots WHERE id = ?")
+            .bind(cohort.snapshot_id)
+            .fetch_optional(&mut *connection)
+            .await
+            .map_err(store_error)?;
+    if persisted_snapshot_fingerprint.as_deref() != Some(&cohort.snapshot_fingerprint) {
+        return Err(WorkflowStoreError(
+            "cohort snapshot fingerprint does not match persistence".into(),
+        ));
+    }
+    sqlx::query(
+        "INSERT INTO workflow_evaluation_cohorts \
+         (id, snapshot_id, split, origin, name, fingerprint, artifact_json, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(cohort.id)
+    .bind(cohort.snapshot_id)
+    .bind(enum_string(&cohort.split)?)
+    .bind(enum_string(&cohort.origin)?)
+    .bind(&cohort.name)
+    .bind(&cohort.fingerprint)
+    .bind(to_json(cohort)?)
+    .bind(cohort.created_at)
+    .execute(&mut *connection)
+    .await
+    .map_err(store_error)?;
+    insert_role(connection, initial_role, 0).await
 }
 
 fn validate_cohort(cohort: &EvaluationCohort) -> Result<(), WorkflowStoreError> {

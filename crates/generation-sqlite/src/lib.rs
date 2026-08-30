@@ -45,7 +45,7 @@ use generation_core::{
     },
 };
 use sqlx::{
-    FromRow, QueryBuilder, Sqlite, SqlitePool,
+    FromRow, QueryBuilder, Sqlite, SqliteConnection, SqlitePool,
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
 };
@@ -88,20 +88,8 @@ impl DatasetStore for SqliteStore {
     fn create_dataset(&self, dataset: &DatasetDefinition) -> BoxFuture<'_, Result<(), StoreError>> {
         let dataset = dataset.clone();
         Box::pin(async move {
-            sqlx::query(
-                "INSERT INTO dataset_definitions \
-                 (id, name, task_description, labels_json, dimensions_json, created_at) \
-                 VALUES (?, ?, ?, ?, ?, ?)",
-            )
-            .bind(dataset.id)
-            .bind(dataset.name)
-            .bind(dataset.task_description)
-            .bind(to_json(&dataset.labels)?)
-            .bind(to_json(&dataset.dimensions)?)
-            .bind(dataset.created_at)
-            .execute(&self.pool)
-            .await
-            .map_err(store_error)?;
+            let mut connection = self.pool.acquire().await.map_err(store_error)?;
+            insert_dataset(&mut connection, &dataset).await?;
             Ok(())
         })
     }
@@ -172,17 +160,8 @@ impl PlanStore for SqliteStore {
     fn create_plan(&self, plan: &GenerationPlan) -> BoxFuture<'_, Result<(), StoreError>> {
         let plan = plan.clone();
         Box::pin(async move {
-            sqlx::query(
-                "INSERT INTO generation_plans (id, dataset_id, cells_json, created_at) \
-                 VALUES (?, ?, ?, ?)",
-            )
-            .bind(plan.id)
-            .bind(plan.dataset_id)
-            .bind(to_json(&plan.cells)?)
-            .bind(plan.created_at)
-            .execute(&self.pool)
-            .await
-            .map_err(store_error)?;
+            let mut connection = self.pool.acquire().await.map_err(store_error)?;
+            insert_plan(&mut connection, &plan).await?;
             Ok(())
         })
     }
@@ -522,21 +501,8 @@ impl BackendConfigurationStore for SqliteStore {
     ) -> BoxFuture<'_, Result<(), StoreError>> {
         let configuration = configuration.clone();
         Box::pin(async move {
-            sqlx::query(
-                "INSERT INTO backend_configurations \
-                 (name, base_url, model, parameters_json, updated_at) VALUES (?, ?, ?, ?, ?) \
-                 ON CONFLICT(name) DO UPDATE SET base_url = excluded.base_url, \
-                 model = excluded.model, parameters_json = excluded.parameters_json, \
-                 updated_at = excluded.updated_at",
-            )
-            .bind(configuration.name)
-            .bind(configuration.base_url)
-            .bind(configuration.model)
-            .bind(to_json(&configuration.parameters)?)
-            .bind(configuration.updated_at)
-            .execute(&self.pool)
-            .await
-            .map_err(store_error)?;
+            let mut connection = self.pool.acquire().await.map_err(store_error)?;
+            upsert_backend(&mut connection, &configuration).await?;
             Ok(())
         })
     }
@@ -1021,6 +987,67 @@ impl BackendConfigurationRecord {
             updated_at: self.updated_at,
         })
     }
+}
+
+pub(crate) async fn insert_dataset(
+    connection: &mut SqliteConnection,
+    dataset: &DatasetDefinition,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO dataset_definitions \
+         (id, name, task_description, labels_json, dimensions_json, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(dataset.id)
+    .bind(&dataset.name)
+    .bind(&dataset.task_description)
+    .bind(to_json(&dataset.labels)?)
+    .bind(to_json(&dataset.dimensions)?)
+    .bind(dataset.created_at)
+    .execute(connection)
+    .await
+    .map_err(store_error)?;
+    Ok(())
+}
+
+pub(crate) async fn insert_plan(
+    connection: &mut SqliteConnection,
+    plan: &GenerationPlan,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO generation_plans (id, dataset_id, cells_json, created_at) \
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind(plan.id)
+    .bind(plan.dataset_id)
+    .bind(to_json(&plan.cells)?)
+    .bind(plan.created_at)
+    .execute(connection)
+    .await
+    .map_err(store_error)?;
+    Ok(())
+}
+
+pub(crate) async fn upsert_backend(
+    connection: &mut SqliteConnection,
+    configuration: &BackendConfiguration,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO backend_configurations \
+         (name, base_url, model, parameters_json, updated_at) VALUES (?, ?, ?, ?, ?) \
+         ON CONFLICT(name) DO UPDATE SET base_url = excluded.base_url, \
+         model = excluded.model, parameters_json = excluded.parameters_json, \
+         updated_at = excluded.updated_at",
+    )
+    .bind(&configuration.name)
+    .bind(&configuration.base_url)
+    .bind(&configuration.model)
+    .bind(to_json(&configuration.parameters)?)
+    .bind(configuration.updated_at)
+    .execute(connection)
+    .await
+    .map_err(store_error)?;
+    Ok(())
 }
 
 fn to_json<T: serde::Serialize>(value: &T) -> Result<String, StoreError> {

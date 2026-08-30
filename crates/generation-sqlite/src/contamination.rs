@@ -1,4 +1,4 @@
-use sqlx::{FromRow, QueryBuilder, Sqlite};
+use sqlx::{FromRow, QueryBuilder, Sqlite, SqliteConnection};
 use uuid::Uuid;
 use workflow_core::{
     contamination::{ContaminationOverride, ContaminationReport, ContaminationStatus},
@@ -14,52 +14,8 @@ impl ContaminationStore for SqliteStore {
     ) -> BoxFuture<'_, Result<(), WorkflowStoreError>> {
         let report = report.clone();
         Box::pin(async move {
-            validate_report(&report)?;
             let mut transaction = self.pool().begin().await.map_err(store_error)?;
-            for cohort_id in &report.cohort_ids {
-                let persisted: Option<String> = sqlx::query_scalar(
-                    "SELECT fingerprint FROM workflow_evaluation_cohorts WHERE id = ?",
-                )
-                .bind(cohort_id)
-                .fetch_optional(&mut *transaction)
-                .await
-                .map_err(store_error)?;
-                if persisted.as_deref()
-                    != report
-                        .cohort_fingerprints
-                        .get(cohort_id)
-                        .map(String::as_str)
-                {
-                    return Err(WorkflowStoreError(format!(
-                        "cohort fingerprint does not match persistence: {cohort_id}"
-                    )));
-                }
-            }
-            sqlx::query(
-                "INSERT INTO workflow_contamination_reports \
-                 (id, status, cohort_ids_json, artifact_json, fingerprint, created_at) \
-                 VALUES (?, ?, ?, ?, ?, ?)",
-            )
-            .bind(report.id)
-            .bind(enum_string(&report.status)?)
-            .bind(to_json(&report.cohort_ids)?)
-            .bind(to_json(&report)?)
-            .bind(&report.fingerprint)
-            .bind(report.created_at)
-            .execute(&mut *transaction)
-            .await
-            .map_err(store_error)?;
-            for cohort_id in &report.cohort_ids {
-                sqlx::query(
-                    "INSERT INTO workflow_contamination_report_cohorts \
-                     (report_id, cohort_id) VALUES (?, ?)",
-                )
-                .bind(report.id)
-                .bind(cohort_id)
-                .execute(&mut *transaction)
-                .await
-                .map_err(store_error)?;
-            }
+            insert_contamination_report(&mut transaction, &report).await?;
             transaction.commit().await.map_err(store_error)?;
             Ok(())
         })
@@ -177,6 +133,57 @@ impl ContaminationStore for SqliteStore {
             .transpose()
         })
     }
+}
+
+pub(crate) async fn insert_contamination_report(
+    connection: &mut SqliteConnection,
+    report: &ContaminationReport,
+) -> Result<(), WorkflowStoreError> {
+    validate_report(report)?;
+    for cohort_id in &report.cohort_ids {
+        let persisted: Option<String> =
+            sqlx::query_scalar("SELECT fingerprint FROM workflow_evaluation_cohorts WHERE id = ?")
+                .bind(cohort_id)
+                .fetch_optional(&mut *connection)
+                .await
+                .map_err(store_error)?;
+        if persisted.as_deref()
+            != report
+                .cohort_fingerprints
+                .get(cohort_id)
+                .map(String::as_str)
+        {
+            return Err(WorkflowStoreError(format!(
+                "cohort fingerprint does not match persistence: {cohort_id}"
+            )));
+        }
+    }
+    sqlx::query(
+        "INSERT INTO workflow_contamination_reports \
+         (id, status, cohort_ids_json, artifact_json, fingerprint, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(report.id)
+    .bind(enum_string(&report.status)?)
+    .bind(to_json(&report.cohort_ids)?)
+    .bind(to_json(report)?)
+    .bind(&report.fingerprint)
+    .bind(report.created_at)
+    .execute(&mut *connection)
+    .await
+    .map_err(store_error)?;
+    for cohort_id in &report.cohort_ids {
+        sqlx::query(
+            "INSERT INTO workflow_contamination_report_cohorts \
+             (report_id, cohort_id) VALUES (?, ?)",
+        )
+        .bind(report.id)
+        .bind(cohort_id)
+        .execute(&mut *connection)
+        .await
+        .map_err(store_error)?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, FromRow)]

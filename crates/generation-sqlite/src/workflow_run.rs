@@ -1,4 +1,4 @@
-use sqlx::{FromRow, QueryBuilder, Sqlite};
+use sqlx::{FromRow, QueryBuilder, Sqlite, SqliteConnection};
 use uuid::Uuid;
 use workflow_core::{
     ports::{
@@ -16,26 +16,9 @@ impl WorkflowRunStore for SqliteStore {
     ) -> BoxFuture<'_, Result<(), WorkflowStoreError>> {
         let definition = definition.clone();
         Box::pin(async move {
-            validate_definition(&definition)?;
-            validate_definition_references(self, &definition).await?;
-            sqlx::query(
-                "INSERT INTO workflow_definitions \
-                 (id, name, dataset_id, project_configuration_id, development_suite_id, \
-                  sealed_suite_id, artifact_json, fingerprint, created_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(definition.id)
-            .bind(&definition.name)
-            .bind(definition.dataset_id)
-            .bind(definition.project_configuration_id)
-            .bind(definition.development_suite_id)
-            .bind(definition.sealed_suite_id)
-            .bind(to_json(&definition)?)
-            .bind(&definition.fingerprint)
-            .bind(definition.created_at)
-            .execute(self.pool())
-            .await
-            .map_err(store_error)?;
+            let mut transaction = self.pool().begin().await.map_err(store_error)?;
+            insert_workflow_definition(&mut transaction, &definition).await?;
+            transaction.commit().await.map_err(store_error)?;
             Ok(())
         })
     }
@@ -252,13 +235,13 @@ impl WorkflowRunStore for SqliteStore {
 }
 
 async fn validate_definition_references(
-    store: &SqliteStore,
+    connection: &mut SqliteConnection,
     definition: &WorkflowDefinition,
 ) -> Result<(), WorkflowStoreError> {
     let configuration: Option<(Uuid, String)> =
         sqlx::query_as("SELECT dataset_id, fingerprint FROM project_configurations WHERE id = ?")
             .bind(definition.project_configuration_id)
-            .fetch_optional(store.pool())
+            .fetch_optional(&mut *connection)
             .await
             .map_err(store_error)?;
     if configuration.as_ref()
@@ -274,7 +257,7 @@ async fn validate_definition_references(
     let development: Option<(String, String)> =
         sqlx::query_as("SELECT kind, fingerprint FROM workflow_benchmark_suites WHERE id = ?")
             .bind(definition.development_suite_id)
-            .fetch_optional(store.pool())
+            .fetch_optional(&mut *connection)
             .await
             .map_err(store_error)?;
     if development.as_ref()
@@ -294,7 +277,7 @@ async fn validate_definition_references(
         let sealed: Option<(String, String)> =
             sqlx::query_as("SELECT kind, fingerprint FROM workflow_benchmark_suites WHERE id = ?")
                 .bind(id)
-                .fetch_optional(store.pool())
+                .fetch_optional(&mut *connection)
                 .await
                 .map_err(store_error)?;
         if sealed.as_ref() != Some(&("sealed_acceptance".into(), fingerprint.clone())) {
@@ -303,6 +286,33 @@ async fn validate_definition_references(
             ));
         }
     }
+    Ok(())
+}
+
+pub(crate) async fn insert_workflow_definition(
+    connection: &mut SqliteConnection,
+    definition: &WorkflowDefinition,
+) -> Result<(), WorkflowStoreError> {
+    validate_definition(definition)?;
+    validate_definition_references(connection, definition).await?;
+    sqlx::query(
+        "INSERT INTO workflow_definitions \
+         (id, name, dataset_id, project_configuration_id, development_suite_id, \
+          sealed_suite_id, artifact_json, fingerprint, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(definition.id)
+    .bind(&definition.name)
+    .bind(definition.dataset_id)
+    .bind(definition.project_configuration_id)
+    .bind(definition.development_suite_id)
+    .bind(definition.sealed_suite_id)
+    .bind(to_json(definition)?)
+    .bind(&definition.fingerprint)
+    .bind(definition.created_at)
+    .execute(connection)
+    .await
+    .map_err(store_error)?;
     Ok(())
 }
 

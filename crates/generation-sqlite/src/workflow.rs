@@ -21,19 +21,10 @@ impl InitialAllocationStore for SqliteStore {
         Box::pin(async move {
             validate_allocation_plan(&allocation, &plan)?;
             let artifact_json = serde_json::to_string(&allocation).map_err(store_error)?;
-            let cells_json = serde_json::to_string(&plan.cells).map_err(store_error)?;
             let mut transaction = self.pool().begin().await.map_err(store_error)?;
-            sqlx::query(
-                "INSERT INTO generation_plans (id, dataset_id, cells_json, created_at) \
-                 VALUES (?, ?, ?, ?)",
-            )
-            .bind(plan.id)
-            .bind(plan.dataset_id)
-            .bind(cells_json)
-            .bind(plan.created_at)
-            .execute(&mut *transaction)
-            .await
-            .map_err(store_error)?;
+            crate::insert_plan(&mut transaction, &plan)
+                .await
+                .map_err(store_error)?;
             sqlx::query(
                 "INSERT INTO workflow_initial_allocations \
                  (id, dataset_id, generation_plan_id, requested_total_rows, \

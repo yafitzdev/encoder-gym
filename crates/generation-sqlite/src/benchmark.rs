@@ -1,4 +1,4 @@
-use sqlx::{FromRow, QueryBuilder, Sqlite};
+use sqlx::{FromRow, QueryBuilder, Sqlite, SqliteConnection};
 use uuid::Uuid;
 use workflow_core::{
     benchmark::{AcceptanceAssessment, BenchmarkSuite},
@@ -17,92 +17,8 @@ impl BenchmarkStore for SqliteStore {
     ) -> BoxFuture<'_, Result<(), WorkflowStoreError>> {
         let suite = suite.clone();
         Box::pin(async move {
-            validate_suite(&suite)?;
-            let report_fingerprint: Option<String> = sqlx::query_scalar(
-                "SELECT fingerprint FROM workflow_contamination_reports WHERE id = ?",
-            )
-            .bind(suite.contamination_report_id)
-            .fetch_optional(self.pool())
-            .await
-            .map_err(store_error)?;
-            if report_fingerprint.as_deref() != Some(&suite.contamination_report_fingerprint) {
-                return Err(WorkflowStoreError(
-                    "benchmark contamination report does not match persistence".into(),
-                ));
-            }
-            if let Some(fingerprint) = &suite.contamination_override_fingerprint {
-                let persisted: Option<String> = sqlx::query_scalar(
-                    "SELECT fingerprint FROM workflow_contamination_overrides \
-                     WHERE report_id = ?",
-                )
-                .bind(suite.contamination_report_id)
-                .fetch_optional(self.pool())
-                .await
-                .map_err(store_error)?;
-                if persisted.as_deref() != Some(fingerprint) {
-                    return Err(WorkflowStoreError(
-                        "benchmark contamination override does not match persistence".into(),
-                    ));
-                }
-            }
             let mut transaction = self.pool().begin().await.map_err(store_error)?;
-            for cohort in &suite.cohorts {
-                let persisted_cohort: Option<String> = sqlx::query_scalar(
-                    "SELECT fingerprint FROM workflow_evaluation_cohorts WHERE id = ?",
-                )
-                .bind(cohort.cohort_id)
-                .fetch_optional(&mut *transaction)
-                .await
-                .map_err(store_error)?;
-                let persisted_role: Option<String> = sqlx::query_scalar(
-                    "SELECT fingerprint FROM workflow_cohort_role_decisions WHERE id = ? \
-                     AND cohort_id = ?",
-                )
-                .bind(cohort.role_decision_id)
-                .bind(cohort.cohort_id)
-                .fetch_optional(&mut *transaction)
-                .await
-                .map_err(store_error)?;
-                if persisted_cohort.as_deref() != Some(&cohort.cohort_fingerprint)
-                    || persisted_role.as_deref() != Some(&cohort.role_decision_fingerprint)
-                {
-                    return Err(WorkflowStoreError(format!(
-                        "benchmark cohort or role does not match persistence: {}",
-                        cohort.cohort_id
-                    )));
-                }
-            }
-            sqlx::query(
-                "INSERT INTO workflow_benchmark_suites \
-                 (id, name, kind, contamination_report_id, \
-                  contamination_override_fingerprint, artifact_json, fingerprint, created_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(suite.id)
-            .bind(&suite.name)
-            .bind(enum_string(&suite.kind)?)
-            .bind(suite.contamination_report_id)
-            .bind(&suite.contamination_override_fingerprint)
-            .bind(to_json(&suite)?)
-            .bind(&suite.fingerprint)
-            .bind(suite.created_at)
-            .execute(&mut *transaction)
-            .await
-            .map_err(store_error)?;
-            for cohort in &suite.cohorts {
-                sqlx::query(
-                    "INSERT INTO workflow_benchmark_suite_cohorts \
-                     (suite_id, cohort_id, role_decision_id, protocol_fingerprint) \
-                     VALUES (?, ?, ?, ?)",
-                )
-                .bind(suite.id)
-                .bind(cohort.cohort_id)
-                .bind(cohort.role_decision_id)
-                .bind(&cohort.protocol_fingerprint)
-                .execute(&mut *transaction)
-                .await
-                .map_err(store_error)?;
-            }
+            insert_benchmark_suite(&mut transaction, &suite).await?;
             transaction.commit().await.map_err(store_error)?;
             Ok(())
         })
@@ -293,6 +209,92 @@ impl BenchmarkStore for SqliteStore {
                 .collect()
         })
     }
+}
+
+pub(crate) async fn insert_benchmark_suite(
+    connection: &mut SqliteConnection,
+    suite: &BenchmarkSuite,
+) -> Result<(), WorkflowStoreError> {
+    validate_suite(suite)?;
+    let report_fingerprint: Option<String> =
+        sqlx::query_scalar("SELECT fingerprint FROM workflow_contamination_reports WHERE id = ?")
+            .bind(suite.contamination_report_id)
+            .fetch_optional(&mut *connection)
+            .await
+            .map_err(store_error)?;
+    if report_fingerprint.as_deref() != Some(&suite.contamination_report_fingerprint) {
+        return Err(WorkflowStoreError(
+            "benchmark contamination report does not match persistence".into(),
+        ));
+    }
+    if let Some(fingerprint) = &suite.contamination_override_fingerprint {
+        let persisted: Option<String> = sqlx::query_scalar(
+            "SELECT fingerprint FROM workflow_contamination_overrides WHERE report_id = ?",
+        )
+        .bind(suite.contamination_report_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(store_error)?;
+        if persisted.as_deref() != Some(fingerprint) {
+            return Err(WorkflowStoreError(
+                "benchmark contamination override does not match persistence".into(),
+            ));
+        }
+    }
+    for cohort in &suite.cohorts {
+        let persisted_cohort: Option<String> =
+            sqlx::query_scalar("SELECT fingerprint FROM workflow_evaluation_cohorts WHERE id = ?")
+                .bind(cohort.cohort_id)
+                .fetch_optional(&mut *connection)
+                .await
+                .map_err(store_error)?;
+        let persisted_role: Option<String> = sqlx::query_scalar(
+            "SELECT fingerprint FROM workflow_cohort_role_decisions WHERE id = ? AND cohort_id = ?",
+        )
+        .bind(cohort.role_decision_id)
+        .bind(cohort.cohort_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(store_error)?;
+        if persisted_cohort.as_deref() != Some(&cohort.cohort_fingerprint)
+            || persisted_role.as_deref() != Some(&cohort.role_decision_fingerprint)
+        {
+            return Err(WorkflowStoreError(format!(
+                "benchmark cohort or role does not match persistence: {}",
+                cohort.cohort_id
+            )));
+        }
+    }
+    sqlx::query(
+        "INSERT INTO workflow_benchmark_suites \
+         (id, name, kind, contamination_report_id, contamination_override_fingerprint, \
+          artifact_json, fingerprint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(suite.id)
+    .bind(&suite.name)
+    .bind(enum_string(&suite.kind)?)
+    .bind(suite.contamination_report_id)
+    .bind(&suite.contamination_override_fingerprint)
+    .bind(to_json(suite)?)
+    .bind(&suite.fingerprint)
+    .bind(suite.created_at)
+    .execute(&mut *connection)
+    .await
+    .map_err(store_error)?;
+    for cohort in &suite.cohorts {
+        sqlx::query(
+            "INSERT INTO workflow_benchmark_suite_cohorts \
+             (suite_id, cohort_id, role_decision_id, protocol_fingerprint) VALUES (?, ?, ?, ?)",
+        )
+        .bind(suite.id)
+        .bind(cohort.cohort_id)
+        .bind(cohort.role_decision_id)
+        .bind(&cohort.protocol_fingerprint)
+        .execute(&mut *connection)
+        .await
+        .map_err(store_error)?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, FromRow)]

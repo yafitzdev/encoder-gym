@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use project_preparation::{
     BoxFuture, PreparationBundle, PreparationStore, PreparationStoreError, PreparedProject,
 };
-use sqlx::{FromRow, Sqlite, Transaction};
+use sqlx::{FromRow, Sqlite, SqliteConnection};
 use uuid::Uuid;
 
 use crate::SqliteStore;
@@ -24,15 +24,55 @@ impl PreparationStore for SqliteStore {
                 return Ok(existing);
             }
 
-            insert_dataset(&mut transaction, &bundle).await?;
-            insert_project_configuration(&mut transaction, &bundle).await?;
-            insert_cohorts(&mut transaction, &bundle).await?;
-            insert_contamination_reports(&mut transaction, &bundle).await?;
-            insert_suite(&mut transaction, &bundle.development_suite).await?;
-            if let Some(suite) = &bundle.sealed_suite {
-                insert_suite(&mut transaction, suite).await?;
+            crate::insert_dataset(&mut transaction, &bundle.dataset)
+                .await
+                .map_err(store_error)?;
+            crate::insert_plan(&mut transaction, &bundle.default_generation_plan)
+                .await
+                .map_err(store_error)?;
+            if let Some(backend) = &bundle.backend_configuration {
+                crate::upsert_backend(&mut transaction, backend)
+                    .await
+                    .map_err(store_error)?;
             }
-            insert_workflow_definition(&mut transaction, &bundle).await?;
+            crate::project::insert_project_configuration(
+                &mut transaction,
+                &bundle.project_configuration,
+            )
+            .await
+            .map_err(store_error)?;
+            let roles = bundle
+                .role_decisions
+                .iter()
+                .map(|role| (role.cohort_id, role))
+                .collect::<BTreeMap<_, _>>();
+            for cohort in &bundle.cohorts {
+                let role = roles.get(&cohort.id).ok_or_else(|| {
+                    PreparationStoreError(format!("cohort has no initial role: {}", cohort.id))
+                })?;
+                crate::governance::insert_cohort_with_initial_role(&mut transaction, cohort, role)
+                    .await
+                    .map_err(store_error)?;
+            }
+            for report in &bundle.contamination_reports {
+                crate::contamination::insert_contamination_report(&mut transaction, report)
+                    .await
+                    .map_err(store_error)?;
+            }
+            crate::benchmark::insert_benchmark_suite(&mut transaction, &bundle.development_suite)
+                .await
+                .map_err(store_error)?;
+            if let Some(suite) = &bundle.sealed_suite {
+                crate::benchmark::insert_benchmark_suite(&mut transaction, suite)
+                    .await
+                    .map_err(store_error)?;
+            }
+            crate::workflow_run::insert_workflow_definition(
+                &mut transaction,
+                &bundle.workflow_definition,
+            )
+            .await
+            .map_err(store_error)?;
             insert_preparation(&mut transaction, &bundle.preparation).await?;
             transaction.commit().await.map_err(store_error)?;
             Ok(bundle.preparation)
@@ -86,241 +126,8 @@ impl PreparationStore for SqliteStore {
     }
 }
 
-async fn insert_dataset(
-    transaction: &mut Transaction<'_, Sqlite>,
-    bundle: &PreparationBundle,
-) -> Result<(), PreparationStoreError> {
-    let dataset = &bundle.dataset;
-    sqlx::query(
-        "INSERT INTO dataset_definitions \
-         (id, name, task_description, labels_json, dimensions_json, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?)",
-    )
-    .bind(dataset.id)
-    .bind(&dataset.name)
-    .bind(&dataset.task_description)
-    .bind(to_json(&dataset.labels)?)
-    .bind(to_json(&dataset.dimensions)?)
-    .bind(dataset.created_at)
-    .execute(&mut **transaction)
-    .await
-    .map_err(store_error)?;
-
-    let plan = &bundle.default_generation_plan;
-    sqlx::query(
-        "INSERT INTO generation_plans (id, dataset_id, cells_json, created_at) \
-         VALUES (?, ?, ?, ?)",
-    )
-    .bind(plan.id)
-    .bind(plan.dataset_id)
-    .bind(to_json(&plan.cells)?)
-    .bind(plan.created_at)
-    .execute(&mut **transaction)
-    .await
-    .map_err(store_error)?;
-
-    if let Some(backend) = &bundle.backend_configuration {
-        sqlx::query(
-            "INSERT INTO backend_configurations \
-             (name, base_url, model, parameters_json, updated_at) VALUES (?, ?, ?, ?, ?) \
-             ON CONFLICT(name) DO UPDATE SET base_url = excluded.base_url, \
-             model = excluded.model, parameters_json = excluded.parameters_json, \
-             updated_at = excluded.updated_at",
-        )
-        .bind(&backend.name)
-        .bind(&backend.base_url)
-        .bind(&backend.model)
-        .bind(to_json(&backend.parameters)?)
-        .bind(backend.updated_at)
-        .execute(&mut **transaction)
-        .await
-        .map_err(store_error)?;
-    }
-    Ok(())
-}
-
-async fn insert_project_configuration(
-    transaction: &mut Transaction<'_, Sqlite>,
-    bundle: &PreparationBundle,
-) -> Result<(), PreparationStoreError> {
-    let configuration = &bundle.project_configuration;
-    sqlx::query(
-        "INSERT INTO project_configurations \
-         (id, fingerprint, dataset_id, generation_plan_id, resolved_toml_json, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?)",
-    )
-    .bind(configuration.id)
-    .bind(&configuration.fingerprint)
-    .bind(configuration.dataset_id)
-    .bind(configuration.generation_plan_id)
-    .bind(to_json(&configuration.resolved)?)
-    .bind(configuration.created_at)
-    .execute(&mut **transaction)
-    .await
-    .map_err(store_error)?;
-    Ok(())
-}
-
-async fn insert_cohorts(
-    transaction: &mut Transaction<'_, Sqlite>,
-    bundle: &PreparationBundle,
-) -> Result<(), PreparationStoreError> {
-    let roles = bundle
-        .role_decisions
-        .iter()
-        .map(|role| (role.cohort_id, role))
-        .collect::<BTreeMap<_, _>>();
-    for cohort in &bundle.cohorts {
-        let persisted_snapshot_fingerprint: Option<String> =
-            sqlx::query_scalar("SELECT fingerprint FROM dataset_snapshots WHERE id = ?")
-                .bind(cohort.snapshot_id)
-                .fetch_optional(&mut **transaction)
-                .await
-                .map_err(store_error)?;
-        if persisted_snapshot_fingerprint.as_deref() != Some(&cohort.snapshot_fingerprint) {
-            return Err(PreparationStoreError(format!(
-                "cohort snapshot fingerprint does not match persistence: {}",
-                cohort.snapshot_id
-            )));
-        }
-        sqlx::query(
-            "INSERT INTO workflow_evaluation_cohorts \
-             (id, snapshot_id, split, origin, name, fingerprint, artifact_json, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(cohort.id)
-        .bind(cohort.snapshot_id)
-        .bind(enum_string(&cohort.split)?)
-        .bind(enum_string(&cohort.origin)?)
-        .bind(&cohort.name)
-        .bind(&cohort.fingerprint)
-        .bind(to_json(cohort)?)
-        .bind(cohort.created_at)
-        .execute(&mut **transaction)
-        .await
-        .map_err(store_error)?;
-        let role = roles.get(&cohort.id).ok_or_else(|| {
-            PreparationStoreError(format!("cohort has no initial role: {}", cohort.id))
-        })?;
-        sqlx::query(
-            "INSERT INTO workflow_cohort_role_decisions \
-             (id, cohort_id, sequence, role, disposition, predecessor_id, fingerprint, \
-              artifact_json, created_at) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(role.id)
-        .bind(role.cohort_id)
-        .bind(enum_string(&role.role)?)
-        .bind(enum_string(&role.disposition)?)
-        .bind(role.predecessor_id)
-        .bind(&role.fingerprint)
-        .bind(to_json(role)?)
-        .bind(role.created_at)
-        .execute(&mut **transaction)
-        .await
-        .map_err(store_error)?;
-    }
-    Ok(())
-}
-
-async fn insert_contamination_reports(
-    transaction: &mut Transaction<'_, Sqlite>,
-    bundle: &PreparationBundle,
-) -> Result<(), PreparationStoreError> {
-    for report in &bundle.contamination_reports {
-        sqlx::query(
-            "INSERT INTO workflow_contamination_reports \
-             (id, status, cohort_ids_json, artifact_json, fingerprint, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(report.id)
-        .bind(enum_string(&report.status)?)
-        .bind(to_json(&report.cohort_ids)?)
-        .bind(to_json(report)?)
-        .bind(&report.fingerprint)
-        .bind(report.created_at)
-        .execute(&mut **transaction)
-        .await
-        .map_err(store_error)?;
-        for cohort_id in &report.cohort_ids {
-            sqlx::query(
-                "INSERT INTO workflow_contamination_report_cohorts (report_id, cohort_id) \
-                 VALUES (?, ?)",
-            )
-            .bind(report.id)
-            .bind(cohort_id)
-            .execute(&mut **transaction)
-            .await
-            .map_err(store_error)?;
-        }
-    }
-    Ok(())
-}
-
-async fn insert_suite(
-    transaction: &mut Transaction<'_, Sqlite>,
-    suite: &workflow_core::benchmark::BenchmarkSuite,
-) -> Result<(), PreparationStoreError> {
-    sqlx::query(
-        "INSERT INTO workflow_benchmark_suites \
-         (id, name, kind, contamination_report_id, contamination_override_fingerprint, \
-          artifact_json, fingerprint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(suite.id)
-    .bind(&suite.name)
-    .bind(enum_string(&suite.kind)?)
-    .bind(suite.contamination_report_id)
-    .bind(&suite.contamination_override_fingerprint)
-    .bind(to_json(suite)?)
-    .bind(&suite.fingerprint)
-    .bind(suite.created_at)
-    .execute(&mut **transaction)
-    .await
-    .map_err(store_error)?;
-    for cohort in &suite.cohorts {
-        sqlx::query(
-            "INSERT INTO workflow_benchmark_suite_cohorts \
-             (suite_id, cohort_id, role_decision_id, protocol_fingerprint) \
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(suite.id)
-        .bind(cohort.cohort_id)
-        .bind(cohort.role_decision_id)
-        .bind(&cohort.protocol_fingerprint)
-        .execute(&mut **transaction)
-        .await
-        .map_err(store_error)?;
-    }
-    Ok(())
-}
-
-async fn insert_workflow_definition(
-    transaction: &mut Transaction<'_, Sqlite>,
-    bundle: &PreparationBundle,
-) -> Result<(), PreparationStoreError> {
-    let definition = &bundle.workflow_definition;
-    sqlx::query(
-        "INSERT INTO workflow_definitions \
-         (id, name, dataset_id, project_configuration_id, development_suite_id, \
-          sealed_suite_id, artifact_json, fingerprint, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(definition.id)
-    .bind(&definition.name)
-    .bind(definition.dataset_id)
-    .bind(definition.project_configuration_id)
-    .bind(definition.development_suite_id)
-    .bind(definition.sealed_suite_id)
-    .bind(to_json(definition)?)
-    .bind(&definition.fingerprint)
-    .bind(definition.created_at)
-    .execute(&mut **transaction)
-    .await
-    .map_err(store_error)?;
-    Ok(())
-}
-
 async fn insert_preparation(
-    transaction: &mut Transaction<'_, Sqlite>,
+    connection: &mut SqliteConnection,
     value: &PreparedProject,
 ) -> Result<(), PreparationStoreError> {
     sqlx::query(
@@ -340,7 +147,7 @@ async fn insert_preparation(
     .bind(to_json(value)?)
     .bind(&value.fingerprint)
     .bind(value.created_at)
-    .execute(&mut **transaction)
+    .execute(connection)
     .await
     .map_err(store_error)?;
     Ok(())
@@ -490,14 +297,6 @@ impl PreparationRow {
         }
         Ok(value)
     }
-}
-
-fn enum_string(value: &impl serde::Serialize) -> Result<String, PreparationStoreError> {
-    serde_json::to_value(value)
-        .map_err(store_error)?
-        .as_str()
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| PreparationStoreError("enum did not serialize as a string".into()))
 }
 
 fn to_json(value: &impl serde::Serialize) -> Result<String, PreparationStoreError> {
