@@ -7,7 +7,7 @@ use generation_core::{
     parsing::parse_generated_candidates,
     ports::{BoxFuture, GenerationBackend, GenerationBackendError},
 };
-use reqwest::{Client, Url};
+use reqwest::{Client, StatusCode, Url};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
@@ -135,9 +135,8 @@ impl GenerationBackend for OpenAICompatibleBackend {
                 .await
                 .map_err(|error| GenerationBackendError::Request(error.to_string()))?;
             if !status.is_success() {
-                return Err(GenerationBackendError::Request(format!(
-                    "HTTP {status}: {}",
-                    truncate(&raw, 2_000)
+                return Err(GenerationBackendError::Request(provider_error(
+                    status, &raw,
                 )));
             }
             Self::normalize_response(&raw)
@@ -196,8 +195,51 @@ fn insert_optional<T: serde::Serialize>(
     Ok(())
 }
 
-fn truncate(value: &str, max_chars: usize) -> String {
-    value.chars().take(max_chars).collect()
+fn provider_error(status: StatusCode, raw: &str) -> String {
+    let error = serde_json::from_str::<Value>(raw)
+        .ok()
+        .and_then(|value| value.get("error").cloned());
+    let code = error
+        .as_ref()
+        .and_then(|value| value.get("code"))
+        .and_then(Value::as_str)
+        .map(safe_identifier);
+    let kind = error
+        .as_ref()
+        .and_then(|value| value.get("type"))
+        .and_then(Value::as_str)
+        .map(safe_identifier);
+    let parameter = error
+        .as_ref()
+        .and_then(|value| value.get("param"))
+        .and_then(Value::as_str)
+        .map(safe_identifier);
+    let details = [
+        code.map(|value| format!("code={value}")),
+        kind.map(|value| format!("type={value}")),
+        parameter.map(|value| format!("parameter={value}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    let suffix = if details.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", details.join(", "))
+    };
+    if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+        format!("HTTP {status}{suffix}: provider rejected authentication")
+    } else {
+        format!("HTTP {status}{suffix}: provider returned a non-success response")
+    }
+}
+
+fn safe_identifier(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || "._-".contains(*character))
+        .take(80)
+        .collect()
 }
 
 #[cfg(test)]
@@ -210,7 +252,7 @@ mod tests {
     use serde_json::json;
     use tokio::{net::TcpListener, sync::mpsc};
 
-    use super::OpenAICompatibleBackend;
+    use super::{OpenAICompatibleBackend, provider_error};
 
     fn backend() -> OpenAICompatibleBackend {
         OpenAICompatibleBackend::new("http://localhost:8080/v1/", None, "test-model")
@@ -286,6 +328,27 @@ mod tests {
             },
         };
         assert!(backend().request_body(&request).is_err());
+    }
+
+    #[test]
+    fn provider_errors_keep_codes_but_never_persist_response_messages() {
+        let error = provider_error(
+            reqwest::StatusCode::UNAUTHORIZED,
+            r#"{
+                "error": {
+                    "message": "Incorrect API key provided: sk-secret-fragment",
+                    "type": "invalid_request_error",
+                    "code": "invalid_api_key",
+                    "param": null
+                }
+            }"#,
+        );
+
+        assert!(error.contains("401 Unauthorized"));
+        assert!(error.contains("code=invalid_api_key"));
+        assert!(error.contains("provider rejected authentication"));
+        assert!(!error.contains("sk-secret-fragment"));
+        assert!(!error.contains("Incorrect API key"));
     }
 
     #[tokio::test]

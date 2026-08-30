@@ -180,8 +180,35 @@ fn live_openai_compatible_smoke_is_explicitly_opt_in() {
         fixture.database_url(),
         ["workflow", "start", &definition_id],
     );
-    assert_ne!(result["run"]["state"], "failed");
-    assert!(artifact_count(&result, "generation_job") > 0);
+    assert!(
+        artifact_count(&result, "generation_job") > 0,
+        "live workflow produced no generation job: {}",
+        live_failure_summary(&result)
+    );
+    assert_ne!(
+        result["run"]["state"],
+        "failed",
+        "live workflow failed: {}",
+        live_failure_summary(&result)
+    );
+}
+
+fn live_failure_summary(status: &Value) -> String {
+    let state = status["run"]["state"].as_str().unwrap_or("unknown");
+    let stage = status["latest_attempt"]["stage"]
+        .as_str()
+        .unwrap_or("unknown");
+    let reason = status["latest_attempt"]["reason"]
+        .as_str()
+        .unwrap_or("no stage reason");
+    let job_error = status["generation"]
+        .as_array()
+        .and_then(|generations| generations.last())
+        .and_then(|generation| generation["jobs"].as_array())
+        .and_then(|jobs| jobs.last())
+        .and_then(|job| job["error_message"].as_str())
+        .unwrap_or("no generation job error");
+    format!("state={state}, stage={stage}, reason={reason}, job_error={job_error}")
 }
 
 fn assert_failed_generation_attempt(status: &Value, attempt: u64, retryable: bool) {

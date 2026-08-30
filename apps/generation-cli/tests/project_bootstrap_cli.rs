@@ -2,7 +2,7 @@ pub mod support;
 
 use std::path::{Path, PathBuf};
 
-use project_config::TrainingBackendKind;
+use project_config::{GenerationBackendKind, TrainingBackendKind};
 use project_preparation::BootstrapManifest;
 use serde_json::Value;
 use synthetic_data_sqlite::SqliteStore;
@@ -200,6 +200,49 @@ fn bootstrapped_project_runs_the_real_local_bert_adapter() {
 }
 
 #[test]
+#[ignore = "requires an explicitly configured live endpoint and may incur provider cost"]
+fn bootstrapped_pilot_runs_bounded_openai_compatible_generation() {
+    let base_url = std::env::var("SYNTH_E2E_OPENAI_BASE_URL")
+        .expect("set SYNTH_E2E_OPENAI_BASE_URL before running the ignored smoke test");
+    let model = std::env::var("SYNTH_E2E_OPENAI_MODEL")
+        .expect("set SYNTH_E2E_OPENAI_MODEL before running the ignored smoke test");
+    assert!(
+        std::env::var_os("SYNTH_OPENAI_API_KEY").is_some(),
+        "set SYNTH_OPENAI_API_KEY before running the ignored smoke test"
+    );
+    let fixture = PilotFixture::new();
+    fixture.configure_openai(&base_url, &model);
+    let created = run_json(
+        fixture.database_url(),
+        ["project", "bootstrap", fixture.manifest()],
+    );
+    let definition_id = string_at(&created, "/preparation/workflow_definition_id");
+    let status = run_json(
+        fixture.database_url(),
+        ["workflow", "start", &definition_id],
+    );
+
+    for kind in [
+        "generation_job",
+        "training_run",
+        "checkpoint",
+        "evaluation_run",
+    ] {
+        assert!(
+            workflow_artifact_count(&status, kind) > 0,
+            "live bootstrapped workflow is missing {kind}: {}",
+            live_workflow_summary(&status)
+        );
+    }
+    let jobs = status["generation"]
+        .as_array()
+        .expect("generation status")
+        .iter()
+        .flat_map(|generation| generation["jobs"].as_array().expect("generation jobs"));
+    assert!(jobs.into_iter().all(|job| job["state"] == "completed"));
+}
+
+#[test]
 fn late_persistence_failure_rolls_back_every_bootstrap_artifact() {
     let fixture = PilotFixture::new();
     tokio::runtime::Runtime::new()
@@ -295,6 +338,34 @@ fn assert_all_test_with_imported_provenance(database_url: &str, snapshot_id: &st
             .iter()
             .all(|member| member["source_provenance"]["kind"] == "imported")
     );
+}
+
+fn workflow_artifact_count(status: &Value, kind: &str) -> usize {
+    status["attempts"]
+        .as_array()
+        .expect("workflow attempts")
+        .iter()
+        .flat_map(|attempt| attempt["artifacts"].as_array().expect("attempt artifacts"))
+        .filter(|artifact| artifact["kind"] == kind)
+        .count()
+}
+
+fn live_workflow_summary(status: &Value) -> String {
+    let state = status["run"]["state"].as_str().unwrap_or("unknown");
+    let stage = status["latest_attempt"]["stage"]
+        .as_str()
+        .unwrap_or("unknown");
+    let reason = status["latest_attempt"]["reason"]
+        .as_str()
+        .unwrap_or("no stage reason");
+    let job_error = status["generation"]
+        .as_array()
+        .and_then(|generations| generations.last())
+        .and_then(|generation| generation["jobs"].as_array())
+        .and_then(|jobs| jobs.last())
+        .and_then(|job| job["error_message"].as_str())
+        .unwrap_or("no generation job error");
+    format!("state={state}, stage={stage}, reason={reason}, job_error={job_error}")
 }
 
 fn string_at(value: &Value, pointer: &str) -> String {
@@ -394,6 +465,30 @@ impl PilotFixture {
             toml::to_string_pretty(&manifest).expect("manifest serializes"),
         )
         .expect("BERT manifest writes");
+    }
+
+    fn configure_openai(&self, base_url: &str, model: &str) {
+        let source = std::fs::read_to_string(&self.manifest_path).expect("manifest reads");
+        let mut manifest = BootstrapManifest::parse_toml(&source).expect("manifest parses");
+        manifest.project.generation.backend = GenerationBackendKind::OpenaiCompatible;
+        manifest.project.generation.base_url = Some(base_url.into());
+        manifest.project.generation.model = model.into();
+        manifest.project.generation.temperature = Some(0.2);
+        manifest.project.generation.max_tokens = Some(256);
+        manifest.project.generation.batch_size = 1;
+        manifest.project.generation.max_retries = 0;
+        manifest.project.generation.max_attempt_multiplier = 1;
+        manifest.workflow.total_rows = 5;
+        manifest.workflow.reserved_rows = 1;
+        manifest.workflow.budget.maximum_initial_rows = 5;
+        manifest.workflow.budget.maximum_cumulative_rows = 6;
+        manifest.workflow.budget.maximum_generation_attempts = 4;
+        manifest.workflow.budget.maximum_generation_requests = 4;
+        std::fs::write(
+            &self.manifest_path,
+            toml::to_string_pretty(&manifest).expect("manifest serializes"),
+        )
+        .expect("OpenAI manifest writes");
     }
 
     fn corrupt_sealed_label(&self) {

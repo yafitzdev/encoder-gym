@@ -67,3 +67,17 @@ and set its immutable `base_model_id`. For real generation, copy the manifest,
 select `openai-compatible`, configure a finite row/request budget, and provide
 the API key only through `SYNTH_OPENAI_API_KEY`. Those are deliberate external
 smokes and are not part of ordinary tests.
+
+The checked-in, ignored live bootstrap smoke uses four one-row requests at
+most, then requires ordinary training and development-evaluation artifacts:
+
+```powershell
+$env:SYNTH_OPENAI_API_KEY = "..."
+$env:SYNTH_E2E_OPENAI_BASE_URL = "https://api.openai.com/v1"
+$env:SYNTH_E2E_OPENAI_MODEL = "gpt-4.1-mini"
+cargo test -p synthetic-data-cli --test project_bootstrap_cli bootstrapped_pilot_runs_bounded_openai_compatible_generation -- --ignored --nocapture
+```
+
+Provider response bodies are not persisted on failures. Durable job errors
+retain only the HTTP status and safe structured identifiers such as provider
+error code, type, and parameter.
