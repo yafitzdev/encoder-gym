@@ -81,6 +81,12 @@ structured remainder and never silently changes a constraint. Preview is
 read-only. Persistence records normalized policy, inputs, results, and
 fingerprint before normal plan creation.
 
+Concise partial selectors may compile into those exact cell bounds. Overlaps
+combine by highest minimum, lowest maximum, and exclusion if any rule excludes
+the cell. Explanation is derived from the immutable result and reports both
+effective weight shares and realized integer target shares. The allocator does
+not consult an LLM or claim a policy-independent optimum.
+
 ## Evaluation roles and sealing
 
 Every benchmark cohort has one current role derived from append-only decisions:

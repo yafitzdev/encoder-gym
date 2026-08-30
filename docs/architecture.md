@@ -52,6 +52,12 @@ provider, Candle, Axum, or adapter types. The CLI application assembles the
 concrete slice runners and workflow ports; SQLite implements workflow
 persistence in a feature-owned adapter module.
 
+The generation core owns deterministic Cartesian cardinality and expansion,
+including the local cell-count safety invariant. Workflow allocation consumes
+those cells, compiles partial operator selectors into exact constraints, and
+derives explainable group summaries. CLI parsing, SQLite persistence, and
+provenance traversal remain adapters around those pure operations.
+
 `project-preparation` owns the strict operator manifest and its pure compiler.
 It may construct ordinary domain requests and an atomic persistence bundle, but
 it cannot execute generation, snapshotting, training, evaluation, analysis, or

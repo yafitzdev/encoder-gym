@@ -1,0 +1,24 @@
+# Partial selectors are compiled into exact per-cell constraints.
+# Omit label or dimensions to match a broader group. An empty selector matches all cells.
+
+[[rules]]
+minimum_target = 100
+
+[rules.selector]
+label = "fraud"
+
+[[rules]]
+minimum_target = 150
+maximum_target = 500
+
+[rules.selector]
+label = "fraud"
+
+[rules.selector.dimensions]
+difficulty = "hard"
+
+[[rules]]
+excluded = true
+
+[rules.selector.dimensions]
+writing_style = "messy"

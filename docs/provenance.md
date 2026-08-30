@@ -17,6 +17,19 @@ generation job
   -> generation plan
 ```
 
+An initial plan created from an exact dataset-size request has an additional
+decision path:
+
+```text
+generation plan
+  -> immutable initial allocation (policy, coverage, compiled bounds, targets)
+    -> dataset definition
+```
+
+The allocation and its result carry reproducible SHA-256 fingerprints. Compact
+distribution explanations are derived from that persisted result rather than
+stored as mutable presentation state.
+
 Generated rows also embed the resolved context in generation metadata. A
 workflow advisory assessment links to the same generation semantic context,
 so its prompt cannot silently pick up a later catalog revision.
@@ -95,6 +108,7 @@ synth provenance checkpoint <CHECKPOINT_ID>
 synth provenance semantic-profile <PROFILE_ID>
 synth provenance semantic-binding <BINDING_ID>
 synth provenance generation-semantic-context <JOB_ID>
+synth provenance initial-allocation <ALLOCATION_ID>
 synth --output json provenance checkpoint <CHECKPOINT_ID>
 synth provenance analysis-report <ANALYSIS_REPORT_ID>
 synth provenance analysis-finding-review <REVIEW_ID>

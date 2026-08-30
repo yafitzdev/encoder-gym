@@ -38,6 +38,10 @@ The initial output is text-classification data:
 Dimension names and values are user-defined categorical data. Example names in
 this specification must never be hard-coded.
 
+The complete generation-space cardinality must be inspectable without
+materializing every cell. The local application rejects schemas above its
+explicit cell safety limit before Cartesian expansion.
+
 Optional semantic profiles may enrich labels, dimensions, and dimension values
 with descriptions, examples, counterexamples, and inclusion/exclusion rules.
 Profiles are immutable and versioned; reusable and dataset-specific layers are
@@ -58,6 +62,11 @@ may convert one exact accepted-row total and a balanced, weighted, constrained,
 or explicit policy into absolute Slice 1 cell targets. It must preview and then
 create an ordinary unequal generation plan; it does not change the Slice 1 plan
 or backend contracts.
+
+Allocation constraints may be expressed as exact cells or compiled from
+validated partial label/dimension selectors. Persisted allocation facts retain
+the resulting exact per-cell bounds. Operator-facing explanations summarize
+realized targets and effective weights across labels and every dimension value.
 
 For every cell, persisted facts must support reporting:
 

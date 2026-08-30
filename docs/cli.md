@@ -63,6 +63,8 @@ workflow start <DEFINITION_ID>` command as a separate authorization. Start from
 
 Exact initial-budget allocation commands are:
 
+- `synth plan describe <DATASET_ID>` to inspect Cartesian cardinality without
+  materializing every cell;
 - `synth allocation preview <DATASET_ID> --total-rows 20000` for a read-only
   complete balanced preview;
 - `synth allocation create <DATASET_ID> --total-rows 20000` to atomically persist
@@ -72,11 +74,16 @@ Exact initial-budget allocation commands are:
   weights;
 - `--policy minimum-then-weighted --minimum-per-cell N` for explicit floors;
 - `--policy explicit --targets <JSON_OR_TOML>` for complete absolute targets;
-- `--constraints <JSON_OR_TOML>` for per-cell minima, maxima, and exclusions; and
+- `--constraints <JSON_OR_TOML>` for exact per-cell constraints or concise
+  partial selector rules with minima, maxima, and exclusions;
+- `--explain` or `synth allocation explain <ID>` for label and dimension-value
+  distributions; and
 - `synth allocation list|show` for immutable persisted results.
 
 Preview accounts for persisted accepted coverage but writes nothing. Infeasible
 constraints return structured issues and cannot create a generation plan.
+Totals are absolute accepted-row targets. See `allocation.md` for policy,
+rounding, selector-overlap, safety-limit, and provenance behavior.
 
 Evaluation-governance commands are:
 
