@@ -48,6 +48,12 @@ versioned semantic catalog. Attachments are explicit, generation jobs pin exact
 profile versions, and no second database or service is required. See
 [`docs/semantic-catalog.md`](docs/semantic-catalog.md).
 
+Authenticity research is an optional, explicitly started Pi-agent workflow. It
+studies permitted sources, produces an evidence-linked profile for human
+approval, and hands only abstract guidance to generation. The complete offline
+and real-provider procedures are in
+[`docs/authenticity-research.md`](docs/authenticity-research.md).
+
 The fastest complete offline journey starts from the checked-in local benchmark
 files and requires no copied UUIDs:
 

@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "dataset_name": "support-intents",
+  "target": {
+    "language": "English",
+    "region": "global",
+    "time_period": "current",
+    "audience": "consumer support customers",
+    "channel": "support chat and short support requests",
+    "domain": "customer support"
+  },
+  "questions": [
+    "How long and structurally complete are authentic support messages?",
+    "Which noise, shorthand, emotion, and ambiguity patterns occur?",
+    "Which patterns make synthetic support messages look artificial?"
+  ],
+  "desired_source_diversity": 2,
+  "source_policy": {
+    "allowed_domains": ["example.com"],
+    "blocked_domains": [],
+    "allowed_source_classes": ["documentation", "forum"]
+  },
+  "budgets": {
+    "max_model_turns": 8,
+    "max_searches": 2,
+    "max_fetched_pages": 3,
+    "max_fetched_bytes": 20000,
+    "max_input_tokens": 100000,
+    "max_output_tokens": 50000,
+    "max_wall_clock_seconds": 60,
+    "max_cost_microusd": 0,
+    "max_retries_per_call": 1
+  },
+  "provider": {
+    "runtime": "pi",
+    "provider": "fake",
+    "model": "scripted-authenticity-v1"
+  },
+  "required_profile_sections": ["structure", "language", "noise", "ambiguity", "artificiality"]
+}

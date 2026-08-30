@@ -116,9 +116,9 @@ Research run states are `queued`, `running`, `awaiting_review`, `failed`, and
 exhaustion, cancellation, provider failure, validation failure, and
 interruption. Progress and usage are derived from persisted calls and evidence.
 
-Startup recovery interrupts orphaned calls and runs. It may resume from durable
-evidence, but it cannot silently replay an uncertain paid call or reset a
-budget. Profile revisions supersede rather than mutate previous artifacts.
+Explicit recovery interrupts orphaned calls and runs. It does not silently
+replay an uncertain paid call or reset a budget. Profile revisions supersede
+rather than mutate previous artifacts.
 
 ## CLI contract
 

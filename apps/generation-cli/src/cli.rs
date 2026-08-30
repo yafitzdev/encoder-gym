@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use uuid::Uuid;
 
 #[derive(Debug, Parser)]
@@ -59,6 +59,11 @@ pub enum Command {
     Semantic {
         #[command(subcommand)]
         command: SemanticCommand,
+    },
+    /// Run bounded, evidence-backed authenticity research for a dataset.
+    Research {
+        #[command(subcommand)]
+        command: ResearchCommand,
     },
     /// Create and inspect immutable dataset snapshots.
     Snapshot {
@@ -164,6 +169,82 @@ pub enum Command {
     Rows(RowsArgs),
     /// Export accepted rows.
     Export(ExportArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ResearchCommand {
+    /// Resolve and validate a research brief without persisting or calling providers.
+    BriefValidate { file: PathBuf },
+    /// Persist and execute one bounded research run in the foreground.
+    Start(ResearchStartArgs),
+    /// Show durable lifecycle, plan, progress, budgets, and stop reason.
+    Status { run_id: Uuid },
+    /// Poll durable status until the run reaches a terminal/review state.
+    Watch { run_id: Uuid },
+    /// List the bounded evidence captured by a run.
+    Evidence { run_id: Uuid },
+    /// Show the latest profile drafted by a run.
+    Profile { run_id: Uuid },
+    /// Request cancellation; a running host observes this before more tool work.
+    Cancel { run_id: Uuid },
+    /// Mark an interrupted run failed without replaying open external calls.
+    Recover { run_id: Uuid },
+    /// Append a human review decision for an immutable profile.
+    Review(ResearchReviewArgs),
+    /// Bind an explicitly approved profile to a dataset or one of its plans.
+    Bind {
+        dataset_or_plan_id: Uuid,
+        profile_id: Uuid,
+    },
+    /// Resolve the currently approved authenticity context for a dataset or plan.
+    Context { dataset_or_plan_id: Uuid },
+}
+
+#[derive(Debug, clap::Args)]
+pub struct ResearchStartArgs {
+    pub file: PathBuf,
+    /// Scripted Pi turns for an offline fake-provider brief.
+    #[arg(long)]
+    pub script: Option<PathBuf>,
+    /// Deterministic source corpus for an offline fake-provider brief.
+    #[arg(long)]
+    pub corpus: Option<PathBuf>,
+    #[command(flatten)]
+    pub runtime: ResearchRuntimeArgs,
+    /// Environment variable containing the Brave Search API key for a real run.
+    #[arg(long, default_value = "BRAVE_SEARCH_API_KEY")]
+    pub search_api_key_env: String,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ResearchRuntimeArgs {
+    /// Node.js executable used for the local Pi sidecar.
+    #[arg(long, default_value = "node")]
+    pub node: PathBuf,
+    /// Compiled Pi JSONL sidecar. Defaults to the repository adapter build.
+    #[arg(long)]
+    pub pi_sidecar: Option<PathBuf>,
+}
+
+#[derive(Debug, clap::Args)]
+#[command(group(
+    ArgGroup::new("decision")
+        .required(true)
+        .multiple(false)
+        .args(["approve", "reject", "request_revision"])
+))]
+pub struct ResearchReviewArgs {
+    pub profile_id: Uuid,
+    #[arg(long)]
+    pub approve: bool,
+    #[arg(long)]
+    pub reject: bool,
+    #[arg(long)]
+    pub request_revision: bool,
+    #[arg(long, default_value = "local-operator")]
+    pub reviewer: String,
+    #[arg(long)]
+    pub reason: String,
 }
 
 #[derive(Debug, Subcommand)]

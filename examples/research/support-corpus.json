@@ -1,0 +1,16 @@
+[
+  {
+    "url": "https://example.com/support-chat-guide",
+    "title": "Support chat writing observations",
+    "source_class": "documentation",
+    "tags": ["real support chat language"],
+    "content": "Real support chats are brief. Customers often omit greetings, use fragments such as \"charged twice??\", include typos, and leave account context implicit."
+  },
+  {
+    "url": "https://example.com/customer-forum-patterns",
+    "title": "Customer forum complaint patterns",
+    "source_class": "forum",
+    "tags": ["real support chat language"],
+    "content": "Forum complaints can be longer and emotional, but examples still mix fragments, shorthand, irrelevant detail, and unresolved ambiguity."
+  }
+]

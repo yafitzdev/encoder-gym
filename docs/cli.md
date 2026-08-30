@@ -60,6 +60,24 @@ Semantic catalog commands are:
 There is no automatic name-based binding. With no explicit binding, ordinary
 task/schema inference remains the fallback. See `semantic-catalog.md`.
 
+Authenticity-research commands are:
+
+- `synth research brief-validate <FILE>` to resolve dataset and semantic facts
+  and validate all source/provider/budget policy without an external call;
+- `research start <FILE>` to run the bounded Pi loop in the foreground;
+- `status|watch`, `evidence`, and `profile` to inspect persisted progress and
+  artifacts;
+- `cancel <RUN_ID>` and `recover <RUN_ID>` for durable control without silently
+  replaying uncertain external calls;
+- `review <PROFILE_ID> --approve|--reject|--request-revision --reason TEXT` for
+  append-only operator decisions; and
+- `bind <DATASET_OR_PLAN_ID> <PROFILE_ID>` plus `context <DATASET_OR_PLAN_ID>`
+  for the explicit generation handoff.
+
+The offline start form adds `--script` and `--corpus`; real research omits both
+and uses `--search-api-key-env`. Research never starts generation. See
+`authenticity-research.md`.
+
 Declarative project-preparation commands are:
 
 - `synth project preview <MANIFEST>` to resolve exact initial cell targets,

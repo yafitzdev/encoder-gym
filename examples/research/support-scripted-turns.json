@@ -1,0 +1,161 @@
+[
+  {
+    "text": "1. Search two permitted source classes for authentic message patterns.\n2. Read representative sources and record bounded evidence.\n3. Compare structure, language, noise, ambiguity, and artificiality risks.\n4. Draft an evidence-linked profile for human review.",
+    "toolCalls": [
+      {
+        "name": "search_web",
+        "arguments": {
+          "query": "real support chat language",
+          "sourceClasses": ["documentation", "forum"],
+          "maximumResults": 4
+        }
+      }
+    ]
+  },
+  {
+    "text": "I found two source classes and will inspect the documentation example first.",
+    "toolCalls": [
+      {
+        "name": "fetch_page",
+        "arguments": {
+          "url": "https://example.com/support-chat-guide",
+          "maximumBytes": 5000
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "name": "record_evidence",
+        "arguments": {
+          "key": "chat_style",
+          "url": "https://example.com/support-chat-guide",
+          "title": "Support chat writing observations",
+          "query": "real support chat language",
+          "sourceClass": "documentation",
+          "contentHash": "sha256:df331d289ae9c9b23787f35205d66cbac24d9412d3cffc21f8265c15e5f7e3e8",
+          "excerpt": "Customers often omit greetings, use fragments such as \"charged twice??\", include typos, and leave account context implicit.",
+          "observation": "Short support requests often use fragments, omit greetings, contain typos, and leave context implicit.",
+          "applicability": "Short support-chat and ticket-opening inputs across intent labels.",
+          "confidence": "high"
+        }
+      }
+    ]
+  },
+  {
+    "text": "The documentation source is narrow, so I will compare it with a forum source.",
+    "toolCalls": [
+      {
+        "name": "fetch_page",
+        "arguments": {
+          "url": "https://example.com/customer-forum-patterns",
+          "maximumBytes": 5000
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "name": "record_evidence",
+        "arguments": {
+          "key": "forum_style",
+          "url": "https://example.com/customer-forum-patterns",
+          "title": "Customer forum complaint patterns",
+          "query": "real support chat language",
+          "sourceClass": "forum",
+          "contentHash": "sha256:c101c2587d1deb2e7dc6482e2666c025972856512c4909a90795ef1c3badb1db",
+          "excerpt": "Forum complaints can be longer and emotional, but examples still mix fragments, shorthand, irrelevant detail, and unresolved ambiguity.",
+          "observation": "Forum inputs broaden the length and emotion range while retaining shorthand, irrelevant detail, and ambiguity.",
+          "applicability": "Longer or emotionally charged support inputs and hard or ambiguous cells.",
+          "confidence": "medium"
+        }
+      }
+    ]
+  },
+  {
+    "text": "I will inspect the accumulated evidence before synthesis.",
+    "toolCalls": [
+      {
+        "name": "inspect_evidence",
+        "arguments": {}
+      }
+    ]
+  },
+  {
+    "text": "Both sources support varied completeness and noise; the exact distributions remain uncertain.",
+    "toolCalls": [
+      {
+        "name": "draft_profile",
+        "arguments": {
+          "claims": [
+            {
+              "key": "fragment_claim",
+              "statement": "Authentic support inputs often omit greetings and use incomplete fragments.",
+              "confidence": "high",
+              "supportingEvidenceKeys": ["chat_style"],
+              "conflictingEvidenceKeys": [],
+              "inference": false
+            },
+            {
+              "key": "variation_claim",
+              "statement": "Authentic inputs vary from terse requests to longer emotional complaints and may contain irrelevant detail or unresolved ambiguity.",
+              "confidence": "medium",
+              "supportingEvidenceKeys": ["chat_style", "forum_style"],
+              "conflictingEvidenceKeys": [],
+              "inference": false
+            }
+          ],
+          "profile": {
+            "schemaVersion": 1,
+            "summary": "Generate support inputs with evidence-backed variation in completeness, length, emotion, noise, and ambiguity.",
+            "sections": {
+              "structure": {
+                "observations": ["Inputs range from short fragments to longer complaints."],
+                "generationInstructions": ["Vary completeness and length; do not force a greeting or full sentence."],
+                "claimKeys": ["fragment_claim", "variation_claim"]
+              },
+              "language": {
+                "observations": ["Shorthand and direct phrasing occur."],
+                "generationInstructions": ["Use ordinary customer vocabulary and occasional shorthand appropriate to the channel."],
+                "claimKeys": ["variation_claim"]
+              },
+              "noise": {
+                "observations": ["Typos and irrelevant details occur in authentic requests."],
+                "generationInstructions": ["Apply noise selectively instead of corrupting every row."],
+                "claimKeys": ["fragment_claim", "variation_claim"]
+              },
+              "ambiguity": {
+                "observations": ["Customers may leave account context implicit or leave the issue unresolved."],
+                "generationInstructions": ["For ambiguous cells, omit one useful detail without making the label impossible."],
+                "claimKeys": ["fragment_claim", "variation_claim"]
+              },
+              "artificiality": {
+                "observations": ["Uniformly polished, complete inputs would conflict with both sources."],
+                "generationInstructions": ["Avoid repeated templates, obligatory greetings, and uniformly polished grammar."],
+                "claimKeys": ["fragment_claim", "variation_claim"]
+              }
+            },
+            "generationInstructions": [
+              "Vary message length, completeness, emotion, and noise independently.",
+              "Use source observations abstractly and never reproduce retained excerpts."
+            ],
+            "caveats": ["The offline corpus demonstrates the workflow and is not a statistically representative sample."]
+          }
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "name": "finish_research",
+        "arguments": {
+          "reason": "sufficient_evidence",
+          "summary": "An evidence-backed authenticity profile is ready for human review."
+        }
+      }
+    ]
+  }
+]
