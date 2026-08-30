@@ -17,11 +17,21 @@ The application must let a user:
 8. List snapshot members and their source provenance.
 9. Export a snapshot as JSONL or CSV with split assignments.
 
+An optional qualification path may first select accepted source rows through an
+approved immutable curation manifest. Qualification is specified separately in
+[Dataset Qualification and Curation](dataset-quality-spec.md). Dataset
+Management still owns snapshot membership validation and deterministic split
+assignment; the quality capability owns only its reviewed source selection.
+
 ## Snapshot rules
 
 - Completed snapshots are immutable.
 - A source row appears at most once in a snapshot.
 - Only accepted rows may become snapshot members.
+- A snapshot created through a quality manifest contains only its explicitly
+  included source rows and is atomically linked to the approved manifest.
+- Snapshots without a curation application remain valid and visibly
+  unqualified for backward compatibility.
 - Split ratios are non-negative, sum to one within numeric tolerance, and
   produce deterministic assignments for the same seed and source rows.
 - Splitting is stratified by label. Small strata use deterministic largest-

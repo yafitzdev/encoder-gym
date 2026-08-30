@@ -49,6 +49,14 @@ The Pi package has a pinned lockfile and its formatting, type-check, unit-test,
 and build commands run alongside the Rust gates. Ordinary tests never search
 the web or call a paid model.
 
+Dataset qualification follows the same boundary-first sequence: specification,
+pure source-set planning and policy verdicts, deterministic fake evaluator,
+durable runner and SQLite evidence, append-only curation review, qualified
+snapshot handoff, workflow gating, provenance/doctor, offline CLI acceptance,
+and only then an optional bounded audit coordinator. V1 includes only directly
+assessed or explicitly overridden rows; sampling-based inference is a later
+policy rather than a hidden shortcut.
+
 ## Component loop
 
 For each component:

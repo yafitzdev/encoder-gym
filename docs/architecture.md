@@ -36,6 +36,8 @@ research adapters / apps ─> research-core
 generation-core ──────────> research-core (resolved authenticity context only)
 dataset architect adapters / apps ─> dataset-architect-core
 dataset-architect-core ────> generation/allocation and governed evidence contracts
+quality evaluator adapters / apps ─> dataset-quality-core
+dataset-quality-core ─────> immutable source-row and semantic guidance contracts
 ```
 
 `artifact-core` only canonicalizes fingerprint inputs and describes provenance
@@ -70,6 +72,19 @@ coverage, deterministic-allocation, and governed diagnostic artifacts. It does
 not own generation-planning mathematics, prompt transport, persistence, Pi, or
 sealed evidence. An architect proposal is untrusted until the ordinary initial
 allocator reproduces it and an operator approves it.
+
+`dataset-quality-core` owns immutable source-set audit plans, explicit quality
+policies, normalized evaluator requests and assessments, deterministic verdicts,
+append-only row/manifest reviews, curation proposals, and approved manifests.
+It consumes normalized immutable source rows and optional semantic/authenticity
+guidance. It does not own source-row acceptance, generation, snapshot splitting,
+provider transport, SQLite, training, evaluation, or workflow transitions.
+
+Dataset Management remains unchanged. The application verifies an approved
+manifest, passes only its included rows to the ordinary snapshot builder, and
+atomically persists a curation application beside the snapshot. Legacy
+snapshots without such an application retain their existing fingerprints and
+behavior.
 
 After approval, `dataset-architect-core` compiles the advisory output into two
 ordinary immutable inputs: a `GenerationPlan` and a provider-neutral
@@ -157,6 +172,14 @@ facts, compare deterministic allocation previews, estimate a generation budget,
 and submit one explicit proposal. The core rejects missing or duplicate cells,
 infeasible totals, unknown strategy selectors, stale coverage, and any sealed
 or retired diagnostic evidence before a normal generation plan can be created.
+
+### `dataset-quality-core`
+
+Owns the provider-neutral Dataset Qualification boundary. It fingerprints the
+complete candidate source set, validates exact blind label and dimension score
+shapes, derives verdicts from integer policy thresholds, and compiles reviewed
+evidence into a complete immutable selection. Unevaluated rows are excluded in
+V1. A quality evaluator cannot rewrite data or decide snapshot membership.
 
 ### `synthetic-data-sqlite`
 

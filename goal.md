@@ -1,107 +1,77 @@
-# Goal — Bounded Agentic Dataset Architect
+# Goal — Dataset Qualification and Curation
 
-Build a high-impact decision layer between dataset definition/authenticity
-research and synthetic generation. Use Pi agentically to recommend what data
-to generate, while retaining deterministic host authority, explicit human
-approval, immutable provenance, and strict evaluation-evidence isolation.
+Build a high-trust quality boundary between structurally accepted source rows
+and training snapshots. A replaceable evaluator must produce bounded semantic-
+quality evidence; deterministic policy and explicit review must produce an
+immutable curation manifest that the ordinary snapshot builder can consume.
 
-Do not add a graphical UI, HTTP API, automatic training, autonomous closed-loop
-optimization, multiple agents, distributed workers, or sealed-holdout access.
+Do not add a graphical UI, HTTP API, automatic relabeling, source-row mutation,
+semantic deduplication, automatic regeneration, distributed workers, or sealed-
+holdout access. Follow `docs/dataset-quality-spec.md` as the authoritative
+capability specification.
 
 ## Product flow
 
 ```text
-dataset definition
-  + current accepted coverage
-  + semantic definitions
-  + optional approved authenticity profile
-  + operator priorities and hard constraints
-  + optional governed aggregate development diagnostics
-    -> bounded Pi Dataset Architect run
-    -> visible plan and deterministic allocation previews
-    -> explicit every-cell allocation + scoped generation strategies + cost
-    -> operator inspection and append-only approval
-    -> immutable ordinary GenerationPlan + normalized strategy context
-    -> normal generation job pins and consumes that context
+accepted generated/imported rows
+  -> immutable row-complete audit plan
+  -> bounded replaceable quality evaluator
+  -> blind label/dimension/authenticity/risk assessments
+  -> deterministic qualified/borderline/quarantined verdicts
+  -> append-only row review and complete curation proposal
+  -> explicit manifest approval
+  -> immutable qualified snapshot linked to the manifest
 ```
 
-The architect advises. It must never generate rows, create or approve its own
-plan, call a generation backend, start training/evaluation, mutate datasets, or
-read sealed acceptance evidence.
+The evaluator supplies evidence. It never decides membership, rewrites a row,
+approves a manifest, starts another slice, or reads evaluation evidence.
 
 ## Required architecture
 
-- Rust core owns briefs, finite budgets, lifecycle, tool-call ledger, proposal
-  validation, review, application, fingerprints, and normalized handoff.
-- Pi remains behind the product-neutral `agent-runtime-core` process contract.
-  Pi/provider types do not leak into domain, SQLite, planning, prompting, or CLI
-  contracts.
-- Expose only application-owned tools for pinned-fact inspection, deterministic
-  allocation previews, declared cost estimates, proposal submission, and finish.
-  Never expose shell, filesystem, database, arbitrary network, generation,
-  training, evaluation, approval, or sealed-evidence tools.
-- The existing deterministic allocator remains the sole feasibility authority.
-  Every proposal explicitly allocates every Cartesian cell and is replayed as
-  an ordinary explicit allocation.
-- Generation strategy guidance is provider-neutral, scoped to exact matching
-  cells, and cannot alter trusted labels, dimensions, deterministic fields, or
-  validation rules.
-- Generation jobs pin the approved strategy fingerprint alongside semantics,
-  authenticity, prompt template, construction plan, backend, and parameters.
-  Generation performs no architect/Pi calls.
+- `dataset-quality-core` owns source-set manifests, explicit integer policies,
+  evaluator request/response validation, verdicts, reviews, curation, and
+  fingerprints. Provider and SQLite types never cross its boundary.
+- Audit plans pin every source-row fingerprint plus exact semantic and optional
+  authenticity guidance. New rows require a new plan.
+- A deterministic fake and an OpenAI-compatible adapter implement the project-
+  owned evaluator port. Prompt policy remains outside provider transport.
+- One durable local runner owns batching, attempts, retry, cancellation,
+  interruption, usage, and reconciled counters under finite persisted budgets.
+- Every manifest decides every pinned row. Unevaluated rows are excluded; human
+  inclusion overrides are append-only and require a reason.
+- Applying a manifest atomically persists an ordinary snapshot plus a curation
+  application. Historical snapshot shapes and fingerprints remain unchanged.
 
-## Brief and proposal
+## Evidence and verdicts
 
-A strict resolved brief pins the full dataset and fingerprint, exact total and
-reserve, persisted accepted coverage, hard cell constraints, weighted operator
-priorities, optional semantic/authenticity contexts, optional eligible aggregate
-diagnostics, declared generation cost assumptions, provider/model identity,
-credential environment-variable name, and finite turn/tool/preview/token/cost/
-wall-clock limits.
-
-The proposal contains an explicit target, rationale, confidence, and expected
-benefits for every cell; scoped strategies such as boundary cases, hard
-negatives, ambiguity, realistic noise, rare patterns, channel variation, and
-length variation; approximate shares and instructions; tradeoffs, uncertainty,
-the deterministic feasibility result, pinned coverage, and cost estimate.
+Assessments blindly rank every known label and every allowed value for each row
+dimension. They also score optional authenticity adherence, leakage risk,
+shortcut risk, and evaluator confidence in basis points. The host compares the
+blind result with pinned source facts and derives verdicts from the immutable
+policy. Evaluator output cannot contain replacement content or a membership
+decision.
 
 ## Governance and durability
 
-- Only current active development or diagnostic cohort evidence is eligible.
-  Reconstruct diagnostics from persisted analysis facts; do not accept an
-  arbitrary diagnostic blob from the brief file.
-- Record a slices-level adaptive `dataset_architecture` evidence exposure.
-- Reject sealed, external-benchmark, training, retired, legacy, mismatched, or
-  fingerprint-invalid evidence before it enters an agent prompt.
-- Persist queued/running/awaiting-review/failed/cancelled runs, every tool intent
-  and outcome, usage, stop reason, proposal, reviews, application, plan, and job
-  assignment. Recovery does not replay uncertain model/tool calls.
-- Reviews are append-only. Application requires the latest approval for the
-  exact proposal and fails when accepted coverage differs from the pinned
-  proposal coverage. Repeated successful application is idempotent.
+- Persist plans, runs, evaluator attempts, normalized assessments, immutable
+  reports, row reviews, curation proposals, manifest reviews, approved
+  manifests, applications, and snapshot links.
+- External calls are recorded before I/O and uncertain calls consume retry
+  budget. Success plus assessments plus counters commits atomically.
+- Sealed and external benchmark contents are categorically ineligible.
+- Reviews bind immutable reports/proposals, never a mutable run projection.
+- `doctor` and provenance verify every fingerprint, counter, review chain,
+  source-row link, selection entry, and qualified snapshot application.
 
 ## CLI and acceptance
 
-Provide:
-
-```text
-synth architect brief-validate <FILE>
-synth architect start <FILE> [--script <FILE>]
-synth architect status|watch|proposal <RUN_ID>
-synth architect cancel|recover <RUN_ID>
-synth architect review <PROPOSAL_ID> --approve|--reject|--request-revision --reason <TEXT>
-synth architect apply <PROPOSAL_ID>
-synth architect context <PLAN_ID>
-```
-
-Ordinary acceptance must use a fresh local database, checked-in brief, scripted
-Pi turns, actual JSONL process boundary, and fake generation backend. Prove the
-proposal is deterministically validated; approval and fresh coverage gate
-application; an ordinary generation job pins the strategy; only matching-cell
-instructions enter reconstructed prompts; generation adds no architect tool
-calls; tampering is reported by `doctor`; older plans without strategy remain
-compatible; and all Rust/Pi quality gates pass.
+Implement the complete CLI in `docs/dataset-quality-spec.md`. Ordinary
+acceptance uses a fresh database, fake generated/imported sources, fake
+evaluator, actual CLI process boundary, row review, manifest approval, qualified
+snapshot, provenance, export, and doctor. Prove unassessed rows never enter the
+snapshot, tampering is detected, legacy snapshots remain compatible, and all
+Rust quality gates pass.
 
 Implement and commit coherent stages. Follow `AGENTS.md`,
-`docs/dataset-architect-spec.md`, `docs/architecture.md`, and
+`docs/dataset-quality-spec.md`, `docs/architecture.md`, and
 `docs/development.md`.

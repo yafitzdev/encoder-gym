@@ -69,6 +69,14 @@ the existing deterministic initial allocator remains the feasibility authority.
 Only an explicitly approved, non-stale proposal can create a normal Slice 1
 plan. See [Dataset Architect](dataset-architect-spec.md).
 
+An optional dataset-qualification capability may audit structurally accepted
+generated or imported rows before they become training data. A replaceable
+evaluator produces bounded evidence; deterministic policy and explicit human
+review produce an immutable curation manifest. Dataset Management remains the
+owner of snapshot splitting, while an atomic application links the approved
+manifest to the resulting snapshot. See
+[Dataset Qualification and Curation](dataset-quality-spec.md).
+
 ## Shared invariants
 
 - IDs are globally unique and timestamps use UTC.
@@ -101,6 +109,7 @@ plan. See [Dataset Architect](dataset-architect-spec.md).
 - [Slice 6 — Optimization](slice-6-spec.md)
 - [Authenticity Research Agent](research-agent-spec.md)
 - [Dataset Architect](dataset-architect-spec.md)
+- [Dataset Qualification and Curation](dataset-quality-spec.md)
 
 Cross-slice composition is specified separately in
 [Controlled Workflow and Evaluation Governance](workflow-governance-spec.md).
