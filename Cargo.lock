@@ -3136,6 +3136,7 @@ dependencies = [
  "project-config",
  "project-preparation",
  "recovery-core",
+ "research-core",
  "semantic-catalog",
  "serde",
  "serde_json",

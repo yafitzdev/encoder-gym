@@ -6,7 +6,9 @@ use uuid::Uuid;
 
 use crate::{
     brief::ResolvedResearchBrief,
-    evidence::{FetchRequest, SearchRequest, SearchResult, UntrustedPage},
+    evidence::{
+        FetchRequest, ResearchClaim, ResearchEvidence, SearchRequest, SearchResult, UntrustedPage,
+    },
     lifecycle::{ResearchRun, ResearchToolCall},
     profile::{AuthenticityProfile, ProfileBinding, ProfileReview, ResolvedAuthenticityContext},
 };
@@ -97,6 +99,31 @@ pub trait ResearchStore: Send + Sync {
         &self,
         call: &ResearchToolCall,
     ) -> BoxFuture<'_, Result<(), ResearchAdapterError>>;
+
+    fn list_tool_calls(
+        &self,
+        run_id: Uuid,
+    ) -> BoxFuture<'_, Result<Vec<ResearchToolCall>, ResearchAdapterError>>;
+
+    fn record_evidence(
+        &self,
+        evidence: &ResearchEvidence,
+    ) -> BoxFuture<'_, Result<(), ResearchAdapterError>>;
+
+    fn list_evidence(
+        &self,
+        run_id: Uuid,
+    ) -> BoxFuture<'_, Result<Vec<ResearchEvidence>, ResearchAdapterError>>;
+
+    fn record_claim(
+        &self,
+        claim: &ResearchClaim,
+    ) -> BoxFuture<'_, Result<(), ResearchAdapterError>>;
+
+    fn list_claims(
+        &self,
+        run_id: Uuid,
+    ) -> BoxFuture<'_, Result<Vec<ResearchClaim>, ResearchAdapterError>>;
 
     fn save_profile(
         &self,
