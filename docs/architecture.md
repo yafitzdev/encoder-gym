@@ -58,6 +58,15 @@ those cells, compiles partial operator selectors into exact constraints, and
 derives explainable group summaries. CLI parsing, SQLite persistence, and
 provenance traversal remain adapters around those pure operations.
 
+The same core owns the provider-neutral hybrid row-construction compiler. A
+fingerprinted field-recipe graph deterministically prepares row seeds, exposes
+only unresolved semantic fields to prompt construction, and merges normalized
+backend output without trusting it for cell identity. The job runner records
+both provider requests and local deterministic batches through the durable
+attempt contract. SQLite stores plans and field-level traces but does not
+evaluate recipes; provider adapters receive normalized requests and do not know
+how coverage, persistence, or deterministic fields work.
+
 `project-preparation` owns the strict operator manifest and its pure compiler.
 It may construct ordinary domain requests and an atomic persistence bundle, but
 it cannot execute generation, snapshotting, training, evaluation, analysis, or

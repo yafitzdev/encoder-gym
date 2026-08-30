@@ -32,13 +32,16 @@ only from the named `--api-key-env` environment variable.
 
 Generation execution inspection commands are:
 
+- `synth config construction-preview <PROJECT.toml> --label LABEL [--dimension
+  NAME=VALUE] [--start-index N] [--count N]` to compile recipes, show
+  deterministic row seeds, and reveal whether a provider call is required;
 - `synth job execution <JOB_ID>` for the immutable, non-secret runtime
   specification and its fingerprint;
-- `synth job attempts <JOB_ID>` for ordered provider requests, outcomes, usage,
-  errors, and request/outcome fingerprints; and
+- `synth job attempts <JOB_ID>` for ordered provider requests or deterministic
+  construction batches, outcomes, usage, errors, and fingerprints; and
 - `synth job prompt <JOB_ID> --cell-index N [--requested-count N]` to reconstruct
-  a request from the pinned dataset, semantic context, prompt template, and
-  parameters without contacting the provider.
+  the next prepared batch and, when needed, its request from pinned facts
+  without contacting the provider.
 
 These commands inspect persisted facts; they do not regenerate, retry, or
 silently use current backend configuration.

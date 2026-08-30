@@ -1,0 +1,86 @@
+version = 1
+
+[dataset]
+name = "hybrid-support-intents"
+task = "Classify a customer support message by its primary intent."
+labels = ["billing", "fraud"]
+
+[[dataset.dimensions]]
+name = "style"
+values = ["clean", "messy"]
+
+[generation]
+target_per_cell = 10
+batch_size = 5
+max_retries = 2
+max_attempt_multiplier = 3
+backend = "fake"
+model = "deterministic-v1"
+temperature = 0.4
+seed = 42
+
+[generation.construction]
+seed = 42
+
+[[generation.construction.fields]]
+name = "ticket_id"
+value_type = "string"
+[generation.construction.fields.recipe]
+type = "sequence"
+prefix = "T-"
+start = 1000
+step = 1
+width = 6
+
+[[generation.construction.fields]]
+name = "channel"
+value_type = "string"
+[generation.construction.fields.recipe]
+type = "weighted_choice"
+
+[[generation.construction.fields.recipe.choices]]
+value = "chat"
+weight = 6
+
+[[generation.construction.fields.recipe.choices]]
+value = "email"
+weight = 3
+
+[[generation.construction.fields.recipe.choices]]
+value = "phone_transcript"
+weight = 1
+
+[[generation.construction.fields]]
+name = "label_copy"
+value_type = "string"
+[generation.construction.fields.recipe]
+type = "cell_label"
+
+[[generation.construction.fields]]
+name = "style_copy"
+value_type = "string"
+[generation.construction.fields.recipe]
+type = "cell_dimension"
+name = "style"
+
+[[generation.construction.fields]]
+name = "text"
+value_type = "string"
+[generation.construction.fields.recipe]
+type = "llm"
+instruction = "Generate only the customer message for ticket ${ticket_id} arriving via ${channel}."
+
+[[generation.construction.fields]]
+name = "text_length"
+value_type = "integer"
+[generation.construction.fields.recipe]
+type = "transform"
+source = "text"
+operation = "length"
+
+[snapshot]
+name = "hybrid-baseline"
+train_ratio = 0.8
+validation_ratio = 0.1
+test_ratio = 0.1
+seed = 42

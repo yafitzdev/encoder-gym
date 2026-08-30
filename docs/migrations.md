@@ -88,6 +88,9 @@ applied automatically when the SQLite store connects.
   specifications, append-only provider request attempts, and transactional
   normalized-text claims that preserve legacy duplicates while rejecting new
   cross-process duplicates.
+- `0040_hybrid_row_construction`: typed arbitrary generated/source/snapshot row
+  fields and optional per-field construction provenance, with empty defaults
+  for every legacy row.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

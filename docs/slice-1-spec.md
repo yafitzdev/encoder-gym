@@ -31,6 +31,10 @@ The initial output is text-classification data:
     "difficulty": "easy",
     "writing_style": "clean",
     "ambiguity": "obvious"
+  },
+  "fields": {
+    "ticket_id": "T-0042",
+    "channel": "chat"
   }
 }
 ```
@@ -94,6 +98,28 @@ Convert the dataset definition, task, cell, requested row count, generation
 parameters, and optional examples into a normalized generation request. Prompt
 templates must be inspectable and must not live in provider clients.
 
+### Hybrid row construction
+
+A versioned, fingerprinted row-construction plan owns every generated field.
+Each field declares a value type and one recipe. Deterministic recipes include
+fixed values, cell label/dimension copies, sequences, seeded weighted choices,
+integer ranges, patterns, templates, lookups, and transforms. An `llm` recipe
+marks only that field as provider-owned. Dependencies are compiled in
+topological order; unknown references, cycles, invalid value types, and unknown
+dataset dimensions fail before a job starts.
+
+The compiler prepares deterministic row seeds first. Prompt construction sends
+only unresolved LLM fields to the backend. The compiler then merges only those
+requested values, reasserts the trusted generation-cell label and dimensions,
+and resolves deterministic fields that depend on LLM output. If a plan contains
+no LLM fields, the runner completes it locally and makes no provider call.
+
+Every row retains the immutable construction-plan fingerprint, stable row
+index, and a per-field source, recipe, and value fingerprint. Arbitrary fields
+survive accepted-source persistence, snapshots, JSONL export, and flattened CSV
+export. `text` remains required and string-typed; `label` and `dimensions` are
+reserved generation-cell facts rather than provider output.
+
 ### Generation backend port
 
 The application owns a provider-neutral `GenerationBackend` contract. A backend
@@ -123,6 +149,10 @@ specifications, and one append-only record per provider request. Accepted and
 rejected rows retain provenance including backend, model, job identifier,
 request-attempt identifier, and creation time. Raw API credentials are never
 persisted.
+
+The execution specification also pins the row-construction plan. The attempt
+ledger distinguishes provider requests from deterministic construction batches,
+so progress and recovery remain fact-based even when no external API is used.
 
 The execution specification pins initial per-cell needs, backend/model and
 non-secret endpoint identity, generation parameters, batching/retry limits,
@@ -174,6 +204,9 @@ Prioritize deterministic tests for:
 - validation composition
 - duplicate detection
 - backend response normalization
+- recipe dependency compilation and deterministic replay
+- hybrid merge isolation and per-field provenance validation
+- deterministic-only execution with zero backend calls
 - failure, retry, and cancellation behavior
 - crash interruption, atomic attempt/row commits, and cumulative attempt limits
 - execution/prompt fingerprint reproduction and migration compatibility

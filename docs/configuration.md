@@ -21,6 +21,9 @@ back. The persisted record includes a deterministic SHA-256 fingerprint.
 - `generation`: initial equal target, batching/retry policy, backend, model,
   normalized generation parameters, generic provider `extra` parameters, and
   `api_key_env`.
+- `generation.construction`: optional deterministic seed and ordered field
+  recipes for hybrid row construction. Omitting it preserves the default
+  LLM-generated `text` behavior.
 - `snapshot`: name, description, ratios, and deterministic split seed.
 - `training`: local backend, optional registered `base_model_id`, feature
   dimension, epochs, learning rate, L2, checkpoint cadence, seed, and artifact
@@ -50,6 +53,32 @@ spending a bounded JSON-generation budget on reasoning with:
 ```toml
 [generation.extra.thinking]
 type = "disabled"
+```
+
+## Hybrid row construction
+
+Every `[[generation.construction.fields]]` entry has a unique `name`, a
+`value_type` (`string`, `integer`, `number`, `boolean`, `object`, `array`, or
+`any`), and a tagged recipe. The supported recipe types are `fixed`,
+`cell_label`, `cell_dimension`, `sequence`, `weighted_choice`, `integer_range`,
+`pattern`, `template`, `lookup`, `transform`, and `llm`. Templates use
+`${field}`, `${label}`, `${row_index}`, and `${dimension.NAME}` references.
+Transforms support `lowercase`, `uppercase`, `trim`, and `length`. Pattern
+tokens support `{digit:N}`, `{alpha:N}`, and `{alnum:N}`.
+
+`text` is mandatory and must be a string. `label` and `dimensions` are reserved
+because the generation cell owns them. Other fields are persisted as typed JSON
+and exported. Only `llm` fields appear in the provider response contract. A
+fully deterministic plan bypasses the configured provider entirely while still
+writing a durable construction attempt and complete provenance.
+
+Use [the hybrid example](../examples/hybrid-project.toml) and inspect it before
+generation:
+
+```text
+synth config validate examples/hybrid-project.toml
+synth config construction-preview examples/hybrid-project.toml \
+  --label billing --dimension style=messy --count 3
 ```
 
 Analysis protocols are deliberately resolved on `analysis create` rather than
