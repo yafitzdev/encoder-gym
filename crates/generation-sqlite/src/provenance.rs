@@ -3145,8 +3145,7 @@ impl SqliteStore {
         let Some(report) = self.get_analysis_report(id).await.map_err(store_error)? else {
             return Ok(None);
         };
-        let mut parents = self
-            .evaluation_node(report.evaluation_run_id)
+        let mut parents = Box::pin(self.evaluation_node(report.evaluation_run_id))
             .await?
             .into_iter()
             .collect::<Vec<_>>();
@@ -3179,8 +3178,7 @@ impl SqliteStore {
         else {
             return Ok(None);
         };
-        let mut parents = self
-            .analysis_node(proposal.analysis_report_id)
+        let mut parents = Box::pin(self.analysis_node(proposal.analysis_report_id))
             .await?
             .into_iter()
             .collect::<Vec<_>>();
