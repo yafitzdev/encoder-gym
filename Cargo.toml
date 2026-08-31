@@ -19,6 +19,7 @@ members = [
     "crates/generation-core",
     "crates/generation-fake",
     "crates/generation-openai-compatible",
+    "crates/generation-supervisor-core",
     "crates/optimization-core",
     "crates/project-config",
     "crates/project-preparation",
@@ -73,6 +74,7 @@ url = "2"
 
 generation-core = { package = "synthetic-data-core", path = "crates/generation-core" }
 generation-fake = { package = "synthetic-data-fake", path = "crates/generation-fake" }
+generation-supervisor-core = { package = "generation-supervisor-core", path = "crates/generation-supervisor-core" }
 dataset-core = { package = "dataset-core", path = "crates/dataset-core" }
 dataset-import = { package = "dataset-import", path = "crates/dataset-import" }
 dataset-quality-core = { package = "dataset-quality-core", path = "crates/dataset-quality-core" }
