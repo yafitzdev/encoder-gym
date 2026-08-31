@@ -11,6 +11,9 @@ use crate::allocation::InitialAllocationRecord;
 use crate::approval::WorkflowApprovalDecision;
 use crate::benchmark::{AcceptanceAssessment, AcceptanceState, BenchmarkSuite, BenchmarkSuiteKind};
 use crate::benchmark_bundle::BenchmarkBundle;
+use crate::benchmark_qualification::{
+    BENCHMARK_QUALIFICATION_PROTOCOL, BenchmarkQualification, BenchmarkReadiness,
+};
 use crate::contamination::{ContaminationOverride, ContaminationReport, ContaminationStatus};
 use crate::execution::WorkflowChildExecution;
 use crate::governance::{CohortRoleDecision, EvaluationCohort, EvidenceExposure, ExposurePurpose};
@@ -252,6 +255,52 @@ pub trait BenchmarkBundleStore: Send + Sync {
         &self,
         query: BenchmarkBundleQuery,
     ) -> BoxFuture<'_, Result<Vec<BenchmarkBundle>, WorkflowStoreError>>;
+}
+
+#[derive(Debug, Clone)]
+pub struct BenchmarkQualificationQuery {
+    pub benchmark_bundle_id: Option<Uuid>,
+    pub readiness: Option<BenchmarkReadiness>,
+    pub protocol: Option<String>,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+impl Default for BenchmarkQualificationQuery {
+    fn default() -> Self {
+        Self {
+            benchmark_bundle_id: None,
+            readiness: None,
+            protocol: Some(BENCHMARK_QUALIFICATION_PROTOCOL.into()),
+            limit: 50,
+            offset: 0,
+        }
+    }
+}
+
+/// Persistence boundary for immutable benchmark-readiness evidence.
+pub trait BenchmarkQualificationStore: Send + Sync {
+    fn create_benchmark_qualification(
+        &self,
+        qualification: &BenchmarkQualification,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    /// Loads historical evidence using its pinned cohort roles.
+    fn get_benchmark_qualification(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<BenchmarkQualification>, WorkflowStoreError>>;
+
+    /// Loads evidence only while the bundle and all roles remain executable.
+    fn get_executable_benchmark_qualification(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<BenchmarkQualification>, WorkflowStoreError>>;
+
+    fn query_benchmark_qualifications(
+        &self,
+        query: BenchmarkQualificationQuery,
+    ) -> BoxFuture<'_, Result<Vec<BenchmarkQualification>, WorkflowStoreError>>;
 }
 
 #[derive(Debug, Clone)]

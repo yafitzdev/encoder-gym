@@ -58,9 +58,9 @@ use sqlx::{FromRow, Row};
 use training_core::ports::{EncoderRegistry, TrainingStore};
 use uuid::Uuid;
 use workflow_core::ports::{
-    AdvisorStore, BenchmarkBundleStore, BenchmarkStore, ContaminationStore, InitialAllocationStore,
-    PromotionStore, StopDecisionStore, TrainingBenchmarkCheckStore, WorkflowApprovalStore,
-    WorkflowRunStore,
+    AdvisorStore, BenchmarkBundleStore, BenchmarkQualificationStore, BenchmarkStore,
+    ContaminationStore, InitialAllocationStore, PromotionStore, StopDecisionStore,
+    TrainingBenchmarkCheckStore, WorkflowApprovalStore, WorkflowRunStore,
 };
 
 use super::SqliteStore;
@@ -155,6 +155,7 @@ impl ProvenanceStore for SqliteStore {
                 ArtifactKind::BenchmarkSuite => self.benchmark_suite_node(id).await,
                 ArtifactKind::ContaminationReport => self.contamination_report_node(id).await,
                 ArtifactKind::BenchmarkBundle => self.benchmark_bundle_node(id).await,
+                ArtifactKind::BenchmarkQualification => self.benchmark_qualification_node(id).await,
                 ArtifactKind::TrainingBenchmarkCheck => {
                     self.training_benchmark_check_node(id).await
                 }
@@ -881,6 +882,36 @@ impl SqliteStore {
             Some(value.fingerprint.clone()),
             &value,
             vec![snapshot, bundle, report],
+        )?))
+    }
+
+    async fn benchmark_qualification_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(value) = self
+            .get_benchmark_qualification(id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let bundle = required_provenance_parent(
+            self.benchmark_bundle_node(value.benchmark_bundle_id)
+                .await?,
+            "benchmark qualification bundle",
+        )?;
+        require_node_fingerprint(
+            &bundle,
+            &value.benchmark_bundle_fingerprint,
+            "benchmark qualification bundle",
+        )?;
+        Ok(Some(node(
+            ArtifactKind::BenchmarkQualification,
+            id,
+            Some(value.fingerprint.clone()),
+            &value,
+            vec![bundle],
         )?))
     }
 

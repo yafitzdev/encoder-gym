@@ -27,13 +27,18 @@ use uuid::Uuid;
 use workflow_core::{
     allocation::InitialAllocationPolicy,
     benchmark::{AcceptanceContract, BenchmarkMetric, MetricRequirement, MetricTarget},
+    benchmark_qualification::{
+        BenchmarkQualificationPolicy, BenchmarkReadiness, QualificationPopulation,
+        qualify_benchmark_bundle,
+    },
     contamination::{
         CohortContaminationInput, ContaminationKind, ContaminationMember, ContaminationPolicy,
         ContaminationStatus, check_contamination,
     },
     governance::{CohortOrigin, CohortRole, CohortRoleDecision, DisclosureLevel, EvaluationCohort},
     ports::{
-        BenchmarkBundleQuery, BenchmarkBundleStore, ContaminationStore, GovernanceStore,
+        BenchmarkBundleQuery, BenchmarkBundleStore, BenchmarkQualificationQuery,
+        BenchmarkQualificationStore, ContaminationStore, GovernanceStore,
         TrainingBenchmarkCheckQuery, TrainingBenchmarkCheckStore,
     },
     training_benchmark::{
@@ -58,6 +63,97 @@ values = ["clean", "messy"]
 target_per_cell = 10
 batch_size = 20
 "#;
+
+#[tokio::test]
+async fn benchmark_qualification_is_recomputed_from_snapshot_evidence() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("benchmark-qualification.db");
+    let url = format!("sqlite://{}", path.to_string_lossy().replace('\\', "/"));
+    let store = SqliteStore::connect(&url).await.expect("database connects");
+    let (manifest, evidence) = fixture(&store).await;
+    let bundle = compile_project(&manifest, &evidence).expect("bundle");
+    store
+        .create_preparation(&bundle)
+        .await
+        .expect("preparation persists");
+    let cohort = &bundle.development_suite.cohorts[0];
+    let members = store
+        .list_snapshot_members(cohort.snapshot_id)
+        .await
+        .expect("snapshot members")
+        .into_iter()
+        .filter(|member| member.split == cohort.split)
+        .collect::<Vec<_>>();
+    let policy = BenchmarkQualificationPolicy {
+        minimum_overall_support: 1,
+        minimum_label_support: 1,
+        maximum_proportion_margin_of_error: 0.49,
+        maximum_normalized_duplicate_rate: 1.0,
+        ..BenchmarkQualificationPolicy::default()
+    };
+    let qualification = qualify_benchmark_bundle(
+        &bundle.benchmark_bundle,
+        &bundle.development_suite,
+        None,
+        vec![QualificationPopulation {
+            cohort_id: cohort.cohort_id,
+            members: &members,
+        }],
+        policy,
+    )
+    .expect("qualification");
+    assert_eq!(qualification.readiness, BenchmarkReadiness::Blocked);
+    store
+        .create_benchmark_qualification(&qualification)
+        .await
+        .expect("qualification persists");
+    assert_eq!(
+        store
+            .get_benchmark_qualification(qualification.id)
+            .await
+            .expect("qualification read"),
+        Some(qualification.clone())
+    );
+    assert_eq!(
+        store
+            .get_executable_benchmark_qualification(qualification.id)
+            .await
+            .expect("executable qualification read"),
+        Some(qualification.clone())
+    );
+    assert_eq!(
+        store
+            .query_benchmark_qualifications(BenchmarkQualificationQuery {
+                benchmark_bundle_id: Some(bundle.benchmark_bundle.id),
+                readiness: Some(BenchmarkReadiness::Blocked),
+                ..BenchmarkQualificationQuery::default()
+            })
+            .await
+            .expect("qualification list"),
+        vec![qualification.clone()]
+    );
+    let provenance = store
+        .trace_provenance(ArtifactKind::BenchmarkQualification, qualification.id)
+        .await
+        .expect("qualification provenance")
+        .expect("qualification node");
+    assert_eq!(provenance.kind, ArtifactKind::BenchmarkQualification);
+    assert_eq!(provenance.parents.len(), 1);
+    assert_eq!(provenance.parents[0].kind, ArtifactKind::BenchmarkBundle);
+
+    sqlx::query("UPDATE dataset_snapshot_members SET label = 'fraud' WHERE id = ?")
+        .bind(members[0].id)
+        .execute(store.pool())
+        .await
+        .expect("tamper population");
+    assert!(
+        store
+            .get_benchmark_qualification(qualification.id)
+            .await
+            .is_err(),
+        "population tampering must invalidate readiness evidence"
+    );
+}
 
 #[tokio::test]
 async fn preparation_bundle_is_atomic_queryable_and_idempotent_by_manifest() {

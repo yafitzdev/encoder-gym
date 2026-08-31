@@ -149,6 +149,11 @@ applied automatically when the SQLite store connects.
   reject stale/cancelled parents, wrong stage-kind combinations, mutation, and
   deletion. These are execution-control facts rather than terminal artifact
   lineage.
+- `0051_benchmark_qualifications`: immutable, bundle-scoped benchmark
+  readiness evidence with one canonical artifact per protocol and policy. The
+  adapter deeply recomputes aggregate support, distribution, source,
+  duplication, and uncertainty facts from verified snapshot members on every
+  read. Foreign keys and update/delete triggers preserve append-only authority.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

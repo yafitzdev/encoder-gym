@@ -57,10 +57,12 @@ its own check, and the selected check is pinned through final promotion and
 provenance rather than being inferred from a historical model name.
 
 This firewall is the first implemented milestone of
-[Benchmark Stewardship](benchmark-stewardship-spec.md). Later stewardship may
-add deterministic benchmark qualification and a bounded advisory benchmark
-architect, but neither may weaken deterministic eligibility, expose sealed row
-content for adaptation, or turn advisory output into approval authority.
+[Benchmark Stewardship](benchmark-stewardship-spec.md). Deterministic benchmark
+qualification now derives immutable aggregate readiness evidence from the exact
+bundle populations; its separate approval and workflow gate remain the next
+stewardship boundary. A later bounded advisory benchmark architect may not
+weaken deterministic eligibility, expose sealed row content for adaptation, or
+turn advisory output into approval authority.
 
 A pilot bootstrap layer may resolve local JSONL/CSV cohort declarations into
 ordinary completed imports and immutable all-test snapshots before invoking the
