@@ -359,6 +359,15 @@ artifact pins snapshot, population, training cohorts and roles, bundle,
 benchmark cohort set, combined report, protocol version, and fingerprint. A
 blocked check remains durable evidence but cannot authorize training.
 
+Its benchmark-qualification policy separately answers whether the exact bundle
+population can support its declared decisions. The pure calculation consumes
+suite contracts and snapshot members, derives only aggregate support,
+distribution, source-composition, duplication, text-bound, and uncertainty
+facts, and emits normalized blocking issues and honest limitation warnings.
+It reuses evaluation slice identities and the platform text normalizer; it does
+not calculate model metrics, approve a benchmark, or treat balanced labels as
+proof of representativeness.
+
 The dependency direction is deliberately outward from the workflow core's
 ports:
 

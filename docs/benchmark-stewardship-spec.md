@@ -180,6 +180,63 @@ the exact benchmark populations and acceptance contract:
 Qualification may expose aggregate facts about sealed evidence, never row
 content or adaptive diagnostics. Deterministic policy owns readiness.
 
+### V1 readiness contract
+
+Qualification operates on the exact cohort union pinned by one executable
+`BenchmarkBundle`. It evaluates each cohort independently because suite
+acceptance requirements are applied independently to each cohort. The immutable
+artifact pins the bundle and suite fingerprints, a versioned policy, a
+fingerprint of each exact member population, aggregate cohort summaries,
+normalized issues, and one derived `ready` or `blocked` state.
+
+The V1 policy makes the following values explicit:
+
+- minimum overall and per-label support;
+- a fixed confidence level and maximum binomial proportion margin of error;
+- maximum normalized duplicate rate;
+- minimum producer diversity and maximum single-producer concentration;
+- maximum label-support imbalance.
+
+The uncertainty floor is the conservative worst-case normal-approximation
+sample size `ceil(z^2 * 0.25 / margin^2)`. It applies to overall and explicitly
+contracted label/slice proportion decisions. A future policy version may use
+Wilson intervals or metric-specific bootstrap simulation, but may not silently
+change an existing artifact's calculation.
+
+Every suite label is required to have support even when it is not named by an
+individual metric requirement. Every canonical slice requirement is parsed
+through `evaluation-core::SliceIdentity` and counted using the same slice
+semantics as evaluation. A contracted slice must meet its declared support,
+the evaluation protocol's minimum slice support, and the uncertainty floor.
+
+Aggregate evidence records label counts, required-slice counts, observed
+dimension/value counts, generated/imported composition, producer
+concentration, normalized duplicates, and text-length bounds. Normalization
+reuses the generation/contamination rule. The artifact never contains raw
+text, source paths, or sealed member identities.
+
+Population summaries do not by themselves establish real-world
+representativeness or human semantic correctness. V1 therefore emits explicit
+warnings for both limitations. A McNemar requirement also emits a warning that
+paired-test power remains conditional on the future baseline/candidate
+disagreement rate. Later evidence bindings may close those warnings by pinning
+an approved quality audit or an operator-reviewed reference distribution; the
+system must not infer either claim from class balance alone.
+
+Blocked qualifications remain inspectable. Only a ready qualification may be
+approved and bound to a new workflow definition. Approval is a separate
+append-only human decision; recalculating a qualification does not imply
+approval.
+
+### Milestone 2 implementation sequence
+
+1. pure qualification policy, summaries, issues, and fingerprints;
+2. immutable SQLite artifact and deep population recomputation;
+3. scriptable create/show/list/validate CLI;
+4. append-only review and a ready-plus-approved workflow binding;
+5. preparation preview/create integration, provenance, Doctor, and offline E2E;
+6. typed semantic-quality and reference-distribution evidence bindings.
+
 ## Milestone 3 — bounded Benchmark Architect
 
 A replaceable advisory component may propose a benchmark blueprint from task
