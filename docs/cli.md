@@ -274,7 +274,16 @@ Benchmark and acceptance commands are:
   decisions and report `valid`, `training_allowed`, status, and reasons; and
 - `synth benchmark training-check-list` with optional `--snapshot-id <ID>`,
   `--benchmark-bundle-id <ID>`, and `--status clean|blocked` filters to page
-  historical checks under the current `train_and_validation_v1` input protocol.
+  historical checks under the current `train_and_validation_v1` input protocol;
+- `synth benchmark qualification-create <BUNDLE_ID> [--policy FILE]` to derive
+  or idempotently reuse immutable readiness evidence from every exact cohort
+  population. The strict JSON/TOML policy controls support, confidence/margin,
+  normalized duplicates, producer diversity/concentration, and label balance;
+- `synth benchmark qualification-show|qualification-validate <ID>` to inspect
+  or deeply recompute a qualification from current verified snapshots and
+  executable bundle roles; and
+- `synth benchmark qualification-list` with optional
+  `--benchmark-bundle-id <ID>` and `--readiness ready|blocked` filters.
 
 Metric contracts require at least one effective decision bound and support
 overall metrics, per-label precision/recall/F1, canonical typed slice keys,
@@ -284,6 +293,12 @@ candidate run, protocol, cohort, metrics, and internal counts agree. Sealed
 suites accept overall metrics only, require aggregate, adaptation-ineligible
 disclosure, and require a separate `--authorize-sealed` acknowledgement.
 Repeating an identical assessment returns the existing artifact.
+
+Qualification outputs contain aggregate counts and issues, never row content.
+`ready` means all deterministic support and policy checks passed; warnings
+remain explicit where structural evidence cannot establish semantic quality,
+real-world representativeness, or future paired-test disagreement power. A
+blocked result is durable evidence and is not converted to ready by inspection.
 
 Training checks are created automatically by governed workflow training; there
 is no manual create command. The current input protocol treats every train and

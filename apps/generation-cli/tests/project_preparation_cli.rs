@@ -74,6 +74,9 @@ fn manifest_previews_prepares_idempotently_and_yields_a_startable_workflow() {
     let definition_id = created["preparation"]["workflow_definition_id"]
         .as_str()
         .expect("definition ID");
+    let bundle_id = created["preparation"]["benchmark_bundle_id"]
+        .as_str()
+        .expect("bundle ID");
     assert_eq!(
         created["next_command"],
         format!("synth workflow start {definition_id}")
@@ -90,6 +93,65 @@ fn manifest_previews_prepares_idempotently_and_yields_a_startable_workflow() {
     );
     let shown = run_json(&database_url, ["project", "show", preparation_id]);
     assert_eq!(shown["workflow_definition"]["id"], definition_id);
+
+    let qualification = run_json(
+        &database_url,
+        ["benchmark", "qualification-create", bundle_id],
+    );
+    assert_eq!(qualification["benchmark_bundle_id"], bundle_id);
+    assert_eq!(qualification["readiness"], "blocked");
+    assert!(
+        qualification["issues"]
+            .as_array()
+            .expect("qualification issues")
+            .iter()
+            .any(|issue| issue["code"] == "insufficient_support")
+    );
+    let qualification_id = qualification["id"].as_str().expect("qualification ID");
+    assert_eq!(
+        run_json(
+            &database_url,
+            ["benchmark", "qualification-create", bundle_id],
+        )["id"],
+        qualification_id,
+        "same bundle and policy must reuse one immutable calculation"
+    );
+    assert_eq!(
+        run_json(
+            &database_url,
+            ["benchmark", "qualification-show", qualification_id],
+        )["fingerprint"],
+        qualification["fingerprint"]
+    );
+    let validation = run_json(
+        &database_url,
+        ["benchmark", "qualification-validate", qualification_id],
+    );
+    assert_eq!(validation["valid"], true);
+    assert_eq!(validation["ready"], false);
+    assert_eq!(
+        run_json(
+            &database_url,
+            [
+                "benchmark",
+                "qualification-list",
+                "--benchmark-bundle-id",
+                bundle_id,
+                "--readiness",
+                "blocked",
+            ],
+        )
+        .as_array()
+        .expect("qualification list")
+        .len(),
+        1
+    );
+    let provenance = run_json(
+        &database_url,
+        ["provenance", "benchmark-qualification", qualification_id],
+    );
+    assert_eq!(provenance["kind"], "benchmark_qualification");
+    assert_eq!(provenance["parents"][0]["kind"], "benchmark_bundle");
     assert_eq!(
         run_json(&database_url, ["workflow", "list"]),
         serde_json::json!([]),

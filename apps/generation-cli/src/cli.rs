@@ -1729,6 +1729,30 @@ pub enum BenchmarkCommand {
         #[command(flatten)]
         page: PageArgs,
     },
+    /// Derive and persist deterministic readiness evidence for one benchmark bundle.
+    QualificationCreate {
+        benchmark_bundle_id: Uuid,
+        /// Strict JSON/TOML BenchmarkQualificationPolicy; defaults are explicit in output.
+        #[arg(long)]
+        policy: Option<PathBuf>,
+    },
+    /// Show one immutable benchmark qualification.
+    QualificationShow {
+        id: Uuid,
+    },
+    /// Recompute one qualification from persisted snapshot populations.
+    QualificationValidate {
+        id: Uuid,
+    },
+    /// List immutable benchmark qualifications.
+    QualificationList {
+        #[arg(long)]
+        benchmark_bundle_id: Option<Uuid>,
+        #[arg(long, value_enum)]
+        readiness: Option<BenchmarkReadinessArg>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1743,6 +1767,12 @@ pub enum AcceptanceStateArg {
     Fail,
     Inconclusive,
     Invalid,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum BenchmarkReadinessArg {
+    Ready,
+    Blocked,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1984,6 +2014,7 @@ pub enum ArtifactKindArg {
     BenchmarkSuite,
     ContaminationReport,
     BenchmarkBundle,
+    BenchmarkQualification,
     TrainingBenchmarkCheck,
     WorkflowDefinition,
     WorkflowRun,
