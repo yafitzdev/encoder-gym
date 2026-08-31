@@ -5,6 +5,7 @@ use project_preparation::{
 };
 use sqlx::{FromRow, Sqlite, SqliteConnection};
 use uuid::Uuid;
+use workflow_core::benchmark_bundle::build_benchmark_bundle;
 
 use crate::SqliteStore;
 
@@ -60,7 +61,7 @@ impl PreparationStore for SqliteStore {
         Box::pin(async move {
             sqlx::query_as::<_, PreparationRow>(
                 "SELECT id, name, manifest_fingerprint, dataset_id, project_configuration_id, \
-                 development_suite_id, sealed_suite_id, workflow_definition_id, artifact_json, \
+                 development_suite_id, sealed_suite_id, benchmark_bundle_id, workflow_definition_id, artifact_json, \
                  fingerprint, created_at FROM project_preparations \
                  ORDER BY created_at DESC, id ASC LIMIT ? OFFSET ?",
             )
@@ -121,6 +122,9 @@ pub(crate) async fn insert_preparation_bundle(
             .await
             .map_err(store_error)?;
     }
+    crate::benchmark_bundle::insert_benchmark_bundle(connection, &bundle.benchmark_bundle)
+        .await
+        .map_err(store_error)?;
     crate::workflow_run::insert_workflow_definition(connection, &bundle.workflow_definition)
         .await
         .map_err(store_error)?;
@@ -134,8 +138,8 @@ async fn insert_preparation(
     sqlx::query(
         "INSERT INTO project_preparations \
          (id, name, manifest_fingerprint, dataset_id, project_configuration_id, \
-          development_suite_id, sealed_suite_id, workflow_definition_id, artifact_json, \
-          fingerprint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          development_suite_id, sealed_suite_id, benchmark_bundle_id, workflow_definition_id, \
+          artifact_json, fingerprint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(value.id)
     .bind(&value.name)
@@ -144,6 +148,7 @@ async fn insert_preparation(
     .bind(value.project_configuration_id)
     .bind(value.development_suite_id)
     .bind(value.sealed_suite_id)
+    .bind(value.benchmark_bundle_id)
     .bind(value.workflow_definition_id)
     .bind(to_json(value)?)
     .bind(&value.fingerprint)
@@ -211,12 +216,46 @@ fn validate_bundle(bundle: &PreparationBundle) -> Result<(), PreparationStoreErr
             ));
         }
     }
+    let global_report = bundle
+        .contamination_reports
+        .iter()
+        .find(|report| report.id == bundle.benchmark_bundle.contamination_report_id)
+        .ok_or_else(|| {
+            PreparationStoreError("benchmark bundle contamination report is absent".into())
+        })?;
+    let expected_bundle = build_benchmark_bundle(
+        &bundle.development_suite,
+        bundle.sealed_suite.as_ref(),
+        global_report,
+    )
+    .map_err(store_error)?;
+    if bundle.benchmark_bundle.validate_fingerprint().is_err()
+        || bundle.benchmark_bundle.development_suite_id != expected_bundle.development_suite_id
+        || bundle.benchmark_bundle.development_suite_fingerprint
+            != expected_bundle.development_suite_fingerprint
+        || bundle.benchmark_bundle.sealed_suite_id != expected_bundle.sealed_suite_id
+        || bundle.benchmark_bundle.sealed_suite_fingerprint
+            != expected_bundle.sealed_suite_fingerprint
+        || bundle.benchmark_bundle.contamination_report_id
+            != expected_bundle.contamination_report_id
+        || bundle.benchmark_bundle.contamination_report_fingerprint
+            != expected_bundle.contamination_report_fingerprint
+        || bundle.benchmark_bundle.fingerprint != expected_bundle.fingerprint
+    {
+        return Err(PreparationStoreError(
+            "benchmark bundle does not match the prepared suites and global report".into(),
+        ));
+    }
     let definition = &bundle.workflow_definition;
     if definition.reproduce_fingerprint().map_err(store_error)? != definition.fingerprint
         || definition.dataset_id != bundle.dataset.id
         || definition.project_configuration_id != configuration.id
         || definition.development_suite_id != bundle.development_suite.id
         || definition.sealed_suite_id != bundle.sealed_suite.as_ref().map(|suite| suite.id)
+        || definition
+            .benchmark_bundle
+            .as_ref()
+            .is_none_or(|binding| binding.validate_bundle(&bundle.benchmark_bundle).is_err())
     {
         return Err(PreparationStoreError(
             "workflow definition references are inconsistent".into(),
@@ -228,6 +267,9 @@ fn validate_bundle(bundle: &PreparationBundle) -> Result<(), PreparationStoreErr
         || preparation.project_configuration_id != configuration.id
         || preparation.development_suite_id != bundle.development_suite.id
         || preparation.sealed_suite_id != bundle.sealed_suite.as_ref().map(|suite| suite.id)
+        || preparation.benchmark_bundle_id != Some(bundle.benchmark_bundle.id)
+        || preparation.benchmark_bundle_fingerprint.as_deref()
+            != Some(bundle.benchmark_bundle.fingerprint.as_str())
         || preparation.workflow_definition_id != definition.id
     {
         return Err(PreparationStoreError(
@@ -238,7 +280,7 @@ fn validate_bundle(bundle: &PreparationBundle) -> Result<(), PreparationStoreErr
 }
 
 const PREPARATION_SELECT_BY_ID: &str = "SELECT id, name, manifest_fingerprint, dataset_id, project_configuration_id, \
-     development_suite_id, sealed_suite_id, workflow_definition_id, artifact_json, \
+     development_suite_id, sealed_suite_id, benchmark_bundle_id, workflow_definition_id, artifact_json, \
      fingerprint, created_at FROM project_preparations WHERE id = ?";
 
 async fn get_by_manifest<'e, E>(
@@ -250,7 +292,7 @@ where
 {
     sqlx::query_as::<_, PreparationRow>(
         "SELECT id, name, manifest_fingerprint, dataset_id, project_configuration_id, \
-         development_suite_id, sealed_suite_id, workflow_definition_id, artifact_json, \
+         development_suite_id, sealed_suite_id, benchmark_bundle_id, workflow_definition_id, artifact_json, \
          fingerprint, created_at FROM project_preparations WHERE manifest_fingerprint = ?",
     )
     .bind(manifest_fingerprint)
@@ -270,6 +312,7 @@ struct PreparationRow {
     project_configuration_id: Uuid,
     development_suite_id: Uuid,
     sealed_suite_id: Option<Uuid>,
+    benchmark_bundle_id: Option<Uuid>,
     workflow_definition_id: Uuid,
     artifact_json: String,
     fingerprint: String,
@@ -280,13 +323,15 @@ impl PreparationRow {
     fn into_domain(self) -> Result<PreparedProject, PreparationStoreError> {
         let value: PreparedProject =
             serde_json::from_str(&self.artifact_json).map_err(store_error)?;
-        if value.id != self.id
+        if value.benchmark_bundle_id.is_some() != value.benchmark_bundle_fingerprint.is_some()
+            || value.id != self.id
             || value.name != self.name
             || value.manifest_fingerprint != self.manifest_fingerprint
             || value.dataset_id != self.dataset_id
             || value.project_configuration_id != self.project_configuration_id
             || value.development_suite_id != self.development_suite_id
             || value.sealed_suite_id != self.sealed_suite_id
+            || value.benchmark_bundle_id != self.benchmark_bundle_id
             || value.workflow_definition_id != self.workflow_definition_id
             || value.fingerprint != self.fingerprint
             || value.created_at != self.created_at

@@ -1,6 +1,8 @@
 use sqlx::{FromRow, QueryBuilder, Sqlite, SqliteConnection};
 use uuid::Uuid;
 use workflow_core::{
+    benchmark_bundle::BenchmarkBundle,
+    contamination::ContaminationReport,
     ports::{
         BoxFuture, WorkflowDefinitionQuery, WorkflowRunQuery, WorkflowRunStore, WorkflowStoreError,
     },
@@ -23,22 +25,57 @@ impl WorkflowRunStore for SqliteStore {
         })
     }
 
+    fn create_workflow_definition_with_authority(
+        &self,
+        new_contamination_report: Option<&ContaminationReport>,
+        new_benchmark_bundle: Option<&BenchmarkBundle>,
+        definition: &WorkflowDefinition,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>> {
+        let report = new_contamination_report.cloned();
+        let bundle = new_benchmark_bundle.cloned();
+        let definition = definition.clone();
+        Box::pin(async move {
+            let binding = definition.benchmark_bundle.as_ref().ok_or_else(|| {
+                WorkflowStoreError("workflow definition requires a benchmark bundle binding".into())
+            })?;
+            if let Some(bundle) = &bundle {
+                binding.validate_bundle(bundle).map_err(store_error)?;
+            }
+            if let Some(report) = &report {
+                let bundle = bundle.as_ref().ok_or_else(|| {
+                    WorkflowStoreError(
+                        "a new contamination report requires its new benchmark bundle".into(),
+                    )
+                })?;
+                if report.id != bundle.contamination_report_id
+                    || report.fingerprint != bundle.contamination_report_fingerprint
+                {
+                    return Err(WorkflowStoreError(
+                        "new contamination report does not belong to the workflow benchmark bundle"
+                            .into(),
+                    ));
+                }
+            }
+            let mut transaction = self.pool().begin().await.map_err(store_error)?;
+            if let Some(report) = &report {
+                crate::contamination::insert_contamination_report(&mut transaction, report).await?;
+            }
+            if let Some(bundle) = &bundle {
+                crate::benchmark_bundle::insert_benchmark_bundle(&mut transaction, bundle).await?;
+            }
+            insert_workflow_definition(&mut transaction, &definition).await?;
+            transaction.commit().await.map_err(store_error)?;
+            Ok(())
+        })
+    }
+
     fn get_workflow_definition(
         &self,
         id: Uuid,
     ) -> BoxFuture<'_, Result<Option<WorkflowDefinition>, WorkflowStoreError>> {
         Box::pin(async move {
-            sqlx::query_as::<_, DefinitionRow>(
-                "SELECT id, name, dataset_id, project_configuration_id, development_suite_id, \
-                 sealed_suite_id, artifact_json, fingerprint, created_at \
-                 FROM workflow_definitions WHERE id = ?",
-            )
-            .bind(id)
-            .fetch_optional(self.pool())
-            .await
-            .map_err(store_error)?
-            .map(DefinitionRow::into_domain)
-            .transpose()
+            let mut connection = self.pool().acquire().await.map_err(store_error)?;
+            load_workflow_definition(&mut connection, id).await
         })
     }
 
@@ -47,10 +84,7 @@ impl WorkflowRunStore for SqliteStore {
         query: WorkflowDefinitionQuery,
     ) -> BoxFuture<'_, Result<Vec<WorkflowDefinition>, WorkflowStoreError>> {
         Box::pin(async move {
-            let mut builder = QueryBuilder::<Sqlite>::new(
-                "SELECT id, name, dataset_id, project_configuration_id, development_suite_id, \
-                 sealed_suite_id, artifact_json, fingerprint, created_at FROM workflow_definitions",
-            );
+            let mut builder = QueryBuilder::<Sqlite>::new("SELECT id FROM workflow_definitions");
             if let Some(dataset_id) = query.dataset_id {
                 builder.push(" WHERE dataset_id = ").push_bind(dataset_id);
             }
@@ -59,14 +93,24 @@ impl WorkflowRunStore for SqliteStore {
                 .push_bind(query.limit)
                 .push(" OFFSET ")
                 .push_bind(query.offset);
-            builder
-                .build_query_as::<DefinitionRow>()
+            let ids = builder
+                .build_query_scalar::<Uuid>()
                 .fetch_all(self.pool())
                 .await
-                .map_err(store_error)?
-                .into_iter()
-                .map(DefinitionRow::into_domain)
-                .collect()
+                .map_err(store_error)?;
+            let mut connection = self.pool().acquire().await.map_err(store_error)?;
+            let mut definitions = Vec::with_capacity(ids.len());
+            for id in ids {
+                let definition = load_workflow_definition(&mut connection, id)
+                    .await?
+                    .ok_or_else(|| {
+                        WorkflowStoreError(format!(
+                            "workflow definition disappeared while listing: {id}"
+                        ))
+                    })?;
+                definitions.push(definition);
+            }
+            Ok(definitions)
         })
     }
 
@@ -87,18 +131,30 @@ impl WorkflowRunStore for SqliteStore {
                     "initial workflow attempt must be the first event".into(),
                 ));
             }
-            let definition_fingerprint: Option<String> =
-                sqlx::query_scalar("SELECT fingerprint FROM workflow_definitions WHERE id = ?")
-                    .bind(run.definition_id)
-                    .fetch_optional(self.pool())
-                    .await
-                    .map_err(store_error)?;
-            if definition_fingerprint.as_deref() != Some(&run.definition_fingerprint) {
+            let mut transaction = self.pool().begin().await.map_err(store_error)?;
+            let definition = load_workflow_definition(&mut transaction, run.definition_id)
+                .await?
+                .ok_or_else(|| WorkflowStoreError("workflow run definition not found".into()))?;
+            if definition.fingerprint != run.definition_fingerprint {
                 return Err(WorkflowStoreError(
                     "workflow run definition does not match persistence".into(),
                 ));
             }
-            let mut transaction = self.pool().begin().await.map_err(store_error)?;
+            let binding = definition.benchmark_bundle.as_ref().ok_or_else(|| {
+                WorkflowStoreError(
+                    "legacy workflow definitions without benchmark authority are not executable"
+                        .into(),
+                )
+            })?;
+            let executable_bundle = crate::benchmark_bundle::load_executable_benchmark_bundle(
+                &mut transaction,
+                binding.bundle_id,
+            )
+            .await?
+            .ok_or_else(|| WorkflowStoreError("workflow benchmark bundle not found".into()))?;
+            binding
+                .validate_bundle(&executable_bundle)
+                .map_err(store_error)?;
             insert_run(&mut transaction, &run).await?;
             insert_attempt(&mut transaction, &attempt).await?;
             transaction.commit().await.map_err(store_error)?;
@@ -234,10 +290,51 @@ impl WorkflowRunStore for SqliteStore {
     }
 }
 
+pub(crate) async fn load_workflow_definition(
+    connection: &mut SqliteConnection,
+    id: Uuid,
+) -> Result<Option<WorkflowDefinition>, WorkflowStoreError> {
+    let Some(row) = sqlx::query_as::<_, DefinitionRow>(
+        "SELECT id, name, dataset_id, project_configuration_id, development_suite_id, \
+         sealed_suite_id, benchmark_bundle_id, artifact_json, fingerprint, created_at \
+         FROM workflow_definitions WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(store_error)?
+    else {
+        return Ok(None);
+    };
+    let definition = row.into_domain()?;
+    if let Some(binding) = &definition.benchmark_bundle {
+        let bundle = crate::benchmark_bundle::load_benchmark_bundle(connection, binding.bundle_id)
+            .await?
+            .ok_or_else(|| {
+                WorkflowStoreError(format!(
+                    "workflow benchmark bundle not found: {}",
+                    binding.bundle_id
+                ))
+            })?;
+        binding.validate_bundle(&bundle).map_err(store_error)?;
+    }
+    Ok(Some(definition))
+}
+
 async fn validate_definition_references(
     connection: &mut SqliteConnection,
     definition: &WorkflowDefinition,
 ) -> Result<(), WorkflowStoreError> {
+    let binding = definition.benchmark_bundle.as_ref().ok_or_else(|| {
+        WorkflowStoreError("new workflow definitions require a benchmark bundle".into())
+    })?;
+    let persisted_bundle =
+        crate::benchmark_bundle::load_benchmark_bundle(connection, binding.bundle_id)
+            .await?
+            .ok_or_else(|| WorkflowStoreError("workflow benchmark bundle not found".into()))?;
+    binding
+        .validate_bundle(&persisted_bundle)
+        .map_err(store_error)?;
     let configuration: Option<(Uuid, String)> =
         sqlx::query_as("SELECT dataset_id, fingerprint FROM project_configurations WHERE id = ?")
             .bind(definition.project_configuration_id)
@@ -298,8 +395,8 @@ pub(crate) async fn insert_workflow_definition(
     sqlx::query(
         "INSERT INTO workflow_definitions \
          (id, name, dataset_id, project_configuration_id, development_suite_id, \
-          sealed_suite_id, artifact_json, fingerprint, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          sealed_suite_id, benchmark_bundle_id, artifact_json, fingerprint, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(definition.id)
     .bind(&definition.name)
@@ -307,6 +404,12 @@ pub(crate) async fn insert_workflow_definition(
     .bind(definition.project_configuration_id)
     .bind(definition.development_suite_id)
     .bind(definition.sealed_suite_id)
+    .bind(
+        definition
+            .benchmark_bundle
+            .as_ref()
+            .map(|binding| binding.bundle_id),
+    )
     .bind(to_json(definition)?)
     .bind(&definition.fingerprint)
     .bind(definition.created_at)
@@ -429,6 +532,7 @@ struct DefinitionRow {
     project_configuration_id: Uuid,
     development_suite_id: Uuid,
     sealed_suite_id: Option<Uuid>,
+    benchmark_bundle_id: Option<Uuid>,
     artifact_json: String,
     fingerprint: String,
     created_at: chrono::DateTime<chrono::Utc>,
@@ -443,6 +547,11 @@ impl DefinitionRow {
             || value.project_configuration_id != self.project_configuration_id
             || value.development_suite_id != self.development_suite_id
             || value.sealed_suite_id != self.sealed_suite_id
+            || value
+                .benchmark_bundle
+                .as_ref()
+                .map(|binding| binding.bundle_id)
+                != self.benchmark_bundle_id
             || value.fingerprint != self.fingerprint
             || value.created_at != self.created_at
         {

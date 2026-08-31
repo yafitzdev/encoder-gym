@@ -29,6 +29,7 @@ The workflow must reuse the current artifact-producing paths below.
 | Dataset snapshot | `dataset-core::build_snapshot` through `SnapshotStore` | UUID, source row IDs, deterministic split, fingerprint | Immutable training/evaluation source and parent of later snapshot lineage |
 | Training run/checkpoint | `TrainingRunner` through `TrainingBackend`, `TrainingStore`, and `CheckpointSink` | queued/running/completed/failed/cancelled; artifact checksum and fingerprint | Workflow requests a configured run and links its verified final checkpoint |
 | Evaluation run/predictions | `EvaluationRunner` through `Predictor`, `EvaluationExampleSource`, and `EvaluationStore` | queued/running/completed/failed/cancelled; cohort/protocol/input fingerprints | Development or sealed suite execution under role/disclosure policy |
+| Benchmark bundle | `workflow-core::build_benchmark_bundle` through `BenchmarkBundleStore`; derived by workflow definition or project preparation | immutable development and optional sealed suite pins plus one strict global contamination-report pin | Decision-grade authority for the complete workflow benchmark population |
 | Comparison/selection | pure `evaluation-core` comparison and immutable reports | compatible cohort/protocol fingerprints | V1/V2 evidence and deterministic acceptance input |
 | Analysis report | `analysis-core::run_analysis` through analysis evidence/store ports | immutable report/protocol/source fingerprints and normalized findings | Development-only diagnostic input |
 | Optimization proposal/review/application | `optimization-core` plus `OptimizationStore` | immutable evidence/protocol/proposal; append-only review; idempotent application | Produces bounded normal plan or training candidate after governance validation |
@@ -46,7 +47,7 @@ same application functions and runners.
 
 - exact initial-budget allocation policy and result;
 - cohort roles, exposure/disclosure policy, and deterministic acceptance;
-- benchmark-suite identity and compatibility policy;
+- benchmark-suite and benchmark-bundle identity and compatibility policy;
 - workflow definition, run, iteration, stage, attempt, budget, approval envelope,
   and stop decision;
 - narrow ports for creating, starting, querying, cancelling, and linking ordinary
@@ -104,6 +105,15 @@ labels, predictions, error examples, and slice details are ineligible for
 adaptation. Sealed evaluation is a separately authorized action and defaults to
 policy-approved aggregate disclosure.
 
+Workflow execution uses the suites reached through the definition's benchmark
+bundle, not a fresh suite lookup by a floating identifier. Before a run is
+created and before each executing stage performs evidence work, every cohort's
+current role decision must still be the exact active decision pinned by that
+suite. Any role transition or retirement makes that workflow authority
+non-executable, even if a later decision uses the same role name. Historical
+status and provenance remain readable; continued execution requires a new suite,
+bundle, and definition over eligible current roles.
+
 Every evaluation or inspection appends an exposure containing purpose,
 disclosure level, adaptation eligibility, workflow/iteration identity, and
 timestamp. Row-level inspection or adaptive use retires/demotes a sealed cohort
@@ -122,10 +132,27 @@ entity/group identity across cohorts. Group-aware splitting keeps related rows
 together when group identity exists. Policy determines whether findings block,
 warn, or require an explicit append-only override.
 
+Before a workflow definition becomes executable, its development and optional
+sealed suites are validated as one global benchmark population. Their suite
+identities and fingerprints must be distinct, no cohort may repeat, and the two
+suites may not share a snapshot/split. They must also describe the same task and
+ordered label vocabulary. A separately computed report must cover exactly the
+suite cohort union, reproduce every cohort and current-role fingerprint, use the
+default zero-tolerance policy, and contain zero source-row, exact-text,
+normalized-text, and group findings. The report must be clean with no reasons; a
+contamination override is never accepted at this boundary.
+
 For local classification datasets, `snapshot create --group-dimension` treats
 an arbitrary categorical dimension as the optional group identity and assigns
 the whole group to one split deterministically. Persisted overlap findings keep
 evidence fingerprints instead of raw text.
+
+`workflow define --group-dimension` applies the same identity to the strict
+global check. Without the flag, the command infers the single group dimension
+used by the suite-local reports. Conflicting inferred dimensions or an explicit
+value that differs from the inferred value are rejected. The flag may introduce
+a dimension when none is inferred, in which case every bound member must have a
+non-empty value for it.
 
 Evidence used to guide a model is adaptive regardless of whether it comes from
 one holdout, multiple folds, confidence intervals, or statistical tests. The
@@ -139,10 +166,36 @@ evaluation protocols, metric thresholds, slice/support requirements, compatible
 baseline and regression tolerance, disclosure, adaptation eligibility,
 contamination status, and fingerprint.
 
+An immutable `BenchmarkBundle` is the authority above those individual suites.
+It pins the IDs and fingerprints of the development suite, optional sealed
+suite, and strict global contamination report. Its own fingerprint covers those
+pins and intentionally has no override field. A new workflow definition must
+carry the exact compact bundle binding. Definitions and runs created before
+migration `0046` retain their historical JSON and remain inspectable, but are
+not executable authority: a legacy definition cannot initialize a run and a
+legacy run cannot advance or resume. Recreate the definition through
+`workflow define` or project preparation to derive a bundle before continuing.
+
+`workflow define` loads the persisted suites and their pinned evidence,
+recomputes the strict global report from the immutable snapshot members, and
+reuses an existing report and bundle when their fingerprints match. Otherwise
+it inserts the new report, bundle, and definition atomically. A user-supplied
+bundle binding is accepted only when it exactly matches the derived authority.
+
 Deterministic assessment returns `pass`, `fail`, `inconclusive`, or `invalid`
 with structured reasons. Development suites may drive iteration. Sealed suites
 may support final milestone assessment only and never become workflow adaptation
 evidence.
+
+The suite disclosure is a maximum, not a promise that every workflow stage can
+operate at that level. The current workflow needs row content for initial and
+follow-up diagnosis, predictions for paired comparison, slices for optimization,
+and aggregate or row content for the advisor according to its egress policy.
+All development uses are adaptive and therefore also require
+`adaptation_eligible = true`. Workflow definition and declarative preparation
+reject an insufficient policy before persistence; runtime checks the same core
+policy again before analysis, comparison, optimizer, or provider work. Final
+sealed assessment is always aggregate-only and non-adaptive.
 
 The local definition format supports overall, per-label, and arbitrary slice
 metric requirements, minimum support, paired baseline regression tolerances,
@@ -173,16 +226,18 @@ and contamination eligibility. It performs no provider call and creates no
 artifact.
 
 `project prepare` reruns the same validation and atomically inserts only normal
-slice/workflow artifacts plus one immutable preparation summary. The manifest
-fingerprint is an idempotency key. Preparation rejects missing or changed
-snapshots, mismatched label order, empty selected splits, duplicate snapshot/
-split use across roles, blocked cross-cohort contamination, unsafe sealed
-disclosure, and invalid finite budgets before writing anything. Preparation
-does not start the workflow; `workflow start` remains a separate authorization.
+slice/workflow artifacts, the strict global contamination report, its benchmark
+bundle, and one immutable preparation summary. Both the definition and summary
+pin the bundle identity and fingerprint. The manifest fingerprint is an
+idempotency key. Preparation rejects missing or changed snapshots, mismatched
+label order, empty selected splits, duplicate snapshot/split use across roles,
+any strict global contamination, unsafe sealed disclosure, and invalid finite
+budgets before writing anything. Preparation does not start the workflow;
+`workflow start` remains a separate authorization.
 
 ## Workflow lifecycle
 
-A resolved legacy workflow proceeds through legal durable stages:
+A resolved executable workflow proceeds through legal durable stages:
 
 ```text
 allocation -> generation -> snapshot -> training -> development evaluation
@@ -249,9 +304,16 @@ the persisted ceiling. Every new candidate currently uses the resolved
 `fresh` training policy; checkpoint continuation is not silently inferred.
 
 Development evaluation, diagnosis, advising, optimization, and paired
-comparison each append their own idempotent exposure fact. A configured
-fresh-cohort threshold produces a deterministic stop reason before further
-adaptive iteration, rather than treating repeated holdout use as fresh evidence.
+comparison each append their own idempotent exposure fact. The recorded
+adaptation flag is derived from both the purpose and the suite's eligibility
+pin; an existing idempotency match must reproduce the pinned role, disclosure,
+eligibility, and note. Comparisons are matched to baseline and candidate
+evaluations by suite cohort compatibility rather than artifact-list position.
+When the acceptance contract has a regression requirement, the matching
+comparison is part of the assessment identity and stop-decision evidence. A
+configured fresh-cohort threshold produces a deterministic stop reason before
+further adaptive iteration, rather than treating repeated holdout use as fresh
+evidence.
 
 ## Optional advisor boundary
 

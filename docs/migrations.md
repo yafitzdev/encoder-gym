@@ -107,6 +107,16 @@ applied automatically when the SQLite store connects.
   reproducible invalid-output-aware reports, append-only row/manifest review
   chains, complete curation selections, and an atomic link between an approved
   manifest and its ordinary dataset snapshot.
+- `0045_dataset_architecture_exposures`: adds dataset-architecture use to the
+  append-only governed evidence-exposure ledger while preserving prior rows and
+  foreign keys.
+- `0046_benchmark_bundles`: immutable development/optional sealed suite and
+  strict global-contamination authority with normalized foreign keys, a unique
+  artifact fingerprint, distinct-suite enforcement, and indexed nullable links
+  from workflow definitions and project preparations. Existing records retain
+  `NULL` links so their historical JSON, status, and provenance remain readable.
+  Those legacy definitions and runs are intentionally non-executable: create a
+  new bundle-backed definition before starting or advancing workflow work.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

@@ -176,7 +176,8 @@ Declarative project-preparation commands are:
   request estimates, cohort disclosures, leakage checks, governance mode, and
   the finite stage graph without writing project artifacts;
 - `synth project prepare <MANIFEST>` to atomically persist the normal project
-  configuration, cohorts, reports, suites, and workflow definition;
+  configuration, cohorts, reports, suites, immutable benchmark bundle, and
+  workflow definition;
 - `synth project show <PREPARATION_ID>` to inspect the immutable preparation and
   its resolved workflow definition; and
 - `synth project list` to page preparation summaries.
@@ -237,12 +238,22 @@ Leakage-defense commands are:
   exact-text, and normalized-text cross-cohort checks;
 - `--group-dimension account_id` to include group overlap and `--policy FILE`
   to load explicit nonzero thresholds; and
+- `synth workflow define --definition workflow.toml --group-dimension account_id`
+  to apply that group identity to the mandatory zero-tolerance check over the
+  complete development and optional sealed suite union; and
 - `synth contamination show|list|override` to inspect immutable reports or add
   a named, reasoned exception without altering the report.
 
 Contamination reports persist fingerprints of overlapping evidence rather than
 raw overlapping text. A blocked report is ineligible for a benchmark suite
 unless it has an explicit persisted override.
+
+For `workflow define`, `--group-dimension` must match the single dimension
+already pinned by suite-local contamination reports. If none is pinned, the flag
+introduces one; if the flag is omitted, the command infers the single pinned
+dimension. Conflicting dimensions and missing or empty group values fail the
+definition. Unlike standalone suite creation, the global workflow check accepts
+neither nonzero thresholds nor an override.
 
 Benchmark and acceptance commands are:
 
@@ -265,6 +276,20 @@ suites accept overall metrics only, require aggregate, adaptation-ineligible
 disclosure, and require a separate `--authorize-sealed` acknowledgement.
 Repeating an identical assessment returns the existing artifact.
 
+`workflow define` reloads the suites and their immutable snapshot evidence,
+requires distinct development and optional sealed evidence, and recomputes one
+clean zero-tolerance report over exactly their combined cohorts. It reuses an
+existing report and `BenchmarkBundle` with matching fingerprints or persists
+the derived authority with the definition in one transaction. A
+`benchmark_bundle` supplied in the definition file is only an assertion: it
+must exactly match the derived binding.
+
+The bundle pins exact cohort-role decision identities as well as suite and
+report fingerprints. `workflow start`, `resume`, and each running stage require
+those decisions to remain current and active. A role transition or retirement
+therefore closes the old authority; create new eligible suites and a new
+bundle-backed definition instead of trying to revive it.
+
 Project bootstrap commands are:
 
 - `synth project bootstrap-preview <MANIFEST>` to validate local JSONL/CSV
@@ -285,9 +310,10 @@ snapshot IDs.
 Finite-workflow commands are:
 
 - `synth workflow define --definition workflow.toml` (start from
-  `examples/workflow.toml`) to persist resolved slice
-  references, initial allocation, governance mode, finite budgets, and stop
-  policy as one immutable fingerprinted definition;
+  `examples/workflow.toml`) to derive or reuse the global benchmark-bundle
+  authority and persist resolved slice references, initial allocation,
+  governance mode, finite budgets, and stop policy as one immutable
+  fingerprinted definition;
 - `synth workflow start <DEFINITION_ID>` to create and drive the authorized
   initial pipeline until development completion, an approval pause, a bounded
   stop, or a failure;
@@ -307,13 +333,30 @@ Finite-workflow commands are:
   inspect the immutable promote/reject record.
 
 The workflow definition resolves analysis and optimization protocols, optional
-advisor configuration, `training_iteration_policy = "fresh"`, exact suite and
-project fingerprints, and all budgets before the run starts. Advisor secrets
+advisor configuration, `training_iteration_policy = "fresh"`, exact project,
+suite, global-contamination, and benchmark-bundle fingerprints, and all budgets
+before the run starts. Advisor secrets
 are environment-variable names only. `review_each_iteration` always pauses;
 `preauthorized_bounded` records each envelope decision and rejects actions that
 exceed its backend, model, configuration, row, request, token, or iteration
 limits. Development acceptance is not final acceptance: only `finalize` may
 touch the sealed suite, and sealed results never feed analysis or optimization.
+
+The workflow checks disclosure before the relevant work: diagnosis and
+follow-up diagnosis require `row_content`, comparison requires `predictions`,
+optimization requires `slices`, and advisor use requires `aggregate` or
+`row_content` according to its egress policy. These development purposes are
+adaptive, so every participating development cohort must also be
+adaptation-eligible. `finalize` instead uses the exact bundle-pinned sealed suite
+with aggregate, non-adaptive acceptance exposure. Paired comparisons are joined
+to candidate evaluations by cohort; when a regression contract is configured,
+their IDs are included in the acceptance assessment and stop decision.
+
+Definitions and runs migrated from before `0046_benchmark_bundles` remain
+available to `workflow definition-show|definition-list`, `workflow status|list`,
+and provenance inspection, but their null bundle binding is not executable.
+They cannot start or advance a workflow; run `workflow define` or project
+preparation again to create new governed authority.
 
 Stage attempts form a fingerprint-linked append-only chain. Run updates use the
 expected latest attempt as an optimistic concurrency guard. Illegal stage

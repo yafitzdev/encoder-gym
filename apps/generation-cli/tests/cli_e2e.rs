@@ -7,7 +7,7 @@ use optimization_core::protocol::{
 };
 use serde_json::Value;
 
-use support::{run_json, run_text};
+use support::{run, run_json, run_text};
 
 #[test]
 fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
@@ -254,7 +254,7 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
             "cohorts": [{
                 "cohort_id": development_cohort_id,
                 "protocol": evaluation["run"]["protocol"],
-                "disclosure": "aggregate",
+                "disclosure": "row_content",
                 "adaptation_eligible": true
             }],
             "contract": {
@@ -263,7 +263,14 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
                     "metric": "accuracy",
                     "minimum": 1.0,
                     "minimum_support": 1
-                }]
+                }],
+                "regression": {
+                    "max_accuracy_drop": 0.02,
+                    "max_macro_f1_drop": 0.02,
+                    "minimum_accuracy_delta_lower_bound": null,
+                    "minimum_macro_f1_delta_lower_bound": null,
+                    "require_mcnemar_significance": false
+                }
             }
         }))
         .expect("benchmark definition JSON"),
@@ -294,12 +301,62 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
         ["benchmark", "assess", &benchmark_id, "--run", &run_mapping],
     );
     assert_eq!(repeated_acceptance["id"], acceptance["id"]);
+    let sealed_csv_path = directory.path().join("sealed.csv");
+    std::fs::write(&sealed_csv_path, sealed_csv()).expect("write sealed CSV");
+    let sealed_dataset = run_json(
+        &database_url,
+        [
+            "dataset",
+            "create",
+            "--name",
+            "sealed-support",
+            "--task",
+            "Classify intentionally ambiguous support messages.",
+            "--label",
+            "billing",
+            "--label",
+            "fraud",
+        ],
+    );
+    let sealed_dataset_id = string_at(&sealed_dataset, "/id");
+    let sealed_import = run_json(
+        &database_url,
+        [
+            "dataset",
+            "import",
+            &sealed_dataset_id,
+            "--input",
+            path(&sealed_csv_path),
+            "--format",
+            "csv",
+        ],
+    );
+    assert_eq!(sealed_import["accepted_rows"], 4);
+    let sealed_snapshot = run_json(
+        &database_url,
+        [
+            "snapshot",
+            "create",
+            &sealed_dataset_id,
+            "--name",
+            "sealed-acceptance-only",
+            "--train-ratio",
+            "0",
+            "--validation-ratio",
+            "0",
+            "--test-ratio",
+            "1",
+            "--seed",
+            "17",
+        ],
+    );
+    let sealed_snapshot_id = string_at(&sealed_snapshot, "/snapshot/id");
     let sealed_cohort = run_json(
         &database_url,
         [
             "cohort",
             "create",
-            &snapshot_id,
+            &sealed_snapshot_id,
             "--name",
             "sealed-acceptance-test-split",
             "--split",
@@ -416,6 +473,15 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
             path(&workflow_definition_path),
         ],
     );
+    assert_eq!(
+        workflow_definition["benchmark_bundle"]["development_suite_id"],
+        benchmark_id
+    );
+    assert_eq!(
+        workflow_definition["benchmark_bundle"]["sealed_suite_id"],
+        sealed_benchmark_id
+    );
+    let benchmark_bundle_binding = workflow_definition["benchmark_bundle"].clone();
     let workflow_definition_id = string_at(&workflow_definition, "/id");
     let workflow = run_json(
         &database_url,
@@ -540,6 +606,35 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
     ] {
         assert!(completed_artifact_kinds.contains(&kind.to_owned()));
     }
+    let stop_decision_link = completed_workflow["attempts"]
+        .as_array()
+        .expect("completed workflow attempts")
+        .iter()
+        .flat_map(|attempt| attempt["artifacts"].as_array().expect("attempt artifacts"))
+        .find(|artifact| artifact["kind"] == "stop_decision")
+        .expect("stop decision link");
+    let stop_decision_id = string_at(stop_decision_link, "/artifact_id");
+    let stop_decision = run_json(&database_url, ["workflow", "stop-show", &stop_decision_id]);
+    let stop_comparison_ids = stop_decision["comparison_ids"]
+        .as_array()
+        .expect("stop comparison IDs");
+    assert_eq!(stop_comparison_ids.len(), 1);
+    let assessment_id = string_at(&stop_decision, "/acceptance_assessment_id");
+    let stop_assessment = run_json(
+        &database_url,
+        ["benchmark", "assessment-show", &assessment_id],
+    );
+    let assessment_comparison_ids = stop_assessment["comparison_ids"]
+        .as_object()
+        .expect("assessment comparison IDs");
+    assert_eq!(assessment_comparison_ids.len(), 1);
+    assert_eq!(
+        assessment_comparison_ids
+            .get(&development_cohort_id)
+            .and_then(serde_json::Value::as_str),
+        stop_comparison_ids[0].as_str(),
+        "the decision-grade assessment and stop decision must pin the same paired comparison"
+    );
     let finalized_workflow = run_json(
         &database_url,
         ["workflow", "finalize", &automatic_workflow_id],
@@ -622,55 +717,84 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
             .any(|value| value["cohort_id"] == sealed_cohort_id)
     );
     let preauthorized_definition_path = directory.path().join("preauthorized-workflow.json");
-    std::fs::write(
-        &preauthorized_definition_path,
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "name": "preauthorized bounded encoder loop",
-            "dataset_id": dataset_id,
-            "project_configuration_id": initialized["project_configuration"]["id"],
-            "project_configuration_fingerprint": initialized["project_configuration"]["fingerprint"],
-            "development_suite_id": benchmark_id,
-            "development_suite_fingerprint": benchmark["fingerprint"],
-            "initial_allocation": {
-                "total_rows": 24,
-                "reserved_rows": 4,
-                "policy": {"kind": "balanced"},
-                "constraints": []
-            },
-            "governance": {
-                "mode": "preauthorized_bounded",
-                "envelope": {
-                    "maximum_iterations": 1,
-                    "maximum_additional_rows": 4,
-                    "maximum_generation_requests": 50,
-                    "maximum_advisor_calls": 0,
-                    "maximum_advisor_tokens": 0,
-                    "permitted_generation_backend": "fake",
-                    "permitted_generation_model": "deterministic-v1",
-                    "permitted_training_backend": "hashing-linear",
-                    "permitted_training_configuration_fingerprints": []
-                }
-            },
-            "budget": {
+    let preauthorized_request = serde_json::json!({
+        "name": "preauthorized bounded encoder loop",
+        "dataset_id": dataset_id,
+        "project_configuration_id": initialized["project_configuration"]["id"],
+        "project_configuration_fingerprint": initialized["project_configuration"]["fingerprint"],
+        "development_suite_id": benchmark_id,
+        "development_suite_fingerprint": benchmark["fingerprint"],
+        "sealed_suite_id": sealed_benchmark_id,
+        "sealed_suite_fingerprint": sealed_benchmark["fingerprint"],
+        "initial_allocation": {
+            "total_rows": 24,
+            "reserved_rows": 4,
+            "policy": {"kind": "balanced"},
+            "constraints": []
+        },
+        "governance": {
+            "mode": "preauthorized_bounded",
+            "envelope": {
                 "maximum_iterations": 1,
-                "maximum_initial_rows": 24,
-                "maximum_cumulative_rows": 28,
-                "maximum_generation_attempts": 100,
+                "maximum_additional_rows": 4,
                 "maximum_generation_requests": 50,
                 "maximum_advisor_calls": 0,
                 "maximum_advisor_tokens": 0,
-                "maximum_stage_attempts": 3
-            },
-            "policy": {
-                "minimum_improvement": 0.01,
-                "maximum_tolerated_regression": 0.02,
-                "stop_on_inconclusive": true,
-                "stop_on_invalid": true,
-                "enable_advisor": false,
-                "require_fresh_development_cohort_after_iterations": 2
+                "permitted_generation_backend": "fake",
+                "permitted_generation_model": "deterministic-v1",
+                "permitted_training_backend": "hashing-linear",
+                "permitted_training_configuration_fingerprints": []
             }
-        }))
-        .expect("preauthorized workflow definition JSON"),
+        },
+        "budget": {
+            "maximum_iterations": 1,
+            "maximum_initial_rows": 24,
+            "maximum_cumulative_rows": 28,
+            "maximum_generation_attempts": 100,
+            "maximum_generation_requests": 50,
+            "maximum_advisor_calls": 0,
+            "maximum_advisor_tokens": 0,
+            "maximum_stage_attempts": 3
+        },
+        "policy": {
+            "minimum_improvement": 0.01,
+            "maximum_tolerated_regression": 0.02,
+            "stop_on_inconclusive": true,
+            "stop_on_invalid": true,
+            "enable_advisor": false,
+            "require_fresh_development_cohort_after_iterations": 2
+        }
+    });
+    let mismatched_definition_path = directory.path().join("mismatched-workflow.json");
+    let mut mismatched_request = preauthorized_request.clone();
+    let mut mismatched_binding = benchmark_bundle_binding.clone();
+    mismatched_binding["bundle_id"] = serde_json::json!(uuid::Uuid::new_v4());
+    mismatched_request["benchmark_bundle"] = mismatched_binding;
+    std::fs::write(
+        &mismatched_definition_path,
+        serde_json::to_vec_pretty(&mismatched_request)
+            .expect("mismatched workflow definition JSON"),
+    )
+    .expect("write mismatched workflow definition");
+    let mismatched = run(
+        &database_url,
+        [
+            "workflow",
+            "define",
+            "--definition",
+            path(&mismatched_definition_path),
+        ],
+    );
+    assert!(!mismatched.status.success());
+    assert!(
+        String::from_utf8_lossy(&mismatched.stderr)
+            .contains("does not match the binding derived from persisted benchmark evidence")
+    );
+
+    std::fs::write(
+        &preauthorized_definition_path,
+        serde_json::to_vec_pretty(&preauthorized_request)
+            .expect("preauthorized workflow definition JSON"),
     )
     .expect("write preauthorized workflow definition");
     let preauthorized_definition = run_json(
@@ -681,6 +805,10 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
             "--definition",
             path(&preauthorized_definition_path),
         ],
+    );
+    assert_eq!(
+        preauthorized_definition["benchmark_bundle"],
+        benchmark_bundle_binding
     );
     let preauthorized_definition_id = string_at(&preauthorized_definition, "/id");
     let preauthorized_workflow = run_json(
@@ -1353,4 +1481,12 @@ fn ambiguous_csv() -> String {
         csv.push_str(&format!("same support message{punctuation},fraud\n"));
     }
     csv
+}
+
+fn sealed_csv() -> &'static str {
+    "text,label\n\
+sealed invoice reconciliation request,billing\n\
+sealed subscription renewal question,billing\n\
+sealed card takeover warning,fraud\n\
+sealed identity theft notification,fraud\n"
 }

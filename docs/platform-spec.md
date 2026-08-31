@@ -38,10 +38,13 @@ runners, persistence ports, or provenance.
 
 A declarative preparation layer may compile one strict local manifest into the
 ordinary project configuration, evaluation cohorts, contamination reports,
-benchmark suites, and resolved workflow definition required to start that
-workflow. Preparation is read-only during preview and atomic during creation.
-It derives identities and fingerprints from persisted snapshot evidence; it
-does not import hidden defaults, run a slice, or weaken any governance check.
+benchmark suites, immutable benchmark-bundle authority, and resolved workflow
+definition required to start that workflow. The bundle pins the development and
+optional sealed suites plus one clean, zero-tolerance contamination report over
+their exact combined cohort population. Preparation is read-only during preview
+and atomic during creation. It derives identities and fingerprints from
+persisted snapshot evidence; it does not import hidden defaults, run a slice, or
+weaken any governance check.
 
 A pilot bootstrap layer may resolve local JSONL/CSV cohort declarations into
 ordinary completed imports and immutable all-test snapshots before invoking the
@@ -98,6 +101,9 @@ manifest to the resulting snapshot. See
   a persisted pre-authorization envelope.
 - Deterministic benchmark contracts decide pass, fail, inconclusive, or invalid;
   an LLM may provide advisory interpretation but never acceptance authority.
+- Every new workflow definition binds one immutable benchmark bundle. Its
+  development and optional sealed suites are globally disjoint, and an override
+  cannot authorize contamination in their strict global report.
 
 ## Slice definitions
 

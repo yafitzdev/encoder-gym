@@ -1,7 +1,12 @@
+use std::collections::BTreeSet;
+
 use sqlx::{FromRow, QueryBuilder, Sqlite, SqliteConnection};
 use uuid::Uuid;
 use workflow_core::{
-    contamination::{ContaminationOverride, ContaminationReport, ContaminationStatus},
+    contamination::{
+        CohortContaminationInput, ContaminationMember, ContaminationOverride, ContaminationReport,
+        ContaminationStatus, check_contamination,
+    },
     ports::{BoxFuture, ContaminationQuery, ContaminationStore, WorkflowStoreError},
 };
 
@@ -26,16 +31,8 @@ impl ContaminationStore for SqliteStore {
         id: Uuid,
     ) -> BoxFuture<'_, Result<Option<ContaminationReport>, WorkflowStoreError>> {
         Box::pin(async move {
-            sqlx::query_as::<_, ReportRow>(
-                "SELECT id, status, cohort_ids_json, artifact_json, fingerprint, created_at \
-                 FROM workflow_contamination_reports WHERE id = ?",
-            )
-            .bind(id)
-            .fetch_optional(self.pool())
-            .await
-            .map_err(store_error)?
-            .map(ReportRow::into_domain)
-            .transpose()
+            let mut connection = self.pool().acquire().await.map_err(store_error)?;
+            load_contamination_report(&mut connection, id).await
         })
     }
 
@@ -45,8 +42,7 @@ impl ContaminationStore for SqliteStore {
     ) -> BoxFuture<'_, Result<Vec<ContaminationReport>, WorkflowStoreError>> {
         Box::pin(async move {
             let mut builder = QueryBuilder::<Sqlite>::new(
-                "SELECT DISTINCT r.id, r.status, r.cohort_ids_json, r.artifact_json, \
-                 r.fingerprint, r.created_at FROM workflow_contamination_reports r",
+                "SELECT DISTINCT r.id FROM workflow_contamination_reports r",
             );
             if query.cohort_id.is_some() {
                 builder.push(" JOIN workflow_contamination_report_cohorts c ON c.report_id = r.id");
@@ -66,14 +62,24 @@ impl ContaminationStore for SqliteStore {
                 .push_bind(query.limit)
                 .push(" OFFSET ")
                 .push_bind(query.offset);
-            builder
-                .build_query_as::<ReportRow>()
+            let ids = builder
+                .build_query_scalar::<Uuid>()
                 .fetch_all(self.pool())
                 .await
-                .map_err(store_error)?
-                .into_iter()
-                .map(ReportRow::into_domain)
-                .collect()
+                .map_err(store_error)?;
+            let mut connection = self.pool().acquire().await.map_err(store_error)?;
+            let mut reports = Vec::with_capacity(ids.len());
+            for id in ids {
+                let report = load_contamination_report(&mut connection, id)
+                    .await?
+                    .ok_or_else(|| {
+                        WorkflowStoreError(format!(
+                            "contamination report disappeared while listing: {id}"
+                        ))
+                    })?;
+                reports.push(report);
+            }
+            Ok(reports)
         })
     }
 
@@ -135,29 +141,47 @@ impl ContaminationStore for SqliteStore {
     }
 }
 
+pub(crate) async fn load_contamination_report(
+    connection: &mut SqliteConnection,
+    id: Uuid,
+) -> Result<Option<ContaminationReport>, WorkflowStoreError> {
+    let Some(row) = sqlx::query_as::<_, ReportRow>(
+        "SELECT id, status, cohort_ids_json, artifact_json, fingerprint, created_at \
+         FROM workflow_contamination_reports WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(store_error)?
+    else {
+        return Ok(None);
+    };
+    let report = row.into_domain()?;
+    let persisted_ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT cohort_id FROM workflow_contamination_report_cohorts \
+         WHERE report_id = ? ORDER BY cohort_id",
+    )
+    .bind(id)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(store_error)?;
+    let mut artifact_ids = report.cohort_ids.clone();
+    artifact_ids.sort();
+    if artifact_ids != persisted_ids {
+        return Err(WorkflowStoreError(format!(
+            "contamination report cohort index differs from artifact: {id}"
+        )));
+    }
+    validate_persisted_report_bindings(connection, &report).await?;
+    Ok(Some(report))
+}
+
 pub(crate) async fn insert_contamination_report(
     connection: &mut SqliteConnection,
     report: &ContaminationReport,
 ) -> Result<(), WorkflowStoreError> {
     validate_report(report)?;
-    for cohort_id in &report.cohort_ids {
-        let persisted: Option<String> =
-            sqlx::query_scalar("SELECT fingerprint FROM workflow_evaluation_cohorts WHERE id = ?")
-                .bind(cohort_id)
-                .fetch_optional(&mut *connection)
-                .await
-                .map_err(store_error)?;
-        if persisted.as_deref()
-            != report
-                .cohort_fingerprints
-                .get(cohort_id)
-                .map(String::as_str)
-        {
-            return Err(WorkflowStoreError(format!(
-                "cohort fingerprint does not match persistence: {cohort_id}"
-            )));
-        }
-    }
+    validate_persisted_report_bindings(connection, report).await?;
     sqlx::query(
         "INSERT INTO workflow_contamination_reports \
          (id, status, cohort_ids_json, artifact_json, fingerprint, created_at) \
@@ -182,6 +206,125 @@ pub(crate) async fn insert_contamination_report(
         .execute(&mut *connection)
         .await
         .map_err(store_error)?;
+    }
+    Ok(())
+}
+
+async fn validate_persisted_report_bindings(
+    connection: &mut SqliteConnection,
+    report: &ContaminationReport,
+) -> Result<(), WorkflowStoreError> {
+    let cohort_ids = report.cohort_ids.iter().copied().collect::<BTreeSet<_>>();
+    if cohort_ids.len() != report.cohort_ids.len()
+        || report
+            .cohort_fingerprints
+            .keys()
+            .copied()
+            .collect::<BTreeSet<_>>()
+            != cohort_ids
+        || report
+            .role_decision_fingerprints
+            .keys()
+            .copied()
+            .collect::<BTreeSet<_>>()
+            != cohort_ids
+    {
+        return Err(WorkflowStoreError(
+            "contamination report evidence bindings are incomplete or noncanonical".into(),
+        ));
+    }
+    let mut inputs = Vec::with_capacity(report.cohort_ids.len());
+    for cohort_id in &report.cohort_ids {
+        let cohort = crate::governance::load_cohort(connection, *cohort_id)
+            .await?
+            .ok_or_else(|| WorkflowStoreError(format!("cohort not found: {cohort_id}")))?;
+        if report.cohort_fingerprints.get(cohort_id) != Some(&cohort.fingerprint) {
+            return Err(WorkflowStoreError(format!(
+                "cohort fingerprint does not match persistence: {cohort_id}"
+            )));
+        }
+        let role_fingerprint = report
+            .role_decision_fingerprints
+            .get(cohort_id)
+            .ok_or_else(|| {
+                WorkflowStoreError(format!(
+                    "contamination report has no role binding: {cohort_id}"
+                ))
+            })?;
+        let role_id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM workflow_cohort_role_decisions \
+             WHERE cohort_id = ? AND fingerprint = ?",
+        )
+        .bind(cohort_id)
+        .bind(role_fingerprint)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(store_error)?;
+        let role_id = role_id.ok_or_else(|| {
+            WorkflowStoreError(format!(
+                "cohort role fingerprint does not match persistence: {cohort_id}"
+            ))
+        })?;
+        let role = crate::governance::load_role_decision(connection, role_id, *cohort_id)
+            .await?
+            .ok_or_else(|| {
+                WorkflowStoreError(format!(
+                    "cohort role decision disappeared while validating report: {cohort_id}"
+                ))
+            })?;
+        let (snapshot, members) =
+            crate::load_verified_snapshot_with_members(connection, cohort.snapshot_id)
+                .await
+                .map_err(store_error)?
+                .ok_or_else(|| {
+                    WorkflowStoreError(format!(
+                        "contamination cohort snapshot not found: {}",
+                        cohort.snapshot_id
+                    ))
+                })?;
+        if snapshot.fingerprint != cohort.snapshot_fingerprint {
+            return Err(WorkflowStoreError(format!(
+                "contamination cohort snapshot differs from persistence: {cohort_id}"
+            )));
+        }
+        let members = members
+            .iter()
+            .filter(|member| member.split == cohort.split)
+            .map(|member| {
+                ContaminationMember::from_snapshot_member(member, report.group_dimension.as_deref())
+            })
+            .collect::<Vec<_>>();
+        if members.is_empty() {
+            return Err(WorkflowStoreError(format!(
+                "contamination cohort has no members in its pinned split: {cohort_id}"
+            )));
+        }
+        inputs.push(CohortContaminationInput {
+            cohort,
+            role,
+            members,
+        });
+    }
+    let recomputed = check_contamination(
+        inputs,
+        report.group_dimension.clone(),
+        report.policy.clone(),
+    )
+    .map_err(store_error)?;
+    if recomputed.cohort_ids != report.cohort_ids
+        || recomputed.cohort_fingerprints != report.cohort_fingerprints
+        || recomputed.role_decision_fingerprints != report.role_decision_fingerprints
+        || recomputed.group_dimension != report.group_dimension
+        || recomputed.policy != report.policy
+        || recomputed.counts != report.counts
+        || recomputed.findings != report.findings
+        || recomputed.status != report.status
+        || recomputed.reasons != report.reasons
+        || recomputed.fingerprint != report.fingerprint
+    {
+        return Err(WorkflowStoreError(
+            "contamination report differs from recomputed persisted-member evidence".into(),
+        ));
     }
     Ok(())
 }

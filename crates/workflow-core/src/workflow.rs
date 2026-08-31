@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::advisor::AdvisorConfiguration;
 use crate::allocation::{InitialAllocationPolicy, InitialCellConstraint};
+use crate::benchmark_bundle::{BenchmarkBundleBinding, BenchmarkBundleError};
 use analysis_core::protocol::AnalysisProtocol;
 use dataset_quality_core::policy::{
     AuditMode, EvaluatorEgressPolicy, QualityPolicy, QualityPolicyPresetControls, QualityPreset,
@@ -26,6 +27,8 @@ pub struct WorkflowDefinitionRequest {
     pub sealed_suite_id: Option<Uuid>,
     #[serde(default)]
     pub sealed_suite_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub benchmark_bundle: Option<BenchmarkBundleBinding>,
     pub initial_allocation: WorkflowInitialAllocation,
     #[serde(default)]
     pub analysis_protocol: Option<AnalysisProtocol>,
@@ -206,6 +209,8 @@ pub struct WorkflowDefinition {
     pub development_suite_fingerprint: String,
     pub sealed_suite_id: Option<Uuid>,
     pub sealed_suite_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub benchmark_bundle: Option<BenchmarkBundleBinding>,
     pub initial_allocation: WorkflowInitialAllocation,
     #[serde(default)]
     pub analysis_protocol: Option<AnalysisProtocol>,
@@ -279,6 +284,7 @@ impl WorkflowDefinition {
             )?,
             sealed_suite_id: request.sealed_suite_id,
             sealed_suite_fingerprint: request.sealed_suite_fingerprint,
+            benchmark_bundle: request.benchmark_bundle,
             initial_allocation: request.initial_allocation,
             analysis_protocol: Some(analysis_protocol),
             optimization_protocol: Some(optimization_protocol),
@@ -415,7 +421,7 @@ pub struct WorkflowRun {
 
 impl WorkflowRun {
     pub fn queued(definition: &WorkflowDefinition) -> Result<Self, WorkflowError> {
-        validate_definition(definition)?;
+        validate_executable_definition(definition)?;
         let now = Utc::now();
         Ok(Self {
             id: Uuid::new_v4(),
@@ -491,7 +497,7 @@ impl WorkflowStageAttempt {
         previous: Option<&Self>,
         attempt: u32,
     ) -> Result<Self, WorkflowError> {
-        validate_definition(definition)?;
+        validate_executable_definition(definition)?;
         validate_run_identity(definition, run)?;
         if attempt == 0 || attempt > definition.budget.maximum_stage_attempts {
             return Err(WorkflowError::StageAttemptsExceeded);
@@ -615,6 +621,14 @@ pub enum WorkflowError {
     InvalidQualityGate,
     #[error("sealed suite id and fingerprint must either both be present or both absent")]
     SealedSuitePair,
+    #[error("workflow definition requires a benchmark bundle binding")]
+    BenchmarkBundleRequired,
+    #[error("workflow benchmark bundle binding is invalid")]
+    InvalidBenchmarkBundleBinding,
+    #[error("workflow benchmark bundle fingerprint does not reproduce")]
+    BenchmarkBundleFingerprint,
+    #[error("workflow benchmark suite references do not match the benchmark bundle binding")]
+    BenchmarkBundleSuiteMismatch,
     #[error("preauthorization exceeds the workflow budget or has invalid permissions")]
     InvalidEnvelope,
     #[error("workflow definition fingerprint mismatch")]
@@ -647,6 +661,18 @@ fn validate_request(request: &WorkflowDefinitionRequest) -> Result<(), WorkflowE
     if request.sealed_suite_id.is_some() != request.sealed_suite_fingerprint.is_some() {
         return Err(WorkflowError::SealedSuitePair);
     }
+    let benchmark_bundle = request
+        .benchmark_bundle
+        .as_ref()
+        .ok_or(WorkflowError::BenchmarkBundleRequired)?;
+    validate_benchmark_bundle_binding(benchmark_bundle)?;
+    validate_benchmark_suite_binding(
+        request.development_suite_id,
+        &request.development_suite_fingerprint,
+        request.sealed_suite_id,
+        request.sealed_suite_fingerprint.as_deref(),
+        benchmark_bundle,
+    )?;
     let budget = &request.budget;
     if budget.maximum_iterations == 0
         || budget.maximum_initial_rows == 0
@@ -714,6 +740,81 @@ fn validate_definition(value: &WorkflowDefinition) -> Result<(), WorkflowError> 
     }
     if value.reproduce_fingerprint()? != value.fingerprint {
         return Err(WorkflowError::DefinitionFingerprint);
+    }
+    if let Some(benchmark_bundle) = &value.benchmark_bundle {
+        validate_benchmark_bundle_binding(benchmark_bundle)?;
+        validate_benchmark_suite_binding(
+            value.development_suite_id,
+            &value.development_suite_fingerprint,
+            value.sealed_suite_id,
+            value.sealed_suite_fingerprint.as_deref(),
+            benchmark_bundle,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_executable_definition(value: &WorkflowDefinition) -> Result<(), WorkflowError> {
+    validate_definition(value)?;
+    if value.benchmark_bundle.is_none() {
+        return Err(WorkflowError::BenchmarkBundleRequired);
+    }
+    Ok(())
+}
+
+fn validate_benchmark_bundle_binding(
+    binding: &BenchmarkBundleBinding,
+) -> Result<(), WorkflowError> {
+    let sealed_pair_is_complete =
+        binding.sealed_suite_id.is_some() == binding.sealed_suite_fingerprint.is_some();
+    let fingerprints = [
+        binding.bundle_fingerprint.as_str(),
+        binding.development_suite_fingerprint.as_str(),
+        binding.contamination_report_fingerprint.as_str(),
+    ];
+    if binding.bundle_id.is_nil()
+        || binding.development_suite_id.is_nil()
+        || binding.contamination_report_id.is_nil()
+        || !sealed_pair_is_complete
+        || binding.sealed_suite_id.is_some_and(|id| id.is_nil())
+        || fingerprints
+            .into_iter()
+            .chain(binding.sealed_suite_fingerprint.as_deref())
+            .any(|value| value.trim().is_empty() || value.trim() != value)
+        || binding
+            .sealed_suite_id
+            .is_some_and(|sealed_id| sealed_id == binding.development_suite_id)
+        || binding
+            .sealed_suite_fingerprint
+            .as_ref()
+            .is_some_and(|sealed| sealed == &binding.development_suite_fingerprint)
+    {
+        return Err(WorkflowError::InvalidBenchmarkBundleBinding);
+    }
+    binding
+        .validate_fingerprint()
+        .map_err(|error| match error {
+            BenchmarkBundleError::BundleFingerprintMismatch => {
+                WorkflowError::BenchmarkBundleFingerprint
+            }
+            other => WorkflowError::Fingerprint(other.to_string()),
+        })?;
+    Ok(())
+}
+
+fn validate_benchmark_suite_binding(
+    development_suite_id: Uuid,
+    development_suite_fingerprint: &str,
+    sealed_suite_id: Option<Uuid>,
+    sealed_suite_fingerprint: Option<&str>,
+    binding: &BenchmarkBundleBinding,
+) -> Result<(), WorkflowError> {
+    if development_suite_id != binding.development_suite_id
+        || development_suite_fingerprint != binding.development_suite_fingerprint
+        || sealed_suite_id != binding.sealed_suite_id
+        || sealed_suite_fingerprint != binding.sealed_suite_fingerprint.as_deref()
+    {
+        return Err(WorkflowError::BenchmarkBundleSuiteMismatch);
     }
     Ok(())
 }
@@ -935,6 +1036,16 @@ fn definition_fingerprint(value: &WorkflowDefinition) -> Result<String, Workflow
                     .map_err(|error| WorkflowError::Fingerprint(error.to_string()))?,
             );
     }
+    if value.benchmark_bundle.is_some() {
+        document
+            .as_object_mut()
+            .expect("definition document object")
+            .insert(
+                "benchmark_bundle".into(),
+                serde_json::to_value(&value.benchmark_bundle)
+                    .map_err(|error| WorkflowError::Fingerprint(error.to_string()))?,
+            );
+    }
     artifact_core::fingerprint(&document)
         .map_err(|error| WorkflowError::Fingerprint(error.to_string()))
 }
@@ -964,16 +1075,50 @@ fn required(value: String, field: &'static str) -> Result<String, WorkflowError>
 mod tests {
     use super::*;
 
-    fn definition() -> WorkflowDefinition {
-        WorkflowDefinition::new(WorkflowDefinitionRequest {
+    fn benchmark_bundle_binding(
+        development_suite_id: Uuid,
+        development_suite_fingerprint: &str,
+        sealed_suite_id: Option<Uuid>,
+        sealed_suite_fingerprint: Option<&str>,
+    ) -> BenchmarkBundleBinding {
+        let contamination_report_id = Uuid::new_v4();
+        let contamination_report_fingerprint = "sha256:contamination".to_owned();
+        let mut binding = BenchmarkBundleBinding {
+            bundle_id: Uuid::new_v4(),
+            bundle_fingerprint: String::new(),
+            development_suite_id,
+            development_suite_fingerprint: development_suite_fingerprint.to_owned(),
+            sealed_suite_id,
+            sealed_suite_fingerprint: sealed_suite_fingerprint.map(str::to_owned),
+            contamination_report_id,
+            contamination_report_fingerprint,
+        };
+        binding.bundle_fingerprint = binding
+            .reproduce_bundle_fingerprint()
+            .expect("bundle fingerprint");
+        binding
+    }
+
+    fn definition_request() -> WorkflowDefinitionRequest {
+        let development_suite_id = Uuid::new_v4();
+        let development_suite_fingerprint = "sha256:development";
+        let sealed_suite_id = Uuid::new_v4();
+        let sealed_suite_fingerprint = "sha256:sealed";
+        WorkflowDefinitionRequest {
             name: "encoder loop".into(),
             dataset_id: Uuid::new_v4(),
             project_configuration_id: Uuid::new_v4(),
             project_configuration_fingerprint: "sha256:config".into(),
-            development_suite_id: Uuid::new_v4(),
-            development_suite_fingerprint: "sha256:development".into(),
-            sealed_suite_id: Some(Uuid::new_v4()),
-            sealed_suite_fingerprint: Some("sha256:sealed".into()),
+            development_suite_id,
+            development_suite_fingerprint: development_suite_fingerprint.into(),
+            sealed_suite_id: Some(sealed_suite_id),
+            sealed_suite_fingerprint: Some(sealed_suite_fingerprint.into()),
+            benchmark_bundle: Some(benchmark_bundle_binding(
+                development_suite_id,
+                development_suite_fingerprint,
+                Some(sealed_suite_id),
+                Some(sealed_suite_fingerprint),
+            )),
             initial_allocation: WorkflowInitialAllocation {
                 total_rows: 100,
                 reserved_rows: 20,
@@ -1015,8 +1160,170 @@ mod tests {
                 enable_advisor: true,
                 require_fresh_development_cohort_after_iterations: Some(2),
             },
+        }
+    }
+
+    fn definition() -> WorkflowDefinition {
+        WorkflowDefinition::new(definition_request()).expect("definition")
+    }
+
+    #[test]
+    fn definition_creation_requires_a_valid_matching_benchmark_bundle() {
+        let mut missing = definition_request();
+        missing.benchmark_bundle = None;
+        assert_eq!(
+            WorkflowDefinition::new(missing),
+            Err(WorkflowError::BenchmarkBundleRequired)
+        );
+
+        let mut invalid = definition_request();
+        invalid
+            .benchmark_bundle
+            .as_mut()
+            .expect("benchmark bundle")
+            .bundle_fingerprint = "sha256:tampered".into();
+        assert_eq!(
+            WorkflowDefinition::new(invalid),
+            Err(WorkflowError::BenchmarkBundleFingerprint)
+        );
+
+        let mut malformed = definition_request();
+        malformed
+            .benchmark_bundle
+            .as_mut()
+            .expect("benchmark bundle")
+            .contamination_report_id = Uuid::nil();
+        assert_eq!(
+            WorkflowDefinition::new(malformed),
+            Err(WorkflowError::InvalidBenchmarkBundleBinding)
+        );
+
+        let mut mismatched = definition_request();
+        mismatched.development_suite_fingerprint = "sha256:substituted-suite".into();
+        assert_eq!(
+            WorkflowDefinition::new(mismatched),
+            Err(WorkflowError::BenchmarkBundleSuiteMismatch)
+        );
+
+        let mut mismatched = definition_request();
+        mismatched.development_suite_id = Uuid::new_v4();
+        assert_eq!(
+            WorkflowDefinition::new(mismatched),
+            Err(WorkflowError::BenchmarkBundleSuiteMismatch)
+        );
+
+        let mut mismatched = definition_request();
+        mismatched.sealed_suite_id = Some(Uuid::new_v4());
+        assert_eq!(
+            WorkflowDefinition::new(mismatched),
+            Err(WorkflowError::BenchmarkBundleSuiteMismatch)
+        );
+
+        let mut mismatched = definition_request();
+        mismatched.sealed_suite_fingerprint = Some("sha256:substituted-sealed-suite".into());
+        assert_eq!(
+            WorkflowDefinition::new(mismatched),
+            Err(WorkflowError::BenchmarkBundleSuiteMismatch)
+        );
+
+        let mut development_only = definition_request();
+        development_only.sealed_suite_id = None;
+        development_only.sealed_suite_fingerprint = None;
+        development_only.benchmark_bundle = Some(benchmark_bundle_binding(
+            development_only.development_suite_id,
+            &development_only.development_suite_fingerprint,
+            None,
+            None,
+        ));
+        assert!(WorkflowDefinition::new(development_only).is_ok());
+    }
+
+    #[test]
+    fn legacy_definition_reproduces_its_fingerprint_but_cannot_be_queued() {
+        let mut legacy = definition();
+        legacy.benchmark_bundle = None;
+        let historical_document = serde_json::json!({
+            "name": legacy.name,
+            "dataset_id": legacy.dataset_id,
+            "project_configuration_id": legacy.project_configuration_id,
+            "project_configuration_fingerprint": legacy.project_configuration_fingerprint,
+            "development_suite_id": legacy.development_suite_id,
+            "development_suite_fingerprint": legacy.development_suite_fingerprint,
+            "sealed_suite_id": legacy.sealed_suite_id,
+            "sealed_suite_fingerprint": legacy.sealed_suite_fingerprint,
+            "initial_allocation": legacy.initial_allocation,
+            "governance": legacy.governance,
+            "budget": legacy.budget,
+            "policy": legacy.policy,
+            "analysis_protocol": legacy.analysis_protocol,
+            "optimization_protocol": legacy.optimization_protocol,
+            "advisor": legacy.advisor,
+            "training_iteration_policy": legacy.training_iteration_policy,
+        });
+        legacy.fingerprint =
+            artifact_core::fingerprint(&historical_document).expect("historical fingerprint");
+
+        let encoded = serde_json::to_value(&legacy).expect("legacy definition JSON");
+        assert!(
+            !encoded
+                .as_object()
+                .expect("definition object")
+                .contains_key("benchmark_bundle")
+        );
+        let decoded: WorkflowDefinition =
+            serde_json::from_value(encoded).expect("legacy definition remains readable");
+        assert_eq!(
+            decoded.reproduce_fingerprint().expect("reproduce"),
+            decoded.fingerprint
+        );
+        assert_eq!(
+            WorkflowRun::queued(&decoded),
+            Err(WorkflowError::BenchmarkBundleRequired)
+        );
+        let now = Utc::now();
+        let mut queued = WorkflowRun {
+            id: Uuid::new_v4(),
+            definition_id: decoded.id,
+            definition_fingerprint: decoded.fingerprint.clone(),
+            state: WorkflowRunState::Queued,
+            current_stage: None,
+            iteration: 0,
+            usage: WorkflowBudgetUsage::zero(),
+            latest_attempt_id: None,
+            latest_attempt_fingerprint: None,
+            cancel_requested: false,
+            created_at: now,
+            updated_at: now,
+        };
+        assert_eq!(
+            WorkflowStageAttempt::start(
+                &decoded,
+                &mut queued,
+                WorkflowStage::InitialAllocation,
+                None,
+                1,
+            ),
+            Err(WorkflowError::BenchmarkBundleRequired)
+        );
+
+        let request_json = serde_json::to_value({
+            let mut request = definition_request();
+            request.benchmark_bundle = None;
+            request
         })
-        .expect("definition")
+        .expect("legacy request JSON");
+        assert!(
+            !request_json
+                .as_object()
+                .expect("request object")
+                .contains_key("benchmark_bundle")
+        );
+        let request: WorkflowDefinitionRequest =
+            serde_json::from_value(request_json).expect("legacy request remains readable");
+        assert_eq!(
+            WorkflowDefinition::new(request),
+            Err(WorkflowError::BenchmarkBundleRequired)
+        );
     }
 
     fn gated_definition() -> WorkflowDefinition {
@@ -1030,6 +1337,7 @@ mod tests {
             development_suite_fingerprint: definition.development_suite_fingerprint,
             sealed_suite_id: definition.sealed_suite_id,
             sealed_suite_fingerprint: definition.sealed_suite_fingerprint,
+            benchmark_bundle: definition.benchmark_bundle,
             initial_allocation: definition.initial_allocation,
             analysis_protocol: definition.analysis_protocol,
             optimization_protocol: definition.optimization_protocol,
@@ -1128,6 +1436,7 @@ mod tests {
             development_suite_fingerprint: definition.development_suite_fingerprint,
             sealed_suite_id: definition.sealed_suite_id,
             sealed_suite_fingerprint: definition.sealed_suite_fingerprint,
+            benchmark_bundle: definition.benchmark_bundle,
             initial_allocation: definition.initial_allocation,
             analysis_protocol: definition.analysis_protocol,
             optimization_protocol: definition.optimization_protocol,
@@ -1254,6 +1563,7 @@ mod tests {
             development_suite_fingerprint: definition.development_suite_fingerprint,
             sealed_suite_id: definition.sealed_suite_id,
             sealed_suite_fingerprint: definition.sealed_suite_fingerprint,
+            benchmark_bundle: definition.benchmark_bundle,
             initial_allocation: definition.initial_allocation,
             analysis_protocol: definition.analysis_protocol,
             optimization_protocol: definition.optimization_protocol,

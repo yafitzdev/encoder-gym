@@ -84,6 +84,137 @@ fn result_state<T, E>(result: &Result<Option<T>, E>) -> &'static str {
     }
 }
 
+pub(in crate::commands::doctor) async fn benchmark_bundle_facts_check(
+    store: &SqliteStore,
+) -> DoctorCheck {
+    let result: anyhow::Result<(usize, usize, usize, usize)> = async {
+        let bundles = store
+            .query_benchmark_bundles(BenchmarkBundleQuery {
+                development_suite_id: None,
+                sealed_suite_id: None,
+                contamination_report_id: None,
+                limit: 10_000,
+                offset: 0,
+            })
+            .await?;
+        let bundles = bundles
+            .iter()
+            .map(|bundle| (bundle.id, bundle))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        let definitions = store
+            .query_workflow_definitions(WorkflowDefinitionQuery {
+                dataset_id: None,
+                limit: 10_000,
+                offset: 0,
+            })
+            .await?;
+        let definitions = definitions
+            .iter()
+            .map(|definition| (definition.id, definition))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let mut legacy_definitions = 0_usize;
+        for definition in definitions.values() {
+            let Some(binding) = &definition.benchmark_bundle else {
+                legacy_definitions += 1;
+                continue;
+            };
+            let bundle = bundles.get(&binding.bundle_id).with_context(|| {
+                format!(
+                    "workflow definition {} benchmark bundle is missing: {}",
+                    definition.id, binding.bundle_id
+                )
+            })?;
+            binding.validate_bundle(bundle).with_context(|| {
+                format!(
+                    "workflow definition {} benchmark bundle binding differs",
+                    definition.id
+                )
+            })?;
+        }
+
+        let preparations = store.list_preparations(10_000, 0).await?;
+        let mut legacy_preparations = 0_usize;
+        for preparation in &preparations {
+            let definition = definitions
+                .get(&preparation.workflow_definition_id)
+                .with_context(|| {
+                    format!(
+                        "preparation {} workflow definition is missing: {}",
+                        preparation.id, preparation.workflow_definition_id
+                    )
+                })?;
+            match (
+                preparation.benchmark_bundle_id,
+                preparation.benchmark_bundle_fingerprint.as_deref(),
+            ) {
+                (None, None) => {
+                    legacy_preparations += 1;
+                    anyhow::ensure!(
+                        definition.benchmark_bundle.is_none(),
+                        "legacy preparation {} points to workflow definition {} with a benchmark bundle",
+                        preparation.id,
+                        definition.id
+                    );
+                }
+                (Some(bundle_id), Some(bundle_fingerprint)) => {
+                    let bundle = bundles.get(&bundle_id).with_context(|| {
+                        format!(
+                            "preparation {} benchmark bundle is missing: {bundle_id}",
+                            preparation.id
+                        )
+                    })?;
+                    anyhow::ensure!(
+                        bundle.fingerprint == bundle_fingerprint
+                            && preparation.development_suite_id == bundle.development_suite_id
+                            && preparation.sealed_suite_id == bundle.sealed_suite_id,
+                        "preparation {} benchmark bundle projection differs",
+                        preparation.id
+                    );
+                    definition
+                        .benchmark_bundle
+                        .as_ref()
+                        .with_context(|| {
+                            format!(
+                                "preparation {} points to legacy workflow definition {}",
+                                preparation.id, definition.id
+                            )
+                        })?
+                        .validate_bundle(bundle)
+                        .with_context(|| {
+                            format!(
+                                "preparation {} workflow benchmark bundle binding differs",
+                                preparation.id
+                            )
+                        })?;
+                }
+                _ => anyhow::bail!(
+                    "preparation {} has an incomplete benchmark bundle projection",
+                    preparation.id
+                ),
+            }
+        }
+
+        Ok((
+            bundles.len(),
+            definitions.len().saturating_sub(legacy_definitions),
+            preparations.len().saturating_sub(legacy_preparations),
+            legacy_definitions + legacy_preparations,
+        ))
+    }
+    .await;
+
+    match result {
+        Ok((bundles, definitions, preparations, legacy)) => pass(
+            "benchmark_bundle_facts",
+            format!(
+                "{bundles} bundle(s), {definitions} workflow binding(s), and {preparations} preparation binding(s) verified; {legacy} legacy NULL binding(s) retained for inspection and marked non-executable"
+            ),
+        ),
+        Err(error) => fail("benchmark_bundle_facts", error.to_string()),
+    }
+}
+
 pub(in crate::commands::doctor) async fn workflow_facts_check(store: &SqliteStore) -> DoctorCheck {
     let definitions = match store
         .query_workflow_definitions(WorkflowDefinitionQuery {

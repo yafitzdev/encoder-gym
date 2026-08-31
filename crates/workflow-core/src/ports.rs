@@ -10,6 +10,7 @@ use crate::advisor::AdvisoryAssessment;
 use crate::allocation::InitialAllocationRecord;
 use crate::approval::WorkflowApprovalDecision;
 use crate::benchmark::{AcceptanceAssessment, AcceptanceState, BenchmarkSuite, BenchmarkSuiteKind};
+use crate::benchmark_bundle::BenchmarkBundle;
 use crate::contamination::{ContaminationOverride, ContaminationReport, ContaminationStatus};
 use crate::governance::{CohortRoleDecision, EvaluationCohort, EvidenceExposure, ExposurePurpose};
 use crate::promotion::ModelPromotion;
@@ -223,6 +224,33 @@ pub trait ContaminationStore: Send + Sync {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct BenchmarkBundleQuery {
+    pub development_suite_id: Option<Uuid>,
+    pub sealed_suite_id: Option<Uuid>,
+    pub contamination_report_id: Option<Uuid>,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+/// Persistence boundary for the immutable, cross-suite benchmark authority.
+pub trait BenchmarkBundleStore: Send + Sync {
+    fn create_benchmark_bundle(
+        &self,
+        bundle: &BenchmarkBundle,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    fn get_benchmark_bundle(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<BenchmarkBundle>, WorkflowStoreError>>;
+
+    fn query_benchmark_bundles(
+        &self,
+        query: BenchmarkBundleQuery,
+    ) -> BoxFuture<'_, Result<Vec<BenchmarkBundle>, WorkflowStoreError>>;
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct BenchmarkSuiteQuery {
     pub kind: Option<BenchmarkSuiteKind>,
     pub cohort_id: Option<Uuid>,
@@ -289,6 +317,16 @@ pub struct WorkflowRunQuery {
 pub trait WorkflowRunStore: Send + Sync {
     fn create_workflow_definition(
         &self,
+        definition: &WorkflowDefinition,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    /// Atomically persists any newly derived benchmark authority artifacts and
+    /// the workflow definition that binds them. `None` means the exact
+    /// immutable artifact already exists and has been validated by the caller.
+    fn create_workflow_definition_with_authority(
+        &self,
+        new_contamination_report: Option<&ContaminationReport>,
+        new_benchmark_bundle: Option<&BenchmarkBundle>,
         definition: &WorkflowDefinition,
     ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
 

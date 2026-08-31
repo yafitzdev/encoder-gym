@@ -7,6 +7,7 @@ pub(super) fn execute_initial_stage<'a>(
     run: &'a WorkflowRun,
     attempt: &'a WorkflowStageAttempt,
     configured: &'a project_config::ResolvedProjectConfig,
+    benchmark_authority: &'a WorkflowBenchmarkAuthority,
 ) -> Pin<Box<dyn Future<Output = anyhow::Result<StageExecution>> + Send + 'a>> {
     Box::pin(async move {
         let history = store.list_workflow_attempts(run.id).await?;
@@ -193,14 +194,7 @@ pub(super) fn execute_initial_stage<'a>(
             }
             WorkflowStage::DevelopmentEvaluation => {
                 let checkpoint_id = artifact_id(&history, "checkpoint")?;
-                let suite = store
-                    .get_benchmark_suite(definition.development_suite_id)
-                    .await?
-                    .context("development benchmark suite not found")?;
-                ensure!(
-                    suite.kind == BenchmarkSuiteKind::Development,
-                    "suite is not development"
-                );
+                let suite = &benchmark_authority.development;
                 let mut links = Vec::new();
                 for cohort in &suite.cohorts {
                     let existing = store
@@ -239,10 +233,8 @@ pub(super) fn execute_initial_stage<'a>(
                 links
             }
             WorkflowStage::AcceptanceAssessment => {
-                let suite = store
-                    .get_benchmark_suite(definition.development_suite_id)
-                    .await?
-                    .context("development benchmark suite not found")?;
+                let suite = &benchmark_authority.development;
+                validate_suite_access(suite, ExposurePurpose::DevelopmentEvaluation, None)?;
                 let evaluation_ids = artifact_ids(&history, "evaluation_run");
                 let mut inputs = Vec::new();
                 for cohort in &suite.cohorts {
@@ -252,7 +244,7 @@ pub(super) fn execute_initial_stage<'a>(
                         comparison: None,
                     });
                 }
-                let assessment = assess_benchmark(&suite, inputs)?;
+                let assessment = assess_benchmark(suite, inputs)?;
                 let existing = store
                     .query_acceptance_assessments(AcceptanceAssessmentQuery {
                         suite_id: Some(suite.id),
@@ -273,7 +265,7 @@ pub(super) fn execute_initial_stage<'a>(
                 };
                 record_suite_exposures(
                     store,
-                    &suite,
+                    suite,
                     assessment.evaluation_run_ids.values().copied().collect(),
                     run,
                     ExposurePurpose::DevelopmentEvaluation,
@@ -297,6 +289,12 @@ pub(super) fn execute_initial_stage<'a>(
             }
             WorkflowStage::ErrorAnalysis => {
                 let evaluation_ids = artifact_ids(&history, "evaluation_run");
+                let suite = &benchmark_authority.development;
+                validate_suite_access(
+                    suite,
+                    ExposurePurpose::Diagnosis,
+                    Some(DisclosureLevel::RowContent),
+                )?;
                 let protocol = definition
                     .analysis_protocol
                     .as_ref()
@@ -323,13 +321,9 @@ pub(super) fn execute_initial_stage<'a>(
                     !links.is_empty(),
                     "development analysis produced no reports"
                 );
-                let suite = store
-                    .get_benchmark_suite(definition.development_suite_id)
-                    .await?
-                    .context("development benchmark suite not found")?;
                 record_suite_exposures(
                     store,
-                    &suite,
+                    suite,
                     artifact_ids(&history, "evaluation_run"),
                     run,
                     ExposurePurpose::Diagnosis,
@@ -344,6 +338,12 @@ pub(super) fn execute_initial_stage<'a>(
                     .advisor
                     .as_ref()
                     .context("workflow advisor is enabled without resolved configuration")?;
+                let suite = &benchmark_authority.development;
+                let advisor_disclosure = match configuration.egress_policy {
+                    AdvisorEgressPolicy::AggregateOnly => DisclosureLevel::Aggregate,
+                    AdvisorEgressPolicy::DevelopmentText => DisclosureLevel::RowContent,
+                };
+                validate_suite_access(suite, ExposurePurpose::Advisor, Some(advisor_disclosure))?;
                 let analysis_report_id = artifact_id(&history, "analysis_report")?;
                 let assessment_id = artifact_id(&history, "acceptance_assessment")?;
                 let report = store
@@ -478,20 +478,13 @@ pub(super) fn execute_initial_stage<'a>(
                         value
                     }
                 };
-                let suite = store
-                    .get_benchmark_suite(definition.development_suite_id)
-                    .await?
-                    .context("development benchmark suite not found")?;
                 record_suite_exposures(
                     store,
-                    &suite,
+                    suite,
                     artifact_ids(&history, "evaluation_run"),
                     run,
                     ExposurePurpose::Advisor,
-                    Some(match configuration.egress_policy {
-                        AdvisorEgressPolicy::AggregateOnly => DisclosureLevel::Aggregate,
-                        AdvisorEgressPolicy::DevelopmentText => DisclosureLevel::RowContent,
-                    }),
+                    Some(advisor_disclosure),
                     "workflow advisory assessment",
                 )
                 .await?;
@@ -509,6 +502,12 @@ pub(super) fn execute_initial_stage<'a>(
                 )]
             }
             WorkflowStage::OptimizationProposal => {
+                let suite = &benchmark_authority.development;
+                validate_suite_access(
+                    suite,
+                    ExposurePurpose::Optimization,
+                    Some(DisclosureLevel::Slices),
+                )?;
                 let analysis_report_id = artifact_id(&history, "followup_analysis_report")
                     .or_else(|_| artifact_id(&history, "analysis_report"))?;
                 let report = store
@@ -523,13 +522,9 @@ pub(super) fn execute_initial_stage<'a>(
                     )?,
                 )
                 .await?;
-                let suite = store
-                    .get_benchmark_suite(definition.development_suite_id)
-                    .await?
-                    .context("development benchmark suite not found")?;
                 record_suite_exposures(
                     store,
-                    &suite,
+                    suite,
                     vec![report.evaluation_run_id],
                     run,
                     ExposurePurpose::Optimization,
@@ -694,10 +689,7 @@ pub(super) fn execute_initial_stage<'a>(
             }
             WorkflowStage::IterationEvaluation => {
                 let checkpoint_id = artifact_id(&history, "iteration_checkpoint")?;
-                let suite = store
-                    .get_benchmark_suite(definition.development_suite_id)
-                    .await?
-                    .context("development benchmark suite not found")?;
+                let suite = &benchmark_authority.development;
                 let mut links = Vec::new();
                 for cohort in &suite.cohorts {
                     let evaluation = match store
@@ -735,6 +727,12 @@ pub(super) fn execute_initial_stage<'a>(
                 links
             }
             WorkflowStage::Comparison => {
+                let suite = &benchmark_authority.development;
+                validate_suite_access(
+                    suite,
+                    ExposurePurpose::Comparison,
+                    Some(DisclosureLevel::Predictions),
+                )?;
                 let baseline_ids = artifact_ids_for_stage(
                     &history,
                     WorkflowStage::DevelopmentEvaluation,
@@ -748,21 +746,42 @@ pub(super) fn execute_initial_stage<'a>(
                     "iteration_evaluation_run",
                 );
                 ensure!(
-                    baseline_ids.len() == iteration_ids.len() && !baseline_ids.is_empty(),
-                    "iteration evaluations are incompatible with the baseline"
+                    baseline_ids.len() == suite.cohorts.len()
+                        && iteration_ids.len() == suite.cohorts.len()
+                        && !suite.cohorts.is_empty(),
+                    "iteration evaluations are incompatible with the benchmark suite"
                 );
                 let mut links = Vec::new();
-                for (left, right) in baseline_ids.into_iter().zip(iteration_ids) {
-                    let comparison = evaluation::compare_workflow(left, right, store).await?;
+                for cohort in &suite.cohorts {
+                    let baseline = load_matching_evaluation(store, cohort, &baseline_ids).await?;
+                    let iteration = load_matching_evaluation(store, cohort, &iteration_ids).await?;
+                    let comparison =
+                        evaluation::compare_workflow(baseline.id, iteration.id, store).await?;
                     links.push(link(
                         "evaluation_comparison",
                         comparison.id,
                         &comparison.fingerprint,
                     ));
                 }
+                record_suite_exposures(
+                    store,
+                    suite,
+                    iteration_ids,
+                    run,
+                    ExposurePurpose::Comparison,
+                    Some(DisclosureLevel::Predictions),
+                    "workflow paired evaluation comparison",
+                )
+                .await?;
                 links
             }
             WorkflowStage::FollowupAnalysis => {
+                let suite = &benchmark_authority.development;
+                validate_suite_access(
+                    suite,
+                    ExposurePurpose::Diagnosis,
+                    Some(DisclosureLevel::RowContent),
+                )?;
                 let evaluations = artifact_ids_for_stage(
                     &history,
                     WorkflowStage::IterationEvaluation,
@@ -779,13 +798,25 @@ pub(super) fn execute_initial_stage<'a>(
                     evaluations.len() == comparisons.len() && !evaluations.is_empty(),
                     "follow-up analysis inputs are incomplete"
                 );
+                let comparisons_by_candidate =
+                    load_comparisons_by_candidate(store, &comparisons).await?;
+                ensure!(
+                    comparisons_by_candidate.len() == evaluations.len(),
+                    "follow-up analysis comparisons do not map one-to-one to candidate evaluations"
+                );
                 let exposure_evaluations = evaluations.clone();
                 let base_protocol = definition
                     .analysis_protocol
                     .as_ref()
                     .context("workflow has no resolved analysis protocol")?;
                 let mut links = Vec::new();
-                for (evaluation_id, comparison_id) in evaluations.into_iter().zip(comparisons) {
+                for evaluation_id in evaluations {
+                    let comparison_id = comparisons_by_candidate
+                        .get(&evaluation_id)
+                        .context(
+                            "follow-up analysis has no cohort-compatible comparison for its candidate evaluation",
+                        )?
+                        .id;
                     let mut protocol = base_protocol.clone();
                     protocol.comparison_id = Some(comparison_id);
                     let fingerprint = protocol.fingerprint()?;
@@ -808,13 +839,9 @@ pub(super) fn execute_initial_stage<'a>(
                         &report.fingerprint,
                     ));
                 }
-                let suite = store
-                    .get_benchmark_suite(definition.development_suite_id)
-                    .await?
-                    .context("development benchmark suite not found")?;
                 record_suite_exposures(
                     store,
-                    &suite,
+                    suite,
                     exposure_evaluations,
                     run,
                     ExposurePurpose::Diagnosis,
@@ -825,8 +852,15 @@ pub(super) fn execute_initial_stage<'a>(
                 links
             }
             WorkflowStage::StopDecision => {
-                let decision =
-                    execute_stop_decision(store, definition, run, &history, &usage).await?;
+                let decision = execute_stop_decision(
+                    store,
+                    definition,
+                    run,
+                    &history,
+                    &usage,
+                    &benchmark_authority.development,
+                )
+                .await?;
                 let mut links = vec![
                     link("stop_decision", decision.id, &decision.fingerprint),
                     link(
@@ -845,19 +879,15 @@ pub(super) fn execute_initial_stage<'a>(
                 links
             }
             WorkflowStage::SealedEvaluation => {
-                let suite_id = definition
-                    .sealed_suite_id
-                    .context("workflow has no sealed benchmark suite")?;
-                let suite = store
-                    .get_benchmark_suite(suite_id)
-                    .await?
-                    .context("sealed benchmark suite not found")?;
-                ensure!(
-                    suite.kind == BenchmarkSuiteKind::SealedAcceptance
-                        && definition.sealed_suite_fingerprint.as_deref()
-                            == Some(&suite.fingerprint),
-                    "sealed benchmark suite identity changed"
-                );
+                let suite = benchmark_authority
+                    .sealed
+                    .as_ref()
+                    .context("workflow has no sealed benchmark suite authority")?;
+                validate_suite_access(
+                    suite,
+                    ExposurePurpose::Acceptance,
+                    Some(DisclosureLevel::Aggregate),
+                )?;
                 let checkpoint_id = artifact_id(&history, "iteration_checkpoint")
                     .or_else(|_| artifact_id(&history, "checkpoint"))?;
                 let mut evaluation_ids = Vec::new();
@@ -904,7 +934,7 @@ pub(super) fn execute_initial_stage<'a>(
                         comparison: None,
                     });
                 }
-                let candidate = assess_benchmark(&suite, inputs)?;
+                let candidate = assess_benchmark(suite, inputs)?;
                 let assessment = match store
                     .query_acceptance_assessments(AcceptanceAssessmentQuery {
                         suite_id: Some(suite.id),
@@ -919,35 +949,20 @@ pub(super) fn execute_initial_stage<'a>(
                 {
                     Some(value) => value,
                     None => {
-                        for cohort in &suite.cohorts {
-                            let current_role = store
-                                .get_current_cohort_role(cohort.cohort_id)
-                                .await?
-                                .context("sealed cohort has no current role")?;
-                            let exposure = EvidenceExposure::new(
-                                &store
-                                    .get_cohort(cohort.cohort_id)
-                                    .await?
-                                    .context("sealed cohort not found")?,
-                                &current_role,
-                                EvidenceExposureRequest {
-                                    evaluation_run_id: Some(
-                                        candidate.evaluation_run_ids[&cohort.cohort_id],
-                                    ),
-                                    workflow_run_id: Some(run.id),
-                                    workflow_iteration: Some(run.iteration),
-                                    purpose: ExposurePurpose::Acceptance,
-                                    disclosure: cohort.disclosure,
-                                    adaptation_eligible: false,
-                                    note: Some("explicit final sealed assessment".into()),
-                                },
-                            )?;
-                            store.append_exposure(&exposure, None).await?;
-                        }
                         store.create_acceptance_assessment(&candidate).await?;
                         candidate
                     }
                 };
+                record_suite_exposures(
+                    store,
+                    suite,
+                    evaluation_ids,
+                    run,
+                    ExposurePurpose::Acceptance,
+                    Some(DisclosureLevel::Aggregate),
+                    "explicit final sealed assessment",
+                )
+                .await?;
                 links.push(link(
                     "sealed_acceptance_assessment",
                     assessment.id,

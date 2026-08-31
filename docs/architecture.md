@@ -94,12 +94,21 @@ authenticity, construction, prompt-template, and backend identities. The job
 runner never imports or invokes the architect runner.
 
 `workflow-core` owns only cross-slice policy: initial finite allocation,
-evaluation roles and exposure rules, benchmark acceptance contracts, durable
-workflow state, approval envelopes, stop decisions, and the ports required to
-request or inspect ordinary slice artifacts. It must not import SQLite, CLI,
-provider, Candle, Axum, or adapter types. The CLI application assembles the
-concrete slice runners and workflow ports; SQLite implements workflow
-persistence in a feature-owned adapter module.
+evaluation roles and exposure rules, benchmark acceptance contracts, immutable
+benchmark-bundle authority, durable workflow state, approval envelopes, stop
+decisions, and the ports required to request or inspect ordinary slice
+artifacts. A bundle binds the development and optional sealed suite fingerprints
+to one zero-tolerance report over their exact cohort union. It must not import
+SQLite, CLI, provider, Candle, Axum, or adapter types. The CLI application
+assembles the concrete slice runners and workflow ports; SQLite implements
+workflow persistence in feature-owned adapter modules.
+
+Historical bundle reads verify the immutable pinned suite, role-decision,
+report, snapshot, and member evidence without pretending that a past role
+decision is still current. Executable workflow loading adds the stricter
+requirement that each pinned role decision is the current active decision. The
+CLI repeats that check before every running stage and derives all development or
+sealed suite use from the loaded bundle authority.
 
 The generation core owns deterministic Cartesian cardinality and expansion,
 including the local cell-count safety invariant. Workflow allocation consumes
@@ -120,10 +129,13 @@ how coverage, persistence, or deterministic fields work.
 It may construct ordinary domain requests and an atomic persistence bundle, but
 it cannot execute generation, snapshotting, training, evaluation, analysis, or
 optimization. The compiler receives already-loaded immutable snapshot evidence
-through its own input shape; it has no SQLite or CLI dependency. SQLite owns
-the one transaction that inserts the compiled ordinary artifacts plus a small
-preparation record. Repeating the same manifest returns that record by stable
-manifest fingerprint instead of creating another project.
+through its own input shape; it has no SQLite or CLI dependency. It computes
+suite-local reports plus a separate zero-tolerance global report, builds the
+benchmark bundle, and pins that bundle in both the workflow definition and
+preparation summary. SQLite owns the one transaction that inserts the compiled
+ordinary artifacts, report, bundle, definition, and small preparation record.
+Repeating the same manifest returns that record by stable manifest fingerprint
+instead of creating another project.
 
 The optional pilot-bootstrap contract in the same core describes local cohort
 source declarations and the resolved ordinary import/snapshot artifacts needed
@@ -292,9 +304,13 @@ separate from generation and training execution.
 
 This cross-slice core is introduced by the controlled-workflow phase. It owns a
 finite state machine and governance policies, not the implementation of any
-slice. Workflow artifact links contain identities, fingerprints, bounded state,
-and compatibility facts rather than copied datasets, predictions, checkpoints,
-or proposal payloads.
+slice. Its `BenchmarkBundle` constructor is the authority for global benchmark
+disjointness: the development and sealed suite identities and their
+snapshot/split evidence must be distinct, and the exact combined cohort set must
+have a clean zero-tolerance contamination report with no override. Workflow
+artifact links contain identities, fingerprints, bounded state, and
+compatibility facts rather than copied datasets, predictions, checkpoints, or
+proposal payloads.
 
 The dependency direction is deliberately outward from the workflow core's
 ports:
@@ -351,9 +367,10 @@ Preview exposes exact allocation cells, provider-request ceilings, stage graph,
 training choice, evidence disclosures, approval boundaries, and contamination
 results without generating UUID-bearing artifacts or writing state. Creation
 resolves all intermediate IDs and fingerprints, rejects duplicate evidence use,
-unknown labels, empty splits, blocked contamination, unsafe sealed disclosure,
-and incompatible workflow budgets, then hands one bundle to the persistence
-port. It never shells out to existing CLI commands or copies slice algorithms.
+unknown labels, empty splits, any global contamination, unsafe sealed
+disclosure, and incompatible workflow budgets, then hands one atomic persistence
+bundle containing the benchmark bundle and its workflow binding to the port. It
+never shells out to existing CLI commands or copies slice algorithms.
 
 ## Durability and provenance
 
@@ -376,9 +393,12 @@ are not silently replayed under the same artifact identity.
 
 Snapshots, registered base-model bundles, resolved configurations, evaluation
 inputs, analysis protocols/reports, optimization evidence/proposals, reviews,
-campaign links, and outcomes have deterministic SHA-256 fingerprints. Floating
-point inputs are normalized through their persisted JSON representation before
-hashing so identities reproduce after reload. Checkpoint
+benchmark suites, global contamination reports, benchmark bundles, campaign
+links, and outcomes have deterministic SHA-256 fingerprints. A workflow
+definition pins its exact bundle binding, and the bundle pins suite and report
+identities plus fingerprints. Floating point inputs are normalized through their
+persisted JSON representation before hashing so identities reproduce after
+reload. Checkpoint
 bytes are checksum-verified before every production load. Provenance traces are
 built from persisted foreign keys and source-row provenance, not presentation
 state.

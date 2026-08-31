@@ -206,6 +206,58 @@ impl GovernanceStore for SqliteStore {
     }
 }
 
+/// Loads and fully validates one persisted cohort through the same normalized
+/// column checks used by the public governance store, while retaining the
+/// caller's transaction/connection boundary.
+pub(crate) async fn load_cohort(
+    connection: &mut SqliteConnection,
+    id: Uuid,
+) -> Result<Option<EvaluationCohort>, WorkflowStoreError> {
+    sqlx::query_as::<_, CohortRow>(
+        "SELECT id, snapshot_id, split, origin, name, fingerprint, artifact_json, \
+         created_at FROM workflow_evaluation_cohorts WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(store_error)?
+    .map(CohortRow::into_domain)
+    .transpose()
+}
+
+/// Loads and fully validates an exact historical role decision. This is
+/// intentionally distinct from resolving the current role: immutable suites
+/// pin a decision, while bundle creation separately requires that decision to
+/// still be current.
+pub(crate) async fn load_role_decision(
+    connection: &mut SqliteConnection,
+    id: Uuid,
+    cohort_id: Uuid,
+) -> Result<Option<CohortRoleDecision>, WorkflowStoreError> {
+    sqlx::query_as::<_, RoleRow>(
+        "SELECT id, cohort_id, sequence, role, disposition, predecessor_id, fingerprint, \
+         artifact_json, created_at FROM workflow_cohort_role_decisions \
+         WHERE id = ? AND cohort_id = ?",
+    )
+    .bind(id)
+    .bind(cohort_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(store_error)?
+    .map(RoleRow::into_domain)
+    .transpose()
+}
+
+pub(crate) async fn load_current_role(
+    connection: &mut SqliteConnection,
+    cohort_id: Uuid,
+) -> Result<Option<CohortRoleDecision>, WorkflowStoreError> {
+    current_role(&mut *connection, cohort_id)
+        .await?
+        .map(RoleRow::into_domain)
+        .transpose()
+}
+
 async fn current_role<'e, E>(
     executor: E,
     cohort_id: Uuid,

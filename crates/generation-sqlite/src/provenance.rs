@@ -58,8 +58,8 @@ use sqlx::{FromRow, Row};
 use training_core::ports::{EncoderRegistry, TrainingStore};
 use uuid::Uuid;
 use workflow_core::ports::{
-    AdvisorStore, BenchmarkStore, InitialAllocationStore, PromotionStore, StopDecisionStore,
-    WorkflowApprovalStore, WorkflowRunStore,
+    AdvisorStore, BenchmarkBundleStore, BenchmarkStore, ContaminationStore, InitialAllocationStore,
+    PromotionStore, StopDecisionStore, WorkflowApprovalStore, WorkflowRunStore,
 };
 
 use super::SqliteStore;
@@ -151,6 +151,9 @@ impl ProvenanceStore for SqliteStore {
                 ArtifactKind::OptimizationCampaign => self.campaign_node(id).await,
                 ArtifactKind::OptimizationCampaignLink => self.campaign_link_node(id).await,
                 ArtifactKind::OptimizationOutcome => self.optimization_outcome_node(id).await,
+                ArtifactKind::BenchmarkSuite => self.benchmark_suite_node(id).await,
+                ArtifactKind::ContaminationReport => self.contamination_report_node(id).await,
+                ArtifactKind::BenchmarkBundle => self.benchmark_bundle_node(id).await,
                 ArtifactKind::WorkflowDefinition => self.workflow_definition_node(id).await,
                 ArtifactKind::WorkflowRun => self.workflow_run_node(id).await,
                 ArtifactKind::AcceptanceAssessment => self.acceptance_node(id).await,
@@ -736,6 +739,91 @@ impl SqliteStore {
         )?))
     }
 
+    async fn benchmark_suite_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(value) = self.get_benchmark_suite(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        Ok(Some(node(
+            ArtifactKind::BenchmarkSuite,
+            id,
+            Some(value.fingerprint.clone()),
+            &value,
+            vec![],
+        )?))
+    }
+
+    async fn contamination_report_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(value) = self
+            .get_contamination_report(id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(node(
+            ArtifactKind::ContaminationReport,
+            id,
+            Some(value.fingerprint.clone()),
+            &value,
+            vec![],
+        )?))
+    }
+
+    async fn benchmark_bundle_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(value) = self.get_benchmark_bundle(id).await.map_err(store_error)? else {
+            return Ok(None);
+        };
+        let development = required_provenance_parent(
+            self.benchmark_suite_node(value.development_suite_id)
+                .await?,
+            "benchmark bundle development suite",
+        )?;
+        require_node_fingerprint(
+            &development,
+            &value.development_suite_fingerprint,
+            "benchmark bundle development suite",
+        )?;
+        let mut parents = vec![development];
+        if let (Some(suite_id), Some(fingerprint)) = (
+            value.sealed_suite_id,
+            value.sealed_suite_fingerprint.as_deref(),
+        ) {
+            let sealed = required_provenance_parent(
+                self.benchmark_suite_node(suite_id).await?,
+                "benchmark bundle sealed suite",
+            )?;
+            require_node_fingerprint(&sealed, fingerprint, "benchmark bundle sealed suite")?;
+            parents.push(sealed);
+        }
+        let report = required_provenance_parent(
+            self.contamination_report_node(value.contamination_report_id)
+                .await?,
+            "benchmark bundle contamination report",
+        )?;
+        require_node_fingerprint(
+            &report,
+            &value.contamination_report_fingerprint,
+            "benchmark bundle contamination report",
+        )?;
+        parents.push(report);
+        Ok(Some(node(
+            ArtifactKind::BenchmarkBundle,
+            id,
+            Some(value.fingerprint.clone()),
+            &value,
+            parents,
+        )?))
+    }
+
     async fn workflow_definition_node(
         &self,
         id: Uuid,
@@ -756,6 +844,18 @@ impl SqliteStore {
             .await?
         {
             parents.push(config);
+        }
+        if let Some(binding) = &value.benchmark_bundle {
+            let bundle = required_provenance_parent(
+                self.benchmark_bundle_node(binding.bundle_id).await?,
+                "workflow definition benchmark bundle",
+            )?;
+            require_node_fingerprint(
+                &bundle,
+                &binding.bundle_fingerprint,
+                "workflow definition benchmark bundle",
+            )?;
+            parents.push(bundle);
         }
         Ok(Some(node(
             ArtifactKind::WorkflowDefinition,

@@ -188,6 +188,12 @@ does not overwrite a mutable "best model" pointer. See
 [`docs/workflow-governance-spec.md`](docs/workflow-governance-spec.md) and
 [`docs/cli.md`](docs/cli.md).
 
+Each new definition pins an immutable benchmark bundle. Workflow execution
+fails closed if a pinned cohort role is no longer the current active decision.
+The complete development loop requires adaptation-eligible `row_content`
+disclosure; sealed evidence remains aggregate-only and non-adaptive. Legacy
+pre-bundle workflows remain inspectable but cannot be resumed.
+
 `plan create --targets <FILE>` accepts explicit per-cell targets when an equal
 distribution is not appropriate. This is the underlying plan model used by
 both the CLI and browser application.

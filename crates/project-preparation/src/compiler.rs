@@ -10,9 +10,10 @@ use workflow_core::{
         BenchmarkCohortEvidence, BenchmarkCohortRequest, BenchmarkSuiteKind, BenchmarkSuiteRequest,
         build_benchmark_suite,
     },
+    benchmark_bundle::build_benchmark_bundle,
     contamination::{
-        CohortContaminationInput, ContaminationMember, ContaminationReport, ContaminationStatus,
-        check_contamination,
+        CohortContaminationInput, ContaminationMember, ContaminationPolicy, ContaminationReport,
+        ContaminationStatus, check_contamination,
     },
     governance::{CohortRole, CohortRoleDecision, DisclosureLevel, EvaluationCohort},
     workflow::{
@@ -147,6 +148,12 @@ pub fn compile_project(
             )
         })
         .transpose()?;
+    let benchmark_bundle = build_benchmark_bundle(
+        &development_suite,
+        sealed_suite.as_ref(),
+        &context.global_report,
+    )
+    .map_err(domain)?;
     let workflow_definition = WorkflowDefinition::new(WorkflowDefinitionRequest {
         name: manifest.workflow.name.clone(),
         dataset_id: context.dataset.id,
@@ -156,6 +163,7 @@ pub fn compile_project(
         development_suite_fingerprint: development_suite.fingerprint.clone(),
         sealed_suite_id: sealed_suite.as_ref().map(|suite| suite.id),
         sealed_suite_fingerprint: sealed_suite.as_ref().map(|suite| suite.fingerprint.clone()),
+        benchmark_bundle: Some(benchmark_bundle.binding().map_err(domain)?),
         initial_allocation: WorkflowInitialAllocation {
             total_rows: manifest.workflow.total_rows,
             reserved_rows: manifest.workflow.reserved_rows,
@@ -183,6 +191,8 @@ pub fn compile_project(
         project_configuration_id: project_configuration.id,
         development_suite_id: development_suite.id,
         sealed_suite_id: sealed_suite.as_ref().map(|suite| suite.id),
+        benchmark_bundle_id: Some(benchmark_bundle.id),
+        benchmark_bundle_fingerprint: Some(benchmark_bundle.fingerprint.clone()),
         workflow_definition_id: workflow_definition.id,
         created_at: chrono::Utc::now(),
         fingerprint: String::new(),
@@ -207,6 +217,7 @@ pub fn compile_project(
         contamination_reports: canonical_reports(context.global_report, context.suite_reports),
         development_suite,
         sealed_suite,
+        benchmark_bundle,
         workflow_definition,
         preparation,
     })
@@ -355,7 +366,9 @@ fn build_context(
     let global_report = check_contamination(
         contamination_inputs,
         manifest.contamination.group_dimension.clone(),
-        manifest.contamination.policy.clone(),
+        // Cross-suite authority is always zero-tolerance. The manifest policy
+        // remains available for each suite-local diagnostic report.
+        ContaminationPolicy::default(),
     )
     .map_err(domain)?;
     let suite_reports = std::iter::once(&manifest.development)
@@ -455,6 +468,13 @@ fn validate_manifest_shape(manifest: &PreparationManifest) -> Result<(), Prepara
     if manifest.workflow.policy.enable_advisor != manifest.workflow.advisor.is_some() {
         return Err(PreparationError::Invalid(
             "workflow advisor presence must match policy.enable_advisor".into(),
+        ));
+    }
+    if manifest.development.cohorts.iter().any(|cohort| {
+        cohort.disclosure < DisclosureLevel::RowContent || !cohort.adaptation_eligible
+    }) {
+        return Err(PreparationError::Invalid(
+            "development cohorts must permit row-content disclosure and adaptive use because the workflow always performs error analysis and optimization".into(),
         ));
     }
     Ok(())
@@ -898,7 +918,7 @@ batch_size = 20
             origin: CohortOrigin::InternalSnapshot,
             role: CohortRole::Diagnostic,
             protocol: None,
-            disclosure: DisclosureLevel::Predictions,
+            disclosure: DisclosureLevel::RowContent,
             adaptation_eligible: true,
         });
 
@@ -925,6 +945,25 @@ batch_size = 20
         assert!(matches!(
             preview_project(&manifest, &evidence),
             Err(PreparationError::Invalid(message)) if message.contains("aggregate-only")
+        ));
+    }
+
+    #[test]
+    fn rejects_development_policy_that_cannot_execute_the_stage_graph() {
+        let (mut manifest, evidence) = fixture();
+        manifest.development.cohorts[0].disclosure = DisclosureLevel::Slices;
+        assert!(matches!(
+            preview_project(&manifest, &evidence),
+            Err(PreparationError::Invalid(message))
+                if message.contains("row-content disclosure and adaptive use")
+        ));
+
+        let (mut manifest, evidence) = fixture();
+        manifest.development.cohorts[0].adaptation_eligible = false;
+        assert!(matches!(
+            compile_project(&manifest, &evidence),
+            Err(PreparationError::Invalid(message))
+                if message.contains("row-content disclosure and adaptive use")
         ));
     }
 
@@ -982,7 +1021,7 @@ batch_size = 20
                     origin: CohortOrigin::InternalSnapshot,
                     role: CohortRole::Development,
                     protocol: None,
-                    disclosure: DisclosureLevel::Predictions,
+                    disclosure: DisclosureLevel::RowContent,
                     adaptation_eligible: true,
                 }],
                 contract: decision_contract(),

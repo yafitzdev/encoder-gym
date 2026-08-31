@@ -99,8 +99,11 @@ Governed workflow definitions are separate strict TOML/JSON documents. At
 `workflow define`, the platform resolves and fingerprints the project
 configuration, development and optional sealed suites, analysis protocol,
 optimization protocol, optional advisor policy, fresh-iteration training
-policy, governance mode, and finite budgets. Editing project TOML or suite
-defaults later cannot change an existing workflow definition or run.
+policy, governance mode, and finite budgets. It also derives an immutable
+benchmark bundle that pins those suites and the strict global contamination
+report. Editing project TOML or suite defaults later cannot change an existing
+workflow definition or run. Execution additionally requires every bundle-pinned
+cohort role decision to remain the current active decision.
 Start with `examples/workflow.toml` and replace its persisted identity and
 fingerprint placeholders after creating the project and benchmark suites.
 

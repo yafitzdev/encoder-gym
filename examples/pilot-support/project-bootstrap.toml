@@ -62,7 +62,7 @@ required_model_formats = []
 name = "development-local"
 origin = "internal_snapshot"
 role = "development"
-disclosure = "predictions"
+disclosure = "row_content"
 adaptation_eligible = true
 
 [development.cohorts.source]

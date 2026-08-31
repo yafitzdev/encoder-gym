@@ -1,7 +1,16 @@
 pub mod support;
 
+use std::collections::BTreeMap;
+
 use chrono::Utc;
-use dataset_core::domain::{SplitConfiguration, SplitRatios};
+use dataset_core::{
+    domain::{
+        DatasetSnapshot, SnapshotMember, SnapshotSplit, SourceProvenance, SplitConfiguration,
+        SplitRatios,
+    },
+    ports::SnapshotStore,
+    splitting::reproduce_snapshot_fingerprint,
+};
 use generation_core::{domain::DatasetDefinition, ports::DatasetStore};
 use synthetic_data_sqlite::SqliteStore;
 use uuid::Uuid;
@@ -241,25 +250,16 @@ async fn create_snapshot_fixture(database_url: &str) -> Uuid {
         .await
         .expect("dataset persisted");
     let snapshot_id = Uuid::new_v4();
-    let split = SplitConfiguration::new(SplitRatios::new(0.8, 0.1, 0.1).expect("ratios"), 42);
-    sqlx::query(
-        "INSERT INTO dataset_snapshots \
-         (id, source_dataset_id, name, description, split_configuration_json, member_count, \
-          fingerprint, created_at) VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
-    )
-    .bind(snapshot_id)
-    .bind(dataset.id)
-    .bind("governance CLI fixture")
-    .bind(serde_json::to_string(&split).expect("split JSON"))
-    .bind(1_i64)
-    .bind("sha256:governance-cli-fixture")
-    .bind(Utc::now())
-    .execute(store.pool())
-    .await
-    .expect("snapshot fixture persisted");
+    let split = SplitConfiguration::new(SplitRatios::new(0.0, 0.0, 1.0).expect("ratios"), 42);
     let source_row_id = Uuid::new_v4();
     let member_id = Uuid::new_v4();
     let created_at = Utc::now();
+    let provenance = SourceProvenance::Generated {
+        generation_job_id: Uuid::nil(),
+        backend: "fake".into(),
+        model: "fake-v1".into(),
+        construction_plan_fingerprint: None,
+    };
     sqlx::query(
         "INSERT INTO dataset_source_rows \
          (id, dataset_id, source_kind, source_ref, cell_key, text, normalized_text, label, \
@@ -274,32 +274,38 @@ async fn create_snapshot_fixture(database_url: &str) -> Uuid {
     .bind("charged twice")
     .bind("billing")
     .bind("{}")
-    .bind(format!(
-        r#"{{"kind":"generated","generation_job_id":"{}","backend":"fake","model":"fake-v1"}}"#,
-        Uuid::nil()
-    ))
+    .bind(serde_json::to_string(&provenance).expect("provenance JSON"))
     .bind(created_at)
     .execute(store.pool())
     .await
     .expect("source fixture persisted");
-    sqlx::query(
-        "INSERT INTO dataset_snapshot_members \
-         (id, snapshot_id, source_row_id, split, text, label, dimensions_json, \
-          source_provenance_json, source_created_at) VALUES (?, ?, ?, 'test', ?, ?, ?, ?, ?)",
-    )
-    .bind(member_id)
-    .bind(snapshot_id)
-    .bind(source_row_id)
-    .bind("charged twice")
-    .bind("billing")
-    .bind("{}")
-    .bind(format!(
-        r#"{{"kind":"generated","generation_job_id":"{}","backend":"fake","model":"fake-v1"}}"#,
-        Uuid::nil()
-    ))
-    .bind(created_at)
-    .execute(store.pool())
-    .await
-    .expect("snapshot member fixture persisted");
+    let mut snapshot = DatasetSnapshot {
+        id: snapshot_id,
+        source_dataset_id: dataset.id,
+        name: "governance CLI fixture".into(),
+        description: None,
+        split_configuration: split,
+        member_count: 1,
+        fingerprint: String::new(),
+        created_at,
+    };
+    let member = SnapshotMember {
+        id: member_id,
+        snapshot_id,
+        source_row_id,
+        split: SnapshotSplit::Test,
+        text: "charged twice".into(),
+        label: "billing".into(),
+        dimensions: BTreeMap::new(),
+        fields: BTreeMap::new(),
+        source_provenance: provenance,
+        source_created_at: created_at,
+    };
+    snapshot.fingerprint = reproduce_snapshot_fingerprint(&snapshot, std::slice::from_ref(&member))
+        .expect("snapshot fingerprint");
+    store
+        .create_snapshot(&snapshot, std::slice::from_ref(&member))
+        .await
+        .expect("snapshot fixture persisted");
     snapshot_id
 }

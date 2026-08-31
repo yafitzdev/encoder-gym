@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use workflow_core::{
     benchmark::BenchmarkSuite,
+    benchmark_bundle::BenchmarkBundle,
     contamination::{ContaminationKind, ContaminationReport, ContaminationStatus},
     governance::{CohortRoleDecision, EvaluationCohort},
     workflow::{WorkflowDefinition, WorkflowStage},
@@ -145,6 +146,7 @@ pub struct PreparationBundle {
     pub contamination_reports: Vec<ContaminationReport>,
     pub development_suite: BenchmarkSuite,
     pub sealed_suite: Option<BenchmarkSuite>,
+    pub benchmark_bundle: BenchmarkBundle,
     pub workflow_definition: WorkflowDefinition,
     pub preparation: PreparedProject,
 }
@@ -158,6 +160,10 @@ pub struct PreparedProject {
     pub project_configuration_id: Uuid,
     pub development_suite_id: Uuid,
     pub sealed_suite_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub benchmark_bundle_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub benchmark_bundle_fingerprint: Option<String>,
     pub workflow_definition_id: Uuid,
     pub created_at: DateTime<Utc>,
     pub fingerprint: String,
@@ -172,7 +178,7 @@ impl PreparedProject {
 pub(crate) fn prepared_fingerprint(
     value: &PreparedProject,
 ) -> Result<String, artifact_core::FingerprintError> {
-    artifact_core::fingerprint(&serde_json::json!({
+    let mut document = serde_json::json!({
         "id": value.id,
         "name": value.name,
         "manifest_fingerprint": value.manifest_fingerprint,
@@ -182,7 +188,21 @@ pub(crate) fn prepared_fingerprint(
         "sealed_suite_id": value.sealed_suite_id,
         "workflow_definition_id": value.workflow_definition_id,
         "created_at": value.created_at,
-    }))
+    });
+    if value.benchmark_bundle_id.is_some() || value.benchmark_bundle_fingerprint.is_some() {
+        let object = document
+            .as_object_mut()
+            .expect("prepared project fingerprint document");
+        object.insert(
+            "benchmark_bundle_id".into(),
+            serde_json::json!(value.benchmark_bundle_id),
+        );
+        object.insert(
+            "benchmark_bundle_fingerprint".into(),
+            serde_json::json!(value.benchmark_bundle_fingerprint),
+        );
+    }
+    artifact_core::fingerprint(&document)
 }
 
 pub(crate) fn bootstrap_fingerprint(
@@ -196,6 +216,40 @@ pub(crate) fn bootstrap_fingerprint(
         "sources": value.sources,
         "created_at": value.created_at,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_preparation_omits_bundle_fields_and_reproduces_its_fingerprint() {
+        let mut value = PreparedProject {
+            id: Uuid::new_v4(),
+            name: "legacy preparation".into(),
+            manifest_fingerprint: "sha256:manifest".into(),
+            dataset_id: Uuid::new_v4(),
+            project_configuration_id: Uuid::new_v4(),
+            development_suite_id: Uuid::new_v4(),
+            sealed_suite_id: None,
+            benchmark_bundle_id: None,
+            benchmark_bundle_fingerprint: None,
+            workflow_definition_id: Uuid::new_v4(),
+            created_at: Utc::now(),
+            fingerprint: String::new(),
+        };
+        value.fingerprint = prepared_fingerprint(&value).expect("legacy fingerprint");
+
+        let encoded = serde_json::to_value(&value).expect("legacy JSON");
+        let object = encoded.as_object().expect("preparation object");
+        assert!(!object.contains_key("benchmark_bundle_id"));
+        assert!(!object.contains_key("benchmark_bundle_fingerprint"));
+        let decoded: PreparedProject = serde_json::from_value(encoded).expect("legacy read");
+        assert_eq!(
+            decoded.reproduce_fingerprint().expect("reproduce"),
+            decoded.fingerprint
+        );
+    }
 }
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]

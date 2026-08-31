@@ -28,11 +28,12 @@ creation instead of silently changing evaluation evidence.
 
 Bootstrap creation performs one SQLite transaction containing ordinary source
 datasets, completed imports, accepted source rows, immutable all-test snapshots,
-the preparation bundle described below, and one small bootstrap summary. A late
-failure rolls back every artifact. Idempotency binds the canonical manifest and
-source-content hashes: unchanged bytes return the original record, while changed
-bytes create new immutable history. Paths are retained as import provenance but
-do not substitute for content identity.
+the preparation bundle described below (including its benchmark bundle), and
+one small bootstrap summary. A late failure rolls back every artifact.
+Idempotency binds the canonical manifest and source-content hashes: unchanged
+bytes return the original record, while changed bytes create new immutable
+history. Paths are retained as import provenance but do not substitute for
+content identity.
 
 Bootstrap never starts a workflow, trains, evaluates, or calls a provider. The
 printed `workflow start` command is a separate authorization. Sealed cohorts
@@ -68,23 +69,39 @@ synth provenance project-preparation <PREPARATION_ID>
 
 Preview is read-only at the domain level. It reports every generation cell and
 target, initial/reserved totals, estimated initial requests, configured
-backends, cohort counts, contamination status, disclosures, governance mode,
-and the finite stage graph. UUIDs and timestamps generated only during artifact
-creation are intentionally absent, so repeated previews are stable.
+backends, cohort counts, suite-local and all-cohort contamination status,
+disclosures, governance mode, and the finite stage graph. The all-cohort check
+always uses zero tolerance even when the manifest gives suite-local nonzero
+limits. UUIDs and timestamps generated only during artifact creation are
+intentionally absent, so repeated previews are stable.
 
 Prepare reruns the same validation and inserts one bundle in one SQLite
 transaction: dataset, default configuration plan, non-secret backend settings,
 resolved project configuration, cohorts and roles, contamination reports,
-benchmark suites, workflow definition, and preparation summary. A failure at
-any point rolls back the whole bundle. The stable manifest fingerprint is
-unique; repeating the same manifest returns the existing preparation even
-though a fresh compilation would otherwise generate new artifact UUIDs.
+benchmark suites, immutable benchmark bundle, workflow definition, and
+preparation summary. The bundle pins the development and optional sealed suite
+IDs/fingerprints and the clean global report ID/fingerprint; both the definition
+and preparation summary pin that bundle. A failure at any point rolls back the
+whole transaction. The stable manifest fingerprint is unique; repeating the
+same manifest returns the existing preparation even though a fresh compilation
+would otherwise generate new artifact UUIDs.
 
 Preparation rejects missing or changed snapshots, duplicate snapshot/split
 assignments, label-order mismatches, empty selected splits, incompatible cohort
 origins/roles, unsafe sealed disclosure, invalid budgets, infeasible initial
-allocation, and contamination above policy. It never reads API keys and never
-starts generation, training, evaluation, or sealed acceptance.
+allocation, and any source-row, exact-text, normalized-text, or configured-group
+overlap between any pair of cohorts in the combined development and optional
+sealed set. The global report must cover exactly that set and cannot be
+authorized by a contamination override. It never reads API keys and never starts
+generation, training, evaluation, or sealed acceptance.
+
+To execute the current complete workflow, every development cohort must pin
+`row_content` disclosure and `adaptation_eligible = true`: row content is needed
+by diagnosis, while the lower `predictions` and `slices` requirements are then
+also covered. Preparation rejects a narrower or adaptation-ineligible
+development policy before persisting any artifacts, and workflow runtime
+rechecks the same core access policy before evidence work. Sealed cohorts remain
+aggregate-only and adaptation-ineligible.
 
 The successful command prints the separate authorization needed to execute:
 

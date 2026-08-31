@@ -10,6 +10,7 @@ The manifest is `examples/pilot-support/project-bootstrap.toml`. It declares:
 - a JSONL development cohort with 16 rows;
 - a CSV sealed cohort with 10 different rows;
 - exactly 20 accepted training rows, four reserved for one bounded iteration;
+- row-content, adaptation-eligible development evidence;
 - aggregate-only, adaptation-ineligible sealed evidence; and
 - finite generation, training, evaluation, retry, and iteration settings.
 

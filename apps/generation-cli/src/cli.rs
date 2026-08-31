@@ -1731,6 +1731,9 @@ pub enum WorkflowCommand {
     Define {
         #[arg(long)]
         definition: PathBuf,
+        /// Optional categorical dimension used as strict cross-suite group identity.
+        #[arg(long)]
+        group_dimension: Option<String>,
     },
     DefinitionShow {
         id: Uuid,
@@ -1959,6 +1962,9 @@ pub enum ArtifactKindArg {
     OptimizationCampaign,
     OptimizationCampaignLink,
     OptimizationOutcome,
+    BenchmarkSuite,
+    ContaminationReport,
+    BenchmarkBundle,
     WorkflowDefinition,
     WorkflowRun,
     AcceptanceAssessment,

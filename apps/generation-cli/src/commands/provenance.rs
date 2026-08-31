@@ -74,6 +74,9 @@ const fn artifact_kind(kind: ArtifactKindArg) -> ArtifactKind {
         ArtifactKindArg::OptimizationCampaign => ArtifactKind::OptimizationCampaign,
         ArtifactKindArg::OptimizationCampaignLink => ArtifactKind::OptimizationCampaignLink,
         ArtifactKindArg::OptimizationOutcome => ArtifactKind::OptimizationOutcome,
+        ArtifactKindArg::BenchmarkSuite => ArtifactKind::BenchmarkSuite,
+        ArtifactKindArg::ContaminationReport => ArtifactKind::ContaminationReport,
+        ArtifactKindArg::BenchmarkBundle => ArtifactKind::BenchmarkBundle,
         ArtifactKindArg::WorkflowDefinition => ArtifactKind::WorkflowDefinition,
         ArtifactKindArg::WorkflowRun => ArtifactKind::WorkflowRun,
         ArtifactKindArg::AcceptanceAssessment => ArtifactKind::AcceptanceAssessment,
@@ -138,6 +141,28 @@ mod tests {
             (
                 ArtifactKindArg::CurationApplication,
                 ArtifactKind::CurationApplication,
+            ),
+        ];
+
+        for (argument, expected) in mappings {
+            assert_eq!(artifact_kind(argument), expected);
+        }
+    }
+
+    #[test]
+    fn benchmark_cli_kinds_map_exactly() {
+        let mappings = [
+            (
+                ArtifactKindArg::BenchmarkSuite,
+                ArtifactKind::BenchmarkSuite,
+            ),
+            (
+                ArtifactKindArg::ContaminationReport,
+                ArtifactKind::ContaminationReport,
+            ),
+            (
+                ArtifactKindArg::BenchmarkBundle,
+                ArtifactKind::BenchmarkBundle,
             ),
         ];
 

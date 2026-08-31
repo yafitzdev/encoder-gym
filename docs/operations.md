@@ -67,6 +67,10 @@ campaign links, outcome fingerprints, and optional generation backend
 reachability. Connectivity output reports only the safe endpoint origin
 and HTTP status; credentials are never printed.
 
+The workflow integrity checks also validate benchmark bundles and their suite,
+strict-contamination, cohort, and pinned-role evidence. Legacy null bundle links
+are retained for inspection, not treated as executable authority.
+
 ## Governed workflow operation
 
 Run one local workflow process at a time. `workflow start` and `resume` hold a
@@ -85,6 +89,13 @@ explicitly to disclose the configured sealed aggregate, then `workflow promote`
 to record promotion, rejection, or inconclusive evidence. Never use sealed
 row-level inspection to tune a candidate without first retiring/demoting that
 cohort through the exposure workflow.
+
+Execution rechecks that every bundle-pinned cohort role decision is still the
+current active decision before each stage does evidence work. A transition or
+retirement deliberately invalidates that definition for further execution;
+derive new suites, a bundle, and a workflow definition from the new eligible
+roles. Pre-`0046` workflows without a bundle remain inspectable but cannot be
+started or resumed.
 
 ## Error analysis
 

@@ -1,7 +1,8 @@
 use sqlx::{FromRow, QueryBuilder, Sqlite, SqliteConnection};
 use uuid::Uuid;
 use workflow_core::{
-    benchmark::{AcceptanceAssessment, BenchmarkSuite},
+    benchmark::{AcceptanceAssessment, BenchmarkCohort, BenchmarkSuite},
+    governance::CohortDisposition,
     ports::{
         AcceptanceAssessmentQuery, BenchmarkStore, BenchmarkSuiteQuery, BoxFuture,
         WorkflowStoreError,
@@ -29,17 +30,8 @@ impl BenchmarkStore for SqliteStore {
         id: Uuid,
     ) -> BoxFuture<'_, Result<Option<BenchmarkSuite>, WorkflowStoreError>> {
         Box::pin(async move {
-            sqlx::query_as::<_, SuiteRow>(
-                "SELECT id, name, kind, contamination_report_id, \
-                 contamination_override_fingerprint, artifact_json, fingerprint, created_at \
-                 FROM workflow_benchmark_suites WHERE id = ?",
-            )
-            .bind(id)
-            .fetch_optional(self.pool())
-            .await
-            .map_err(store_error)?
-            .map(SuiteRow::into_domain)
-            .transpose()
+            let mut connection = self.pool().acquire().await.map_err(store_error)?;
+            load_benchmark_suite(&mut connection, id, false).await
         })
     }
 
@@ -49,9 +41,7 @@ impl BenchmarkStore for SqliteStore {
     ) -> BoxFuture<'_, Result<Vec<BenchmarkSuite>, WorkflowStoreError>> {
         Box::pin(async move {
             let mut builder = QueryBuilder::<Sqlite>::new(
-                "SELECT DISTINCT s.id, s.name, s.kind, s.contamination_report_id, \
-                 s.contamination_override_fingerprint, s.artifact_json, s.fingerprint, \
-                 s.created_at FROM workflow_benchmark_suites s",
+                "SELECT DISTINCT s.id FROM workflow_benchmark_suites s",
             );
             if query.cohort_id.is_some() {
                 builder.push(" JOIN workflow_benchmark_suite_cohorts c ON c.suite_id = s.id");
@@ -74,14 +64,24 @@ impl BenchmarkStore for SqliteStore {
                 .push_bind(query.limit)
                 .push(" OFFSET ")
                 .push_bind(query.offset);
-            builder
-                .build_query_as::<SuiteRow>()
+            let ids = builder
+                .build_query_scalar::<Uuid>()
                 .fetch_all(self.pool())
                 .await
-                .map_err(store_error)?
-                .into_iter()
-                .map(SuiteRow::into_domain)
-                .collect()
+                .map_err(store_error)?;
+            let mut connection = self.pool().acquire().await.map_err(store_error)?;
+            let mut suites = Vec::with_capacity(ids.len());
+            for id in ids {
+                let suite = load_benchmark_suite(&mut connection, id, false)
+                    .await?
+                    .ok_or_else(|| {
+                        WorkflowStoreError(format!(
+                            "benchmark suite disappeared while listing: {id}",
+                        ))
+                    })?;
+                suites.push(suite);
+            }
+            Ok(suites)
         })
     }
 
@@ -211,6 +211,55 @@ impl BenchmarkStore for SqliteStore {
     }
 }
 
+pub(crate) async fn load_benchmark_suite(
+    connection: &mut SqliteConnection,
+    id: Uuid,
+    require_current_roles: bool,
+) -> Result<Option<BenchmarkSuite>, WorkflowStoreError> {
+    let Some(row) = sqlx::query_as::<_, SuiteRow>(
+        "SELECT id, name, kind, contamination_report_id, \
+         contamination_override_fingerprint, artifact_json, fingerprint, created_at \
+         FROM workflow_benchmark_suites WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(store_error)?
+    else {
+        return Ok(None);
+    };
+    let suite = row.into_domain()?;
+    let persisted_children = sqlx::query_as::<_, (Uuid, Uuid, String)>(
+        "SELECT cohort_id, role_decision_id, protocol_fingerprint \
+         FROM workflow_benchmark_suite_cohorts WHERE suite_id = ? \
+         ORDER BY cohort_id",
+    )
+    .bind(id)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(store_error)?;
+    let artifact_children = suite
+        .cohorts
+        .iter()
+        .map(|cohort| {
+            (
+                cohort.cohort_id,
+                cohort.role_decision_id,
+                cohort.protocol_fingerprint.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    if artifact_children != persisted_children {
+        return Err(WorkflowStoreError(format!(
+            "benchmark suite cohort index differs from artifact: {id}"
+        )));
+    }
+    for cohort in &suite.cohorts {
+        validate_persisted_cohort_binding(connection, cohort, require_current_roles).await?;
+    }
+    Ok(Some(suite))
+}
+
 pub(crate) async fn insert_benchmark_suite(
     connection: &mut SqliteConnection,
     suite: &BenchmarkSuite,
@@ -242,28 +291,7 @@ pub(crate) async fn insert_benchmark_suite(
         }
     }
     for cohort in &suite.cohorts {
-        let persisted_cohort: Option<String> =
-            sqlx::query_scalar("SELECT fingerprint FROM workflow_evaluation_cohorts WHERE id = ?")
-                .bind(cohort.cohort_id)
-                .fetch_optional(&mut *connection)
-                .await
-                .map_err(store_error)?;
-        let persisted_role: Option<String> = sqlx::query_scalar(
-            "SELECT fingerprint FROM workflow_cohort_role_decisions WHERE id = ? AND cohort_id = ?",
-        )
-        .bind(cohort.role_decision_id)
-        .bind(cohort.cohort_id)
-        .fetch_optional(&mut *connection)
-        .await
-        .map_err(store_error)?;
-        if persisted_cohort.as_deref() != Some(&cohort.cohort_fingerprint)
-            || persisted_role.as_deref() != Some(&cohort.role_decision_fingerprint)
-        {
-            return Err(WorkflowStoreError(format!(
-                "benchmark cohort or role does not match persistence: {}",
-                cohort.cohort_id
-            )));
-        }
+        validate_persisted_cohort_binding(connection, cohort, false).await?;
     }
     sqlx::query(
         "INSERT INTO workflow_benchmark_suites \
@@ -297,6 +325,66 @@ pub(crate) async fn insert_benchmark_suite(
     Ok(())
 }
 
+/// Reconstructs every suite-owned cohort and role claim from normalized
+/// persistence. Comparing fingerprints alone is insufficient because a
+/// self-consistent forged suite could retain a real fingerprint while changing
+/// its copied snapshot, split, or role fields.
+pub(crate) async fn validate_persisted_cohort_binding(
+    connection: &mut SqliteConnection,
+    pinned: &BenchmarkCohort,
+    require_current_role: bool,
+) -> Result<(), WorkflowStoreError> {
+    let cohort = crate::governance::load_cohort(connection, pinned.cohort_id)
+        .await?
+        .ok_or_else(|| {
+            WorkflowStoreError(format!("benchmark cohort not found: {}", pinned.cohort_id))
+        })?;
+    let role = crate::governance::load_role_decision(
+        connection,
+        pinned.role_decision_id,
+        pinned.cohort_id,
+    )
+    .await?
+    .ok_or_else(|| {
+        WorkflowStoreError(format!(
+            "benchmark cohort role decision not found: {}",
+            pinned.role_decision_id
+        ))
+    })?;
+    if pinned.cohort_fingerprint != cohort.fingerprint
+        || pinned.snapshot_id != cohort.snapshot_id
+        || pinned.snapshot_fingerprint != cohort.snapshot_fingerprint
+        || pinned.split != cohort.split
+        || pinned.role_decision_fingerprint != role.fingerprint
+        || pinned.role != role.role
+    {
+        return Err(WorkflowStoreError(format!(
+            "benchmark cohort or role claims differ from persistence: {}",
+            pinned.cohort_id
+        )));
+    }
+    if require_current_role {
+        let current = crate::governance::load_current_role(connection, pinned.cohort_id)
+            .await?
+            .ok_or_else(|| {
+                WorkflowStoreError(format!(
+                    "benchmark cohort has no current role: {}",
+                    pinned.cohort_id
+                ))
+            })?;
+        if current.id != role.id
+            || current.fingerprint != role.fingerprint
+            || current.disposition != CohortDisposition::Active
+        {
+            return Err(WorkflowStoreError(format!(
+                "benchmark bundle must bind the current cohort role: {}",
+                pinned.cohort_id
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, FromRow)]
 struct SuiteRow {
     id: Uuid,
@@ -324,7 +412,7 @@ impl SuiteRow {
                 "benchmark suite normalized fields do not match artifact".into(),
             ));
         }
-        validate_suite(&value)?;
+        validate_persisted_suite(&value)?;
         Ok(value)
     }
 }
@@ -360,12 +448,13 @@ impl AssessmentRow {
 }
 
 fn validate_suite(value: &BenchmarkSuite) -> Result<(), WorkflowStoreError> {
-    if value.reproduce_fingerprint().map_err(store_error)? != value.fingerprint {
-        return Err(WorkflowStoreError(
-            "benchmark suite fingerprint mismatch".into(),
-        ));
-    }
-    Ok(())
+    value.validate_integrity().map_err(store_error)
+}
+
+fn validate_persisted_suite(value: &BenchmarkSuite) -> Result<(), WorkflowStoreError> {
+    value
+        .validate_legacy_compatible_integrity()
+        .map_err(store_error)
 }
 
 fn validate_assessment(value: &AcceptanceAssessment) -> Result<(), WorkflowStoreError> {

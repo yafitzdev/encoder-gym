@@ -38,7 +38,7 @@ snapshot_id = "00000000-0000-0000-0000-000000000000"
 split = "test"
 origin = "internal_snapshot"
 role = "development"
-disclosure = "predictions"
+disclosure = "row_content"
 adaptation_eligible = true
 
 [development.contract]

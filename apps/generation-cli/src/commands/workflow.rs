@@ -1,9 +1,15 @@
-use std::{collections::BTreeMap, future::Future, pin::Pin, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+    pin::Pin,
+    time::Duration,
+};
 
 use advisor_fake::FakeAnalysisAdvisor;
 use advisor_openai_compatible::OpenAICompatibleAdvisor;
 use analysis_core::{ports::AnalysisStore, runner::run_analysis};
 use anyhow::{Context, ensure};
+use dataset_core::ports::SnapshotStore;
 use dataset_quality_core::{lifecycle::QualityAuditRunState, ports::DatasetQualityStore};
 use evaluation_core::ports::EvaluationStore;
 use generation_core::{
@@ -30,13 +36,22 @@ use workflow_core::{
         InitialCellCoverage, allocate_initial_budget,
     },
     approval::{WorkflowApprovalDecision, WorkflowApprovalMode},
-    benchmark::{BenchmarkSuiteKind, CohortAssessmentInput, assess_benchmark},
+    benchmark::{
+        BenchmarkSuite, BenchmarkSuiteKind, CohortAssessmentInput, assess_benchmark,
+        validate_suite_access,
+    },
+    benchmark_bundle::{BenchmarkBundle, build_benchmark_bundle},
+    contamination::{
+        CohortContaminationInput, ContaminationMember, ContaminationPolicy, ContaminationReport,
+        ContaminationStatus, check_contamination,
+    },
     governance::{
-        DisclosureLevel, EvidenceExposure, EvidenceExposureRequest, ExposurePurpose,
-        summarize_exposure_risk,
+        CohortDisposition, DisclosureLevel, EvidenceExposure, EvidenceExposureRequest,
+        ExposurePurpose, summarize_exposure_risk,
     },
     ports::{
-        AcceptanceAssessmentQuery, AdvisorStore, AdvisoryAssessmentQuery, BenchmarkStore,
+        AcceptanceAssessmentQuery, AdvisorStore, AdvisoryAssessmentQuery, BenchmarkBundleQuery,
+        BenchmarkBundleStore, BenchmarkStore, ContaminationQuery, ContaminationStore,
         ExposureQuery, GovernanceStore, InitialAllocationQuery, InitialAllocationStore,
         PromotionStore, StopDecisionStore, WorkflowApprovalStore, WorkflowDefinitionQuery,
         WorkflowRunQuery, WorkflowRunStore,
@@ -64,12 +79,10 @@ use stage_execution::{StageExecution, execute_initial_stage};
 
 pub async fn execute(command: WorkflowCommand, store: &SqliteStore) -> anyhow::Result<()> {
     match command {
-        WorkflowCommand::Define { definition } => {
-            let request: WorkflowDefinitionRequest = read_document(&definition)?;
-            let definition = WorkflowDefinition::new(request)?;
-            store.create_workflow_definition(&definition).await?;
-            crate::presentation::print(&definition)
-        }
+        WorkflowCommand::Define {
+            definition,
+            group_dimension,
+        } => define_workflow(&definition, group_dimension, store).await,
         WorkflowCommand::DefinitionShow { id } => {
             crate::presentation::print(&require_definition(store, id).await?)
         }
@@ -88,6 +101,7 @@ pub async fn execute(command: WorkflowCommand, store: &SqliteStore) -> anyhow::R
             initialize_only,
         } => {
             let definition = require_definition(store, definition_id).await?;
+            load_workflow_benchmark_authority(store, &definition).await?;
             let mut run = WorkflowRun::queued(&definition)?;
             let attempt = WorkflowStageAttempt::start(
                 &definition,
@@ -110,6 +124,7 @@ pub async fn execute(command: WorkflowCommand, store: &SqliteStore) -> anyhow::R
         WorkflowCommand::Resume { id } => {
             let mut run = require_run(store, id).await?;
             let definition = require_definition(store, run.definition_id).await?;
+            load_workflow_benchmark_authority(store, &definition).await?;
             let previous = store
                 .list_workflow_attempts(id)
                 .await?
@@ -258,6 +273,391 @@ pub async fn execute(command: WorkflowCommand, store: &SqliteStore) -> anyhow::R
     }
 }
 
+const AUTHORITY_LOOKUP_PAGE_SIZE: u32 = 256;
+
+#[derive(Debug, Clone)]
+struct WorkflowBenchmarkAuthority {
+    development: BenchmarkSuite,
+    sealed: Option<BenchmarkSuite>,
+}
+
+async fn load_workflow_benchmark_authority(
+    store: &SqliteStore,
+    definition: &WorkflowDefinition,
+) -> anyhow::Result<WorkflowBenchmarkAuthority> {
+    let binding = definition
+        .benchmark_bundle
+        .as_ref()
+        .context("workflow definition has no benchmark bundle authority")?;
+    let bundle = store
+        .get_benchmark_bundle(binding.bundle_id)
+        .await?
+        .with_context(|| format!("workflow benchmark bundle not found: {}", binding.bundle_id))?;
+    binding
+        .validate_bundle(&bundle)
+        .context("workflow benchmark bundle binding differs from persisted authority")?;
+    let development = load_definition_suite(
+        store,
+        bundle.development_suite_id,
+        &bundle.development_suite_fingerprint,
+        BenchmarkSuiteKind::Development,
+    )
+    .await?;
+    let sealed = match (
+        bundle.sealed_suite_id,
+        bundle.sealed_suite_fingerprint.as_deref(),
+    ) {
+        (Some(id), Some(fingerprint)) => Some(
+            load_definition_suite(store, id, fingerprint, BenchmarkSuiteKind::SealedAcceptance)
+                .await?,
+        ),
+        (None, None) => None,
+        _ => anyhow::bail!("persisted benchmark bundle has an incomplete sealed-suite pin"),
+    };
+    let authority = WorkflowBenchmarkAuthority {
+        development,
+        sealed,
+    };
+    validate_authority_current_roles(store, &authority).await?;
+    Ok(authority)
+}
+
+async fn validate_authority_current_roles(
+    store: &SqliteStore,
+    authority: &WorkflowBenchmarkAuthority,
+) -> anyhow::Result<()> {
+    for suite in std::iter::once(&authority.development).chain(authority.sealed.iter()) {
+        for pinned in &suite.cohorts {
+            let current = store
+                .get_current_cohort_role(pinned.cohort_id)
+                .await?
+                .with_context(|| {
+                    format!("benchmark cohort has no current role: {}", pinned.cohort_id)
+                })?;
+            ensure!(
+                current.id == pinned.role_decision_id
+                    && current.fingerprint == pinned.role_decision_fingerprint
+                    && current.role == pinned.role
+                    && current.disposition == CohortDisposition::Active,
+                "benchmark cohort {} current role no longer matches the immutable bundle authority",
+                pinned.cohort_id
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn define_workflow(
+    document: &std::path::Path,
+    group_dimension: Option<String>,
+    store: &SqliteStore,
+) -> anyhow::Result<()> {
+    let mut request: WorkflowDefinitionRequest = read_document(document)?;
+    ensure!(
+        request.sealed_suite_id.is_some() == request.sealed_suite_fingerprint.is_some(),
+        "sealed suite id and fingerprint must either both be present or both absent"
+    );
+
+    let development = load_definition_suite(
+        store,
+        request.development_suite_id,
+        &request.development_suite_fingerprint,
+        BenchmarkSuiteKind::Development,
+    )
+    .await?;
+    validate_suite_access(
+        &development,
+        ExposurePurpose::Diagnosis,
+        Some(DisclosureLevel::RowContent),
+    )
+    .context(
+        "development benchmark suite cannot support the workflow's required error-analysis stage",
+    )?;
+    let sealed = match (
+        request.sealed_suite_id,
+        request.sealed_suite_fingerprint.as_deref(),
+    ) {
+        (Some(id), Some(fingerprint)) => Some(
+            load_definition_suite(store, id, fingerprint, BenchmarkSuiteKind::SealedAcceptance)
+                .await?,
+        ),
+        (None, None) => None,
+        _ => unreachable!("sealed suite pair was validated"),
+    };
+
+    let mut local_reports = vec![load_suite_contamination_report(store, &development).await?];
+    if let Some(sealed) = sealed.as_ref() {
+        local_reports.push(load_suite_contamination_report(store, sealed).await?);
+    }
+    let group_dimension = resolve_group_dimension(group_dimension, &local_reports)?;
+    let suites = std::iter::once(&development)
+        .chain(sealed.iter())
+        .collect::<Vec<_>>();
+    let inputs =
+        load_bundle_contamination_inputs(store, &suites, group_dimension.as_deref()).await?;
+    let candidate_report =
+        check_contamination(inputs, group_dimension, ContaminationPolicy::default())?;
+    ensure!(
+        candidate_report.status == ContaminationStatus::Clean,
+        "strict global contamination check blocked the benchmark bundle: {}",
+        candidate_report.reasons.join("; ")
+    );
+    let (global_report, create_report) =
+        resolve_reusable_contamination_report(store, candidate_report).await?;
+
+    let candidate_bundle = build_benchmark_bundle(&development, sealed.as_ref(), &global_report)?;
+    let (benchmark_bundle, create_bundle) =
+        resolve_reusable_benchmark_bundle(store, candidate_bundle).await?;
+    let derived_binding = benchmark_bundle.binding()?;
+    if let Some(supplied) = request.benchmark_bundle.as_ref() {
+        ensure!(
+            supplied == &derived_binding,
+            "user-supplied benchmark_bundle does not match the binding derived from persisted benchmark evidence"
+        );
+    }
+    request.benchmark_bundle = Some(derived_binding);
+
+    // Finish all fallible domain validation before creating any of the derived authority records.
+    let definition = WorkflowDefinition::new(request)?;
+    store
+        .create_workflow_definition_with_authority(
+            create_report.then_some(&global_report),
+            create_bundle.then_some(&benchmark_bundle),
+            &definition,
+        )
+        .await?;
+    crate::presentation::print(&definition)
+}
+
+async fn load_definition_suite(
+    store: &SqliteStore,
+    id: uuid::Uuid,
+    expected_fingerprint: &str,
+    expected_kind: BenchmarkSuiteKind,
+) -> anyhow::Result<BenchmarkSuite> {
+    let suite = store
+        .get_benchmark_suite(id)
+        .await?
+        .with_context(|| format!("benchmark suite not found: {id}"))?;
+    suite
+        .validate_integrity()
+        .with_context(|| format!("benchmark suite is not decision-grade: {id}"))?;
+    ensure!(
+        suite.fingerprint == expected_fingerprint,
+        "workflow benchmark suite fingerprint differs from persisted suite {id}"
+    );
+    ensure!(
+        suite.kind == expected_kind,
+        "workflow benchmark suite {id} has kind {:?}, expected {:?}",
+        suite.kind,
+        expected_kind
+    );
+    Ok(suite)
+}
+
+async fn load_suite_contamination_report(
+    store: &SqliteStore,
+    suite: &BenchmarkSuite,
+) -> anyhow::Result<ContaminationReport> {
+    let report = store
+        .get_contamination_report(suite.contamination_report_id)
+        .await?
+        .with_context(|| {
+            format!(
+                "benchmark suite {} contamination report not found: {}",
+                suite.id, suite.contamination_report_id
+            )
+        })?;
+    ensure!(
+        report.reproduce_fingerprint()? == report.fingerprint
+            && report.fingerprint == suite.contamination_report_fingerprint,
+        "benchmark suite {} contamination report differs from persisted evidence",
+        suite.id
+    );
+    Ok(report)
+}
+
+fn resolve_group_dimension(
+    requested: Option<String>,
+    local_reports: &[ContaminationReport],
+) -> anyhow::Result<Option<String>> {
+    let requested = requested
+        .map(|value| {
+            let value = value.trim().to_owned();
+            ensure!(!value.is_empty(), "--group-dimension must not be empty");
+            Ok(value)
+        })
+        .transpose()?;
+    let inferred = local_reports
+        .iter()
+        .filter_map(|report| report.group_dimension.as_deref())
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        inferred.len() <= 1,
+        "benchmark suite contamination reports use conflicting group dimensions: {}",
+        inferred.into_iter().collect::<Vec<_>>().join(", ")
+    );
+    let inferred = local_reports
+        .iter()
+        .find_map(|report| report.group_dimension.clone());
+    if let (Some(requested), Some(inferred)) = (requested.as_deref(), inferred.as_deref()) {
+        ensure!(
+            requested == inferred,
+            "--group-dimension {requested} conflicts with suite contamination dimension {inferred}"
+        );
+    }
+    Ok(inferred.or(requested))
+}
+
+async fn load_bundle_contamination_inputs(
+    store: &SqliteStore,
+    suites: &[&BenchmarkSuite],
+    group_dimension: Option<&str>,
+) -> anyhow::Result<Vec<CohortContaminationInput>> {
+    let capacity = suites.iter().map(|suite| suite.cohorts.len()).sum();
+    let mut inputs = Vec::with_capacity(capacity);
+    let mut seen = BTreeSet::new();
+    for suite in suites {
+        for pinned in &suite.cohorts {
+            ensure!(
+                seen.insert(pinned.cohort_id),
+                "cohort {} appears more than once in the workflow benchmark suite union",
+                pinned.cohort_id
+            );
+            let cohort = store
+                .get_cohort(pinned.cohort_id)
+                .await?
+                .with_context(|| format!("benchmark cohort not found: {}", pinned.cohort_id))?;
+            ensure!(
+                cohort.fingerprint == pinned.cohort_fingerprint
+                    && cohort.snapshot_id == pinned.snapshot_id
+                    && cohort.snapshot_fingerprint == pinned.snapshot_fingerprint
+                    && cohort.split == pinned.split,
+                "benchmark cohort {} differs from the suite-pinned evidence",
+                pinned.cohort_id
+            );
+            let role = store
+                .get_current_cohort_role(pinned.cohort_id)
+                .await?
+                .with_context(|| {
+                    format!("benchmark cohort has no current role: {}", pinned.cohort_id)
+                })?;
+            ensure!(
+                role.id == pinned.role_decision_id
+                    && role.fingerprint == pinned.role_decision_fingerprint
+                    && role.role == pinned.role,
+                "benchmark cohort {} current role differs from the suite-pinned role",
+                pinned.cohort_id
+            );
+            let snapshot = store
+                .get_snapshot(pinned.snapshot_id)
+                .await?
+                .with_context(|| format!("benchmark snapshot not found: {}", pinned.snapshot_id))?;
+            ensure!(
+                snapshot.fingerprint == pinned.snapshot_fingerprint,
+                "benchmark snapshot {} differs from the suite-pinned snapshot",
+                pinned.snapshot_id
+            );
+            let members = store
+                .list_snapshot_members(pinned.snapshot_id)
+                .await?
+                .into_iter()
+                .filter(|member| member.split == pinned.split)
+                .map(|member| ContaminationMember::from_snapshot_member(&member, group_dimension))
+                .collect::<Vec<_>>();
+            ensure!(
+                !members.is_empty(),
+                "benchmark cohort {} has no persisted members in pinned split {:?}",
+                pinned.cohort_id,
+                pinned.split
+            );
+            inputs.push(CohortContaminationInput {
+                cohort,
+                role,
+                members,
+            });
+        }
+    }
+    Ok(inputs)
+}
+
+async fn resolve_reusable_contamination_report(
+    store: &SqliteStore,
+    candidate: ContaminationReport,
+) -> anyhow::Result<(ContaminationReport, bool)> {
+    let cohort_id = candidate
+        .cohort_ids
+        .first()
+        .copied()
+        .context("global contamination report has no cohort")?;
+    let mut offset = 0;
+    loop {
+        let reports = store
+            .query_contamination_reports(ContaminationQuery {
+                cohort_id: Some(cohort_id),
+                status: Some(ContaminationStatus::Clean),
+                limit: AUTHORITY_LOOKUP_PAGE_SIZE,
+                offset,
+            })
+            .await?;
+        if let Some(existing) = reports
+            .iter()
+            .find(|report| report.fingerprint == candidate.fingerprint)
+        {
+            ensure!(
+                existing.reproduce_fingerprint()? == candidate.fingerprint,
+                "persisted contamination authority fingerprint does not reproduce"
+            );
+            return Ok((existing.clone(), false));
+        }
+        let returned = u32::try_from(reports.len()).context("contamination page is too large")?;
+        if returned < AUTHORITY_LOOKUP_PAGE_SIZE {
+            break;
+        }
+        offset = offset
+            .checked_add(returned)
+            .context("contamination authority lookup offset overflow")?;
+    }
+    Ok((candidate, true))
+}
+
+async fn resolve_reusable_benchmark_bundle(
+    store: &SqliteStore,
+    candidate: BenchmarkBundle,
+) -> anyhow::Result<(BenchmarkBundle, bool)> {
+    let mut offset = 0;
+    loop {
+        let bundles = store
+            .query_benchmark_bundles(BenchmarkBundleQuery {
+                development_suite_id: Some(candidate.development_suite_id),
+                sealed_suite_id: candidate.sealed_suite_id,
+                contamination_report_id: Some(candidate.contamination_report_id),
+                limit: AUTHORITY_LOOKUP_PAGE_SIZE,
+                offset,
+            })
+            .await?;
+        if let Some(existing) = bundles
+            .iter()
+            .find(|bundle| bundle.fingerprint == candidate.fingerprint)
+        {
+            ensure!(
+                existing.reproduce_fingerprint()? == candidate.fingerprint,
+                "persisted benchmark bundle fingerprint does not reproduce"
+            );
+            return Ok((existing.clone(), false));
+        }
+        let returned =
+            u32::try_from(bundles.len()).context("benchmark bundle page is too large")?;
+        if returned < AUTHORITY_LOOKUP_PAGE_SIZE {
+            break;
+        }
+        offset = offset
+            .checked_add(returned)
+            .context("benchmark bundle lookup offset overflow")?;
+    }
+    Ok((candidate, true))
+}
+
 async fn drive_initial_pipeline(
     store: &SqliteStore,
     definition: WorkflowDefinition,
@@ -317,6 +717,30 @@ async fn drive_pipeline_inner(
         persisted_configuration.fingerprint == definition.project_configuration_fingerprint,
         "workflow project configuration fingerprint changed"
     );
+    let benchmark_authority = match load_workflow_benchmark_authority(store, &definition).await {
+        Ok(authority) => authority,
+        Err(error) if attempt.state == StageAttemptState::Running => {
+            let usage = run.usage.clone();
+            let failed = attempt.finish(
+                &definition,
+                &mut run,
+                StageOutcome {
+                    state: StageAttemptState::Failed,
+                    reason: Some(format!(
+                        "benchmark authority is no longer executable: {error}"
+                    )),
+                    retryable: false,
+                    artifacts: Vec::new(),
+                    usage_after: usage,
+                },
+            )?;
+            store
+                .commit_workflow_attempt(&run, &failed, attempt.id)
+                .await?;
+            return Ok(run);
+        }
+        Err(error) => return Err(error),
+    };
     loop {
         let cancellable_attempt = attempt.state == StageAttemptState::Running
             || matches!(
@@ -449,12 +873,33 @@ async fn drive_pipeline_inner(
         if attempt.state != StageAttemptState::Running {
             return Ok(run);
         }
+        if let Err(error) = validate_authority_current_roles(store, &benchmark_authority).await {
+            let usage = run.usage.clone();
+            let failed = attempt.finish(
+                &definition,
+                &mut run,
+                StageOutcome {
+                    state: StageAttemptState::Failed,
+                    reason: Some(format!(
+                        "benchmark authority is no longer executable: {error}"
+                    )),
+                    retryable: false,
+                    artifacts: Vec::new(),
+                    usage_after: usage,
+                },
+            )?;
+            store
+                .commit_workflow_attempt(&run, &failed, attempt.id)
+                .await?;
+            return Ok(run);
+        }
         let execution = execute_initial_stage(
             store,
             &definition,
             &run,
             &attempt,
             &persisted_configuration.resolved,
+            &benchmark_authority,
         )
         .await;
         let persisted_run = require_run(store, run.id).await?;
@@ -613,6 +1058,7 @@ async fn approve_and_resume(
         "workflow is not awaiting approval"
     );
     let definition = require_definition(store, run.definition_id).await?;
+    load_workflow_benchmark_authority(store, &definition).await?;
     ensure!(
         matches!(
             definition.governance,
@@ -744,6 +1190,7 @@ async fn execute_stop_decision(
     run: &WorkflowRun,
     history: &[WorkflowStageAttempt],
     usage: &WorkflowBudgetUsage,
+    suite: &BenchmarkSuite,
 ) -> anyhow::Result<workflow_core::stop::StopDecision> {
     if let Some(existing) = store
         .get_iteration_stop_decision(run.id, run.iteration)
@@ -751,25 +1198,58 @@ async fn execute_stop_decision(
     {
         return Ok(existing);
     }
-    let suite = store
-        .get_benchmark_suite(definition.development_suite_id)
-        .await?
-        .context("development benchmark suite not found")?;
+    validate_suite_access(suite, ExposurePurpose::DevelopmentEvaluation, None)?;
     let evaluation_ids = artifact_ids_for_stage(
         history,
         WorkflowStage::IterationEvaluation,
         run.iteration,
         "iteration_evaluation_run",
     );
+    let baseline_ids = artifact_ids_for_stage(
+        history,
+        WorkflowStage::DevelopmentEvaluation,
+        0,
+        "evaluation_run",
+    );
+    let comparison_ids = artifact_ids_for_stage(
+        history,
+        WorkflowStage::Comparison,
+        run.iteration,
+        "evaluation_comparison",
+    );
+    let comparisons_by_candidate = load_comparisons_by_candidate(store, &comparison_ids).await?;
     let mut inputs = Vec::new();
+    let mut comparisons = Vec::with_capacity(suite.cohorts.len());
     for cohort in &suite.cohorts {
+        let baseline = load_matching_evaluation(store, cohort, &baseline_ids).await?;
+        let evaluation = load_matching_evaluation(store, cohort, &evaluation_ids).await?;
+        let comparison = comparisons_by_candidate
+            .get(&evaluation.id)
+            .with_context(|| {
+                format!(
+                    "workflow has no paired comparison for benchmark cohort {} candidate evaluation",
+                    cohort.cohort_id
+                )
+            })?
+            .clone();
+        ensure!(
+            comparison.left_run_id == baseline.id,
+            "workflow comparison baseline does not match benchmark cohort {}",
+            cohort.cohort_id
+        );
+        comparisons.push(comparison.clone());
+        let comparison = suite.contract.regression.as_ref().map(|_| comparison);
         inputs.push(CohortAssessmentInput {
             cohort_id: cohort.cohort_id,
-            run: Some(load_matching_evaluation(store, cohort, &evaluation_ids).await?),
-            comparison: None,
+            run: Some(evaluation),
+            comparison,
         });
     }
-    let candidate = assess_benchmark(&suite, inputs)?;
+    ensure!(
+        comparisons_by_candidate.len() == suite.cohorts.len(),
+        "workflow comparisons do not map exactly to the benchmark suite cohorts"
+    );
+    let candidate = assess_benchmark(suite, inputs)?;
     let acceptance = match store
         .query_acceptance_assessments(AcceptanceAssessmentQuery {
             suite_id: Some(suite.id),
@@ -780,8 +1260,10 @@ async fn execute_stop_decision(
         })
         .await?
         .into_iter()
-        .find(|value| value.evaluation_run_ids == candidate.evaluation_run_ids)
-    {
+        .find(|value| {
+            value.evaluation_run_ids == candidate.evaluation_run_ids
+                && value.comparison_ids == candidate.comparison_ids
+        }) {
         Some(value) => value,
         None => {
             store.create_acceptance_assessment(&candidate).await?;
@@ -790,29 +1272,14 @@ async fn execute_stop_decision(
     };
     record_suite_exposures(
         store,
-        &suite,
+        suite,
         acceptance.evaluation_run_ids.values().copied().collect(),
         run,
-        ExposurePurpose::Comparison,
+        ExposurePurpose::DevelopmentEvaluation,
         None,
         "workflow iteration stop assessment",
     )
     .await?;
-    let comparison_ids = artifact_ids_for_stage(
-        history,
-        WorkflowStage::Comparison,
-        run.iteration,
-        "evaluation_comparison",
-    );
-    let mut comparisons = Vec::new();
-    for id in comparison_ids {
-        comparisons.push(
-            store
-                .get_comparison(id)
-                .await?
-                .with_context(|| format!("workflow comparison not found: {id}"))?,
-        );
-    }
     let decision = decide(
         run.id,
         run.iteration,
@@ -829,6 +1296,7 @@ async fn execute_stop_decision(
 async fn finalize(store: &SqliteStore, id: uuid::Uuid) -> anyhow::Result<()> {
     let mut run = require_run(store, id).await?;
     let definition = require_definition(store, run.definition_id).await?;
+    load_workflow_benchmark_authority(store, &definition).await?;
     ensure!(
         definition.sealed_suite_id.is_some(),
         "workflow definition has no sealed acceptance suite"
@@ -864,6 +1332,7 @@ async fn promote(store: &SqliteStore, id: uuid::Uuid) -> anyhow::Result<()> {
         return print_status(store, run).await;
     }
     let definition = require_definition(store, run.definition_id).await?;
+    load_workflow_benchmark_authority(store, &definition).await?;
     let mut attempts = store.list_workflow_attempts(id).await?;
     let previous = attempts.pop().context("workflow has no stage attempt")?;
     ensure!(
@@ -1010,6 +1479,26 @@ async fn load_matching_evaluation(
     )
 }
 
+async fn load_comparisons_by_candidate(
+    store: &SqliteStore,
+    comparison_ids: &[uuid::Uuid],
+) -> anyhow::Result<BTreeMap<uuid::Uuid, evaluation_core::domain::EvaluationComparisonReport>> {
+    let mut by_candidate = BTreeMap::new();
+    for id in comparison_ids {
+        let comparison = store
+            .get_comparison(*id)
+            .await?
+            .with_context(|| format!("workflow comparison not found: {id}"))?;
+        ensure!(
+            by_candidate
+                .insert(comparison.right_run_id, comparison)
+                .is_none(),
+            "workflow has multiple comparisons for one candidate evaluation"
+        );
+    }
+    Ok(by_candidate)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn record_suite_exposures(
     store: &SqliteStore,
@@ -1020,25 +1509,9 @@ async fn record_suite_exposures(
     disclosure: Option<DisclosureLevel>,
     note: &str,
 ) -> anyhow::Result<()> {
+    validate_suite_access(suite, purpose, disclosure)?;
     for cohort in &suite.cohorts {
         let evaluation = load_matching_evaluation(store, cohort, &evaluation_ids).await?;
-        let existing = store
-            .query_exposures(ExposureQuery {
-                cohort_id: cohort.cohort_id,
-                purpose: Some(purpose),
-                limit: 10_000,
-                offset: 0,
-            })
-            .await?
-            .into_iter()
-            .any(|value| {
-                value.evaluation_run_id == Some(evaluation.id)
-                    && value.workflow_run_id == Some(run.id)
-                    && value.workflow_iteration == Some(run.iteration)
-            });
-        if existing {
-            continue;
-        }
         let persisted_cohort = store
             .get_cohort(cohort.cohort_id)
             .await?
@@ -1047,6 +1520,18 @@ async fn record_suite_exposures(
             .get_current_cohort_role(cohort.cohort_id)
             .await?
             .context("benchmark cohort has no current role")?;
+        ensure!(
+            persisted_cohort.fingerprint == cohort.cohort_fingerprint
+                && persisted_cohort.snapshot_id == cohort.snapshot_id
+                && persisted_cohort.snapshot_fingerprint == cohort.snapshot_fingerprint
+                && persisted_cohort.split == cohort.split
+                && role.id == cohort.role_decision_id
+                && role.fingerprint == cohort.role_decision_fingerprint
+                && role.role == cohort.role
+                && role.disposition == CohortDisposition::Active,
+            "benchmark cohort {} no longer matches the workflow authority",
+            cohort.cohort_id
+        );
         let exposure = EvidenceExposure::new(
             &persisted_cohort,
             &role,
@@ -1056,10 +1541,36 @@ async fn record_suite_exposures(
                 workflow_iteration: Some(run.iteration),
                 purpose,
                 disclosure: disclosure.unwrap_or(cohort.disclosure),
-                adaptation_eligible: true,
+                adaptation_eligible: purpose.is_adaptive() && cohort.adaptation_eligible,
                 note: Some(note.to_owned()),
             },
         )?;
+        let existing = store
+            .query_exposures(ExposureQuery {
+                cohort_id: cohort.cohort_id,
+                purpose: Some(purpose),
+                limit: 10_000,
+                offset: 0,
+            })
+            .await?
+            .into_iter()
+            .find(|value| {
+                value.evaluation_run_id == Some(evaluation.id)
+                    && value.workflow_run_id == Some(run.id)
+                    && value.workflow_iteration == Some(run.iteration)
+            });
+        if let Some(existing) = existing {
+            ensure!(
+                existing.role_decision_id == exposure.role_decision_id
+                    && existing.role == exposure.role
+                    && existing.disclosure == exposure.disclosure
+                    && existing.adaptation_eligible == exposure.adaptation_eligible
+                    && existing.requires_retirement == exposure.requires_retirement
+                    && existing.note == exposure.note,
+                "existing benchmark exposure differs from the workflow authority"
+            );
+            continue;
+        }
         store.append_exposure(&exposure, None).await?;
     }
     Ok(())
@@ -1114,5 +1625,84 @@ const fn run_state(value: WorkflowRunStateArg) -> WorkflowRunState {
         WorkflowRunStateArg::Cancelled => WorkflowRunState::Cancelled,
         WorkflowRunStateArg::Exhausted => WorkflowRunState::Exhausted,
         WorkflowRunStateArg::Inconclusive => WorkflowRunState::Inconclusive,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+
+    use super::*;
+
+    fn contamination_report(group_dimension: Option<&str>) -> ContaminationReport {
+        ContaminationReport {
+            id: uuid::Uuid::new_v4(),
+            cohort_ids: Vec::new(),
+            cohort_fingerprints: BTreeMap::new(),
+            role_decision_fingerprints: BTreeMap::new(),
+            group_dimension: group_dimension.map(str::to_owned),
+            policy: ContaminationPolicy::default(),
+            counts: BTreeMap::new(),
+            findings: Vec::new(),
+            status: ContaminationStatus::Clean,
+            reasons: Vec::new(),
+            created_at: Utc::now(),
+            fingerprint: String::new(),
+        }
+    }
+
+    #[test]
+    fn group_dimension_is_inferred_or_explicitly_introduced_without_weakening() {
+        assert_eq!(
+            resolve_group_dimension(
+                None,
+                &[
+                    contamination_report(Some("account_id")),
+                    contamination_report(None),
+                ],
+            )
+            .expect("inferred dimension"),
+            Some("account_id".into())
+        );
+        assert_eq!(
+            resolve_group_dimension(Some("thread_id".into()), &[contamination_report(None)],)
+                .expect("explicit dimension"),
+            Some("thread_id".into())
+        );
+        assert!(
+            resolve_group_dimension(
+                Some("account_id".into()),
+                &[contamination_report(Some("account_id"))],
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn group_dimension_conflicts_are_rejected() {
+        let local_conflict = resolve_group_dimension(
+            None,
+            &[
+                contamination_report(Some("account_id")),
+                contamination_report(Some("thread_id")),
+            ],
+        )
+        .expect_err("conflicting suite dimensions must fail");
+        assert!(
+            local_conflict
+                .to_string()
+                .contains("conflicting group dimensions")
+        );
+
+        let explicit_conflict = resolve_group_dimension(
+            Some("thread_id".into()),
+            &[contamination_report(Some("account_id"))],
+        )
+        .expect_err("explicit conflict must fail");
+        assert!(
+            explicit_conflict
+                .to_string()
+                .contains("conflicts with suite contamination dimension")
+        );
     }
 }

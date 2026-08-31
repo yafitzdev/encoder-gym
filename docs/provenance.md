@@ -120,9 +120,27 @@ model promotion or rejection
 ```
 
 A declarative preparation is itself immutable and points to the ordinary
-workflow definition it assembled. The definition retains the project,
-dataset, suite, cohort, and snapshot identities; the manifest fingerprint is
-the idempotency key.
+workflow definition it assembled. New definitions and preparations both pin the
+same immutable benchmark bundle:
+
+```text
+project preparation or workflow run
+  -> workflow definition
+    -> benchmark bundle
+      -> development benchmark suite
+      -> optional sealed benchmark suite
+      -> strict global contamination report
+```
+
+The bundle records both the identity and fingerprint of each parent. Provenance
+traversal fails closed if a suite or report is absent or its fingerprint has
+changed. Suite and report nodes remain bounded leaves; their immutable payloads
+carry the cohort, role-decision, protocol, and contamination evidence pins. The
+definition also retains the project and dataset identities, while the manifest
+fingerprint remains the preparation idempotency key. Legacy definitions and
+preparations without a bundle link remain readable for historical inspection,
+but a legacy definition or run cannot be used to start or advance workflow
+execution.
 
 Workflow attempts retain iteration, predecessor, usage-after, approval,
 advisor, dataset-diff, and slice-artifact links. Exposure records independently
@@ -146,6 +164,9 @@ synth provenance optimization-proposal-review <REVIEW_ID>
 synth provenance optimization-campaign <CAMPAIGN_ID>
 synth provenance optimization-campaign-link <LINK_ID>
 synth provenance optimization-outcome <OUTCOME_ID>
+synth provenance benchmark-suite <SUITE_ID>
+synth provenance contamination-report <REPORT_ID>
+synth provenance benchmark-bundle <BUNDLE_ID>
 synth provenance workflow-definition <DEFINITION_ID>
 synth provenance project-preparation <PREPARATION_ID>
 synth provenance workflow-run <RUN_ID>

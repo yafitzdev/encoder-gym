@@ -17,6 +17,7 @@ use crate::{
     contamination::{ContaminationOverride, ContaminationReport, ContaminationStatus},
     governance::{
         CohortDisposition, CohortRole, CohortRoleDecision, DisclosureLevel, EvaluationCohort,
+        ExposurePurpose,
     },
 };
 
@@ -162,6 +163,132 @@ impl BenchmarkSuite {
     pub fn reproduce_fingerprint(&self) -> Result<String, BenchmarkError> {
         suite_fingerprint(self)
     }
+
+    /// Revalidates every self-contained invariant after deserialization.
+    /// References to cohorts, role decisions, and contamination artifacts are
+    /// additionally checked by the persistence adapter that owns those facts.
+    pub fn validate_integrity(&self) -> Result<(), BenchmarkError> {
+        self.validate_integrity_inner(false)
+    }
+
+    /// Reads historical suites whose empty contract predates strict decision
+    /// criteria. Such suites remain inspectable and assess as inconclusive,
+    /// but cannot enter a new benchmark bundle.
+    pub fn validate_legacy_compatible_integrity(&self) -> Result<(), BenchmarkError> {
+        self.validate_integrity_inner(true)
+    }
+
+    fn validate_integrity_inner(&self, allow_vacuous_contract: bool) -> Result<(), BenchmarkError> {
+        if self.reproduce_fingerprint()? != self.fingerprint {
+            return Err(BenchmarkError::FingerprintMismatch);
+        }
+        if self.id.is_nil()
+            || self.name.trim().is_empty()
+            || self.name.trim() != self.name
+            || self.task.trim().is_empty()
+            || self.task.trim() != self.task
+            || self.contamination_report_id.is_nil()
+            || !is_canonical_fingerprint(&self.contamination_report_fingerprint)
+            || self
+                .contamination_override_fingerprint
+                .as_deref()
+                .is_some_and(|value| !is_canonical_fingerprint(value))
+        {
+            return Err(BenchmarkError::InvalidSuite(
+                "identity, text, or contamination pins are malformed".into(),
+            ));
+        }
+        validate_labels(&self.labels)?;
+        if let Err(error) = validate_contract(&self.contract, &self.labels, self.kind) {
+            if !(allow_vacuous_contract && error == BenchmarkError::VacuousContract) {
+                return Err(error);
+            }
+        }
+        if self.cohorts.is_empty() {
+            return Err(BenchmarkError::NoCohorts);
+        }
+        if self
+            .required_model_formats
+            .iter()
+            .any(|value| value.trim().is_empty() || value.trim() != value)
+        {
+            return Err(BenchmarkError::InvalidSuite(
+                "model formats must be non-empty and trimmed".into(),
+            ));
+        }
+        let mut canonical_formats = self.required_model_formats.clone();
+        canonical_formats.sort();
+        canonical_formats.dedup();
+        if canonical_formats != self.required_model_formats {
+            return Err(BenchmarkError::InvalidSuite(
+                "model formats are not canonical".into(),
+            ));
+        }
+        let mut seen = BTreeSet::new();
+        let mut previous = None;
+        for cohort in &self.cohorts {
+            if !seen.insert(cohort.cohort_id) {
+                return Err(BenchmarkError::DuplicateCohort(cohort.cohort_id));
+            }
+            if previous.is_some_and(|id| id >= cohort.cohort_id) {
+                return Err(BenchmarkError::InvalidSuite(
+                    "cohorts are not in canonical identity order".into(),
+                ));
+            }
+            previous = Some(cohort.cohort_id);
+            if cohort.cohort_id.is_nil()
+                || cohort.snapshot_id.is_nil()
+                || cohort.role_decision_id.is_nil()
+                || !is_canonical_fingerprint(&cohort.cohort_fingerprint)
+                || !is_canonical_fingerprint(&cohort.evaluation_cohort_fingerprint)
+                || !is_canonical_fingerprint(&cohort.snapshot_fingerprint)
+                || !is_canonical_fingerprint(&cohort.role_decision_fingerprint)
+                || !is_canonical_fingerprint(&cohort.protocol_fingerprint)
+            {
+                return Err(BenchmarkError::InvalidSuite(format!(
+                    "cohort pins are malformed: {}",
+                    cohort.cohort_id
+                )));
+            }
+            cohort
+                .protocol
+                .validate_for_labels(&self.labels)
+                .map_err(|error| BenchmarkError::InvalidSuite(error.to_string()))?;
+            if cohort.protocol.split != cohort.split
+                || cohort.protocol.fingerprint().map_err(map_fingerprint)?
+                    != cohort.protocol_fingerprint
+                || artifact_core::fingerprint(&(cohort.snapshot_fingerprint.as_str(), cohort.split))
+                    .map_err(map_fingerprint)?
+                    != cohort.evaluation_cohort_fingerprint
+            {
+                return Err(BenchmarkError::InvalidSuite(format!(
+                    "cohort protocol or source identity differs: {}",
+                    cohort.cohort_id
+                )));
+            }
+            let role_is_compatible = match self.kind {
+                BenchmarkSuiteKind::Development => matches!(
+                    cohort.role,
+                    CohortRole::Development
+                        | CohortRole::Diagnostic
+                        | CohortRole::ExternalBenchmark
+                ),
+                BenchmarkSuiteKind::SealedAcceptance => matches!(
+                    cohort.role,
+                    CohortRole::SealedAcceptance | CohortRole::ExternalBenchmark
+                ),
+            };
+            if !role_is_compatible {
+                return Err(BenchmarkError::IncompatibleRole(cohort.cohort_id));
+            }
+            if self.kind == BenchmarkSuiteKind::SealedAcceptance
+                && (cohort.disclosure != DisclosureLevel::Aggregate || cohort.adaptation_eligible)
+            {
+                return Err(BenchmarkError::SealedDisclosure);
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -237,6 +364,19 @@ pub enum BenchmarkError {
     RetiredCohort(Uuid),
     #[error("sealed suite must be aggregate-only and adaptation-ineligible")]
     SealedDisclosure,
+    #[error(
+        "benchmark cohort {cohort_id} permits {permitted:?} disclosure but {requested:?} was requested"
+    )]
+    DisclosureExceeded {
+        cohort_id: Uuid,
+        requested: DisclosureLevel,
+        permitted: DisclosureLevel,
+    },
+    #[error("benchmark cohort is ineligible for adaptive purpose {purpose:?}: {cohort_id}")]
+    AdaptiveAccess {
+        cohort_id: Uuid,
+        purpose: ExposurePurpose,
+    },
     #[error("contamination report does not cover exactly the suite cohorts")]
     ContaminationCohorts,
     #[error("blocked contamination report requires a matching override")]
@@ -255,8 +395,40 @@ pub enum BenchmarkError {
     AssessmentCohort(Uuid),
     #[error("artifact fingerprint mismatch")]
     FingerprintMismatch,
+    #[error("invalid benchmark suite: {0}")]
+    InvalidSuite(String),
     #[error("could not fingerprint benchmark artifact: {0}")]
     Fingerprint(String),
+}
+
+/// Validates a prospective use of every cohort pinned by a benchmark suite.
+///
+/// This is deliberately a core policy rather than a CLI check so preparation,
+/// runtime orchestration, and future application surfaces enforce the same
+/// disclosure and adaptation boundary before evidence is accessed.
+pub fn validate_suite_access(
+    suite: &BenchmarkSuite,
+    purpose: ExposurePurpose,
+    requested_disclosure: Option<DisclosureLevel>,
+) -> Result<(), BenchmarkError> {
+    suite.validate_integrity()?;
+    for cohort in &suite.cohorts {
+        let requested = requested_disclosure.unwrap_or(cohort.disclosure);
+        if requested > cohort.disclosure {
+            return Err(BenchmarkError::DisclosureExceeded {
+                cohort_id: cohort.cohort_id,
+                requested,
+                permitted: cohort.disclosure,
+            });
+        }
+        if purpose.is_adaptive() && !cohort.adaptation_eligible {
+            return Err(BenchmarkError::AdaptiveAccess {
+                cohort_id: cohort.cohort_id,
+                purpose,
+            });
+        }
+    }
+    Ok(())
 }
 
 pub fn build_benchmark_suite(
@@ -393,6 +565,7 @@ pub fn build_benchmark_suite(
         fingerprint: String::new(),
     };
     suite.fingerprint = suite_fingerprint(&suite)?;
+    suite.validate_integrity()?;
     Ok(suite)
 }
 
@@ -400,10 +573,7 @@ pub fn assess_benchmark(
     suite: &BenchmarkSuite,
     inputs: Vec<CohortAssessmentInput>,
 ) -> Result<AcceptanceAssessment, BenchmarkError> {
-    if suite.reproduce_fingerprint()? != suite.fingerprint {
-        return Err(BenchmarkError::FingerprintMismatch);
-    }
-    validate_labels(&suite.labels)?;
+    suite.validate_legacy_compatible_integrity()?;
     let mut by_cohort = BTreeMap::new();
     for input in inputs {
         let cohort_id = input.cohort_id;
@@ -1129,6 +1299,10 @@ fn required(value: String, field: &'static str) -> Result<String, BenchmarkError
     }
 }
 
+fn is_canonical_fingerprint(value: &str) -> bool {
+    !value.trim().is_empty() && value.trim() == value
+}
+
 const fn one() -> u64 {
     1
 }
@@ -1331,6 +1505,36 @@ mod tests {
         };
         comparison.fingerprint = comparison_fingerprint(&comparison).expect("fingerprint");
         comparison
+    }
+
+    #[test]
+    fn suite_access_policy_enforces_disclosure_and_adaptive_eligibility() {
+        let mut suite = suite_fixture();
+        validate_suite_access(
+            &suite,
+            ExposurePurpose::Optimization,
+            Some(DisclosureLevel::Slices),
+        )
+        .expect("slice-level adaptive use is permitted");
+        assert!(matches!(
+            validate_suite_access(
+                &suite,
+                ExposurePurpose::Diagnosis,
+                Some(DisclosureLevel::RowContent),
+            ),
+            Err(BenchmarkError::DisclosureExceeded { .. })
+        ));
+
+        suite.cohorts[0].adaptation_eligible = false;
+        suite.fingerprint = suite_fingerprint(&suite).expect("suite fingerprint");
+        assert!(matches!(
+            validate_suite_access(
+                &suite,
+                ExposurePurpose::Optimization,
+                Some(DisclosureLevel::Slices),
+            ),
+            Err(BenchmarkError::AdaptiveAccess { .. })
+        ));
     }
 
     #[test]

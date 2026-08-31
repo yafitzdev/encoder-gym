@@ -87,3 +87,108 @@ fn overbroad_preauthorization_is_rejected_without_persisting_a_project() {
         serde_json::json!([])
     );
 }
+
+#[test]
+fn workflow_cannot_initialize_after_its_pinned_cohort_role_is_retired() {
+    let fixture = WorkflowFixture::new(GenerationMode::Fake);
+    let prepared = fixture.prepare();
+    let preparation = &prepared["preparation"];
+    let definition_id = preparation["workflow_definition_id"]
+        .as_str()
+        .expect("workflow definition ID");
+    let development_suite_id = preparation["development_suite_id"]
+        .as_str()
+        .expect("development suite ID");
+    let suite = run_json(
+        fixture.database_url(),
+        ["benchmark", "show", development_suite_id],
+    );
+    let cohort_id = suite["cohorts"][0]["cohort_id"]
+        .as_str()
+        .expect("development cohort ID");
+
+    run_json(
+        fixture.database_url(),
+        [
+            "cohort",
+            "retire",
+            cohort_id,
+            "--reason",
+            "benchmark was deliberately invalidated before execution",
+        ],
+    );
+    let start = run(
+        fixture.database_url(),
+        ["workflow", "start", definition_id, "--initialize-only"],
+    );
+
+    assert!(!start.status.success());
+    assert!(
+        String::from_utf8_lossy(&start.stderr)
+            .contains("current role no longer matches the immutable bundle authority"),
+        "stderr: {}",
+        String::from_utf8_lossy(&start.stderr)
+    );
+    assert_eq!(
+        run_json(fixture.database_url(), ["workflow", "list"]),
+        serde_json::json!([]),
+        "failed authority validation must occur before a workflow run is persisted"
+    );
+}
+
+#[test]
+fn insufficient_development_disclosure_is_rejected_during_preparation() {
+    let fixture = WorkflowFixture::new(GenerationMode::Fake);
+    let manifest = fixture.write_variant("slices-only-development.toml", |manifest| {
+        manifest.development.cohorts[0].disclosure =
+            workflow_core::governance::DisclosureLevel::Slices;
+    });
+    let output = run(
+        fixture.database_url(),
+        [
+            "project",
+            "prepare",
+            manifest.to_str().expect("UTF-8 manifest path"),
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("must permit row-content disclosure and adaptive use"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        run_json(fixture.database_url(), ["project", "list"]),
+        serde_json::json!([]),
+        "an infeasible evidence policy must not persist a partial project"
+    );
+}
+
+#[test]
+fn adaptation_ineligible_development_evidence_is_rejected_during_preparation() {
+    let fixture = WorkflowFixture::new(GenerationMode::Fake);
+    let manifest = fixture.write_variant("adaptation-ineligible-development.toml", |manifest| {
+        manifest.development.cohorts[0].adaptation_eligible = false;
+    });
+    let output = run(
+        fixture.database_url(),
+        [
+            "project",
+            "prepare",
+            manifest.to_str().expect("UTF-8 manifest path"),
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("must permit row-content disclosure and adaptive use"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        run_json(fixture.database_url(), ["project", "list"]),
+        serde_json::json!([]),
+        "an infeasible evidence policy must not persist a partial project"
+    );
+}

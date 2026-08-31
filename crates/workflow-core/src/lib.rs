@@ -4,6 +4,7 @@ pub mod advisor;
 pub mod allocation;
 pub mod approval;
 pub mod benchmark;
+pub mod benchmark_bundle;
 pub mod contamination;
 pub mod governance;
 pub mod ports;

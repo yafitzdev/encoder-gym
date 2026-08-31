@@ -100,6 +100,9 @@ pub enum ArtifactKind {
     OptimizationCampaign,
     OptimizationCampaignLink,
     OptimizationOutcome,
+    BenchmarkSuite,
+    ContaminationReport,
+    BenchmarkBundle,
     WorkflowDefinition,
     WorkflowRun,
     AcceptanceAssessment,
@@ -163,6 +166,9 @@ impl ArtifactKind {
             Self::OptimizationCampaign => "optimization_campaign",
             Self::OptimizationCampaignLink => "optimization_campaign_link",
             Self::OptimizationOutcome => "optimization_outcome",
+            Self::BenchmarkSuite => "benchmark_suite",
+            Self::ContaminationReport => "contamination_report",
+            Self::BenchmarkBundle => "benchmark_bundle",
             Self::WorkflowDefinition => "workflow_definition",
             Self::WorkflowRun => "workflow_run",
             Self::AcceptanceAssessment => "acceptance_assessment",
@@ -258,6 +264,19 @@ mod tests {
                 "approved_curation_manifest",
             ),
             (ArtifactKind::CurationApplication, "curation_application"),
+        ];
+
+        for (kind, expected) in cases {
+            assert_eq!(kind.as_str(), expected);
+        }
+    }
+
+    #[test]
+    fn benchmark_artifact_names_are_stable() {
+        let cases = [
+            (ArtifactKind::BenchmarkSuite, "benchmark_suite"),
+            (ArtifactKind::ContaminationReport, "contamination_report"),
+            (ArtifactKind::BenchmarkBundle, "benchmark_bundle"),
         ];
 
         for (kind, expected) in cases {

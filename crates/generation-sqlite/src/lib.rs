@@ -5,6 +5,7 @@ mod analysis;
 mod approval;
 mod architect;
 mod benchmark;
+mod benchmark_bundle;
 mod contamination;
 mod evaluation;
 mod generation_execution;
@@ -628,6 +629,43 @@ impl SnapshotStore for SqliteStore {
             .collect()
         })
     }
+}
+
+/// Loads a complete immutable snapshot through one connection and verifies its
+/// member count, deterministic split assignments, and content fingerprint.
+/// Cross-slice authority checks use this instead of trusting a normalized
+/// snapshot fingerprint independently from its member rows.
+pub(crate) async fn load_verified_snapshot_with_members(
+    connection: &mut SqliteConnection,
+    id: Uuid,
+) -> Result<Option<(DatasetSnapshot, Vec<SnapshotMember>)>, DatasetStoreError> {
+    let Some(snapshot) = sqlx::query_as::<_, SnapshotRecord>(
+        "SELECT id, source_dataset_id, name, description, split_configuration_json, \
+         member_count, fingerprint, created_at FROM dataset_snapshots WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(dataset_store_error)?
+    .map(SnapshotRecord::into_domain)
+    .transpose()?
+    else {
+        return Ok(None);
+    };
+    let members = sqlx::query_as::<_, SnapshotMemberRecord>(
+        "SELECT id, snapshot_id, source_row_id, split, text, label, dimensions_json, fields_json, \
+         source_provenance_json, source_created_at FROM dataset_snapshot_members \
+         WHERE snapshot_id = ? ORDER BY source_row_id",
+    )
+    .bind(id)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(dataset_store_error)?
+    .into_iter()
+    .map(SnapshotMemberRecord::into_domain)
+    .collect::<Result<Vec<_>, _>>()?;
+    dataset_core::splitting::verify_snapshot(&snapshot, &members).map_err(dataset_store_error)?;
+    Ok(Some((snapshot, members)))
 }
 
 pub(crate) async fn insert_snapshot(
