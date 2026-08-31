@@ -1,9 +1,14 @@
 //! Provider-neutral prompt and generation-request construction.
 
+use std::collections::BTreeSet;
+
 use artifact_core::{FingerprintError, fingerprint};
 use research_core::profile::ResolvedAuthenticityContext;
 use semantic_catalog::{ResolvedSemanticContext, SemanticTarget};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use thiserror::Error;
+use uuid::Uuid;
 
 use crate::construction::PreparedConstructionBatch;
 use crate::domain::{
@@ -43,6 +48,11 @@ const HYBRID_USER_PROMPT_TEMPLATE: &str = concat!(
 const AUTHENTICITY_PROMPT_TEMPLATE_VERSION: u32 = 3;
 const STRATEGY_PROMPT_TEMPLATE_VERSION: u32 = 4;
 const STRATEGY_PROMPT_SECTION: &str = "Approved per-cell generation strategy (apply proportionally across this cell):\n{strategy_section}";
+const SUPERVISED_PROMPT_TEMPLATE_VERSION: u32 = 5;
+const SUPERVISED_PROMPT_SECTION: &str = concat!(
+    "Supervisor-approved generation guidance for only these row positions:\n",
+    "{supervised_section}"
+);
 const AUTHENTICITY_SYSTEM_PROMPT: &str = concat!(
     "You fill only the explicitly requested semantic fields in synthetic rows. ",
     "Return one valid JSON object with a 'rows' array in exactly the supplied row order. ",
@@ -60,11 +70,175 @@ const AUTHENTICITY_USER_PROMPT_TEMPLATE: &str = concat!(
     "\n\nAvoid duplicating these existing examples:\n{existing_examples}"
 );
 
+#[derive(Debug, Error)]
+pub enum PromptBuildError {
+    #[error("supervised prompt schedule is invalid: {0}")]
+    InvalidSchedule(String),
+    #[error(transparent)]
+    Fingerprint(#[from] FingerprintError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SupervisedRowGuidance {
+    pub cell_key: String,
+    pub row_sequence: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_assignment_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_directive_id: Option<Uuid>,
+    #[serde(default)]
+    pub strategy_instructions: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SupervisedGenerationSchedule {
+    pub supervisor_run_id: Uuid,
+    pub prompt_version_id: Uuid,
+    pub prompt_version_fingerprint: String,
+    #[serde(default)]
+    pub prompt_guidance: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_assignment_set_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_assignment_set_fingerprint: Option<String>,
+    pub rows: Vec<SupervisedRowGuidance>,
+    pub fingerprint: String,
+}
+
+impl SupervisedGenerationSchedule {
+    #[allow(clippy::too_many_arguments)]
+    pub fn create(
+        supervisor_run_id: Uuid,
+        prompt_version_id: Uuid,
+        prompt_version_fingerprint: impl Into<String>,
+        prompt_guidance: Vec<String>,
+        strategy_assignment_set: Option<(Uuid, String)>,
+        rows: Vec<SupervisedRowGuidance>,
+    ) -> Result<Self, PromptBuildError> {
+        let (strategy_assignment_set_id, strategy_assignment_set_fingerprint) =
+            strategy_assignment_set.unzip();
+        let mut value = Self {
+            supervisor_run_id,
+            prompt_version_id,
+            prompt_version_fingerprint: prompt_version_fingerprint.into(),
+            prompt_guidance: normalize_guidance(prompt_guidance),
+            strategy_assignment_set_id,
+            strategy_assignment_set_fingerprint,
+            rows,
+            fingerprint: String::new(),
+        };
+        value.validate_fields()?;
+        value.fingerprint = value.reproduce_fingerprint()?;
+        Ok(value)
+    }
+
+    pub fn reproduce_fingerprint(&self) -> Result<String, PromptBuildError> {
+        let mut value = self.clone();
+        value.fingerprint.clear();
+        Ok(fingerprint(&value)?)
+    }
+
+    pub fn validate(&self) -> Result<(), PromptBuildError> {
+        self.validate_fields()?;
+        if self.fingerprint.is_empty() || self.reproduce_fingerprint()? != self.fingerprint {
+            return Err(PromptBuildError::InvalidSchedule(
+                "schedule fingerprint does not reproduce".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_fields(&self) -> Result<(), PromptBuildError> {
+        if self.supervisor_run_id.is_nil()
+            || self.prompt_version_id.is_nil()
+            || self.prompt_version_fingerprint.trim().is_empty()
+            || self.rows.is_empty()
+            || self.strategy_assignment_set_id.is_some()
+                != self.strategy_assignment_set_fingerprint.is_some()
+        {
+            return Err(PromptBuildError::InvalidSchedule(
+                "run, prompt, row, and optional strategy identities must be complete".into(),
+            ));
+        }
+        if self
+            .strategy_assignment_set_fingerprint
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(PromptBuildError::InvalidSchedule(
+                "strategy assignment-set fingerprint must not be empty".into(),
+            ));
+        }
+        let mut keys = BTreeSet::new();
+        for row in &self.rows {
+            if row.cell_key.trim().is_empty()
+                || !keys.insert((row.cell_key.clone(), row.row_sequence))
+                || row
+                    .strategy_assignment_fingerprint
+                    .as_deref()
+                    .is_some_and(|value| value.trim().is_empty())
+                || row
+                    .strategy_instructions
+                    .iter()
+                    .any(|value| value.trim().is_empty())
+                || (row.strategy_directive_id.is_some()
+                    && row.strategy_assignment_fingerprint.is_none())
+                || (row.strategy_directive_id.is_none() && !row.strategy_instructions.is_empty())
+            {
+                return Err(PromptBuildError::InvalidSchedule(
+                    "row guidance must be unique, normalized, and fully bound".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn for_batch(
+        &self,
+        target: &GenerationCell,
+        start_index: u64,
+        requested_count: u32,
+    ) -> Result<Vec<&SupervisedRowGuidance>, PromptBuildError> {
+        self.validate()?;
+        let start = u32::try_from(start_index)
+            .map_err(|_| PromptBuildError::InvalidSchedule("row sequence exceeds u32".into()))?;
+        let mut rows = Vec::with_capacity(requested_count as usize);
+        for offset in 0..requested_count {
+            let sequence = start
+                .checked_add(offset)
+                .ok_or_else(|| PromptBuildError::InvalidSchedule("row sequence overflow".into()))?;
+            rows.push(
+                self.rows
+                    .iter()
+                    .find(|row| row.cell_key == target.key() && row.row_sequence == sequence)
+                    .ok_or_else(|| {
+                        PromptBuildError::InvalidSchedule(format!(
+                            "no guidance for {} row {sequence}",
+                            target.key()
+                        ))
+                    })?,
+            );
+        }
+        Ok(rows)
+    }
+}
+
+fn normalize_guidance(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct PromptBuilder {
     semantics: Option<ResolvedSemanticContext>,
     authenticity: Option<ResolvedAuthenticityContext>,
     strategy: Option<ResolvedGenerationStrategyContext>,
+    supervision: Option<SupervisedGenerationSchedule>,
 }
 
 impl PromptBuilder {
@@ -113,11 +287,22 @@ impl PromptBuilder {
         })
     }
 
+    pub fn supervision_template_identity(
+        base: &PromptTemplateIdentity,
+    ) -> Result<PromptTemplateIdentity, FingerprintError> {
+        Ok(PromptTemplateIdentity {
+            name: HYBRID_PROMPT_TEMPLATE_NAME.into(),
+            version: SUPERVISED_PROMPT_TEMPLATE_VERSION,
+            fingerprint: fingerprint(&(base, SUPERVISED_PROMPT_SECTION))?,
+        })
+    }
+
     pub fn with_semantics(semantics: ResolvedSemanticContext) -> Self {
         Self {
             semantics: Some(semantics),
             authenticity: None,
             strategy: None,
+            supervision: None,
         }
     }
 
@@ -136,6 +321,11 @@ impl PromptBuilder {
         self
     }
 
+    pub fn attach_supervision(mut self, schedule: SupervisedGenerationSchedule) -> Self {
+        self.supervision = Some(schedule);
+        self
+    }
+
     pub fn semantic_context(&self) -> Option<&ResolvedSemanticContext> {
         self.semantics.as_ref()
     }
@@ -148,6 +338,21 @@ impl PromptBuilder {
         self.strategy.as_ref()
     }
 
+    pub fn supervision_schedule(&self) -> Option<&SupervisedGenerationSchedule> {
+        self.supervision.as_ref()
+    }
+
+    pub fn supervised_row(
+        &self,
+        target: &GenerationCell,
+        row_sequence: u64,
+    ) -> Result<Option<&SupervisedRowGuidance>, PromptBuildError> {
+        let Some(schedule) = &self.supervision else {
+            return Ok(None);
+        };
+        Ok(Some(schedule.for_batch(target, row_sequence, 1)?[0]))
+    }
+
     pub fn build(
         &self,
         definition: &DatasetDefinition,
@@ -156,6 +361,26 @@ impl PromptBuilder {
         parameters: GenerationParameters,
         existing_examples: &[GeneratedCandidate],
     ) -> GenerationRequest {
+        self.build_at(
+            definition,
+            target,
+            requested_count,
+            0,
+            parameters,
+            existing_examples,
+        )
+        .expect("an unsupervised prompt cannot have a missing schedule row")
+    }
+
+    pub fn build_at(
+        &self,
+        definition: &DatasetDefinition,
+        target: GenerationCell,
+        requested_count: u32,
+        start_index: u64,
+        parameters: GenerationParameters,
+        existing_examples: &[GeneratedCandidate],
+    ) -> Result<GenerationRequest, PromptBuildError> {
         let schema = json!({
             "rows": [{
                 "text": "string",
@@ -197,15 +422,32 @@ impl PromptBuilder {
             },
         );
 
-        GenerationRequest {
+        let supervised_section = self.supervised_section(&target, start_index, requested_count)?;
+        if supervised_section.is_some() {
+            system_prompt.push_str(
+                " Follow only the supervisor guidance assigned to each exact row position.",
+            );
+        }
+        let supervised_section = supervised_section.map_or_else(String::new, |guidance| {
+            format!(
+                "\n\n{}",
+                SUPERVISED_PROMPT_SECTION.replace(
+                    "{supervised_section}",
+                    &serde_json::to_string_pretty(&guidance).unwrap_or_default(),
+                )
+            )
+        });
+
+        Ok(GenerationRequest {
             system_prompt,
             user_prompt: format!(
-                "Task:\n{}\n\nGenerate exactly {} rows for this target:\n{}\n\n{}\n\n{}\n\nOutput schema:\n{}\n\nAvoid duplicating these existing examples:\n{}",
+                "Task:\n{}\n\nGenerate exactly {} rows for this target:\n{}\n\n{}\n\n{}{}\n\nOutput schema:\n{}\n\nAvoid duplicating these existing examples:\n{}",
                 definition.task_description,
                 requested_count,
                 serde_json::to_string_pretty(&target).unwrap_or_default(),
                 semantic_section,
                 strategy_section,
+                supervised_section,
                 serde_json::to_string_pretty(&schema).unwrap_or_default(),
                 existing,
             ),
@@ -213,7 +455,7 @@ impl PromptBuilder {
             requested_count,
             parameters,
             construction: None,
-        }
+        })
     }
 
     pub fn build_hybrid(
@@ -223,6 +465,18 @@ impl PromptBuilder {
         parameters: GenerationParameters,
         existing_examples: &[GeneratedCandidate],
     ) -> GenerationRequest {
+        self.build_hybrid_at(definition, prepared, 0, parameters, existing_examples)
+            .expect("an unsupervised prompt cannot have a missing schedule row")
+    }
+
+    pub fn build_hybrid_at(
+        &self,
+        definition: &DatasetDefinition,
+        prepared: PreparedConstructionBatch,
+        start_index: u64,
+        parameters: GenerationParameters,
+        existing_examples: &[GeneratedCandidate],
+    ) -> Result<GenerationRequest, PromptBuildError> {
         let requested_count = prepared.requested_count();
         let target = prepared.target.clone();
         let llm_fields = prepared
@@ -309,7 +563,7 @@ impl PromptBuilder {
                 &serde_json::to_string_pretty(&schema).unwrap_or_default(),
             )
             .replace("{existing_examples}", &existing);
-        let user_prompt = match strategy_section {
+        let mut user_prompt = match strategy_section {
             Some(guidance) => format!(
                 "{user_prompt}\n\n{}",
                 STRATEGY_PROMPT_SECTION.replace(
@@ -319,15 +573,46 @@ impl PromptBuilder {
             ),
             None => user_prompt,
         };
+        if let Some(guidance) = self.supervised_section(&target, start_index, requested_count)? {
+            system_prompt.push_str(
+                " Follow only the supervisor guidance assigned to each exact row position.",
+            );
+            user_prompt.push_str("\n\n");
+            user_prompt.push_str(&SUPERVISED_PROMPT_SECTION.replace(
+                "{supervised_section}",
+                &serde_json::to_string_pretty(&guidance).unwrap_or_default(),
+            ));
+        }
 
-        GenerationRequest {
+        Ok(GenerationRequest {
             system_prompt,
             user_prompt,
             target,
             requested_count,
             parameters,
             construction: Some(prepared),
-        }
+        })
+    }
+
+    fn supervised_section(
+        &self,
+        target: &GenerationCell,
+        start_index: u64,
+        requested_count: u32,
+    ) -> Result<Option<serde_json::Value>, PromptBuildError> {
+        let Some(schedule) = &self.supervision else {
+            return Ok(None);
+        };
+        let rows = schedule.for_batch(target, start_index, requested_count)?;
+        Ok(Some(json!({
+            "supervisor_run_id": schedule.supervisor_run_id,
+            "prompt_version_id": schedule.prompt_version_id,
+            "prompt_version_fingerprint": schedule.prompt_version_fingerprint,
+            "prompt_guidance": schedule.prompt_guidance,
+            "strategy_assignment_set_id": schedule.strategy_assignment_set_id,
+            "strategy_assignment_set_fingerprint": schedule.strategy_assignment_set_fingerprint,
+            "rows": rows,
+        })))
     }
 
     fn guidance_for_target(&self, target: &GenerationCell) -> Option<serde_json::Value> {
@@ -414,7 +699,7 @@ mod tests {
     use research_core::profile::{AuthenticitySection, ResolvedAuthenticityContext};
     use uuid::Uuid;
 
-    use super::PromptBuilder;
+    use super::{PromptBuilder, SupervisedGenerationSchedule, SupervisedRowGuidance};
     use crate::{
         construction::{FieldDefinition, FieldRecipe, FieldValueType, RowConstructionPlan},
         dimensions::expand_generation_cells,
@@ -701,5 +986,60 @@ mod tests {
                 .expect("ordinary identity")
                 .fingerprint
         );
+    }
+
+    #[test]
+    fn supervised_prompt_uses_only_the_exact_assigned_row_guidance() {
+        let dataset = DatasetDefinition::new(
+            "support",
+            "Classify requests",
+            vec!["billing".into()],
+            vec![],
+        )
+        .expect("dataset");
+        let cell = expand_generation_cells(&dataset)[0].clone();
+        let directive_id = Uuid::new_v4();
+        let schedule = SupervisedGenerationSchedule::create(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "prompt-v2",
+            vec!["Write a concrete first-person request.".into()],
+            Some((Uuid::new_v4(), "assignment-set".into())),
+            vec![
+                SupervisedRowGuidance {
+                    cell_key: cell.key(),
+                    row_sequence: 0,
+                    strategy_assignment_fingerprint: Some("assignment-0".into()),
+                    strategy_directive_id: Some(directive_id),
+                    strategy_instructions: vec!["Use a boundary case.".into()],
+                },
+                SupervisedRowGuidance {
+                    cell_key: cell.key(),
+                    row_sequence: 1,
+                    strategy_assignment_fingerprint: Some("assignment-1".into()),
+                    strategy_directive_id: Some(directive_id),
+                    strategy_instructions: vec!["Use plausible input noise.".into()],
+                },
+            ],
+        )
+        .expect("schedule");
+        let builder = PromptBuilder::default().attach_supervision(schedule);
+        let first = builder
+            .build_at(
+                &dataset,
+                cell.clone(),
+                1,
+                0,
+                GenerationParameters::default(),
+                &[],
+            )
+            .expect("first prompt");
+        assert!(first.user_prompt.contains("boundary case"));
+        assert!(!first.user_prompt.contains("plausible input noise"));
+        let second = builder
+            .build_at(&dataset, cell, 1, 1, GenerationParameters::default(), &[])
+            .expect("second prompt");
+        assert!(!second.user_prompt.contains("boundary case"));
+        assert!(second.user_prompt.contains("plausible input noise"));
     }
 }

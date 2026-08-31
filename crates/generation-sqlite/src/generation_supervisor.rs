@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::Utc;
 use dataset_quality_core::ports::DatasetQualityStore;
 use generation_core::jobs::{GenerationAttempt, GenerationAttemptState};
-use generation_core::ports::{DatasetStore, PlanStore, RowStore};
+use generation_core::ports::{DatasetStore, GenerationExecutionStore, PlanStore, RowStore};
 use generation_supervisor_core::{
     SupervisorError,
     advisor::{
@@ -2109,6 +2109,44 @@ async fn verify_row_binding(
         || persisted.generation_job_id != row.generation_job_id
     {
         return Err(integrity("observed generated row fingerprint changed"));
+    }
+    let segment_plan = store
+        .get_plan(persisted.plan_id)
+        .await
+        .map_err(generation_error)?
+        .ok_or_else(|| integrity("row generation segment plan is missing"))?;
+    let master_plan = store
+        .get_plan(contract.plan.id)
+        .await
+        .map_err(generation_error)?
+        .ok_or_else(|| integrity("supervisor master plan is missing"))?;
+    if segment_plan.dataset_id != master_plan.dataset_id
+        || segment_plan.cells.iter().any(|segment| {
+            master_plan
+                .cells
+                .iter()
+                .find(|planned| planned.cell == segment.cell)
+                .is_none_or(|planned| segment.target_count > planned.target_count)
+        })
+    {
+        return Err(integrity(
+            "row generation segment plan exceeds the supervisor master plan",
+        ));
+    }
+    let execution = store
+        .get_generation_execution_spec(row.generation_job_id)
+        .await
+        .map_err(generation_error)?
+        .ok_or_else(|| integrity("row generation execution specification is missing"))?;
+    if execution.plan_id != segment_plan.id
+        || execution
+            .supervision_schedule_fingerprint
+            .as_deref()
+            .is_none()
+    {
+        return Err(integrity(
+            "row generation execution is not pinned to a supervisor schedule",
+        ));
     }
     let attempt = load_generation_attempt(store, row.generation_attempt_id)
         .await?

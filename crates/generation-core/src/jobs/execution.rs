@@ -68,6 +68,8 @@ pub struct GenerationExecutionSpec {
     pub source_novelty_guard_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strategy_context_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supervision_schedule_fingerprint: Option<String>,
     #[serde(default)]
     pub construction_plan: Option<RowConstructionPlan>,
     pub created_at: DateTime<Utc>,
@@ -249,6 +251,7 @@ impl GenerationExecutionSpec {
             authenticity_context_fingerprint,
             source_novelty_guard_fingerprint,
             strategy_context_fingerprint,
+            supervision_schedule_fingerprint: None,
             construction_plan: Some(construction_plan),
             created_at: Utc::now(),
             fingerprint: String::new(),
@@ -264,6 +267,26 @@ impl GenerationExecutionSpec {
             return Err(GenerationExecutionError::InvalidIdentity(
                 "authenticity context and source novelty guard must be pinned together".into(),
             ));
+        }
+        if let Some(supervision_fingerprint) = &self.supervision_schedule_fingerprint {
+            return fingerprint(&(
+                self.job_id,
+                self.dataset_id,
+                self.plan_id,
+                &self.initial_needs,
+                &self.backend,
+                &self.parameters,
+                &self.policy,
+                &self.prompt_template,
+                &self.semantic_context_fingerprint,
+                &self.authenticity_context_fingerprint,
+                &self.source_novelty_guard_fingerprint,
+                &self.strategy_context_fingerprint,
+                supervision_fingerprint,
+                &self.construction_plan,
+                self.created_at,
+            ))
+            .map_err(Into::into);
         }
         if let Some(strategy_fingerprint) = &self.strategy_context_fingerprint {
             return fingerprint(&(
@@ -341,6 +364,18 @@ impl GenerationExecutionSpec {
             ))
             .map_err(Into::into)
         }
+    }
+
+    pub fn with_supervision_schedule(
+        mut self,
+        fingerprint: impl Into<String>,
+    ) -> Result<Self, GenerationExecutionError> {
+        self.supervision_schedule_fingerprint = Some(required(
+            fingerprint.into(),
+            "supervision schedule fingerprint",
+        )?);
+        self.fingerprint = self.reproduce_fingerprint()?;
+        Ok(self)
     }
 }
 

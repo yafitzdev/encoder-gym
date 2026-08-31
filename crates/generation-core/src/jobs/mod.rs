@@ -226,6 +226,14 @@ impl JobRunner {
         self
     }
 
+    pub fn with_supervision_schedule(
+        mut self,
+        schedule: crate::prompting::SupervisedGenerationSchedule,
+    ) -> Self {
+        self.prompt_builder = self.prompt_builder.attach_supervision(schedule);
+        self
+    }
+
     pub fn with_source_novelty_guard(mut self, guard: SourceExcerptNoveltyValidator) -> Self {
         self.source_novelty_guard_fingerprint = Some(guard.fingerprint().to_owned());
         self.validation = self.validation.with_validator(guard);
@@ -332,6 +340,8 @@ impl JobRunner {
                     .min(self.policy.batch_size.max(1))
                     .min(max_attempted_rows - attempted_rows);
                 let start_index = u64::from(attempted_rows);
+                let guidance_start_index =
+                    u64::from(planned.target_count.saturating_sub(remaining));
                 let (result, mut attempt, produced_rows) = match self
                     .execute_batch(
                         &mut job,
@@ -340,6 +350,7 @@ impl JobRunner {
                         construction.as_ref(),
                         requested_count,
                         start_index,
+                        guidance_start_index,
                         &parameters,
                         &mut next_attempt_sequence,
                         &mut attempted_rows,
@@ -380,18 +391,50 @@ impl JobRunner {
                     .rows
                     .into_iter()
                     .take(requested_count as usize)
-                    .map(|candidate| {
-                        self.build_row(
+                    .enumerate()
+                    .map(|(offset, candidate)| {
+                        let row_sequence = guidance_start_index
+                            .saturating_add(u64::try_from(offset).unwrap_or(u64::MAX));
+                        let mut row_metadata = metadata.clone();
+                        if let Some(guidance) = self
+                            .prompt_builder
+                            .supervised_row(&planned.cell, row_sequence)?
+                        {
+                            row_metadata["supervision"] =
+                                serde_json::to_value(guidance).map_err(|error| {
+                                    JobRunnerError::Prompt(
+                                        crate::prompting::PromptBuildError::InvalidSchedule(
+                                            error.to_string(),
+                                        ),
+                                    )
+                                })?;
+                            row_metadata["supervisor_run_id"] = serde_json::json!(
+                                self.prompt_builder
+                                    .supervision_schedule()
+                                    .map(|schedule| schedule.supervisor_run_id)
+                            );
+                            row_metadata["prompt_version_id"] = serde_json::json!(
+                                self.prompt_builder
+                                    .supervision_schedule()
+                                    .map(|schedule| schedule.prompt_version_id)
+                            );
+                            row_metadata["prompt_version_fingerprint"] = serde_json::json!(
+                                self.prompt_builder
+                                    .supervision_schedule()
+                                    .map(|schedule| &schedule.prompt_version_fingerprint)
+                            );
+                        }
+                        Ok(self.build_row(
                             &job,
                             &dataset,
                             planned,
                             candidate,
                             &mut deduplicator,
-                            metadata.clone(),
+                            row_metadata,
                             execution.construction_plan.as_ref(),
-                        )
+                        ))
                     })
-                    .collect::<Vec<_>>();
+                    .collect::<Result<Vec<_>, JobRunnerError>>()?;
 
                 let accepted = rows
                     .iter()
@@ -446,6 +489,7 @@ impl JobRunner {
         construction: Option<&CompiledRowConstructionPlan>,
         requested_count: u32,
         start_index: u64,
+        guidance_start_index: u64,
         parameters: &GenerationParameters,
         next_attempt_sequence: &mut u64,
         attempted_rows: &mut u32,
@@ -453,13 +497,14 @@ impl JobRunner {
     ) -> Result<Option<(crate::domain::GenerationResult, GenerationAttempt, u32)>, JobRunnerError>
     {
         let Some(construction) = construction else {
-            let request = self.prompt_builder.build(
+            let request = self.prompt_builder.build_at(
                 dataset,
                 planned.cell.clone(),
                 requested_count,
+                guidance_start_index,
                 parameters.clone(),
                 &[],
-            );
+            )?;
             return Ok(self
                 .generate_with_retries(
                     job,
@@ -477,12 +522,13 @@ impl JobRunner {
 
         let prepared = construction.prepare(planned.cell.clone(), start_index, requested_count)?;
         if prepared.requires_llm() {
-            let request = self.prompt_builder.build_hybrid(
+            let request = self.prompt_builder.build_hybrid_at(
                 dataset,
                 prepared.clone(),
+                guidance_start_index,
                 parameters.clone(),
                 &[],
-            );
+            )?;
             let Some((mut result, attempt)) = self
                 .generate_with_retries(
                     job,
@@ -620,7 +666,7 @@ impl JobRunner {
             .prompt_builder
             .strategy_context()
             .map(|context| context.fingerprint.as_str());
-        let expected_prompt = if execution.construction_plan.is_some() {
+        let base_prompt = if execution.construction_plan.is_some() {
             if strategy_fingerprint.is_some() {
                 PromptBuilder::strategy_template_identity(authenticity_fingerprint.is_some())?
             } else if authenticity_fingerprint.is_some() {
@@ -631,6 +677,15 @@ impl JobRunner {
         } else {
             PromptBuilder::legacy_template_identity()?
         };
+        let expected_prompt = if self.prompt_builder.supervision_schedule().is_some() {
+            PromptBuilder::supervision_template_identity(&base_prompt)?
+        } else {
+            base_prompt
+        };
+        let supervision_fingerprint = self
+            .prompt_builder
+            .supervision_schedule()
+            .map(|schedule| schedule.fingerprint.as_str());
         if execution.reproduce_fingerprint()? != execution.fingerprint
             || execution.job_id != job.id
             || execution.dataset_id != job.dataset_id
@@ -644,6 +699,11 @@ impl JobRunner {
             || execution.authenticity_context_fingerprint.as_deref() != authenticity_fingerprint
             || execution.source_novelty_guard_fingerprint != self.source_novelty_guard_fingerprint
             || execution.strategy_context_fingerprint.as_deref() != strategy_fingerprint
+            || execution.supervision_schedule_fingerprint.as_deref() != supervision_fingerprint
+            || self
+                .prompt_builder
+                .supervision_schedule()
+                .is_some_and(|schedule| schedule.validate().is_err())
             || self
                 .prompt_builder
                 .authenticity_context()
@@ -734,6 +794,8 @@ pub enum JobRunnerError {
     Fingerprint(#[from] FingerprintError),
     #[error(transparent)]
     Construction(#[from] ConstructionError),
+    #[error(transparent)]
+    Prompt(#[from] crate::prompting::PromptBuildError),
     #[error("generation job not found: {0}")]
     JobNotFound(Uuid),
     #[error("generation execution specification not found: {0}")]

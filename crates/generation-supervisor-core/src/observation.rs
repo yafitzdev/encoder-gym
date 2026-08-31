@@ -225,7 +225,6 @@ impl RowQualityObservation {
         ]
         .contains(&Uuid::nil())
             || row.dataset_id != contract.dataset.id
-            || row.plan_id != contract.plan.id
             || prompt_version_fingerprint.trim().is_empty()
             || row.cell_key.trim().is_empty()
         {

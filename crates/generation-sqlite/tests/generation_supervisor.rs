@@ -18,7 +18,7 @@ use generation_core::{
     },
     planning::{calculate_generation_needs, equal_target_plan},
     ports::{DatasetStore, GenerationExecutionStore, PlanStore, RowStore},
-    prompting::PromptBuilder,
+    prompting::{PromptBuilder, SupervisedGenerationSchedule, SupervisedRowGuidance},
 };
 use generation_supervisor_core::{
     contract::{
@@ -96,6 +96,22 @@ async fn supervisor_evidence_round_trips_with_generation_provenance_and_integrit
         .expect("run bundle persists");
 
     let job = GenerationJob::queued(dataset.id, plan.id, "fake", "deterministic-v1", 1);
+    let schedule = SupervisedGenerationSchedule::create(
+        run.id,
+        prompt.id,
+        prompt.fingerprint.clone(),
+        prompt.guidance.clone(),
+        None,
+        vec![SupervisedRowGuidance {
+            cell_key: plan.cells[0].cell.key(),
+            row_sequence: 0,
+            strategy_assignment_fingerprint: None,
+            strategy_directive_id: None,
+            strategy_instructions: vec![],
+        }],
+    )
+    .expect("supervision schedule");
+    let base_template = PromptBuilder::template_identity().expect("template");
     let spec = GenerationExecutionSpec::new(
         job.id,
         dataset.id,
@@ -113,10 +129,12 @@ async fn supervisor_evidence_round_trips_with_generation_provenance_and_integrit
             max_attempt_multiplier: 1,
             retry_delay_milliseconds: 0,
         },
-        PromptBuilder::template_identity().expect("template"),
+        PromptBuilder::supervision_template_identity(&base_template).expect("supervision template"),
         "no-semantic-context",
     )
-    .expect("execution spec");
+    .expect("execution spec")
+    .with_supervision_schedule(schedule.fingerprint.clone())
+    .expect("pinned schedule");
     let segment_id = Uuid::new_v4();
     let reservation = ChildReservation::create(
         Uuid::new_v4(),
