@@ -4,9 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use dataset_core::domain::SnapshotSplit;
+use evaluation_core::comparison::comparison_fingerprint;
 use evaluation_core::domain::{
     ClassificationMetrics, EvaluationComparisonReport, EvaluationMetrics, EvaluationProtocol,
-    EvaluationRun, EvaluationRunState, LabelMetrics,
+    EvaluationRun, EvaluationRunState, LabelMetrics, SliceIdentity,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -109,7 +110,7 @@ pub enum MetricTarget {
     Slice { key: String },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BenchmarkMetric {
     Accuracy,
@@ -242,6 +243,10 @@ pub enum BenchmarkError {
     ContaminationBlocked,
     #[error("contamination artifact fingerprint mismatch")]
     ContaminationFingerprint,
+    #[error("cohort or role evidence fingerprint mismatch: {0}")]
+    CohortEvidenceFingerprint(Uuid),
+    #[error("acceptance contract has no effective requirement")]
+    VacuousContract,
     #[error("invalid metric requirement: {0}")]
     MetricRequirement(String),
     #[error("invalid regression requirement: {0}")]
@@ -263,7 +268,7 @@ pub fn build_benchmark_suite(
     let name = required(request.name, "suite name")?;
     let task = required(request.task, "suite task")?;
     validate_labels(&request.labels)?;
-    validate_contract(&request.contract, &request.labels)?;
+    validate_contract(&request.contract, &request.labels, request.kind)?;
     if request.cohorts.is_empty() {
         return Err(BenchmarkError::NoCohorts);
     }
@@ -287,6 +292,21 @@ pub fn build_benchmark_suite(
         let resolved = evidence
             .get(&cohort_request.cohort_id)
             .ok_or(BenchmarkError::MissingCohort(cohort_request.cohort_id))?;
+        if resolved
+            .cohort
+            .reproduce_fingerprint()
+            .map_err(|_| BenchmarkError::CohortEvidenceFingerprint(resolved.cohort.id))?
+            != resolved.cohort.fingerprint
+            || resolved
+                .role
+                .reproduce_fingerprint()
+                .map_err(|_| BenchmarkError::CohortEvidenceFingerprint(resolved.cohort.id))?
+                != resolved.role.fingerprint
+        {
+            return Err(BenchmarkError::CohortEvidenceFingerprint(
+                resolved.cohort.id,
+            ));
+        }
         validate_suite_role(request.kind, resolved)?;
         if request.kind == BenchmarkSuiteKind::SealedAcceptance
             && (cohort_request.disclosure != DisclosureLevel::Aggregate
@@ -383,6 +403,7 @@ pub fn assess_benchmark(
     if suite.reproduce_fingerprint()? != suite.fingerprint {
         return Err(BenchmarkError::FingerprintMismatch);
     }
+    validate_labels(&suite.labels)?;
     let mut by_cohort = BTreeMap::new();
     for input in inputs {
         let cohort_id = input.cohort_id;
@@ -398,6 +419,22 @@ pub fn assess_benchmark(
         }
     }
     let mut reasons = Vec::new();
+    if let Err(error) = validate_contract(&suite.contract, &suite.labels, suite.kind) {
+        let (code, state) = if error == BenchmarkError::VacuousContract {
+            ("vacuous_contract", AcceptanceReasonState::Inconclusive)
+        } else {
+            ("invalid_contract", AcceptanceReasonState::Invalid)
+        };
+        reason(
+            &mut reasons,
+            None,
+            code,
+            state,
+            error.to_string(),
+            None,
+            None,
+        );
+    }
     let mut run_ids = BTreeMap::new();
     let mut comparison_ids = BTreeMap::new();
     let mut checkpoint_id = None;
@@ -448,6 +485,7 @@ pub fn assess_benchmark(
         }
         evaluate_regression(
             cohort,
+            run,
             input.comparison.as_ref(),
             &suite.contract,
             &mut reasons,
@@ -587,11 +625,23 @@ fn evaluate_requirements(
 
 fn evaluate_regression(
     cohort: &BenchmarkCohort,
+    candidate_run: &EvaluationRun,
     comparison: Option<&EvaluationComparisonReport>,
     contract: &AcceptanceContract,
     reasons: &mut Vec<AcceptanceReason>,
 ) {
     let Some(requirement) = &contract.regression else {
+        if comparison.is_some() {
+            reason(
+                reasons,
+                Some(cohort.cohort_id),
+                "unexpected_comparison",
+                AcceptanceReasonState::Invalid,
+                "paired comparison was supplied without a regression requirement",
+                None,
+                None,
+            );
+        }
         return;
     };
     let Some(comparison) = comparison else {
@@ -606,7 +656,18 @@ fn evaluate_regression(
         );
         return;
     };
-    if comparison.cohort_fingerprint != cohort.evaluation_cohort_fingerprint
+    let fingerprint_matches = comparison_fingerprint(comparison)
+        .is_ok_and(|fingerprint| fingerprint == comparison.fingerprint);
+    let candidate_metrics_match = candidate_run
+        .metrics
+        .as_ref()
+        .is_some_and(|metrics| metrics == &comparison.right_metrics);
+    if !fingerprint_matches
+        || !comparison_is_consistent(comparison, candidate_run)
+        || comparison.left_run_id == comparison.right_run_id
+        || comparison.right_run_id != candidate_run.id
+        || !candidate_metrics_match
+        || comparison.cohort_fingerprint != cohort.evaluation_cohort_fingerprint
         || comparison.protocol_fingerprint != cohort.protocol_fingerprint
     {
         reason(
@@ -614,7 +675,7 @@ fn evaluate_regression(
             Some(cohort.cohort_id),
             "incompatible_comparison",
             AcceptanceReasonState::Invalid,
-            "paired comparison is incompatible with suite cohort or protocol",
+            "paired comparison is not authentic or is incompatible with the candidate run, cohort, or protocol",
             None,
             None,
         );
@@ -683,6 +744,77 @@ fn evaluate_regression(
             None,
         );
     }
+}
+
+fn comparison_is_consistent(
+    comparison: &EvaluationComparisonReport,
+    candidate_run: &EvaluationRun,
+) -> bool {
+    let left = &comparison.left_metrics.overall;
+    let right = &comparison.right_metrics.overall;
+    let total = comparison
+        .both_correct
+        .checked_add(comparison.both_wrong)
+        .and_then(|value| value.checked_add(comparison.left_only_correct))
+        .and_then(|value| value.checked_add(comparison.right_only_correct));
+    let fixed = comparison
+        .fixed_snapshot_member_ids
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let regressed = comparison
+        .regressed_snapshot_member_ids
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let label_deltas_match = left.per_label.len() == right.per_label.len()
+        && right.per_label.iter().all(|(label, right_metrics)| {
+            left.per_label.get(label).is_some_and(|left_metrics| {
+                comparison
+                    .per_label_f1_delta
+                    .get(label)
+                    .is_some_and(|delta| {
+                        approximately_equal(*delta, right_metrics.f1 - left_metrics.f1)
+                    })
+            })
+        })
+        && comparison.per_label_f1_delta.len() == right.per_label.len();
+    let intervals = [
+        &comparison.accuracy_delta_interval,
+        &comparison.macro_f1_delta_interval,
+    ];
+    let intervals_valid = intervals.iter().all(|interval| {
+        interval.level.is_finite()
+            && interval.level > 0.0
+            && interval.level < 1.0
+            && interval.lower.is_finite()
+            && interval.upper.is_finite()
+            && interval.lower <= interval.upper
+    });
+    let expected_significance =
+        comparison.mcnemar.left_only_correct + comparison.mcnemar.right_only_correct > 0
+            && comparison.mcnemar.two_sided_p_value < 1.0 - candidate_run.protocol.confidence_level;
+
+    left.total == right.total
+        && total == Some(right.total)
+        && approximately_equal(comparison.accuracy_delta, right.accuracy - left.accuracy)
+        && approximately_equal(comparison.macro_f1_delta, right.macro_f1 - left.macro_f1)
+        && label_deltas_match
+        && fixed.len() == comparison.fixed_snapshot_member_ids.len()
+        && regressed.len() == comparison.regressed_snapshot_member_ids.len()
+        && fixed.len() as u64 == comparison.right_only_correct
+        && regressed.len() as u64 == comparison.left_only_correct
+        && fixed.is_disjoint(&regressed)
+        && comparison.mcnemar.left_only_correct == comparison.left_only_correct
+        && comparison.mcnemar.right_only_correct == comparison.right_only_correct
+        && comparison.mcnemar.two_sided_p_value.is_finite()
+        && (0.0..=1.0).contains(&comparison.mcnemar.two_sided_p_value)
+        && comparison.mcnemar.significant == expected_significance
+        && intervals_valid
+}
+
+fn approximately_equal(left: f64, right: f64) -> bool {
+    left.is_finite() && right.is_finite() && (left - right).abs() <= 1e-12
 }
 
 fn resolve_metric(
@@ -769,8 +901,27 @@ fn validate_labels(labels: &[String]) -> Result<(), BenchmarkError> {
 fn validate_contract(
     contract: &AcceptanceContract,
     labels: &[String],
+    suite_kind: BenchmarkSuiteKind,
 ) -> Result<(), BenchmarkError> {
+    let regression_is_effective = contract.regression.as_ref().is_some_and(|requirement| {
+        requirement.max_accuracy_drop.is_some()
+            || requirement.max_macro_f1_drop.is_some()
+            || requirement.minimum_accuracy_delta_lower_bound.is_some()
+            || requirement.minimum_macro_f1_delta_lower_bound.is_some()
+    });
+    if contract.metric_requirements.is_empty() && !regression_is_effective {
+        return Err(BenchmarkError::VacuousContract);
+    }
+
+    let mut seen = BTreeSet::new();
     for requirement in &contract.metric_requirements {
+        if suite_kind == BenchmarkSuiteKind::SealedAcceptance
+            && requirement.target != MetricTarget::Overall
+        {
+            return Err(BenchmarkError::MetricRequirement(
+                "sealed acceptance contracts may target only aggregate overall metrics".into(),
+            ));
+        }
         if requirement.minimum_support == 0
             || requirement.minimum.is_some_and(|value| !value.is_finite())
             || requirement.maximum.is_some_and(|value| !value.is_finite())
@@ -784,6 +935,63 @@ fn validate_contract(
                 requirement.target
             )));
         }
+        if !seen.insert((requirement.target.clone(), requirement.metric)) {
+            return Err(BenchmarkError::MetricRequirement(format!(
+                "duplicate requirement for {:?} and {:?}",
+                requirement.target, requirement.metric
+            )));
+        }
+
+        let lower_is_better = matches!(
+            requirement.metric,
+            BenchmarkMetric::LogLoss
+                | BenchmarkMetric::BrierScore
+                | BenchmarkMetric::ExpectedCalibrationError
+        );
+        if lower_is_better {
+            let Some(maximum) = requirement.maximum else {
+                return Err(BenchmarkError::MetricRequirement(format!(
+                    "{:?} requires a maximum",
+                    requirement.metric
+                )));
+            };
+            if requirement.minimum.is_some() || maximum < 0.0 {
+                return Err(BenchmarkError::MetricRequirement(format!(
+                    "{:?} accepts only a non-negative maximum",
+                    requirement.metric
+                )));
+            }
+            let bounded_maximum = match requirement.metric {
+                BenchmarkMetric::BrierScore => Some(2.0),
+                BenchmarkMetric::ExpectedCalibrationError => Some(1.0),
+                _ => None,
+            };
+            if let Some(bound) = bounded_maximum {
+                if maximum >= bound {
+                    return Err(BenchmarkError::MetricRequirement(format!(
+                        "{:?} maximum must be below {bound}",
+                        requirement.metric
+                    )));
+                }
+            }
+        } else {
+            let Some(minimum) = requirement.minimum else {
+                return Err(BenchmarkError::MetricRequirement(format!(
+                    "{:?} requires a positive minimum",
+                    requirement.metric
+                )));
+            };
+            if minimum <= 0.0
+                || minimum > 1.0
+                || requirement.maximum.is_some_and(|maximum| maximum > 1.0)
+            {
+                return Err(BenchmarkError::MetricRequirement(format!(
+                    "{:?} minimum must be in (0, 1] and maximum, if present, at most 1",
+                    requirement.metric
+                )));
+            }
+        }
+
         match (&requirement.target, requirement.metric) {
             (
                 MetricTarget::Label { label },
@@ -802,26 +1010,49 @@ fn validate_contract(
                     "label targets support precision, recall, or F1".into(),
                 ));
             }
+            (MetricTarget::Slice { key }, _) => {
+                SliceIdentity::parse_key_for_labels(key, labels).map_err(|error| {
+                    BenchmarkError::MetricRequirement(format!(
+                        "invalid canonical slice target: {error}"
+                    ))
+                })?;
+            }
             _ => {}
         }
     }
     if let Some(regression) = &contract.regression {
+        if suite_kind == BenchmarkSuiteKind::SealedAcceptance {
+            return Err(BenchmarkError::RegressionRequirement(
+                "sealed acceptance contracts cannot request paired comparisons".into(),
+            ));
+        }
         let values = [
             regression.max_accuracy_drop,
             regression.max_macro_f1_drop,
             regression.minimum_accuracy_delta_lower_bound,
             regression.minimum_macro_f1_delta_lower_bound,
         ];
+        if !regression_is_effective {
+            return Err(BenchmarkError::RegressionRequirement(
+                "regression requires at least one quantitative bound".into(),
+            ));
+        }
         if values.into_iter().flatten().any(|value| !value.is_finite())
             || regression
                 .max_accuracy_drop
-                .is_some_and(|value| value < 0.0)
+                .is_some_and(|value| !(0.0..1.0).contains(&value))
             || regression
                 .max_macro_f1_drop
-                .is_some_and(|value| value < 0.0)
+                .is_some_and(|value| !(0.0..1.0).contains(&value))
+            || regression
+                .minimum_accuracy_delta_lower_bound
+                .is_some_and(|value| !(-1.0..=1.0).contains(&value) || value == -1.0)
+            || regression
+                .minimum_macro_f1_delta_lower_bound
+                .is_some_and(|value| !(-1.0..=1.0).contains(&value) || value == -1.0)
         {
             return Err(BenchmarkError::RegressionRequirement(
-                "bounds must be finite and maximum drops non-negative".into(),
+                "bounds must be finite and non-vacuous rate deltas".into(),
             ));
         }
     }
@@ -914,7 +1145,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     use evaluation_core::{
-        domain::{EvaluationPrediction, EvaluationSourceIdentity},
+        domain::{
+            ConfidenceInterval, EvaluationPrediction, EvaluationSourceIdentity, McNemarResult,
+        },
         metrics::calculate_metrics_with_protocol,
     };
     use training_core::domain::LabelProbability;
@@ -951,6 +1184,7 @@ mod tests {
                 role: item.role.clone(),
                 members: vec![ContaminationMember {
                     snapshot_member_id: Uuid::new_v4(),
+                    snapshot_id: item.cohort.snapshot_id,
                     source_row_id: Uuid::new_v4(),
                     text: format!("unique example {index}"),
                     group_id: None,
@@ -1052,6 +1286,53 @@ mod tests {
         run
     }
 
+    fn no_change_comparison(
+        run: &EvaluationRun,
+        cohort: &BenchmarkCohort,
+    ) -> EvaluationComparisonReport {
+        let metrics = run.metrics.clone().expect("completed metrics");
+        let total = metrics.overall.total;
+        let mut comparison = EvaluationComparisonReport {
+            id: Uuid::new_v4(),
+            left_run_id: Uuid::new_v4(),
+            right_run_id: run.id,
+            cohort_fingerprint: cohort.evaluation_cohort_fingerprint.clone(),
+            protocol_fingerprint: cohort.protocol_fingerprint.clone(),
+            left_metrics: metrics.clone(),
+            right_metrics: metrics,
+            accuracy_delta: 0.0,
+            macro_f1_delta: 0.0,
+            per_label_f1_delta: BTreeMap::from([("billing".into(), 0.0), ("fraud".into(), 0.0)]),
+            both_correct: total,
+            both_wrong: 0,
+            left_only_correct: 0,
+            right_only_correct: 0,
+            fixed_snapshot_member_ids: Vec::new(),
+            regressed_snapshot_member_ids: Vec::new(),
+            accuracy_delta_interval: ConfidenceInterval {
+                level: run.protocol.confidence_level,
+                lower: 0.0,
+                upper: 0.0,
+            },
+            macro_f1_delta_interval: ConfidenceInterval {
+                level: run.protocol.confidence_level,
+                lower: 0.0,
+                upper: 0.0,
+            },
+            mcnemar: McNemarResult {
+                left_only_correct: 0,
+                right_only_correct: 0,
+                two_sided_p_value: 1.0,
+                significant: false,
+            },
+            slice_deltas: BTreeMap::new(),
+            fingerprint: String::new(),
+            created_at: Utc::now(),
+        };
+        comparison.fingerprint = comparison_fingerprint(&comparison).expect("fingerprint");
+        comparison
+    }
+
     #[test]
     fn deterministic_assessment_distinguishes_fail_and_inconclusive() {
         let suite = suite_fixture();
@@ -1088,5 +1369,115 @@ mod tests {
         )
         .expect("assessment");
         assert_eq!(inconclusive.state, AcceptanceState::Inconclusive);
+    }
+
+    #[test]
+    fn contracts_must_contain_meaningful_decision_criteria() {
+        let labels = vec!["billing".into(), "fraud".into()];
+        assert_eq!(
+            validate_contract(
+                &AcceptanceContract {
+                    metric_requirements: Vec::new(),
+                    regression: None,
+                },
+                &labels,
+                BenchmarkSuiteKind::Development,
+            ),
+            Err(BenchmarkError::VacuousContract)
+        );
+
+        let zero_floor = AcceptanceContract {
+            metric_requirements: vec![MetricRequirement {
+                target: MetricTarget::Overall,
+                metric: BenchmarkMetric::Accuracy,
+                minimum: Some(0.0),
+                maximum: None,
+                minimum_support: 1,
+            }],
+            regression: None,
+        };
+        assert!(matches!(
+            validate_contract(&zero_floor, &labels, BenchmarkSuiteKind::Development),
+            Err(BenchmarkError::MetricRequirement(_))
+        ));
+
+        let sealed_label = AcceptanceContract {
+            metric_requirements: vec![MetricRequirement {
+                target: MetricTarget::Label {
+                    label: "billing".into(),
+                },
+                metric: BenchmarkMetric::F1,
+                minimum: Some(0.5),
+                maximum: None,
+                minimum_support: 1,
+            }],
+            regression: None,
+        };
+        assert!(matches!(
+            validate_contract(&sealed_label, &labels, BenchmarkSuiteKind::SealedAcceptance),
+            Err(BenchmarkError::MetricRequirement(_))
+        ));
+    }
+
+    #[test]
+    fn legacy_vacuous_contracts_can_never_pass_assessment() {
+        let mut suite = suite_fixture();
+        suite.contract = AcceptanceContract {
+            metric_requirements: Vec::new(),
+            regression: None,
+        };
+        suite.fingerprint = suite_fingerprint(&suite).expect("legacy fingerprint");
+        let inputs = suite
+            .cohorts
+            .iter()
+            .map(|cohort| CohortAssessmentInput {
+                cohort_id: cohort.cohort_id,
+                run: Some(completed_run(&suite, cohort, true)),
+                comparison: None,
+            })
+            .collect();
+        let assessment = assess_benchmark(&suite, inputs).expect("legacy assessment");
+        assert_eq!(assessment.state, AcceptanceState::Inconclusive);
+        assert!(
+            assessment
+                .reasons
+                .iter()
+                .any(|reason| reason.code == "vacuous_contract")
+        );
+    }
+
+    #[test]
+    fn paired_comparison_must_bind_to_the_candidate_run() {
+        let mut suite = suite_fixture();
+        suite.contract.regression = Some(RegressionRequirement {
+            max_accuracy_drop: Some(0.1),
+            max_macro_f1_drop: None,
+            minimum_accuracy_delta_lower_bound: None,
+            minimum_macro_f1_delta_lower_bound: None,
+            require_mcnemar_significance: false,
+        });
+        suite.fingerprint = suite_fingerprint(&suite).expect("suite fingerprint");
+        let cohort = &suite.cohorts[0];
+        let run = completed_run(&suite, cohort, true);
+        let mut comparison = no_change_comparison(&run, cohort);
+        comparison.right_run_id = Uuid::new_v4();
+        comparison.fingerprint = comparison_fingerprint(&comparison).expect("forged fingerprint");
+
+        let assessment = assess_benchmark(
+            &suite,
+            vec![CohortAssessmentInput {
+                cohort_id: cohort.cohort_id,
+                run: Some(run),
+                comparison: Some(comparison),
+            }],
+        )
+        .expect("assessment");
+        assert_eq!(assessment.state, AcceptanceState::Invalid);
+        assert!(
+            assessment
+                .reasons
+                .iter()
+                .any(|reason| reason.code == "incompatible_comparison")
+        );
     }
 }

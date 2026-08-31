@@ -30,6 +30,7 @@ pub struct CohortContaminationInput {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContaminationMember {
     pub snapshot_member_id: Uuid,
+    pub snapshot_id: Uuid,
     pub source_row_id: Uuid,
     pub text: String,
     pub group_id: Option<String>,
@@ -39,6 +40,7 @@ impl ContaminationMember {
     pub fn from_snapshot_member(member: &SnapshotMember, group_dimension: Option<&str>) -> Self {
         Self {
             snapshot_member_id: member.id,
+            snapshot_id: member.snapshot_id,
             source_row_id: member.source_row_id,
             text: member.text.clone(),
             group_id: group_dimension.and_then(|name| member.dimensions.get(name).cloned()),
@@ -142,10 +144,14 @@ pub enum ContaminationError {
     DuplicateCohort(Uuid),
     #[error("cohort role does not match cohort {0}")]
     RoleMismatch(Uuid),
+    #[error("cohort or role evidence fingerprint mismatch: {0}")]
+    EvidenceFingerprint(Uuid),
     #[error("retired cohort cannot enter a benchmark suite: {0}")]
     RetiredCohort(Uuid),
     #[error("member {member_id} does not belong to cohort snapshot {snapshot_id}")]
     MemberSnapshot { member_id: Uuid, snapshot_id: Uuid },
+    #[error("member {member_id} has no value for required group dimension {dimension}")]
+    MissingGroup { member_id: Uuid, dimension: String },
     #[error("{0} must not be empty")]
     Empty(&'static str),
     #[error("a clean report cannot be overridden")]
@@ -164,17 +170,54 @@ pub fn check_contamination(
     if inputs.is_empty() {
         return Err(ContaminationError::TooFewCohorts);
     }
+    let group_dimension = group_dimension
+        .map(|value| required(value, "group dimension"))
+        .transpose()?;
     inputs.sort_by_key(|input| input.cohort.id);
     let mut seen = BTreeSet::new();
     for input in &inputs {
         if !seen.insert(input.cohort.id) {
             return Err(ContaminationError::DuplicateCohort(input.cohort.id));
         }
+        if input
+            .cohort
+            .reproduce_fingerprint()
+            .map_err(|_| ContaminationError::EvidenceFingerprint(input.cohort.id))?
+            != input.cohort.fingerprint
+            || input
+                .role
+                .reproduce_fingerprint()
+                .map_err(|_| ContaminationError::EvidenceFingerprint(input.cohort.id))?
+                != input.role.fingerprint
+        {
+            return Err(ContaminationError::EvidenceFingerprint(input.cohort.id));
+        }
         if input.role.cohort_id != input.cohort.id {
             return Err(ContaminationError::RoleMismatch(input.cohort.id));
         }
         if input.role.disposition == CohortDisposition::Retired {
             return Err(ContaminationError::RetiredCohort(input.cohort.id));
+        }
+        for member in &input.members {
+            if member.snapshot_member_id.is_nil() || member.snapshot_id != input.cohort.snapshot_id
+            {
+                return Err(ContaminationError::MemberSnapshot {
+                    member_id: member.snapshot_member_id,
+                    snapshot_id: input.cohort.snapshot_id,
+                });
+            }
+            if let Some(dimension) = &group_dimension {
+                if member
+                    .group_id
+                    .as_deref()
+                    .is_none_or(|value| value.trim().is_empty())
+                {
+                    return Err(ContaminationError::MissingGroup {
+                        member_id: member.snapshot_member_id,
+                        dimension: dimension.clone(),
+                    });
+                }
+            }
         }
     }
 
@@ -238,9 +281,7 @@ pub fn check_contamination(
             .iter()
             .map(|input| (input.cohort.id, input.role.fingerprint.clone()))
             .collect(),
-        group_dimension: group_dimension
-            .map(|value| required(value, "group dimension"))
-            .transpose()?,
+        group_dimension,
         policy,
         counts,
         findings,
@@ -267,14 +308,6 @@ fn compare_pair(
     right: &CohortContaminationInput,
     findings: &mut Vec<ContaminationFinding>,
 ) -> Result<(), ContaminationError> {
-    for member in &left.members {
-        if member.snapshot_member_id.is_nil() {
-            return Err(ContaminationError::MemberSnapshot {
-                member_id: member.snapshot_member_id,
-                snapshot_id: left.cohort.snapshot_id,
-            });
-        }
-    }
     for left_member in &left.members {
         for right_member in &right.members {
             if left_member.source_row_id == right_member.source_row_id {
@@ -504,5 +537,52 @@ mod tests {
             ContaminationOverride::new(&blocked, "known fixture overlap", "operator")
                 .expect("override");
         assert_eq!(override_record.report_id, blocked.id);
+    }
+
+    #[test]
+    fn rejects_missing_group_values_and_mismatched_member_snapshots() {
+        let mut missing_group = input(CohortRole::Development, "one", Uuid::new_v4(), "account-1");
+        missing_group.members[0].group_id = None;
+        let member_id = missing_group.members[0].snapshot_member_id;
+        assert_eq!(
+            check_contamination(
+                vec![missing_group],
+                Some("account".into()),
+                ContaminationPolicy::default(),
+            ),
+            Err(ContaminationError::MissingGroup {
+                member_id,
+                dimension: "account".into(),
+            })
+        );
+
+        let mut wrong_snapshot = input(CohortRole::Development, "two", Uuid::new_v4(), "account-2");
+        wrong_snapshot.members[0].snapshot_id = Uuid::new_v4();
+        let member_id = wrong_snapshot.members[0].snapshot_member_id;
+        let snapshot_id = wrong_snapshot.cohort.snapshot_id;
+        assert_eq!(
+            check_contamination(vec![wrong_snapshot], None, ContaminationPolicy::default(),),
+            Err(ContaminationError::MemberSnapshot {
+                member_id,
+                snapshot_id,
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_tampered_cohort_and_role_evidence() {
+        let mut tampered = input(CohortRole::Development, "one", Uuid::new_v4(), "account-1");
+        tampered.cohort.name = "tampered".into();
+        assert_eq!(
+            check_contamination(vec![tampered.clone()], None, ContaminationPolicy::default()),
+            Err(ContaminationError::EvidenceFingerprint(tampered.cohort.id))
+        );
+
+        let mut tampered = input(CohortRole::Development, "two", Uuid::new_v4(), "account-2");
+        tampered.role.reason = "tampered".into();
+        assert_eq!(
+            check_contamination(vec![tampered.clone()], None, ContaminationPolicy::default()),
+            Err(ContaminationError::EvidenceFingerprint(tampered.cohort.id))
+        );
     }
 }

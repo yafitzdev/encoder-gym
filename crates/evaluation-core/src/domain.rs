@@ -27,6 +27,8 @@ pub enum EvaluationDomainError {
     ConfidenceLevel,
     #[error("dimension intersections must contain sorted, unique, non-empty names")]
     DimensionIntersections,
+    #[error("invalid slice identity: {reason}")]
+    InvalidSliceIdentity { reason: String },
     #[error("invalid evaluation-run transition from {from:?} to {to:?}")]
     Transition {
         from: EvaluationRunState,
@@ -374,6 +376,7 @@ pub enum SliceKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SliceIdentity {
     pub kind: SliceKind,
     pub attributes: BTreeMap<String, String>,
@@ -382,6 +385,108 @@ pub struct SliceIdentity {
 impl SliceIdentity {
     pub fn key(&self) -> String {
         serde_json::to_string(self).expect("slice identity serialization cannot fail")
+    }
+
+    pub fn parse_key_for_labels(
+        key: &str,
+        labels: &[String],
+    ) -> Result<Self, EvaluationDomainError> {
+        let identity = serde_json::from_str::<Self>(key).map_err(|error| {
+            invalid_slice_identity(format!("key is not a valid slice identity: {error}"))
+        })?;
+        identity.validate_for_labels(labels)?;
+        if identity.key() != key {
+            return Err(invalid_slice_identity(
+                "key is not in canonical serialized form",
+            ));
+        }
+        Ok(identity)
+    }
+
+    pub fn validate_for_labels(&self, labels: &[String]) -> Result<(), EvaluationDomainError> {
+        if self
+            .attributes
+            .iter()
+            .any(|(name, value)| !is_canonical_field(name) || !is_canonical_field(value))
+        {
+            return Err(invalid_slice_identity(
+                "attribute names and values must be non-empty and have no surrounding whitespace",
+            ));
+        }
+
+        match self.kind {
+            SliceKind::ExpectedLabel => {
+                let label = self.attributes.get("label").ok_or_else(|| {
+                    invalid_slice_identity(
+                        "expected-label slices require exactly one `label` attribute",
+                    )
+                })?;
+                if self.attributes.len() != 1 {
+                    return Err(invalid_slice_identity(
+                        "expected-label slices require exactly one `label` attribute",
+                    ));
+                }
+                validate_known_label(label, labels)
+            }
+            SliceKind::DimensionValue => {
+                let dimension = self.attributes.get("dimension").ok_or_else(|| {
+                    invalid_slice_identity(
+                        "dimension-value slices require exactly `dimension` and `value` attributes",
+                    )
+                })?;
+                if self.attributes.len() != 2
+                    || !self.attributes.contains_key("value")
+                    || self.attributes.contains_key("label")
+                    || dimension == "label"
+                {
+                    return Err(invalid_slice_identity(
+                        "dimension-value slices require exactly `dimension` and `value` attributes, and `dimension` must not be `label`",
+                    ));
+                }
+                Ok(())
+            }
+            SliceKind::Cell => {
+                let label = self.attributes.get("label").ok_or_else(|| {
+                    invalid_slice_identity(
+                        "cell slices require a `label` and at least one dimension attribute",
+                    )
+                })?;
+                if self.attributes.len() < 2 {
+                    return Err(invalid_slice_identity(
+                        "cell slices require a `label` and at least one dimension attribute",
+                    ));
+                }
+                validate_known_label(label, labels)
+            }
+            SliceKind::DimensionIntersection => {
+                if self.attributes.is_empty() || self.attributes.contains_key("label") {
+                    return Err(invalid_slice_identity(
+                        "dimension-intersection slices require at least one dimension attribute and must not contain `label`",
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+fn is_canonical_field(value: &str) -> bool {
+    !value.is_empty() && value.trim() == value
+}
+
+fn validate_known_label(label: &str, labels: &[String]) -> Result<(), EvaluationDomainError> {
+    if labels.iter().any(|known| known == label) {
+        Ok(())
+    } else {
+        Err(invalid_slice_identity(format!(
+            "`{label}` is not a known label"
+        )))
+    }
+}
+
+fn invalid_slice_identity(reason: impl Into<String>) -> EvaluationDomainError {
+    EvaluationDomainError::InvalidSliceIdentity {
+        reason: reason.into(),
     }
 }
 
@@ -515,7 +620,9 @@ pub struct ModelSelectionReport {
 
 #[cfg(test)]
 mod tests {
-    use super::{EvaluationDomainError, EvaluationProtocol};
+    use std::collections::BTreeMap;
+
+    use super::{EvaluationDomainError, EvaluationProtocol, SliceIdentity, SliceKind};
 
     #[test]
     fn validates_and_fingerprints_normalized_protocols() {
@@ -546,5 +653,133 @@ mod tests {
             oversized.validate_for_labels(&["a".into(), "b".into()]),
             Err(EvaluationDomainError::TopK)
         );
+    }
+
+    #[test]
+    fn parses_canonical_slice_keys_for_each_supported_shape() {
+        let labels = vec!["billing".into(), "fraud".into()];
+        let identities = [
+            SliceIdentity {
+                kind: SliceKind::ExpectedLabel,
+                attributes: BTreeMap::from([("label".into(), "billing".into())]),
+            },
+            SliceIdentity {
+                kind: SliceKind::DimensionValue,
+                attributes: BTreeMap::from([
+                    ("dimension".into(), "difficulty".into()),
+                    ("value".into(), "hard".into()),
+                ]),
+            },
+            SliceIdentity {
+                kind: SliceKind::Cell,
+                attributes: BTreeMap::from([
+                    ("difficulty".into(), "hard".into()),
+                    ("label".into(), "fraud".into()),
+                ]),
+            },
+            SliceIdentity {
+                kind: SliceKind::DimensionIntersection,
+                attributes: BTreeMap::from([
+                    ("difficulty".into(), "hard".into()),
+                    ("style".into(), "messy".into()),
+                ]),
+            },
+        ];
+
+        for identity in identities {
+            identity
+                .validate_for_labels(&labels)
+                .expect("valid slice identity");
+            assert_eq!(
+                SliceIdentity::parse_key_for_labels(&identity.key(), &labels)
+                    .expect("canonical slice key"),
+                identity
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_slice_shapes_and_values() {
+        let labels = vec!["billing".into(), "fraud".into()];
+        let invalid = [
+            SliceIdentity {
+                kind: SliceKind::ExpectedLabel,
+                attributes: BTreeMap::new(),
+            },
+            SliceIdentity {
+                kind: SliceKind::ExpectedLabel,
+                attributes: BTreeMap::from([("label".into(), "unknown".into())]),
+            },
+            SliceIdentity {
+                kind: SliceKind::ExpectedLabel,
+                attributes: BTreeMap::from([
+                    ("label".into(), "billing".into()),
+                    ("style".into(), "clean".into()),
+                ]),
+            },
+            SliceIdentity {
+                kind: SliceKind::DimensionValue,
+                attributes: BTreeMap::from([("dimension".into(), "difficulty".into())]),
+            },
+            SliceIdentity {
+                kind: SliceKind::DimensionValue,
+                attributes: BTreeMap::from([
+                    ("dimension".into(), "label".into()),
+                    ("value".into(), "billing".into()),
+                ]),
+            },
+            SliceIdentity {
+                kind: SliceKind::Cell,
+                attributes: BTreeMap::from([("label".into(), "billing".into())]),
+            },
+            SliceIdentity {
+                kind: SliceKind::Cell,
+                attributes: BTreeMap::from([
+                    ("difficulty".into(), "hard".into()),
+                    ("label".into(), "unknown".into()),
+                ]),
+            },
+            SliceIdentity {
+                kind: SliceKind::Cell,
+                attributes: BTreeMap::from([
+                    ("difficulty".into(), " ".into()),
+                    ("label".into(), "billing".into()),
+                ]),
+            },
+            SliceIdentity {
+                kind: SliceKind::DimensionIntersection,
+                attributes: BTreeMap::new(),
+            },
+            SliceIdentity {
+                kind: SliceKind::DimensionIntersection,
+                attributes: BTreeMap::from([("label".into(), "billing".into())]),
+            },
+        ];
+
+        for identity in invalid {
+            assert!(matches!(
+                identity.validate_for_labels(&labels),
+                Err(EvaluationDomainError::InvalidSliceIdentity { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_noncanonical_missing_and_unknown_slice_key_fields() {
+        let labels = vec!["billing".into(), "fraud".into()];
+        let noncanonical = [
+            r#"{ "kind":"expected_label","attributes":{"label":"billing"}}"#,
+            r#"{"attributes":{"label":"billing"},"kind":"expected_label"}"#,
+            r#"{"kind":"expected_label","attributes":{"label":"billing"},"extra":true}"#,
+            r#"{"kind":"expected_label"}"#,
+            r#"{"kind":"expected_label","attributes":{"label":"billing","unknown":"value"}}"#,
+        ];
+
+        for key in noncanonical {
+            assert!(matches!(
+                SliceIdentity::parse_key_for_labels(key, &labels),
+                Err(EvaluationDomainError::InvalidSliceIdentity { .. })
+            ));
+        }
     }
 }

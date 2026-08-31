@@ -678,7 +678,7 @@ mod tests {
     use uuid::Uuid;
     use workflow_core::{
         allocation::InitialAllocationPolicy,
-        benchmark::AcceptanceContract,
+        benchmark::{AcceptanceContract, BenchmarkMetric, MetricRequirement, MetricTarget},
         contamination::{ContaminationKind, ContaminationStatus},
         governance::{CohortOrigin, CohortRole, DisclosureLevel},
         workflow::{
@@ -838,7 +838,7 @@ batch_size = 20
             name: "sealed".into(),
             required_model_formats: Vec::new(),
             cohorts: vec![repeated],
-            contract: empty_contract(),
+            contract: decision_contract(),
         });
 
         let error = preview_project(&manifest, &evidence).expect_err("reject");
@@ -985,7 +985,7 @@ batch_size = 20
                     disclosure: DisclosureLevel::Predictions,
                     adaptation_eligible: true,
                 }],
-                contract: empty_contract(),
+                contract: decision_contract(),
             },
             sealed: None,
             workflow: WorkflowManifest {
@@ -1035,9 +1035,15 @@ batch_size = 20
         )
     }
 
-    fn empty_contract() -> AcceptanceContract {
+    fn decision_contract() -> AcceptanceContract {
         AcceptanceContract {
-            metric_requirements: Vec::new(),
+            metric_requirements: vec![MetricRequirement {
+                target: MetricTarget::Overall,
+                metric: BenchmarkMetric::MacroF1,
+                minimum: Some(0.01),
+                maximum: None,
+                minimum_support: 1,
+            }],
             regression: None,
         }
     }

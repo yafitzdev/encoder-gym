@@ -42,7 +42,12 @@ disclosure = "predictions"
 adaptation_eligible = true
 
 [development.contract]
-metric_requirements = []
+
+[[development.contract.metric_requirements]]
+target = { kind = "overall" }
+metric = "macro_f1"
+minimum = 0.01
+minimum_support = 1
 
 [workflow]
 name = "support-encoder-workflow"

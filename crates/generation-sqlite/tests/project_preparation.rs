@@ -19,7 +19,7 @@ use synthetic_data_sqlite::SqliteStore;
 use uuid::Uuid;
 use workflow_core::{
     allocation::InitialAllocationPolicy,
-    benchmark::AcceptanceContract,
+    benchmark::{AcceptanceContract, BenchmarkMetric, MetricRequirement, MetricTarget},
     governance::{CohortOrigin, CohortRole, DisclosureLevel},
     workflow::{IterationGovernance, WorkflowBudget, WorkflowPolicy},
 };
@@ -210,7 +210,13 @@ async fn fixture(store: &SqliteStore) -> (PreparationManifest, PreparationEviden
                 adaptation_eligible: true,
             }],
             contract: AcceptanceContract {
-                metric_requirements: Vec::new(),
+                metric_requirements: vec![MetricRequirement {
+                    target: MetricTarget::Overall,
+                    metric: BenchmarkMetric::MacroF1,
+                    minimum: Some(0.01),
+                    maximum: None,
+                    minimum_support: 1,
+                }],
                 regression: None,
             },
         },

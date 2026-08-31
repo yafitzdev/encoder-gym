@@ -335,7 +335,7 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
                 "metric_requirements": [{
                     "target": {"kind": "overall"},
                     "metric": "accuracy",
-                    "minimum": 0.0,
+                    "minimum": 0.01,
                     "minimum_support": 1
                 }]
             }

@@ -76,7 +76,12 @@ difficulty = "dimensions.difficulty"
 writing_style = "dimensions.writing_style"
 
 [development.contract]
-metric_requirements = []
+
+[[development.contract.metric_requirements]]
+target = { kind = "overall" }
+metric = "macro_f1"
+minimum = 0.01
+minimum_support = 1
 
 [sealed]
 name = "support-pilot-sealed"
@@ -100,7 +105,12 @@ difficulty = "difficulty"
 writing_style = "writing_style"
 
 [sealed.contract]
-metric_requirements = []
+
+[[sealed.contract.metric_requirements]]
+target = { kind = "overall" }
+metric = "macro_f1"
+minimum = 0.01
+minimum_support = 1
 
 [workflow]
 name = "support-pilot-workflow"

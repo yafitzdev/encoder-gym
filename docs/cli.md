@@ -256,12 +256,14 @@ Benchmark and acceptance commands are:
 - `synth benchmark assessment-show|assessment-list` to inspect immutable
   `pass`, `fail`, `inconclusive`, or `invalid` outcomes and exact reasons.
 
-Metric contracts support overall metrics, per-label precision/recall/F1,
-arbitrary persisted slice keys, minimum support, maximum regressions, paired
-confidence bounds, and optional McNemar significance. Sealed suites require
-aggregate, adaptation-ineligible disclosure and a separate
-`--authorize-sealed` acknowledgement. Repeating an identical assessment returns
-the existing artifact.
+Metric contracts require at least one effective decision bound and support
+overall metrics, per-label precision/recall/F1, canonical typed slice keys,
+minimum support, maximum regressions, paired confidence bounds, and optional
+McNemar significance. Paired evidence is accepted only when its fingerprint,
+candidate run, protocol, cohort, metrics, and internal counts agree. Sealed
+suites accept overall metrics only, require aggregate, adaptation-ineligible
+disclosure, and require a separate `--authorize-sealed` acknowledgement.
+Repeating an identical assessment returns the existing artifact.
 
 Project bootstrap commands are:
 
