@@ -328,6 +328,7 @@ impl StrategyAssignmentSet {
                 )
             })
             .collect::<BTreeMap<_, _>>();
+        let mut qualified_assignments = std::collections::BTreeSet::new();
         for observation in observations {
             observation.validate(contract)?;
             let assignment_fingerprint = observation
@@ -362,7 +363,9 @@ impl StrategyAssignmentSet {
             }
             match observation.contract_verdict(contract) {
                 ContractRowVerdict::Qualified => {
-                    item.qualified = checked_increment(item.qualified)?
+                    if qualified_assignments.insert(assignment_fingerprint.to_owned()) {
+                        item.qualified = checked_increment(item.qualified)?;
+                    }
                 }
                 ContractRowVerdict::Borderline => {
                     item.borderline = checked_increment(item.borderline)?;

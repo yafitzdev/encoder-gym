@@ -375,6 +375,28 @@ impl SupervisorAdvisorStore for MemoryStore {
         Box::pin(async move { Ok(self.0.lock().unwrap().sessions.get(&session_id).cloned()) })
     }
 
+    fn list_sessions(
+        &self,
+        supervisor_run_id: Uuid,
+    ) -> generation_supervisor_core::ports::BoxFuture<
+        '_,
+        Result<Vec<AdvisorSession>, SupervisorError>,
+    > {
+        Box::pin(async move {
+            let mut sessions = self
+                .0
+                .lock()
+                .unwrap()
+                .sessions
+                .values()
+                .filter(|session| session.supervisor_run_id == supervisor_run_id)
+                .cloned()
+                .collect::<Vec<_>>();
+            sessions.sort_by_key(|session| (session.created_at, session.id));
+            Ok(sessions)
+        })
+    }
+
     fn save_session(
         &self,
         session: &AdvisorSession,
@@ -547,6 +569,25 @@ impl SupervisorAdvisorStore for MemoryStore {
     > {
         Box::pin(async move { Ok(self.0.lock().unwrap().proposals.get(&session_id).cloned()) })
     }
+
+    fn get_proposal(
+        &self,
+        proposal_id: Uuid,
+    ) -> generation_supervisor_core::ports::BoxFuture<
+        '_,
+        Result<Option<PromptRevisionProposal>, SupervisorError>,
+    > {
+        Box::pin(async move {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .proposals
+                .values()
+                .find(|proposal| proposal.id == proposal_id)
+                .cloned())
+        })
+    }
 }
 
 #[tokio::test]
@@ -611,7 +652,7 @@ async fn scripted_pi_can_only_submit_a_valid_guidance_patch_for_review() {
         proposal.protected_field_proof.after_fingerprint
     );
     let data = store.0.lock().unwrap();
-    assert_eq!(data.model_calls[&session.id].len(), 4);
+    assert_eq!(data.model_calls[&session.id].len(), 2);
     assert_eq!(data.tool_calls[&session.id].len(), 7);
 }
 

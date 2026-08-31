@@ -186,6 +186,7 @@ fn evidence(contract: &GenerationQualityContract, score: u16) -> AssessmentEvide
             QualityVerdict::Quarantined
         },
         assigned_label_score: bp(score),
+        strongest_competing_label: Some("other-label".into()),
         assigned_label_margin: i32::from(score.saturating_sub(5_000)),
         assigned_dimension_scores: BTreeMap::new(),
         difficulty_score: None,

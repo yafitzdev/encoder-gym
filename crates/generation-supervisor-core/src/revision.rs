@@ -532,6 +532,12 @@ pub struct PromptRevisionActivation {
     pub authorization_fingerprint: String,
     pub canary_decision_id: Uuid,
     pub canary_decision_fingerprint: String,
+    /// Additional independently passing scopes required by the same canary.
+    /// Empty preserves the original single-scope artifact shape.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supporting_canary_decision_ids: Vec<Uuid>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supporting_canary_decision_fingerprints: Vec<String>,
     pub activated_at: DateTime<Utc>,
     pub fingerprint: String,
 }
@@ -567,9 +573,54 @@ impl PromptRevisionActivation {
             authorization_fingerprint: authorization.fingerprint.clone(),
             canary_decision_id: canary_decision.id,
             canary_decision_fingerprint: canary_decision.fingerprint.clone(),
+            supporting_canary_decision_ids: vec![],
+            supporting_canary_decision_fingerprints: vec![],
             activated_at,
             fingerprint: String::new(),
         };
+        value.fingerprint = value.reproduce_fingerprint()?;
+        Ok(value)
+    }
+
+    pub fn create_for_decisions(
+        id: Uuid,
+        version: &PromptGuidanceVersion,
+        authorization: &PromptRevisionAuthorization,
+        canary_decisions: &[DeterministicQualityDecision],
+        activated_at: DateTime<Utc>,
+    ) -> Result<Self, SupervisorError> {
+        let mut decisions = canary_decisions.iter().collect::<Vec<_>>();
+        decisions.sort_by_key(|decision| (decision.scope.clone(), decision.id));
+        let Some(primary) = decisions.first().copied() else {
+            return Err(SupervisorError::InvalidTransition(
+                "prompt activation requires at least one passing canary scope".into(),
+            ));
+        };
+        if decisions
+            .windows(2)
+            .any(|pair| pair[0].scope == pair[1].scope)
+        {
+            return Err(SupervisorError::Integrity(
+                "prompt activation repeats a canary scope".into(),
+            ));
+        }
+        let mut value = Self::create(id, version, authorization, primary, activated_at)?;
+        for decision in decisions.into_iter().skip(1) {
+            if decision.supervisor_run_id != version.supervisor_run_id
+                || decision.prompt_version_id != version.id
+                || decision.prompt_version_fingerprint != version.fingerprint
+                || decision.state != SupervisorDecisionState::RevisionPassed
+                || decision.reproduce_fingerprint()? != decision.fingerprint
+            {
+                return Err(SupervisorError::InvalidTransition(
+                    "every activation scope requires an exact passing canary decision".into(),
+                ));
+            }
+            value.supporting_canary_decision_ids.push(decision.id);
+            value
+                .supporting_canary_decision_fingerprints
+                .push(decision.fingerprint.clone());
+        }
         value.fingerprint = value.reproduce_fingerprint()?;
         Ok(value)
     }

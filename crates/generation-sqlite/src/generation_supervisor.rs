@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::Utc;
 use dataset_quality_core::ports::DatasetQualityStore;
 use generation_core::jobs::{GenerationAttempt, GenerationAttemptState};
-use generation_core::ports::{DatasetStore, GenerationExecutionStore, PlanStore, RowStore};
+use generation_core::ports::{
+    DatasetStore, GenerationExecutionStore, JobStore, PlanStore, RowStore,
+};
 use generation_supervisor_core::{
     SupervisorError,
     advisor::{
@@ -134,6 +136,29 @@ impl SupervisorAdvisorStore for SqliteStore {
         Box::pin(async move { load_session(self, session_id).await })
     }
 
+    fn list_sessions(
+        &self,
+        supervisor_run_id: Uuid,
+    ) -> BoxFuture<'_, Result<Vec<AdvisorSession>, SupervisorError>> {
+        Box::pin(async move {
+            let sessions: Vec<AdvisorSession> = load_json_many(
+                self,
+                "SELECT session_json FROM generation_supervisor_advisor_sessions WHERE run_id = ? ORDER BY created_at, id",
+                supervisor_run_id,
+            )
+            .await?;
+            for session in &sessions {
+                session.validate()?;
+                if session.supervisor_run_id != supervisor_run_id {
+                    return Err(integrity(
+                        "advisor session belongs to another supervisor run",
+                    ));
+                }
+            }
+            Ok(sessions)
+        })
+    }
+
     fn save_session(&self, session: &AdvisorSession) -> BoxFuture<'_, Result<(), SupervisorError>> {
         let session = session.clone();
         Box::pin(async move {
@@ -183,7 +208,30 @@ impl SupervisorAdvisorStore for SqliteStore {
                     "model call reservations must be contiguous from one",
                 ));
             }
+            let brief = self
+                .get_brief(session.brief_id)
+                .await?
+                .ok_or_else(|| integrity("advisor diagnosis brief is not persisted"))?;
             let mut tx = self.pool().begin().await.map_err(sql_error)?;
+            let previously_reserved = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM generation_supervisor_model_calls AS calls \
+                 JOIN generation_supervisor_advisor_sessions AS sessions \
+                   ON sessions.id = calls.session_id \
+                 WHERE sessions.run_id = ?",
+            )
+            .bind(session.supervisor_run_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            let requested = u64::try_from(previously_reserved)
+                .map_err(|_| integrity("advisor model-call count is negative"))?
+                .checked_add(u64::try_from(calls.len()).unwrap_or(u64::MAX))
+                .ok_or_else(|| validation("advisor model-call reservation count overflowed"))?;
+            if requested > u64::from(brief.contract.budgets.maximum_pi_model_turns) {
+                return Err(SupervisorError::BudgetExhausted(
+                    "advisor model-call reservations exceed the run contract".into(),
+                ));
+            }
             for call in calls {
                 sqlx::query(
                     "INSERT INTO generation_supervisor_model_calls \
@@ -239,7 +287,12 @@ impl SupervisorAdvisorStore for SqliteStore {
             if call.session_id != session.id || call.reproduce_fingerprint()? != call.fingerprint {
                 return Err(integrity("model call and advisor session do not match"));
             }
+            let brief = self
+                .get_brief(session.brief_id)
+                .await?
+                .ok_or_else(|| integrity("advisor diagnosis brief is not persisted"))?;
             let mut tx = self.pool().begin().await.map_err(sql_error)?;
+            validate_advisor_run_usage_tx(&mut tx, &session, &brief.contract).await?;
             save_model_call_tx(&mut tx, &call).await?;
             save_session_tx(&mut tx, &session).await?;
             tx.commit().await.map_err(sql_error)?;
@@ -272,7 +325,12 @@ impl SupervisorAdvisorStore for SqliteStore {
             if call.session_id != session.id || call.reproduce_fingerprint()? != call.fingerprint {
                 return Err(integrity("tool call and advisor session do not match"));
             }
+            let brief = self
+                .get_brief(session.brief_id)
+                .await?
+                .ok_or_else(|| integrity("advisor diagnosis brief is not persisted"))?;
             let mut tx = self.pool().begin().await.map_err(sql_error)?;
+            validate_advisor_run_usage_tx(&mut tx, &session, &brief.contract).await?;
             save_tool_call_tx(&mut tx, &call).await?;
             save_session_tx(&mut tx, &session).await?;
             tx.commit().await.map_err(sql_error)?;
@@ -408,6 +466,13 @@ impl SupervisorAdvisorStore for SqliteStore {
             .map(check_proposal)
             .transpose()
         })
+    }
+
+    fn get_proposal(
+        &self,
+        proposal_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<PromptRevisionProposal>, SupervisorError>> {
+        Box::pin(async move { load_proposal(self, proposal_id).await })
     }
 }
 
@@ -1590,6 +1655,27 @@ impl GenerationSupervisorStore for SqliteStore {
         })
     }
 
+    fn get_revision_authorization(
+        &self,
+        proposal_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<PromptRevisionAuthorization>, SupervisorError>> {
+        Box::pin(async move {
+            load_json_optional(
+                self,
+                "SELECT authorization_json FROM generation_supervisor_revision_authorizations WHERE proposal_id = ?",
+                proposal_id,
+            )
+            .await?
+            .map(|value: PromptRevisionAuthorization| {
+                if value.reproduce_fingerprint()? != value.fingerprint {
+                    return Err(integrity("revision authorization fingerprint mismatch"));
+                }
+                Ok(value)
+            })
+            .transpose()
+        })
+    }
+
     fn save_revision_activation(
         &self,
         activation: &PromptRevisionActivation,
@@ -1612,11 +1698,34 @@ impl GenerationSupervisorStore for SqliteStore {
             let decision = load_decision(self, activation.canary_decision_id)
                 .await?
                 .ok_or_else(|| integrity("activation canary decision is missing"))?;
-            let expected = PromptRevisionActivation::create(
+            if activation.supporting_canary_decision_ids.len()
+                != activation.supporting_canary_decision_fingerprints.len()
+            {
+                return Err(integrity(
+                    "activation supporting canary bindings have different lengths",
+                ));
+            }
+            let mut decisions = vec![decision];
+            for (id, expected_fingerprint) in activation
+                .supporting_canary_decision_ids
+                .iter()
+                .zip(&activation.supporting_canary_decision_fingerprints)
+            {
+                let supporting = load_decision(self, *id)
+                    .await?
+                    .ok_or_else(|| integrity("activation supporting canary decision is missing"))?;
+                if supporting.fingerprint != *expected_fingerprint {
+                    return Err(integrity(
+                        "activation supporting canary fingerprint mismatch",
+                    ));
+                }
+                decisions.push(supporting);
+            }
+            let expected = PromptRevisionActivation::create_for_decisions(
                 activation.id,
                 &version,
                 &authorization,
-                &decision,
+                &decisions,
                 activation.activated_at,
             )?;
             if expected != activation {
@@ -2177,11 +2286,11 @@ async fn verify_row_binding(
                 .cells
                 .iter()
                 .find(|planned| planned.cell == segment.cell)
-                .is_none_or(|planned| segment.target_count > planned.target_count)
+                .is_none()
         })
     {
         return Err(integrity(
-            "row generation segment plan exceeds the supervisor master plan",
+            "row generation segment contains a cell outside the supervisor master plan",
         ));
     }
     let execution = store
@@ -2197,6 +2306,25 @@ async fn verify_row_binding(
     {
         return Err(integrity(
             "row generation execution is not pinned to a supervisor schedule",
+        ));
+    }
+    let job = store
+        .get_job(row.generation_job_id)
+        .await
+        .map_err(generation_error)?
+        .ok_or_else(|| integrity("row generation job is missing"))?;
+    let specified_rows = execution
+        .initial_needs
+        .iter()
+        .map(|need| u64::from(need.remaining_count))
+        .sum::<u64>();
+    if job.plan_id != segment_plan.id
+        || job.requested_rows != specified_rows
+        || job.requested_rows == 0
+        || job.requested_rows > segment.reserved_usage.generated_rows
+    {
+        return Err(integrity(
+            "row generation segment exceeds its exact reserved child budget",
         ));
     }
     let attempt = load_generation_attempt(store, row.generation_attempt_id)
@@ -2485,6 +2613,42 @@ async fn load_json_required<T: DeserializeOwned>(
     value
         .ok_or_else(|| integrity("required supervisor artifact is missing"))
         .and_then(|value| decode(&value))
+}
+
+async fn validate_advisor_run_usage_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    current: &AdvisorSession,
+    contract: &GenerationQualityContract,
+) -> Result<(), SupervisorError> {
+    let payloads = sqlx::query_scalar::<_, String>(
+        "SELECT session_json FROM generation_supervisor_advisor_sessions \
+         WHERE run_id = ? AND id <> ? ORDER BY created_at, id",
+    )
+    .bind(current.supervisor_run_id)
+    .bind(current.id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(sql_error)?;
+    let mut usage = SupervisorUsage::default();
+    for payload in payloads {
+        let session: AdvisorSession = decode(&payload)?;
+        session.validate()?;
+        usage = usage.checked_add(&supervisor_usage(&session))?;
+    }
+    usage = usage.checked_add(&supervisor_usage(current))?;
+    SupervisorUsage::default().reserve(&usage, contract)?;
+    Ok(())
+}
+
+fn supervisor_usage(session: &AdvisorSession) -> SupervisorUsage {
+    SupervisorUsage {
+        pi_model_turns: session.usage.model_turns,
+        pi_tool_calls: session.usage.tool_calls,
+        pi_input_tokens: session.usage.input_tokens,
+        pi_output_tokens: session.usage.output_tokens,
+        cost_microunits: session.usage.cost_microunits.unwrap_or(0),
+        ..SupervisorUsage::default()
+    }
 }
 
 fn encode<T: Serialize>(value: &T) -> Result<String, SupervisorError> {

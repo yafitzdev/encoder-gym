@@ -101,7 +101,47 @@ impl GenerationSupervisorAdvisorRunner {
             })?;
         self.validate_identity(&session, &brief)?;
 
-        let model_calls = (1..=brief.contract.budgets.maximum_pi_model_turns)
+        let sessions = self.store.list_sessions(brief.supervisor_run_id).await?;
+        let prior_sessions = sessions
+            .iter()
+            .filter(|value| value.id != session.id)
+            .collect::<Vec<_>>();
+        let mut reserved_turns = 0_u32;
+        for prior in &prior_sessions {
+            reserved_turns = reserved_turns
+                .checked_add(
+                    u32::try_from(self.store.list_model_calls(prior.id).await?.len()).map_err(
+                        |_| RunnerError::Validation("model-call count exceeds u32".into()),
+                    )?,
+                )
+                .ok_or_else(|| {
+                    RunnerError::Validation("model-call reservations overflow".into())
+                })?;
+        }
+        let remaining_turns = brief
+            .contract
+            .budgets
+            .maximum_pi_model_turns
+            .checked_sub(reserved_turns)
+            .ok_or_else(|| {
+                RunnerError::Domain(SupervisorError::BudgetExhausted(
+                    "advisor model-turn reservations exceed the quality contract".into(),
+                ))
+            })?;
+        if remaining_turns == 0 {
+            return Err(RunnerError::Domain(SupervisorError::BudgetExhausted(
+                "advisor model-turn budget is exhausted".into(),
+            )));
+        }
+        let remaining_sessions = brief
+            .contract
+            .budgets
+            .maximum_prompt_revisions
+            .max(1)
+            .saturating_sub(u32::try_from(prior_sessions.len()).unwrap_or(u32::MAX))
+            .max(1);
+        let maximum_model_turns = remaining_turns.div_ceil(remaining_sessions).max(1);
+        let model_calls = (1..=maximum_model_turns)
             .map(|sequence| {
                 AdvisorModelCall::reserve(
                     Uuid::new_v4(),
@@ -133,7 +173,7 @@ impl GenerationSupervisorAdvisorRunner {
             system_prompt: SUPERVISOR_ADVISOR_SYSTEM_PROMPT.into(),
             initial_prompt: INITIAL_PROMPT_TEMPLATE
                 .replace("{brief}", &serde_json::to_string_pretty(&brief)?),
-            max_model_turns: brief.contract.budgets.maximum_pi_model_turns,
+            max_model_turns: maximum_model_turns,
         };
         let mut agent = match self.runtime.start(request).await {
             Ok(agent) => agent,

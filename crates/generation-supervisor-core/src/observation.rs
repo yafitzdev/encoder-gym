@@ -58,6 +58,8 @@ pub struct AssessmentEvidence {
     pub generator_relationship: GeneratorEvaluatorRelationship,
     pub provider_verdict: QualityVerdict,
     pub assigned_label_score: BasisPoints,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strongest_competing_label: Option<String>,
     pub assigned_label_margin: i32,
     pub assigned_dimension_scores: BTreeMap<String, BasisPoints>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -106,6 +108,7 @@ impl AssessmentEvidence {
             generator_relationship: assessment.generator_relationship,
             provider_verdict: assessment.verdict,
             assigned_label_score: assessment.assigned_label_score,
+            strongest_competing_label: assessment.strongest_competing_label.clone(),
             assigned_label_margin: assessment.assigned_label_margin,
             assigned_dimension_scores: assessment.assigned_dimension_scores.clone(),
             difficulty_score,
@@ -330,9 +333,10 @@ impl RowQualityObservation {
         if evidence.assigned_label_score < thresholds.minimum_assigned_label_score {
             failures.insert(RowCriterionFailure::AssignedLabel);
         }
-        if evidence.assigned_label_margin < 0
-            || u16::try_from(evidence.assigned_label_margin)
-                .map_or(true, |value| value < thresholds.minimum_label_margin.get())
+        if evidence.strongest_competing_label.is_some()
+            && (evidence.assigned_label_margin < 0
+                || u16::try_from(evidence.assigned_label_margin)
+                    .map_or(true, |value| value < thresholds.minimum_label_margin.get()))
         {
             failures.insert(RowCriterionFailure::LabelMargin);
         }

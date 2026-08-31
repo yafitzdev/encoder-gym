@@ -37,6 +37,11 @@ pub trait SupervisorAdvisorStore: Send + Sync {
         session_id: Uuid,
     ) -> BoxFuture<'_, Result<Option<AdvisorSession>, SupervisorError>>;
 
+    fn list_sessions(
+        &self,
+        supervisor_run_id: Uuid,
+    ) -> BoxFuture<'_, Result<Vec<AdvisorSession>, SupervisorError>>;
+
     fn save_session(&self, session: &AdvisorSession) -> BoxFuture<'_, Result<(), SupervisorError>>;
 
     /// Reserves every possible model turn before the runtime process can make
@@ -90,6 +95,11 @@ pub trait SupervisorAdvisorStore: Send + Sync {
     fn latest_proposal(
         &self,
         session_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<PromptRevisionProposal>, SupervisorError>>;
+
+    fn get_proposal(
+        &self,
+        proposal_id: Uuid,
     ) -> BoxFuture<'_, Result<Option<PromptRevisionProposal>, SupervisorError>>;
 }
 
@@ -262,6 +272,11 @@ pub trait GenerationSupervisorStore: Send + Sync {
         authorization: &PromptRevisionAuthorization,
         candidate_version: &PromptGuidanceVersion,
     ) -> BoxFuture<'_, Result<(), SupervisorError>>;
+
+    fn get_revision_authorization(
+        &self,
+        proposal_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<PromptRevisionAuthorization>, SupervisorError>>;
 
     fn save_revision_activation(
         &self,

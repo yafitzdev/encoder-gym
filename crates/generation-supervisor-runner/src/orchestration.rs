@@ -8,6 +8,7 @@ use std::{
     sync::Arc,
 };
 
+use agent_runtime_core::AgentRuntime;
 use artifact_core::{FingerprintError, fingerprint};
 use chrono::Utc;
 use dataset_core::domain::{SourceProvenance, SourceRow};
@@ -37,6 +38,7 @@ use generation_core::{
 };
 use generation_supervisor_core::{
     SupervisorError,
+    advisor::{AdvisorConfiguration, AdvisorSessionState, GenerationQualityDiagnosisBrief},
     contract::{
         AcceptedCoverageBinding, BaselinePolicy, GenerationQualityContract, MonitoringScope,
     },
@@ -46,16 +48,21 @@ use generation_supervisor_core::{
         SupervisorRunEvent, SupervisorRunState, SupervisorUsage,
     },
     observation::{
-        AssessmentEvidence, BatchQualityObservation, QualityScope, QualityWindowKind,
-        RowQualityObservation,
+        AssessmentEvidence, BatchQualityObservation, ContractRowVerdict, QualityScope,
+        QualityWindowKind, RowQualityObservation, StructuralOutcome,
     },
-    ports::{GenerationSupervisorStore, SupervisorIntegrityReport},
-    revision::PromptGuidanceVersion,
+    ports::{GenerationSupervisorStore, SupervisorAdvisorStore, SupervisorIntegrityReport},
+    revision::{
+        PromptGuidanceVersion, PromptRevisionActivation, PromptRevisionAuthorization,
+        PromptRevisionReview, RevisionReviewDecision,
+    },
     strategy::StrategyAssignmentSet,
 };
 use serde::Serialize;
 use thiserror::Error;
 use uuid::Uuid;
+
+use crate::{AdvisorOutcome, GenerationSupervisorAdvisorRunner, RunnerError};
 
 #[derive(Debug, Error)]
 pub enum SupervisorLoopError {
@@ -77,6 +84,8 @@ pub enum SupervisorLoopError {
     QualityRunner(#[from] QualityRunnerError),
     #[error(transparent)]
     Fingerprint(#[from] FingerprintError),
+    #[error(transparent)]
+    Advisor(#[from] RunnerError),
     #[error("generation supervisor metadata was invalid: {0}")]
     Json(#[from] serde_json::Error),
 }
@@ -122,9 +131,28 @@ pub struct SupervisorAdvanceOutcome {
     pub decisions: Vec<DeterministicQualityDecision>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RevisionReviewInput {
+    pub decision: RevisionReviewDecision,
+    pub reviewer: String,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RevisionAuthorizationOutcome {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<PromptRevisionReview>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization: Option<PromptRevisionAuthorization>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_prompt: Option<PromptGuidanceVersion>,
+    pub status: SupervisorStatus,
+}
+
 pub struct GenerationQualitySupervisorRunner {
     generation_store: Arc<dyn GenerationStore>,
     supervisor_store: Arc<dyn GenerationSupervisorStore>,
+    advisor_store: Arc<dyn SupervisorAdvisorStore>,
     quality_store: Arc<dyn DatasetQualityStore>,
     candidates: Arc<dyn QualityCandidateSource>,
     backend: Arc<dyn GenerationBackend>,
@@ -137,6 +165,7 @@ impl GenerationQualitySupervisorRunner {
     pub fn new(
         generation_store: Arc<dyn GenerationStore>,
         supervisor_store: Arc<dyn GenerationSupervisorStore>,
+        advisor_store: Arc<dyn SupervisorAdvisorStore>,
         quality_store: Arc<dyn DatasetQualityStore>,
         candidates: Arc<dyn QualityCandidateSource>,
         backend: Arc<dyn GenerationBackend>,
@@ -160,6 +189,7 @@ impl GenerationQualitySupervisorRunner {
         Ok(Self {
             generation_store,
             supervisor_store,
+            advisor_store,
             quality_store,
             candidates,
             backend,
@@ -374,7 +404,13 @@ impl GenerationQualitySupervisorRunner {
         } else {
             contract.monitoring.rolling_window_rows_per_scope
         };
-        let segment_plan = segment_plan(&master_plan, &coverage, rows_per_cell)?;
+        let segment_plan = segment_plan(
+            &contract,
+            &master_plan,
+            &coverage,
+            &prior_observations,
+            rows_per_cell,
+        )?;
         let requested_rows = segment_plan
             .cells
             .iter()
@@ -406,7 +442,9 @@ impl GenerationQualitySupervisorRunner {
             &prompt,
             &segment_plan,
             &coverage,
+            &prior_observations,
             assignments.as_ref(),
+            &contract,
         )?;
         let job = GenerationJob::queued(
             dataset.id,
@@ -591,11 +629,15 @@ impl GenerationQualitySupervisorRunner {
             .generation_store
             .dataset_cell_counts(dataset.id)
             .await?;
+        let all_observations = self.supervisor_store.list_row_observations(run.id).await?;
+        let effective = effective_coverage(
+            &contract,
+            &master_plan,
+            &refreshed_coverage,
+            &all_observations,
+        );
         let plan_complete = master_plan.cells.iter().all(|planned| {
-            refreshed_coverage
-                .get(&planned.cell.key())
-                .map_or(0, |counts| counts.accepted)
-                >= planned.target_count
+            effective.get(&planned.cell.key()).copied().unwrap_or(0) >= planned.target_count
         });
         let must_pause = decisions.iter().any(|decision| {
             matches!(
@@ -693,6 +735,551 @@ impl GenerationQualitySupervisorRunner {
         self.status(run_id).await
     }
 
+    /// Runs the bounded Pi advisor against one exact redacted pause. The
+    /// deterministic pause remains authoritative; Pi can only propose a
+    /// guidance replacement or escalate.
+    pub async fn diagnose(
+        &self,
+        run_id: Uuid,
+        runtime: Arc<dyn AgentRuntime>,
+        advisor: AdvisorConfiguration,
+    ) -> Result<AdvisorOutcome, SupervisorLoopError> {
+        if self.current_state(run_id).await? != SupervisorRunState::Paused {
+            return Err(SupervisorLoopError::Validation(
+                "only a deterministically paused run can enter diagnosis".into(),
+            ));
+        }
+        let run = self.load_run(run_id).await?;
+        let contract = self.load_contract(run.contract_id).await?;
+        let decision = self
+            .supervisor_store
+            .list_decisions(run_id)
+            .await?
+            .into_iter()
+            .rev()
+            .find(|value| value.state == SupervisorDecisionState::PauseForDiagnosis)
+            .ok_or_else(|| {
+                SupervisorLoopError::Validation(
+                    "paused run has no deterministic diagnosis decision".into(),
+                )
+            })?;
+        let window = self
+            .supervisor_store
+            .get_quality_window(decision.window_id)
+            .await?
+            .ok_or_else(|| {
+                SupervisorLoopError::NotFound(format!("quality window {}", decision.window_id))
+            })?;
+        let prompt = self
+            .supervisor_store
+            .get_prompt_version(decision.prompt_version_id)
+            .await?
+            .ok_or_else(|| {
+                SupervisorLoopError::NotFound(format!(
+                    "prompt version {}",
+                    decision.prompt_version_id
+                ))
+            })?;
+        let brief = GenerationQualityDiagnosisBrief::create(
+            Uuid::new_v4(),
+            run_id,
+            contract,
+            decision,
+            window,
+            prompt,
+            advisor,
+            Utc::now(),
+        )?;
+        self.transition(
+            run_id,
+            SupervisorRunState::Paused,
+            SupervisorRunState::Diagnosing,
+            "bounded Pi diagnosis started from redacted aggregate evidence",
+        )
+        .await?;
+        let runner =
+            GenerationSupervisorAdvisorRunner::new(runtime, Arc::clone(&self.advisor_store));
+        let session = runner.queue(brief).await?;
+        let outcome = match runner.run(session.id).await {
+            Ok(value) => value,
+            Err(error) => {
+                self.transition(
+                    run_id,
+                    SupervisorRunState::Diagnosing,
+                    SupervisorRunState::Failed,
+                    format!("bounded diagnosis failed: {error}"),
+                )
+                .await?;
+                return Err(error.into());
+            }
+        };
+        let (next, reason) = match outcome.session.state {
+            AdvisorSessionState::AwaitingReview if outcome.proposal.is_some() => (
+                SupervisorRunState::AwaitingReview,
+                "Pi proposed a bounded guidance revision awaiting authorization",
+            ),
+            AdvisorSessionState::Escalated => (
+                SupervisorRunState::Paused,
+                "Pi escalated without changing generation guidance",
+            ),
+            AdvisorSessionState::Cancelled => (
+                SupervisorRunState::Cancelled,
+                "bounded diagnosis was cancelled",
+            ),
+            AdvisorSessionState::Failed => (
+                SupervisorRunState::Failed,
+                "bounded diagnosis ended without a valid proposal or escalation",
+            ),
+            state => {
+                return Err(SupervisorLoopError::Validation(format!(
+                    "advisor ended in nonterminal state {state:?}"
+                )));
+            }
+        };
+        self.transition(run_id, SupervisorRunState::Diagnosing, next, reason)
+            .await?;
+        Ok(outcome)
+    }
+
+    /// Appends an optional human review and, when authorized, creates an
+    /// immutable candidate prompt. The candidate is not active until its
+    /// deterministic canary passes.
+    pub async fn authorize_revision(
+        &self,
+        run_id: Uuid,
+        advisor_session_id: Uuid,
+        review_input: Option<RevisionReviewInput>,
+    ) -> Result<RevisionAuthorizationOutcome, SupervisorLoopError> {
+        if self.current_state(run_id).await? != SupervisorRunState::AwaitingReview {
+            return Err(SupervisorLoopError::Validation(
+                "run is not awaiting a prompt revision decision".into(),
+            ));
+        }
+        let session = self
+            .advisor_store
+            .get_session(advisor_session_id)
+            .await?
+            .ok_or_else(|| {
+                SupervisorLoopError::NotFound(format!("advisor session {advisor_session_id}"))
+            })?;
+        if session.supervisor_run_id != run_id
+            || session.state != AdvisorSessionState::AwaitingReview
+        {
+            return Err(SupervisorLoopError::Validation(
+                "advisor session is not the awaiting-review session for this run".into(),
+            ));
+        }
+        let proposal = self
+            .advisor_store
+            .latest_proposal(advisor_session_id)
+            .await?
+            .ok_or_else(|| {
+                SupervisorLoopError::NotFound(format!(
+                    "revision proposal for session {advisor_session_id}"
+                ))
+            })?;
+        let predecessor = self
+            .supervisor_store
+            .latest_revision_review(proposal.id)
+            .await?;
+        let review = review_input
+            .map(|input| {
+                PromptRevisionReview::create(
+                    Uuid::new_v4(),
+                    &proposal,
+                    predecessor.as_ref(),
+                    input.decision,
+                    input.reviewer,
+                    input.rationale,
+                    Utc::now(),
+                )
+            })
+            .transpose()?;
+        if let Some(review) = &review {
+            self.supervisor_store.append_revision_review(review).await?;
+            if review.decision != RevisionReviewDecision::Approve {
+                self.transition(
+                    run_id,
+                    SupervisorRunState::AwaitingReview,
+                    SupervisorRunState::Paused,
+                    "prompt revision was not approved; current prompt remains active",
+                )
+                .await?;
+                return Ok(RevisionAuthorizationOutcome {
+                    review: Some(review.clone()),
+                    authorization: None,
+                    candidate_prompt: None,
+                    status: self.status(run_id).await?,
+                });
+            }
+        }
+        let run = self.load_run(run_id).await?;
+        let contract = self.load_contract(run.contract_id).await?;
+        let parent = self
+            .supervisor_store
+            .get_prompt_version(proposal.parent_prompt_version_id)
+            .await?
+            .ok_or_else(|| {
+                SupervisorLoopError::NotFound(format!(
+                    "parent prompt {}",
+                    proposal.parent_prompt_version_id
+                ))
+            })?;
+        let revision_count = self
+            .supervisor_store
+            .list_prompt_versions(run_id)
+            .await?
+            .into_iter()
+            .filter(|value| value.sequence > 0)
+            .count();
+        if revision_count
+            >= usize::try_from(contract.budgets.maximum_prompt_revisions).unwrap_or(usize::MAX)
+        {
+            return Err(SupervisorLoopError::Supervisor(
+                SupervisorError::BudgetExhausted(
+                    "prompt revision budget is exhausted before authorization".into(),
+                ),
+            ));
+        }
+        let (authorization, candidate) = PromptRevisionAuthorization::authorize(
+            &contract,
+            &proposal,
+            &parent,
+            review.as_ref(),
+            Utc::now(),
+        )?;
+        self.supervisor_store
+            .save_revision_authorization(&authorization, &candidate)
+            .await?;
+        self.transition(
+            run_id,
+            SupervisorRunState::AwaitingReview,
+            SupervisorRunState::Canary,
+            "authorized candidate prompt requires deterministic canary evidence",
+        )
+        .await?;
+        Ok(RevisionAuthorizationOutcome {
+            review,
+            authorization: Some(authorization),
+            candidate_prompt: Some(candidate),
+            status: self.status(run_id).await?,
+        })
+    }
+
+    /// Generates and audits only the candidate prompt's authorized scopes.
+    /// Activation is persisted only when every scoped deterministic decision
+    /// is `RevisionPassed`.
+    pub async fn run_revision_canary(
+        &self,
+        run_id: Uuid,
+    ) -> Result<SupervisorAdvanceOutcome, SupervisorLoopError> {
+        if self.current_state(run_id).await? != SupervisorRunState::Canary {
+            return Err(SupervisorLoopError::Validation(
+                "run is not awaiting a revision canary".into(),
+            ));
+        }
+        let run = self.load_run(run_id).await?;
+        let contract = self.load_contract(run.contract_id).await?;
+        if self.cancel_requested(run_id).await? {
+            self.transition(
+                run_id,
+                SupervisorRunState::Canary,
+                SupervisorRunState::Cancelled,
+                "durable cancellation observed before revision canary I/O",
+            )
+            .await?;
+            return Ok(SupervisorAdvanceOutcome {
+                status: self.status(run_id).await?,
+                generation_job_id: None,
+                quality_audit_run_id: None,
+                decisions: vec![],
+            });
+        }
+        if Utc::now()
+            .signed_duration_since(run.created_at)
+            .num_seconds()
+            .max(0) as u64
+            >= contract.budgets.maximum_duration_seconds
+        {
+            self.transition(
+                run_id,
+                SupervisorRunState::Canary,
+                SupervisorRunState::Failed,
+                "supervisor wall-clock budget was exhausted before revision canary I/O",
+            )
+            .await?;
+            return Ok(SupervisorAdvanceOutcome {
+                status: self.status(run_id).await?,
+                generation_job_id: None,
+                quality_audit_run_id: None,
+                decisions: vec![],
+            });
+        }
+        let dataset = self.load_dataset(contract.dataset.id).await?;
+        let master_plan = self.load_plan(contract.plan.id).await?;
+        self.verify_runtime(&contract, &dataset, &master_plan)?;
+        let candidate = self.candidate_prompt(run_id).await?;
+        let proposal_id = candidate.source_proposal_id.ok_or_else(|| {
+            SupervisorLoopError::Validation("candidate prompt has no source proposal".into())
+        })?;
+        let proposal = self
+            .advisor_store
+            .get_proposal(proposal_id)
+            .await?
+            .ok_or_else(|| {
+                SupervisorLoopError::NotFound(format!("revision proposal {proposal_id}"))
+            })?;
+        let authorization = self
+            .supervisor_store
+            .get_revision_authorization(proposal.id)
+            .await?
+            .ok_or_else(|| {
+                SupervisorLoopError::NotFound(format!(
+                    "revision authorization for proposal {}",
+                    proposal.id
+                ))
+            })?;
+        let assignments = self
+            .supervisor_store
+            .get_strategy_assignments(run_id)
+            .await?;
+        let coverage = self
+            .generation_store
+            .dataset_cell_counts(dataset.id)
+            .await?;
+        let prior_observations = self.supervisor_store.list_row_observations(run.id).await?;
+        let (segment_plan, schedule) = build_canary_inputs(
+            &run,
+            &candidate,
+            &master_plan,
+            &coverage,
+            &prior_observations,
+            assignments.as_ref(),
+            &contract,
+            &proposal.affected_scopes,
+        )?;
+        let requested_rows = segment_plan
+            .cells
+            .iter()
+            .map(|planned| {
+                let accepted = coverage
+                    .get(&planned.cell.key())
+                    .map_or(0, |counts| counts.accepted);
+                u64::from(planned.target_count.saturating_sub(accepted))
+            })
+            .sum::<u64>();
+        if requested_rows == 0 {
+            return Err(SupervisorLoopError::Validation(
+                "revision canary has no authorized rows to generate".into(),
+            ));
+        }
+        let job = GenerationJob::queued(
+            dataset.id,
+            segment_plan.id,
+            self.backend.name(),
+            self.backend.model(),
+            requested_rows,
+        );
+        let novelty_guard = self.novelty_guard()?;
+        let execution = self.generation_execution(
+            &contract,
+            &segment_plan,
+            &coverage,
+            &job,
+            &schedule,
+            novelty_guard.as_ref(),
+        )?;
+        let reserved_generated_rows = requested_rows
+            .checked_mul(u64::from(
+                self.configuration
+                    .generation_policy
+                    .max_attempt_multiplier
+                    .max(1),
+            ))
+            .ok_or_else(|| {
+                SupervisorLoopError::Validation("canary generated-row budget overflowed".into())
+            })?;
+        let reservation = ChildReservation::create(
+            Uuid::new_v4(),
+            run.id,
+            ChildKind::RevisionCanary,
+            format!("revision-canary:{}", candidate.id),
+            job.id,
+            1,
+            None,
+            fingerprint(&(&segment_plan, &job, &execution, &schedule, &authorization))?,
+            Utc::now(),
+        )?
+        .with_reserved_usage(SupervisorUsage {
+            generation_segments: 1,
+            generated_rows: reserved_generated_rows,
+            revision_canaries: 1,
+            ..SupervisorUsage::default()
+        })?;
+        self.supervisor_store.reserve_child(&reservation).await?;
+        self.generation_store.create_plan(&segment_plan).await?;
+        self.generation_store
+            .create_generation_execution(&job, &execution)
+            .await?;
+
+        let generated = match self
+            .job_runner(schedule, novelty_guard)
+            .run(job.id, self.configuration.generation_parameters.clone())
+            .await
+        {
+            Ok(job) if job.state == JobState::Completed => job,
+            Ok(job) => {
+                let reason = job
+                    .error_message
+                    .clone()
+                    .unwrap_or_else(|| format!("revision canary ended in {:?}", job.state));
+                self.finish_failed_child(&reservation, child_state(job.state), reason.clone())
+                    .await?;
+                self.transition(
+                    run.id,
+                    SupervisorRunState::Canary,
+                    if job.state == JobState::Cancelled {
+                        SupervisorRunState::Cancelled
+                    } else {
+                        SupervisorRunState::Failed
+                    },
+                    reason,
+                )
+                .await?;
+                return Ok(SupervisorAdvanceOutcome {
+                    status: self.status(run.id).await?,
+                    generation_job_id: Some(job.id),
+                    quality_audit_run_id: None,
+                    decisions: vec![],
+                });
+            }
+            Err(error) => {
+                let reason = error.to_string();
+                self.finish_failed_child(&reservation, ChildOutcomeState::Failed, reason.clone())
+                    .await?;
+                self.transition(
+                    run.id,
+                    SupervisorRunState::Canary,
+                    SupervisorRunState::Failed,
+                    reason,
+                )
+                .await?;
+                return Ok(SupervisorAdvanceOutcome {
+                    status: self.status(run.id).await?,
+                    generation_job_id: Some(job.id),
+                    quality_audit_run_id: None,
+                    decisions: vec![],
+                });
+            }
+        };
+        self.supervisor_store
+            .finish_child(&ChildOutcome::record(
+                Uuid::new_v4(),
+                &reservation,
+                ChildOutcomeState::Succeeded,
+                Some((generated.id, fingerprint(&generated)?)),
+                None,
+                Utc::now(),
+            )?)
+            .await?;
+        let generated_rows = self.list_job_rows(generated.id).await?;
+        let accepted_ids = generated_rows
+            .iter()
+            .filter(|row| row.validation_status == ValidationStatus::Accepted)
+            .map(|row| row.id)
+            .collect::<Vec<_>>();
+        let source_rows = if accepted_ids.is_empty() {
+            vec![]
+        } else {
+            self.candidates
+                .get_source_rows(dataset.id, accepted_ids)
+                .await?
+        };
+        verify_segment_sources(generated.id, &source_rows)?;
+        let (quality_run_id, assessments) = if source_rows.is_empty() {
+            (None, vec![])
+        } else {
+            match self
+                .audit_segment(&run, &contract, &dataset, source_rows.clone())
+                .await
+            {
+                Ok(value) => value,
+                Err(error) => {
+                    self.transition(
+                        run.id,
+                        SupervisorRunState::Canary,
+                        SupervisorRunState::Failed,
+                        format!("revision canary quality audit failed: {error}"),
+                    )
+                    .await?;
+                    return Ok(SupervisorAdvanceOutcome {
+                        status: self.status(run.id).await?,
+                        generation_job_id: Some(generated.id),
+                        quality_audit_run_id: None,
+                        decisions: vec![],
+                    });
+                }
+            }
+        };
+        let observations = build_row_observations(
+            &contract,
+            &run,
+            &candidate,
+            generated.id,
+            &generated_rows,
+            &source_rows,
+            &assessments,
+            assignments.as_ref(),
+        )?;
+        self.supervisor_store
+            .save_row_observations(&observations)
+            .await?;
+        let decisions = self
+            .persist_windows_and_decisions(&contract, &run, &candidate, &observations, true)
+            .await?;
+        let actual_scopes = decisions
+            .iter()
+            .map(|decision| decision.scope.clone())
+            .collect::<BTreeSet<_>>();
+        let passed = actual_scopes == proposal.affected_scopes
+            && decisions
+                .iter()
+                .all(|decision| decision.state == SupervisorDecisionState::RevisionPassed);
+        if passed {
+            let activation = PromptRevisionActivation::create_for_decisions(
+                Uuid::new_v4(),
+                &candidate,
+                &authorization,
+                &decisions,
+                Utc::now(),
+            )?;
+            self.supervisor_store
+                .save_revision_activation(&activation)
+                .await?;
+            self.transition(
+                run.id,
+                SupervisorRunState::Canary,
+                SupervisorRunState::Running,
+                "every authorized revision scope passed; candidate prompt activated",
+            )
+            .await?;
+        } else {
+            self.transition(
+                run.id,
+                SupervisorRunState::Canary,
+                SupervisorRunState::Paused,
+                "revision canary failed or lacked evidence; current prompt remains active",
+            )
+            .await?;
+        }
+        Ok(SupervisorAdvanceOutcome {
+            status: self.status(run.id).await?,
+            generation_job_id: Some(generated.id),
+            quality_audit_run_id: quality_run_id,
+            decisions,
+        })
+    }
+
     /// Fails closed after a host interruption. Started external calls are
     /// marked uncertain and are never replayed by this recovery operation.
     pub async fn recover(&self, run_id: Uuid) -> Result<SupervisorStatus, SupervisorLoopError> {
@@ -764,6 +1351,28 @@ impl GenerationQualitySupervisorRunner {
             .iter()
             .try_fold(SupervisorUsage::default(), |usage, reservation| {
                 usage.checked_add(&reservation.reserved_usage)
+            })?;
+        let sessions = self.advisor_store.list_sessions(run_id).await?;
+        for session in &sessions {
+            usage = usage.checked_add(&SupervisorUsage {
+                pi_model_turns: session.usage.model_turns,
+                pi_tool_calls: session.usage.tool_calls,
+                pi_input_tokens: session.usage.input_tokens,
+                pi_output_tokens: session.usage.output_tokens,
+                cost_microunits: session.usage.cost_microunits.unwrap_or(0),
+                ..SupervisorUsage::default()
+            })?;
+        }
+        usage.prompt_revisions = self
+            .supervisor_store
+            .list_prompt_versions(run_id)
+            .await?
+            .into_iter()
+            .filter(|version| version.sequence > 0)
+            .count()
+            .try_into()
+            .map_err(|_| {
+                SupervisorLoopError::Validation("prompt revision count exceeds u32".into())
             })?;
         usage.elapsed_seconds = Utc::now()
             .signed_duration_since(run.created_at)
@@ -877,7 +1486,18 @@ impl GenerationQualitySupervisorRunner {
             Arc::clone(&self.candidates),
             self.evaluators.clone(),
         )?;
-        let outcome = runner.execute(audit_run.id).await?;
+        let outcome = match runner.execute(audit_run.id).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                self.finish_failed_child(
+                    &reservation,
+                    ChildOutcomeState::Failed,
+                    error.to_string(),
+                )
+                .await?;
+                return Err(error.into());
+            }
+        };
         if outcome.run.state != QualityAuditRunState::Completed {
             let reason = outcome
                 .run
@@ -1283,6 +1903,33 @@ impl GenerationQualitySupervisorRunner {
         )))
     }
 
+    async fn candidate_prompt(
+        &self,
+        run_id: Uuid,
+    ) -> Result<PromptGuidanceVersion, SupervisorLoopError> {
+        let candidate = self
+            .supervisor_store
+            .list_prompt_versions(run_id)
+            .await?
+            .into_iter()
+            .filter(|value| value.sequence > 0 && value.source_proposal_id.is_some())
+            .max_by_key(|value| value.sequence)
+            .ok_or_else(|| {
+                SupervisorLoopError::NotFound(format!("candidate prompt for run {run_id}"))
+            })?;
+        if self
+            .supervisor_store
+            .get_revision_activation(candidate.id)
+            .await?
+            .is_some()
+        {
+            return Err(SupervisorLoopError::Validation(
+                "latest candidate prompt is already active".into(),
+            ));
+        }
+        Ok(candidate)
+    }
+
     async fn cancel_requested(&self, run_id: Uuid) -> Result<bool, SupervisorLoopError> {
         self.supervisor_store
             .supervisor_cancel_requested(run_id)
@@ -1397,10 +2044,13 @@ fn validate_monitoring_support(
 }
 
 fn segment_plan(
+    contract: &GenerationQualityContract,
     master: &GenerationPlan,
     coverage: &BTreeMap<String, generation_core::coverage::CellCounts>,
+    observations: &[RowQualityObservation],
     rows_per_cell: u32,
 ) -> Result<GenerationPlan, SupervisorLoopError> {
+    let effective = effective_coverage(contract, master, coverage, observations);
     let cells = master
         .cells
         .iter()
@@ -1408,11 +2058,14 @@ fn segment_plan(
             let accepted = coverage
                 .get(&planned.cell.key())
                 .map_or(0, |counts| counts.accepted);
+            let qualified = effective.get(&planned.cell.key()).copied().unwrap_or(0);
+            let addition = planned
+                .target_count
+                .saturating_sub(qualified)
+                .min(rows_per_cell);
             PlannedCell {
                 cell: planned.cell.clone(),
-                target_count: accepted
-                    .saturating_add(rows_per_cell)
-                    .min(planned.target_count),
+                target_count: accepted.saturating_add(addition),
             }
         })
         .collect();
@@ -1425,32 +2078,50 @@ fn build_schedule(
     prompt: &PromptGuidanceVersion,
     segment: &GenerationPlan,
     coverage: &BTreeMap<String, generation_core::coverage::CellCounts>,
+    observations: &[RowQualityObservation],
     assignments: Option<&StrategyAssignmentSet>,
+    contract: &GenerationQualityContract,
 ) -> Result<SupervisedGenerationSchedule, SupervisorLoopError> {
-    let assignment_index = assignments
-        .map(|set| {
-            set.assignments
-                .iter()
-                .map(|assignment| {
-                    (
-                        (assignment.cell_key.clone(), assignment.row_sequence),
-                        assignment,
-                    )
-                })
-                .collect::<BTreeMap<_, _>>()
-        })
-        .unwrap_or_default();
+    let qualified_assignments = observations
+        .iter()
+        .filter(|row| row.contract_verdict(contract) == ContractRowVerdict::Qualified)
+        .filter_map(|row| row.strategy_assignment_fingerprint.clone())
+        .collect::<BTreeSet<_>>();
     let mut rows = Vec::new();
     for planned in &segment.cells {
         let cell_key = planned.cell.key();
         let accepted = coverage.get(&cell_key).map_or(0, |counts| counts.accepted);
-        for row_sequence in accepted..planned.target_count {
-            let assignment = assignment_index.get(&(cell_key.clone(), row_sequence));
-            if assignments.is_some() && assignment.is_none() {
-                return Err(SupervisorLoopError::Validation(format!(
-                    "strategy schedule has no assignment for {cell_key} row {row_sequence}"
-                )));
-            }
+        let supervised_accepted = observations
+            .iter()
+            .filter(|row| {
+                row.cell_key == cell_key && row.structural_outcome == StructuralOutcome::Accepted
+            })
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX);
+        let starting = accepted.saturating_sub(supervised_accepted);
+        let pending = assignments
+            .map(|set| {
+                set.assignments
+                    .iter()
+                    .filter(|assignment| {
+                        assignment.cell_key == cell_key
+                            && assignment.row_sequence >= starting
+                            && !qualified_assignments.contains(&assignment.fingerprint)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for (offset, row_sequence) in (accepted..planned.target_count).enumerate() {
+            let assignment = if assignments.is_some() {
+                Some(*pending.get(offset).ok_or_else(|| {
+                    SupervisorLoopError::Validation(format!(
+                        "strategy schedule has no remaining assignment for {cell_key} replacement row {row_sequence}"
+                    ))
+                })?)
+            } else {
+                None
+            };
             rows.push(SupervisedRowGuidance {
                 cell_key: cell_key.clone(),
                 row_sequence,
@@ -1471,6 +2142,186 @@ fn build_schedule(
         rows,
     )
     .map_err(|error| SupervisorLoopError::Validation(error.to_string()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_canary_inputs(
+    run: &SupervisorRun,
+    prompt: &PromptGuidanceVersion,
+    master: &GenerationPlan,
+    coverage: &BTreeMap<String, generation_core::coverage::CellCounts>,
+    observations: &[RowQualityObservation],
+    assignments: Option<&StrategyAssignmentSet>,
+    contract: &GenerationQualityContract,
+    affected_scopes: &BTreeSet<QualityScope>,
+) -> Result<(GenerationPlan, SupervisedGenerationSchedule), SupervisorLoopError> {
+    if affected_scopes.is_empty() {
+        return Err(SupervisorLoopError::Validation(
+            "revision canary requires at least one affected scope".into(),
+        ));
+    }
+    let qualified_assignments = observations
+        .iter()
+        .filter(|row| row.contract_verdict(contract) == ContractRowVerdict::Qualified)
+        .filter_map(|row| row.strategy_assignment_fingerprint.clone())
+        .collect::<BTreeSet<_>>();
+    let mut selected_fingerprints = BTreeSet::new();
+    let mut selected = BTreeMap::<
+        String,
+        Vec<Option<&generation_supervisor_core::strategy::StrategyAssignment>>,
+    >::new();
+    for scope in affected_scopes {
+        let cell_key = scope.cell_key();
+        if !master
+            .cells
+            .iter()
+            .any(|planned| planned.cell.key() == cell_key)
+        {
+            return Err(SupervisorLoopError::Validation(format!(
+                "revision scope references a cell outside the master plan: {cell_key}"
+            )));
+        }
+        let required = usize::try_from(contract.monitoring.revision_canary_rows_per_scope)
+            .unwrap_or(usize::MAX);
+        if let Some(assignments) = assignments {
+            let raw_accepted = coverage.get(cell_key).map_or(0, |counts| counts.accepted);
+            let supervised_accepted = observations
+                .iter()
+                .filter(|row| {
+                    row.cell_key == cell_key
+                        && row.structural_outcome == StructuralOutcome::Accepted
+                })
+                .count()
+                .try_into()
+                .unwrap_or(u32::MAX);
+            let starting = raw_accepted.saturating_sub(supervised_accepted);
+            let candidates = assignments
+                .assignments
+                .iter()
+                .filter(|assignment| {
+                    assignment.cell_key == cell_key
+                        && assignment.row_sequence >= starting
+                        && !qualified_assignments.contains(&assignment.fingerprint)
+                        && !selected_fingerprints.contains(&assignment.fingerprint)
+                        && match scope {
+                            QualityScope::Cell { .. } => true,
+                            QualityScope::CellStrategy { directive_id, .. } => {
+                                assignment.directive_id == *directive_id
+                            }
+                        }
+                })
+                .take(required)
+                .collect::<Vec<_>>();
+            if candidates.len() != required {
+                return Err(SupervisorLoopError::Validation(format!(
+                    "revision scope {cell_key} has {} unqualified assignments but requires {required} canary rows",
+                    candidates.len()
+                )));
+            }
+            for assignment in candidates {
+                selected_fingerprints.insert(assignment.fingerprint.clone());
+                selected
+                    .entry(cell_key.to_owned())
+                    .or_default()
+                    .push(Some(assignment));
+            }
+        } else {
+            if matches!(scope, QualityScope::CellStrategy { .. }) {
+                return Err(SupervisorLoopError::Validation(
+                    "cell-and-strategy canary has no exact assignment set".into(),
+                ));
+            }
+            selected
+                .entry(cell_key.to_owned())
+                .or_default()
+                .extend(std::iter::repeat_n(None, required));
+        }
+    }
+    let cells = master
+        .cells
+        .iter()
+        .map(|planned| {
+            let cell_key = planned.cell.key();
+            let raw_accepted = coverage.get(&cell_key).map_or(0, |counts| counts.accepted);
+            let addition = selected
+                .get(&cell_key)
+                .map_or(0, |values| u32::try_from(values.len()).unwrap_or(u32::MAX));
+            PlannedCell {
+                cell: planned.cell.clone(),
+                target_count: raw_accepted.saturating_add(addition),
+            }
+        })
+        .collect();
+    let plan = GenerationPlan::new(master.dataset_id, cells)
+        .map_err(|error| SupervisorLoopError::Validation(error.to_string()))?;
+    let mut rows = Vec::new();
+    for planned in &plan.cells {
+        let cell_key = planned.cell.key();
+        let raw_accepted = coverage.get(&cell_key).map_or(0, |counts| counts.accepted);
+        for (offset, assignment) in selected.get(&cell_key).into_iter().flatten().enumerate() {
+            rows.push(SupervisedRowGuidance {
+                cell_key: cell_key.clone(),
+                row_sequence: raw_accepted
+                    .saturating_add(u32::try_from(offset).unwrap_or(u32::MAX)),
+                strategy_assignment_fingerprint: assignment.map(|value| value.fingerprint.clone()),
+                strategy_directive_id: assignment.and_then(|value| value.directive_id),
+                strategy_instructions: assignment
+                    .map(|value| value.instructions.clone())
+                    .unwrap_or_default(),
+            });
+        }
+    }
+    let schedule = SupervisedGenerationSchedule::create(
+        run.id,
+        prompt.id,
+        prompt.fingerprint.clone(),
+        prompt.guidance.clone(),
+        assignments.map(|set| (set.id, set.fingerprint.clone())),
+        rows,
+    )
+    .map_err(|error| SupervisorLoopError::Validation(error.to_string()))?;
+    Ok((plan, schedule))
+}
+
+fn effective_coverage(
+    contract: &GenerationQualityContract,
+    master: &GenerationPlan,
+    coverage: &BTreeMap<String, generation_core::coverage::CellCounts>,
+    observations: &[RowQualityObservation],
+) -> BTreeMap<String, u32> {
+    master
+        .cells
+        .iter()
+        .map(|planned| {
+            let cell_key = planned.cell.key();
+            let raw_accepted = coverage.get(&cell_key).map_or(0, |counts| counts.accepted);
+            let supervised_accepted = observations
+                .iter()
+                .filter(|row| {
+                    row.cell_key == cell_key
+                        && row.structural_outcome == StructuralOutcome::Accepted
+                })
+                .count()
+                .try_into()
+                .unwrap_or(u32::MAX);
+            let starting_accepted = raw_accepted.saturating_sub(supervised_accepted);
+            let qualified_rows = observations.iter().filter(|row| {
+                row.cell_key == cell_key
+                    && row.contract_verdict(contract) == ContractRowVerdict::Qualified
+            });
+            let qualified = if contract.strategy_context.is_some() {
+                qualified_rows
+                    .filter_map(|row| row.strategy_assignment_fingerprint.as_deref())
+                    .collect::<BTreeSet<_>>()
+                    .len()
+            } else {
+                qualified_rows.count()
+            }
+            .try_into()
+            .unwrap_or(u32::MAX);
+            (cell_key, starting_accepted.saturating_add(qualified))
+        })
+        .collect()
 }
 
 fn guidance_references(
