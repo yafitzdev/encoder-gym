@@ -397,6 +397,88 @@ async fn migration_0053_preserves_legacy_workflows_and_guards_qualification_auth
         "bound authority must not be removable"
     );
 
+    let legacy_workflow_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO workflow_definitions \
+         (id, name, dataset_id, project_configuration_id, development_suite_id, \
+          sealed_suite_id, benchmark_bundle_id, artifact_json, fingerprint, created_at) \
+         VALUES (?, 'legacy workflow for preparation', ?, ?, ?, NULL, NULL, '{}', ?, ?)",
+    )
+    .bind(legacy_workflow_id)
+    .bind(dataset_id)
+    .bind(configuration_id)
+    .bind(suite_id)
+    .bind("sha256:legacy-workflow-for-preparation")
+    .bind(now)
+    .execute(&mut connection)
+    .await
+    .expect("legacy workflow for preparation");
+    let preparation_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO project_preparations \
+         (id, name, manifest_fingerprint, dataset_id, project_configuration_id, \
+          development_suite_id, sealed_suite_id, benchmark_bundle_id, workflow_definition_id, \
+          artifact_json, fingerprint, created_at) \
+         VALUES (?, 'legacy preparation', ?, ?, ?, ?, NULL, NULL, ?, '{}', ?, ?)",
+    )
+    .bind(preparation_id)
+    .bind("sha256:legacy-preparation")
+    .bind(dataset_id)
+    .bind(configuration_id)
+    .bind(suite_id)
+    .bind(legacy_workflow_id)
+    .bind("sha256:legacy-preparation-artifact")
+    .bind(now)
+    .execute(&mut connection)
+    .await
+    .expect("legacy preparation");
+    let bound_preparation_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO project_preparations \
+         (id, name, manifest_fingerprint, dataset_id, project_configuration_id, \
+          development_suite_id, sealed_suite_id, benchmark_bundle_id, \
+          benchmark_qualification_id, benchmark_qualification_review_id, workflow_definition_id, \
+          artifact_json, fingerprint, created_at) \
+         VALUES (?, 'bound preparation', ?, ?, ?, ?, NULL, ?, ?, ?, ?, '{}', ?, ?)",
+    )
+    .bind(bound_preparation_id)
+    .bind("sha256:bound-preparation")
+    .bind(dataset_id)
+    .bind(configuration_id)
+    .bind(suite_id)
+    .bind(bundle_id)
+    .bind(qualification_id)
+    .bind(review_id)
+    .bind(workflow_id)
+    .bind("sha256:bound-preparation-artifact")
+    .bind(now)
+    .execute(&mut connection)
+    .await
+    .expect("bound preparation");
+    assert!(
+        sqlx::query(
+            "UPDATE project_preparations SET benchmark_qualification_id = ? \
+             WHERE id = ?",
+        )
+        .bind(qualification_id)
+        .bind(preparation_id)
+        .execute(&mut connection)
+        .await
+        .is_err(),
+        "partial preparation authority must be rejected"
+    );
+    assert!(
+        sqlx::query(
+            "UPDATE project_preparations SET benchmark_qualification_id = NULL, \
+             benchmark_qualification_review_id = NULL WHERE id = ?",
+        )
+        .bind(bound_preparation_id)
+        .execute(&mut connection)
+        .await
+        .is_err(),
+        "bound preparation authority must not be removable"
+    );
+
     let blocked_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO workflow_benchmark_qualifications \

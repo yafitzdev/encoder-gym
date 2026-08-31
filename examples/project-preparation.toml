@@ -28,6 +28,20 @@ batch_size = 20
 backend = "fake"
 model = "deterministic-v1"
 
+[benchmark_qualification]
+reviewed_by = "project owner"
+approval_rationale = "The benchmark meets the declared support and diversity policy for this workflow."
+
+[benchmark_qualification.policy]
+minimum_overall_support = 100
+minimum_label_support = 20
+confidence = "ninety_five"
+maximum_proportion_margin_of_error = 0.10
+maximum_normalized_duplicate_rate = 0.01
+minimum_distinct_producers = 1
+maximum_single_producer_share = 1.0
+maximum_label_imbalance_ratio = 10.0
+
 [development]
 name = "support-development"
 required_model_formats = []

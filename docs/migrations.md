@@ -164,6 +164,10 @@ applied automatically when the SQLite store connects.
   definition's exact benchmark bundle, a `ready` qualification, and its
   explicit `approve` review; partial, invalid, or subsequently changed
   authority is rejected by database triggers and revalidated by the adapter.
+- `0054_preparation_benchmark_qualification`: nullable qualification and review
+  pins on preparation summaries, linked to the exact workflow-definition
+  authority. Legacy preparations remain readable; bound summaries are
+  immutable and cannot be partially populated or detached from their workflow.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

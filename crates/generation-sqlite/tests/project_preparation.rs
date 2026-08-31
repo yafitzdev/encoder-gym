@@ -13,8 +13,9 @@ use dataset_core::{
 use generation_core::ports::DatasetStore;
 use project_config::{ProjectConfig, ProjectOverrides};
 use project_preparation::{
-    CohortEvidence, CohortManifest, ContaminationManifest, PreparationEvidence,
-    PreparationManifest, PreparationStore, SuiteManifest, WorkflowManifest, compile_project,
+    BenchmarkQualificationManifest, CohortEvidence, CohortManifest, ContaminationManifest,
+    PreparationEvidence, PreparationManifest, PreparationStore, SuiteManifest, WorkflowManifest,
+    compile_project,
 };
 use synthetic_data_sqlite::SqliteStore;
 use training_core::{
@@ -29,8 +30,8 @@ use workflow_core::{
     benchmark::{AcceptanceContract, BenchmarkMetric, MetricRequirement, MetricTarget},
     benchmark_qualification::{
         BenchmarkQualificationPolicy, BenchmarkQualificationReviewDecision,
-        BenchmarkQualificationReviewRequest, BenchmarkReadiness, QualificationPopulation,
-        qualify_benchmark_bundle, review_benchmark_qualification,
+        BenchmarkQualificationReviewRequest, BenchmarkReadiness, QualificationConfidence,
+        QualificationPopulation, qualify_benchmark_bundle, review_benchmark_qualification,
     },
     contamination::{
         CohortContaminationInput, ContaminationKind, ContaminationMember, ContaminationPolicy,
@@ -180,7 +181,13 @@ async fn benchmark_qualification_is_recomputed_from_snapshot_evidence() {
     );
 
     sqlx::query("UPDATE dataset_snapshot_members SET label = 'fraud' WHERE id = ?")
-        .bind(members[0].id)
+        .bind(
+            members
+                .iter()
+                .find(|member| member.label == "billing")
+                .expect("billing member")
+                .id,
+        )
         .execute(store.pool())
         .await
         .expect("tamper population");
@@ -435,34 +442,60 @@ async fn legacy_workflow_definition_provenance_remains_readable_without_a_bundle
         .expect("preparation persists");
 
     let mut legacy = bundle.workflow_definition.clone();
+    legacy.id = Uuid::new_v4();
     legacy.benchmark_bundle = None;
+    legacy.benchmark_qualification = None;
     legacy.fingerprint = legacy
         .reproduce_fingerprint()
         .expect("legacy fingerprint reproduces");
     sqlx::query(
-        "UPDATE workflow_definitions SET benchmark_bundle_id = NULL, artifact_json = ?, \
-         fingerprint = ? WHERE id = ?",
+        "INSERT INTO workflow_definitions \
+         (id, name, dataset_id, project_configuration_id, development_suite_id, \
+          sealed_suite_id, benchmark_bundle_id, artifact_json, fingerprint, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
     )
+    .bind(legacy.id)
+    .bind(&legacy.name)
+    .bind(legacy.dataset_id)
+    .bind(legacy.project_configuration_id)
+    .bind(legacy.development_suite_id)
+    .bind(legacy.sealed_suite_id)
     .bind(serde_json::to_string(&legacy).expect("legacy definition JSON"))
     .bind(&legacy.fingerprint)
-    .bind(legacy.id)
+    .bind(legacy.created_at)
     .execute(store.pool())
     .await
     .expect("install legacy definition shape");
 
     let mut legacy_preparation = bundle.preparation.clone();
+    legacy_preparation.id = Uuid::new_v4();
+    legacy_preparation.manifest_fingerprint = "sha256:legacy-manifest".into();
+    legacy_preparation.workflow_definition_id = legacy.id;
     legacy_preparation.benchmark_bundle_id = None;
     legacy_preparation.benchmark_bundle_fingerprint = None;
+    legacy_preparation.benchmark_qualification_id = None;
+    legacy_preparation.benchmark_qualification_fingerprint = None;
+    legacy_preparation.benchmark_qualification_review_id = None;
+    legacy_preparation.benchmark_qualification_review_fingerprint = None;
     legacy_preparation.fingerprint = legacy_preparation
         .reproduce_fingerprint()
         .expect("legacy preparation fingerprint reproduces");
     sqlx::query(
-        "UPDATE project_preparations SET benchmark_bundle_id = NULL, artifact_json = ?, \
-         fingerprint = ? WHERE id = ?",
+        "INSERT INTO project_preparations \
+         (id, name, manifest_fingerprint, dataset_id, project_configuration_id, \
+          development_suite_id, sealed_suite_id, benchmark_bundle_id, workflow_definition_id, \
+          artifact_json, fingerprint, created_at) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)",
     )
+    .bind(legacy_preparation.id)
+    .bind(&legacy_preparation.name)
+    .bind(&legacy_preparation.manifest_fingerprint)
+    .bind(legacy_preparation.dataset_id)
+    .bind(legacy_preparation.project_configuration_id)
+    .bind(legacy_preparation.development_suite_id)
+    .bind(legacy_preparation.workflow_definition_id)
     .bind(serde_json::to_string(&legacy_preparation).expect("legacy preparation JSON"))
     .bind(&legacy_preparation.fingerprint)
-    .bind(legacy_preparation.id)
+    .bind(legacy_preparation.created_at)
     .execute(store.pool())
     .await
     .expect("install legacy preparation shape");
@@ -551,10 +584,10 @@ async fn contamination_persistence_rejects_a_self_consistent_fake_clean_report_f
             .expect("updated sealed snapshot fingerprint");
     sqlx::query(
         "UPDATE dataset_snapshot_members SET dimensions_json = ? \
-         WHERE snapshot_id = ? AND split = 'test'",
+         WHERE id = ?",
     )
     .bind(r#"{"style":"clean"}"#)
-    .bind(sealed_snapshot_id)
+    .bind(sealed_evidence.members[0].id)
     .execute(store.pool())
     .await
     .expect("persist group overlap");
@@ -1083,6 +1116,30 @@ async fn fixture(store: &SqliteStore) -> (PreparationManifest, PreparationEviden
     .execute(store.pool())
     .await
     .expect("source row");
+    let second_source_row_id = Uuid::new_v4();
+    let second_provenance = SourceProvenance::Imported {
+        import_id: Uuid::new_v4(),
+        source_path: "benchmark.jsonl".into(),
+        source_row_number: 2,
+    };
+    sqlx::query(
+        "INSERT INTO dataset_source_rows \
+         (id, dataset_id, source_kind, source_ref, cell_key, text, normalized_text, label, \
+          dimensions_json, provenance_json, created_at) VALUES (?, ?, 'imported', ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(second_source_row_id)
+    .bind(source_dataset.id)
+    .bind(second_source_row_id.to_string())
+    .bind("fraud/style=messy")
+    .bind("I do not recognize this transfer.")
+    .bind("i do not recognize this transfer.")
+    .bind("fraud")
+    .bind(r#"{"style":"messy"}"#)
+    .bind(serde_json::to_string(&second_provenance).expect("provenance"))
+    .bind(now)
+    .execute(store.pool())
+    .await
+    .expect("second source row");
     let snapshot_id = Uuid::new_v4();
     let mut snapshot = DatasetSnapshot {
         id: snapshot_id,
@@ -1093,7 +1150,7 @@ async fn fixture(store: &SqliteStore) -> (PreparationManifest, PreparationEviden
             SplitRatios::new(0.0, 0.0, 1.0).expect("ratios"),
             42,
         ),
-        member_count: 1,
+        member_count: 2,
         fingerprint: "sha256:development".into(),
         created_at: now,
     };
@@ -1109,10 +1166,25 @@ async fn fixture(store: &SqliteStore) -> (PreparationManifest, PreparationEviden
         source_provenance: provenance,
         source_created_at: now,
     };
-    snapshot.fingerprint = reproduce_snapshot_fingerprint(&snapshot, std::slice::from_ref(&member))
+    let second_member = SnapshotMember {
+        id: Uuid::new_v4(),
+        snapshot_id,
+        source_row_id: second_source_row_id,
+        split: SnapshotSplit::Test,
+        text: "I do not recognize this transfer.".into(),
+        label: "fraud".into(),
+        dimensions: BTreeMap::from([("style".into(), "messy".into())]),
+        fields: BTreeMap::new(),
+        source_provenance: second_provenance,
+        source_created_at: now,
+    };
+    let members = vec![member, second_member];
+    let mut members = members;
+    members.sort_by_key(|member| member.source_row_id);
+    snapshot.fingerprint = reproduce_snapshot_fingerprint(&snapshot, &members)
         .expect("development snapshot fingerprint");
     store
-        .create_snapshot(&snapshot, std::slice::from_ref(&member))
+        .create_snapshot(&snapshot, &members)
         .await
         .expect("snapshot");
     let manifest = PreparationManifest {
@@ -1120,6 +1192,20 @@ async fn fixture(store: &SqliteStore) -> (PreparationManifest, PreparationEviden
         name: "support encoder".into(),
         project,
         contamination: ContaminationManifest::default(),
+        benchmark_qualification: BenchmarkQualificationManifest {
+            policy: BenchmarkQualificationPolicy {
+                minimum_overall_support: 2,
+                minimum_label_support: 1,
+                confidence: QualificationConfidence::Eighty,
+                maximum_proportion_margin_of_error: 0.49,
+                maximum_normalized_duplicate_rate: 0.0,
+                minimum_distinct_producers: 1,
+                maximum_single_producer_share: 1.0,
+                maximum_label_imbalance_ratio: 1.0,
+            },
+            reviewed_by: "test operator".into(),
+            approval_rationale: "fixture satisfies its explicit readiness policy".into(),
+        },
         development: SuiteManifest {
             name: "development".into(),
             required_model_formats: Vec::new(),
@@ -1185,7 +1271,7 @@ async fn fixture(store: &SqliteStore) -> (PreparationManifest, PreparationEviden
                 CohortEvidence {
                     snapshot,
                     source_dataset,
-                    members: vec![member],
+                    members,
                 },
             )]),
         },
@@ -1215,16 +1301,40 @@ async fn sealed_fixture(store: &SqliteStore) -> (PreparationManifest, Preparatio
     .bind(source_row_id)
     .bind(development.source_dataset.id)
     .bind(source_row_id.to_string())
-    .bind("fraud/style=messy")
+    .bind("fraud/style=other")
     .bind("A transfer I do not recognize appeared today.")
     .bind("A transfer I do not recognize appeared today.")
     .bind("fraud")
-    .bind(r#"{"style":"messy"}"#)
+    .bind(r#"{"style":"other"}"#)
     .bind(serde_json::to_string(&source_provenance).expect("provenance JSON"))
     .bind(now)
     .execute(store.pool())
     .await
     .expect("sealed source row");
+    let second_source_row_id = Uuid::new_v4();
+    let second_source_provenance = SourceProvenance::Imported {
+        import_id: Uuid::new_v4(),
+        source_path: "sealed.jsonl".into(),
+        source_row_number: 2,
+    };
+    sqlx::query(
+        "INSERT INTO dataset_source_rows \
+         (id, dataset_id, source_kind, source_ref, cell_key, text, normalized_text, label, \
+          dimensions_json, provenance_json, created_at) VALUES (?, ?, 'imported', ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(second_source_row_id)
+    .bind(development.source_dataset.id)
+    .bind(second_source_row_id.to_string())
+    .bind("billing/style=other")
+    .bind("Please explain the fee on my invoice.")
+    .bind("please explain the fee on my invoice.")
+    .bind("billing")
+    .bind(r#"{"style":"other"}"#)
+    .bind(serde_json::to_string(&second_source_provenance).expect("provenance JSON"))
+    .bind(now)
+    .execute(store.pool())
+    .await
+    .expect("second sealed source row");
 
     let snapshot_id = Uuid::new_v4();
     let mut snapshot = DatasetSnapshot {
@@ -1236,7 +1346,7 @@ async fn sealed_fixture(store: &SqliteStore) -> (PreparationManifest, Preparatio
             SplitRatios::new(0.0, 0.0, 1.0).expect("ratios"),
             43,
         ),
-        member_count: 1,
+        member_count: 2,
         fingerprint: "sha256:sealed".into(),
         created_at: now,
     };
@@ -1247,15 +1357,30 @@ async fn sealed_fixture(store: &SqliteStore) -> (PreparationManifest, Preparatio
         split: SnapshotSplit::Test,
         text: "A transfer I do not recognize appeared today.".into(),
         label: "fraud".into(),
-        dimensions: BTreeMap::from([("style".into(), "messy".into())]),
+        dimensions: BTreeMap::from([("style".into(), "other".into())]),
         fields: BTreeMap::new(),
         source_provenance,
         source_created_at: now,
     };
-    snapshot.fingerprint = reproduce_snapshot_fingerprint(&snapshot, std::slice::from_ref(&member))
-        .expect("sealed snapshot fingerprint");
+    let second_member = SnapshotMember {
+        id: Uuid::new_v4(),
+        snapshot_id,
+        source_row_id: second_source_row_id,
+        split: SnapshotSplit::Test,
+        text: "Please explain the fee on my invoice.".into(),
+        label: "billing".into(),
+        dimensions: BTreeMap::from([("style".into(), "other".into())]),
+        fields: BTreeMap::new(),
+        source_provenance: second_source_provenance,
+        source_created_at: now,
+    };
+    let members = vec![member, second_member];
+    let mut members = members;
+    members.sort_by_key(|member| member.source_row_id);
+    snapshot.fingerprint =
+        reproduce_snapshot_fingerprint(&snapshot, &members).expect("sealed snapshot fingerprint");
     store
-        .create_snapshot(&snapshot, std::slice::from_ref(&member))
+        .create_snapshot(&snapshot, &members)
         .await
         .expect("sealed snapshot");
     evidence.cohorts.insert(
@@ -1263,7 +1388,7 @@ async fn sealed_fixture(store: &SqliteStore) -> (PreparationManifest, Preparatio
         CohortEvidence {
             snapshot,
             source_dataset: development.source_dataset,
-            members: vec![member],
+            members,
         },
     );
     manifest.sealed = Some(SuiteManifest {

@@ -94,28 +94,18 @@ fn manifest_previews_prepares_idempotently_and_yields_a_startable_workflow() {
     let shown = run_json(&database_url, ["project", "show", preparation_id]);
     assert_eq!(shown["workflow_definition"]["id"], definition_id);
 
+    let qualification_id = created["preparation"]["benchmark_qualification_id"]
+        .as_str()
+        .expect("qualification ID");
+    let review_id = created["preparation"]["benchmark_qualification_review_id"]
+        .as_str()
+        .expect("qualification review ID");
     let qualification = run_json(
         &database_url,
-        ["benchmark", "qualification-create", bundle_id],
+        ["benchmark", "qualification-show", qualification_id],
     );
     assert_eq!(qualification["benchmark_bundle_id"], bundle_id);
-    assert_eq!(qualification["readiness"], "blocked");
-    assert!(
-        qualification["issues"]
-            .as_array()
-            .expect("qualification issues")
-            .iter()
-            .any(|issue| issue["code"] == "insufficient_support")
-    );
-    let qualification_id = qualification["id"].as_str().expect("qualification ID");
-    assert_eq!(
-        run_json(
-            &database_url,
-            ["benchmark", "qualification-create", bundle_id],
-        )["id"],
-        qualification_id,
-        "same bundle and policy must reuse one immutable calculation"
-    );
+    assert_eq!(qualification["readiness"], "ready");
     assert_eq!(
         run_json(
             &database_url,
@@ -128,7 +118,7 @@ fn manifest_previews_prepares_idempotently_and_yields_a_startable_workflow() {
         ["benchmark", "qualification-validate", qualification_id],
     );
     assert_eq!(validation["valid"], true);
-    assert_eq!(validation["ready"], false);
+    assert_eq!(validation["ready"], true);
     assert_eq!(
         run_json(
             &database_url,
@@ -138,7 +128,7 @@ fn manifest_previews_prepares_idempotently_and_yields_a_startable_workflow() {
                 "--benchmark-bundle-id",
                 bundle_id,
                 "--readiness",
-                "blocked",
+                "ready",
             ],
         )
         .as_array()
@@ -154,21 +144,10 @@ fn manifest_previews_prepares_idempotently_and_yields_a_startable_workflow() {
     assert_eq!(provenance["parents"][0]["kind"], "benchmark_bundle");
     let review = run_json(
         &database_url,
-        [
-            "benchmark",
-            "qualification-review",
-            qualification_id,
-            "--decision",
-            "reject",
-            "--reviewed-by",
-            "project owner",
-            "--rationale",
-            "fixture intentionally lacks decision support",
-        ],
+        ["benchmark", "qualification-review-show", review_id],
     );
-    assert_eq!(review["decision"], "reject");
+    assert_eq!(review["decision"], "approve");
     assert_eq!(review["qualification_id"], qualification_id);
-    let review_id = review["id"].as_str().expect("review ID");
     assert_eq!(
         run_json(
             &database_url,
@@ -225,7 +204,7 @@ fn doctor_verifies_bundle_authority_and_retains_legacy_bindings_for_inspection()
             .bind(definition.id)
             .execute(store.pool())
             .await
-            .expect("legacy definition persisted");
+            .expect_err("bound definition authority must be immutable");
 
             let artifact_json: String =
                 sqlx::query_scalar("SELECT artifact_json FROM project_preparations WHERE id = ?")
@@ -249,17 +228,11 @@ fn doctor_verifies_bundle_authority_and_retains_legacy_bindings_for_inspection()
             .bind(preparation.id)
             .execute(store.pool())
             .await
-            .expect("legacy preparation persisted");
+            .expect_err("bound preparation authority must be immutable");
         })
     });
 
-    let report = assert_doctor_bundle_check(&fixture.database_url, true, "pass");
-    assert!(
-        doctor_check(&report, "benchmark_bundle_facts")["message"]
-            .as_str()
-            .expect("check message")
-            .contains("2 legacy NULL binding(s) retained for inspection and marked non-executable")
-    );
+    assert_doctor_bundle_check(&fixture.database_url, true, "pass");
 }
 
 #[test]
@@ -532,65 +505,86 @@ async fn create_snapshot_fixture(database_url: &str) -> Uuid {
         .expect("dataset persisted");
     let snapshot_id = Uuid::new_v4();
     let split = SplitConfiguration::new(SplitRatios::new(0.0, 0.0, 1.0).expect("ratios"), 42);
-    let source_row_id = Uuid::new_v4();
-    let member_id = Uuid::new_v4();
     let created_at = Utc::now();
-    let dimensions = BTreeMap::from([
-        ("difficulty".into(), "easy".into()),
-        ("writing_style".into(), "clean".into()),
-        ("ambiguity".into(), "obvious".into()),
-    ]);
-    let provenance = SourceProvenance::Generated {
-        generation_job_id: Uuid::nil(),
-        backend: "fake".into(),
-        model: "deterministic-v1".into(),
-        construction_plan_fingerprint: None,
-    };
-    sqlx::query(
-        "INSERT INTO dataset_source_rows \
-         (id, dataset_id, source_kind, source_ref, cell_key, text, normalized_text, label, \
-          dimensions_json, provenance_json, created_at) \
-         VALUES (?, ?, 'generated', ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(source_row_id)
-    .bind(dataset.id)
-    .bind(source_row_id.to_string())
-    .bind("billing/easy/clean/obvious")
-    .bind("Why was I charged twice?")
-    .bind("why was i charged twice?")
-    .bind("billing")
-    .bind(serde_json::to_string(&dimensions).expect("dimensions JSON"))
-    .bind(serde_json::to_string(&provenance).expect("provenance JSON"))
-    .bind(created_at)
-    .execute(store.pool())
-    .await
-    .expect("source row persisted");
+    let labels = ["billing", "fraud", "account", "technical"];
+    let difficulties = ["easy", "medium", "hard"];
+    let styles = ["clean", "messy"];
+    let ambiguities = ["obvious", "ambiguous"];
+    let mut members = Vec::with_capacity(100);
+    for index in 0..100_u32 {
+        let source_row_id = Uuid::new_v4();
+        let label = labels[(index as usize) % labels.len()];
+        let dimensions = BTreeMap::from([
+            (
+                "difficulty".into(),
+                difficulties[(index as usize) % difficulties.len()].into(),
+            ),
+            (
+                "writing_style".into(),
+                styles[(index as usize) % styles.len()].into(),
+            ),
+            (
+                "ambiguity".into(),
+                ambiguities[(index as usize) % ambiguities.len()].into(),
+            ),
+        ]);
+        let text = format!("Fixture support request {index} for {label}");
+        let provenance = SourceProvenance::Generated {
+            generation_job_id: Uuid::nil(),
+            backend: "fake".into(),
+            model: "deterministic-v1".into(),
+            construction_plan_fingerprint: None,
+        };
+        sqlx::query(
+            "INSERT INTO dataset_source_rows \
+             (id, dataset_id, source_kind, source_ref, cell_key, text, normalized_text, label, \
+              dimensions_json, provenance_json, created_at) \
+             VALUES (?, ?, 'generated', ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(source_row_id)
+        .bind(dataset.id)
+        .bind(source_row_id.to_string())
+        .bind(format!(
+            "{label}/{}/{}/{}",
+            dimensions["difficulty"], dimensions["writing_style"], dimensions["ambiguity"]
+        ))
+        .bind(&text)
+        .bind(text.to_lowercase())
+        .bind(label)
+        .bind(serde_json::to_string(&dimensions).expect("dimensions JSON"))
+        .bind(serde_json::to_string(&provenance).expect("provenance JSON"))
+        .bind(created_at)
+        .execute(store.pool())
+        .await
+        .expect("source row persisted");
+        members.push(SnapshotMember {
+            id: Uuid::new_v4(),
+            snapshot_id,
+            source_row_id,
+            split: SnapshotSplit::Test,
+            text,
+            label: label.into(),
+            dimensions,
+            fields: BTreeMap::new(),
+            source_provenance: provenance,
+            source_created_at: created_at,
+        });
+    }
+    members.sort_by_key(|member| member.source_row_id);
     let mut snapshot = DatasetSnapshot {
         id: snapshot_id,
         source_dataset_id: dataset.id,
         name: "project preparation CLI fixture".into(),
         description: None,
         split_configuration: split,
-        member_count: 1,
+        member_count: members.len() as u64,
         fingerprint: String::new(),
         created_at,
     };
-    let member = SnapshotMember {
-        id: member_id,
-        snapshot_id,
-        source_row_id,
-        split: SnapshotSplit::Test,
-        text: "Why was I charged twice?".into(),
-        label: "billing".into(),
-        dimensions,
-        fields: BTreeMap::new(),
-        source_provenance: provenance,
-        source_created_at: created_at,
-    };
-    snapshot.fingerprint = reproduce_snapshot_fingerprint(&snapshot, std::slice::from_ref(&member))
-        .expect("snapshot fingerprint");
+    snapshot.fingerprint =
+        reproduce_snapshot_fingerprint(&snapshot, &members).expect("snapshot fingerprint");
     store
-        .create_snapshot(&snapshot, std::slice::from_ref(&member))
+        .create_snapshot(&snapshot, &members)
         .await
         .expect("snapshot persisted");
     snapshot_id

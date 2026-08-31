@@ -56,11 +56,11 @@ reuse unless the check is clean. Each later immutable candidate snapshot gets
 its own check, and the selected check is pinned through final promotion and
 provenance rather than being inferred from a historical model name.
 
-This firewall is the first implemented milestone of
-[Benchmark Stewardship](benchmark-stewardship-spec.md). Deterministic benchmark
-qualification now derives immutable aggregate readiness evidence from the exact
-bundle populations; its separate approval and workflow gate remain the next
-stewardship boundary. A later bounded advisory benchmark architect may not
+This firewall and deterministic benchmark qualification are the implemented
+early milestones of [Benchmark Stewardship](benchmark-stewardship-spec.md).
+Preparation now requires an explicit approval review and pins the approved
+qualification into the executable workflow authority. A later bounded advisory
+benchmark architect may not
 weaken deterministic eligibility, expose sealed row content for adaptation, or
 turn advisory output into approval authority.
 

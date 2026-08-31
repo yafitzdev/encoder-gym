@@ -54,6 +54,20 @@ statistical_seed = 7
 confidence_level = 0.95
 dimension_intersections = [["difficulty", "writing_style"]]
 
+[benchmark_qualification]
+reviewed_by = "pilot owner"
+approval_rationale = "The small offline pilot cohorts meet this deliberately relaxed smoke-test policy."
+
+[benchmark_qualification.policy]
+minimum_overall_support = 10
+minimum_label_support = 2
+confidence = "eighty"
+maximum_proportion_margin_of_error = 0.49
+maximum_normalized_duplicate_rate = 0.0
+minimum_distinct_producers = 1
+maximum_single_producer_share = 1.0
+maximum_label_imbalance_ratio = 2.0
+
 [development]
 name = "support-pilot-development"
 required_model_formats = []

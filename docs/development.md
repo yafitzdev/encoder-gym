@@ -60,8 +60,10 @@ policy rather than a hidden shortcut.
 Benchmark qualification follows the stewardship sequence: explicit statistical
 policy, pure aggregate evidence, immutable persistence with deep recomputation,
 CLI inspection, separate append-only approval, workflow/preparation gating,
-provenance/Doctor, and offline process acceptance. Sealed population summaries
-must never disclose row content or adaptive diagnostics.
+provenance/Doctor, and offline process acceptance. The policy, approval,
+preparation binding, migration guards, and offline acceptance path are now
+implemented. Sealed population summaries must never disclose row content or
+adaptive diagnostics.
 
 ## Component loop
 

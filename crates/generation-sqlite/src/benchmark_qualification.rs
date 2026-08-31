@@ -25,23 +25,7 @@ impl BenchmarkQualificationStore for SqliteStore {
         let qualification = qualification.clone();
         Box::pin(async move {
             let mut transaction = self.pool().begin().await.map_err(store_error)?;
-            validate_against_persisted(&mut transaction, &qualification, true).await?;
-            sqlx::query(
-                "INSERT INTO workflow_benchmark_qualifications \
-                 (id, benchmark_bundle_id, protocol, readiness, policy_fingerprint, \
-                  artifact_json, fingerprint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(qualification.id)
-            .bind(qualification.benchmark_bundle_id)
-            .bind(&qualification.protocol)
-            .bind(readiness_name(qualification.readiness))
-            .bind(policy_fingerprint(&qualification)?)
-            .bind(to_json(&qualification)?)
-            .bind(&qualification.fingerprint)
-            .bind(qualification.created_at)
-            .execute(&mut *transaction)
-            .await
-            .map_err(store_error)?;
+            insert_benchmark_qualification(&mut transaction, &qualification, true).await?;
             transaction.commit().await.map_err(store_error)?;
             Ok(())
         })
@@ -126,24 +110,7 @@ impl BenchmarkQualificationStore for SqliteStore {
         let review = review.clone();
         Box::pin(async move {
             let mut transaction = self.pool().begin().await.map_err(store_error)?;
-            let qualification = load_qualification(&mut transaction, review.qualification_id, true)
-                .await?
-                .ok_or_else(|| WorkflowStoreError("review qualification not found".into()))?;
-            validate_qualification_review(&qualification, &review).map_err(store_error)?;
-            sqlx::query(
-                "INSERT INTO workflow_benchmark_qualification_reviews \
-                 (id, qualification_id, decision, artifact_json, fingerprint, created_at) \
-                 VALUES (?, ?, ?, ?, ?, ?)",
-            )
-            .bind(review.id)
-            .bind(review.qualification_id)
-            .bind(review_decision_name(review.decision))
-            .bind(to_json(&review)?)
-            .bind(&review.fingerprint)
-            .bind(review.created_at)
-            .execute(&mut *transaction)
-            .await
-            .map_err(store_error)?;
+            insert_benchmark_qualification_review(&mut transaction, &review, true).await?;
             transaction.commit().await.map_err(store_error)?;
             Ok(())
         })
@@ -168,6 +135,58 @@ impl BenchmarkQualificationStore for SqliteStore {
             load_review_by(&mut connection, "qualification_id", qualification_id).await
         })
     }
+}
+
+pub(crate) async fn insert_benchmark_qualification(
+    connection: &mut SqliteConnection,
+    qualification: &BenchmarkQualification,
+    require_current_roles: bool,
+) -> Result<(), WorkflowStoreError> {
+    validate_against_persisted(connection, qualification, require_current_roles).await?;
+    sqlx::query(
+        "INSERT INTO workflow_benchmark_qualifications \
+         (id, benchmark_bundle_id, protocol, readiness, policy_fingerprint, \
+          artifact_json, fingerprint, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(qualification.id)
+    .bind(qualification.benchmark_bundle_id)
+    .bind(&qualification.protocol)
+    .bind(readiness_name(qualification.readiness))
+    .bind(policy_fingerprint(qualification)?)
+    .bind(to_json(qualification)?)
+    .bind(&qualification.fingerprint)
+    .bind(qualification.created_at)
+    .execute(connection)
+    .await
+    .map_err(store_error)?;
+    Ok(())
+}
+
+pub(crate) async fn insert_benchmark_qualification_review(
+    connection: &mut SqliteConnection,
+    review: &BenchmarkQualificationReview,
+    require_current_roles: bool,
+) -> Result<(), WorkflowStoreError> {
+    let qualification =
+        load_qualification(connection, review.qualification_id, require_current_roles)
+            .await?
+            .ok_or_else(|| WorkflowStoreError("review qualification not found".into()))?;
+    validate_qualification_review(&qualification, review).map_err(store_error)?;
+    sqlx::query(
+        "INSERT INTO workflow_benchmark_qualification_reviews \
+         (id, qualification_id, decision, artifact_json, fingerprint, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(review.id)
+    .bind(review.qualification_id)
+    .bind(review_decision_name(review.decision))
+    .bind(to_json(review)?)
+    .bind(&review.fingerprint)
+    .bind(review.created_at)
+    .execute(connection)
+    .await
+    .map_err(store_error)?;
+    Ok(())
 }
 
 pub(crate) async fn load_review_by(

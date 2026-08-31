@@ -12,6 +12,7 @@ use workflow_core::{
     advisor::AdvisorConfiguration,
     allocation::InitialAllocationPolicy,
     benchmark::AcceptanceContract,
+    benchmark_qualification::BenchmarkQualificationPolicy,
     contamination::ContaminationPolicy,
     governance::{CohortOrigin, CohortRole, DisclosureLevel},
     workflow::{IterationGovernance, TrainingIterationPolicy, WorkflowBudget, WorkflowPolicy},
@@ -25,6 +26,7 @@ pub struct PreparationManifest {
     pub project: ProjectConfig,
     #[serde(default)]
     pub contamination: ContaminationManifest,
+    pub benchmark_qualification: BenchmarkQualificationManifest,
     pub development: SuiteManifest,
     #[serde(default)]
     pub sealed: Option<SuiteManifest>,
@@ -39,6 +41,7 @@ pub struct BootstrapManifest {
     pub project: ProjectConfig,
     #[serde(default)]
     pub contamination: ContaminationManifest,
+    pub benchmark_qualification: BenchmarkQualificationManifest,
     pub development: BootstrapSuiteManifest,
     #[serde(default)]
     pub sealed: Option<BootstrapSuiteManifest>,
@@ -107,6 +110,7 @@ impl BootstrapManifest {
             name: self.name.clone(),
             project: self.project.clone(),
             contamination: self.contamination.clone(),
+            benchmark_qualification: self.benchmark_qualification.clone(),
             development: self.development.resolve("development", snapshot_ids)?,
             sealed: self
                 .sealed
@@ -116,6 +120,17 @@ impl BootstrapManifest {
             workflow: self.workflow.clone(),
         })
     }
+}
+
+/// An explicit, fingerprinted readiness policy and operator approval intent.
+/// Preparation may materialize the approval only when deterministic readiness
+/// is `ready`; this section cannot waive a blocking issue.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BenchmarkQualificationManifest {
+    pub policy: BenchmarkQualificationPolicy,
+    pub reviewed_by: String,
+    pub approval_rationale: String,
 }
 
 impl PreparationManifest {

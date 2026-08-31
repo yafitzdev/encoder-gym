@@ -176,15 +176,17 @@ Declarative project-preparation commands are:
   request estimates, cohort disclosures, leakage checks, governance mode, and
   the finite stage graph without writing project artifacts;
 - `synth project prepare <MANIFEST>` to atomically persist the normal project
-  configuration, cohorts, reports, suites, immutable benchmark bundle, and
+  configuration, cohorts, reports, suites, immutable benchmark bundle,
+  deterministic benchmark qualification, explicit approval review, and
   workflow definition;
 - `synth project show <PREPARATION_ID>` to inspect the immutable preparation and
   its resolved workflow definition; and
 - `synth project list` to page preparation summaries.
 
 The manifest may be strict TOML or JSON. Its cohort sources are existing
-immutable snapshot IDs. A repeated manifest fingerprint returns the original
-preparation. Preparation never starts a workflow; run the printed `synth
+immutable snapshot IDs and its `[benchmark_qualification]` section pins the
+readiness policy plus approval rationale. A repeated manifest fingerprint
+returns the original preparation. Preparation never starts a workflow; run the printed `synth
 workflow start <DEFINITION_ID>` command as a separate authorization. Start from
 `examples/project-preparation.toml` and see `project-preparation.md`.
 

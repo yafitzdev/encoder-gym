@@ -980,6 +980,29 @@ impl SqliteStore {
             )?;
             parents.push(bundle);
         }
+        if let Some(binding) = &value.benchmark_qualification {
+            let qualification = required_provenance_parent(
+                self.benchmark_qualification_node(binding.qualification_id)
+                    .await?,
+                "workflow definition benchmark qualification",
+            )?;
+            require_node_fingerprint(
+                &qualification,
+                &binding.qualification_fingerprint,
+                "workflow definition benchmark qualification",
+            )?;
+            let review = required_provenance_parent(
+                self.benchmark_qualification_review_node(binding.review_id)
+                    .await?,
+                "workflow definition benchmark qualification review",
+            )?;
+            require_node_fingerprint(
+                &review,
+                &binding.review_fingerprint,
+                "workflow definition benchmark qualification review",
+            )?;
+            parents.push(review);
+        }
         Ok(Some(node(
             ArtifactKind::WorkflowDefinition,
             id,

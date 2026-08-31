@@ -50,6 +50,9 @@ The manifest owns:
 - immutable development and optional sealed snapshot/split sources;
 - cohort roles, disclosure levels, adaptation eligibility, and leakage limits;
 - development and sealed acceptance contracts; and
+- an explicit benchmark-readiness policy plus operator approval rationale. The
+  compiler computes readiness from the exact cohort populations and will not
+  materialize approval when deterministic checks are blocked; and
 - training/evaluation settings, iteration governance, stop policy, and finite
   row/request/advisor/stage budgets.
 
@@ -70,7 +73,8 @@ synth provenance project-preparation <PREPARATION_ID>
 Preview is read-only at the domain level. It reports every generation cell and
 target, initial/reserved totals, estimated initial requests, configured
 backends, cohort counts, suite-local and all-cohort contamination status,
-disclosures, governance mode, and the finite stage graph. The all-cohort check
+deterministic benchmark qualification support, policy issues, disclosures,
+governance mode, and the finite stage graph. The all-cohort check
 always uses zero tolerance even when the manifest gives suite-local nonzero
 limits. UUIDs and timestamps generated only during artifact creation are
 intentionally absent, so repeated previews are stable.
@@ -78,13 +82,15 @@ intentionally absent, so repeated previews are stable.
 Prepare reruns the same validation and inserts one bundle in one SQLite
 transaction: dataset, default configuration plan, non-secret backend settings,
 resolved project configuration, cohorts and roles, contamination reports,
-benchmark suites, immutable benchmark bundle, workflow definition, and
-preparation summary. The bundle pins the development and optional sealed suite
+benchmark suites, immutable benchmark bundle, deterministic benchmark
+qualification, explicit approval review, workflow definition, and preparation
+summary. The bundle pins the development and optional sealed suite
 IDs/fingerprints and the clean global report ID/fingerprint; both the definition
-and preparation summary pin that bundle. A failure at any point rolls back the
-whole transaction. The stable manifest fingerprint is unique; repeating the
-same manifest returns the existing preparation even though a fresh compilation
-would otherwise generate new artifact UUIDs.
+and preparation summary pin that bundle and the approved qualification/review
+pair. A failure at any point rolls back the whole transaction. The stable
+manifest fingerprint is unique; repeating the same manifest returns the
+existing preparation even though a fresh compilation would otherwise generate
+new artifact UUIDs.
 
 Preparation rejects missing or changed snapshots, duplicate snapshot/split
 assignments, label-order mismatches, empty selected splits, incompatible cohort

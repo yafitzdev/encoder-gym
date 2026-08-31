@@ -223,10 +223,11 @@ content was absent from base-model pretraining, or that no equivalent data was
 used by training performed outside this platform.
 
 This is Milestone 1 of the longer-range
-[Benchmark Stewardship](benchmark-stewardship-spec.md) boundary. Planned
-deterministic benchmark qualification and any later bounded advisory benchmark
-architect remain separate milestones; they cannot waive this check, mutate its
-evidence, or gain authority over sealed data or approval.
+[Benchmark Stewardship](benchmark-stewardship-spec.md) boundary. Deterministic
+benchmark qualification and its explicit approval are now implemented in the
+preparation path as a separate authority layer; any later bounded advisory
+benchmark architect cannot waive either gate, mutate its evidence, or gain
+authority over sealed data or approval.
 
 ## Benchmark suites and acceptance
 

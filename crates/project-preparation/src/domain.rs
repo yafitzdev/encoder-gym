@@ -11,6 +11,10 @@ use uuid::Uuid;
 use workflow_core::{
     benchmark::BenchmarkSuite,
     benchmark_bundle::BenchmarkBundle,
+    benchmark_qualification::{
+        BenchmarkQualification, BenchmarkQualificationPolicy, BenchmarkQualificationReview,
+        BenchmarkReadiness, QualificationIssueSeverity,
+    },
     contamination::{ContaminationKind, ContaminationReport, ContaminationStatus},
     governance::{CohortRoleDecision, EvaluationCohort},
     workflow::{WorkflowDefinition, WorkflowStage},
@@ -129,10 +133,37 @@ pub struct PreparationPreview {
     pub development_cohorts: usize,
     pub sealed_cohorts: usize,
     pub contamination: Vec<ContaminationPreview>,
+    pub benchmark_qualification: Option<BenchmarkQualificationPreview>,
     pub stages: Vec<WorkflowStage>,
     pub governance_mode: String,
     pub issues: Vec<PreparationIssue>,
     pub eligible: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BenchmarkQualificationPreview {
+    pub readiness: BenchmarkReadiness,
+    pub policy: BenchmarkQualificationPolicy,
+    pub cohorts: Vec<BenchmarkQualificationCohortPreview>,
+    pub issues: Vec<BenchmarkQualificationIssuePreview>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BenchmarkQualificationCohortPreview {
+    pub total_support: u64,
+    pub label_support: BTreeMap<String, u64>,
+    pub required_slice_support: BTreeMap<String, u64>,
+    pub normalized_duplicate_rows: u64,
+    pub distinct_producers: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BenchmarkQualificationIssuePreview {
+    pub severity: QualificationIssueSeverity,
+    pub code: String,
+    pub message: String,
+    pub observed: Option<f64>,
+    pub required: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -147,6 +178,8 @@ pub struct PreparationBundle {
     pub development_suite: BenchmarkSuite,
     pub sealed_suite: Option<BenchmarkSuite>,
     pub benchmark_bundle: BenchmarkBundle,
+    pub benchmark_qualification: BenchmarkQualification,
+    pub benchmark_qualification_review: BenchmarkQualificationReview,
     pub workflow_definition: WorkflowDefinition,
     pub preparation: PreparedProject,
 }
@@ -164,6 +197,14 @@ pub struct PreparedProject {
     pub benchmark_bundle_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub benchmark_bundle_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub benchmark_qualification_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub benchmark_qualification_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub benchmark_qualification_review_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub benchmark_qualification_review_fingerprint: Option<String>,
     pub workflow_definition_id: Uuid,
     pub created_at: DateTime<Utc>,
     pub fingerprint: String,
@@ -202,6 +243,31 @@ pub(crate) fn prepared_fingerprint(
             serde_json::json!(value.benchmark_bundle_fingerprint),
         );
     }
+    if value.benchmark_qualification_id.is_some()
+        || value.benchmark_qualification_fingerprint.is_some()
+        || value.benchmark_qualification_review_id.is_some()
+        || value.benchmark_qualification_review_fingerprint.is_some()
+    {
+        let object = document
+            .as_object_mut()
+            .expect("prepared project fingerprint document");
+        object.insert(
+            "benchmark_qualification_id".into(),
+            serde_json::json!(value.benchmark_qualification_id),
+        );
+        object.insert(
+            "benchmark_qualification_fingerprint".into(),
+            serde_json::json!(value.benchmark_qualification_fingerprint),
+        );
+        object.insert(
+            "benchmark_qualification_review_id".into(),
+            serde_json::json!(value.benchmark_qualification_review_id),
+        );
+        object.insert(
+            "benchmark_qualification_review_fingerprint".into(),
+            serde_json::json!(value.benchmark_qualification_review_fingerprint),
+        );
+    }
     artifact_core::fingerprint(&document)
 }
 
@@ -234,6 +300,10 @@ mod tests {
             sealed_suite_id: None,
             benchmark_bundle_id: None,
             benchmark_bundle_fingerprint: None,
+            benchmark_qualification_id: None,
+            benchmark_qualification_fingerprint: None,
+            benchmark_qualification_review_id: None,
+            benchmark_qualification_review_fingerprint: None,
             workflow_definition_id: Uuid::new_v4(),
             created_at: Utc::now(),
             fingerprint: String::new(),
@@ -244,6 +314,7 @@ mod tests {
         let object = encoded.as_object().expect("preparation object");
         assert!(!object.contains_key("benchmark_bundle_id"));
         assert!(!object.contains_key("benchmark_bundle_fingerprint"));
+        assert!(!object.contains_key("benchmark_qualification_id"));
         let decoded: PreparedProject = serde_json::from_value(encoded).expect("legacy read");
         assert_eq!(
             decoded.reproduce_fingerprint().expect("reproduce"),

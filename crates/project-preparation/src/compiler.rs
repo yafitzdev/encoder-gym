@@ -11,6 +11,11 @@ use workflow_core::{
         build_benchmark_suite,
     },
     benchmark_bundle::build_benchmark_bundle,
+    benchmark_qualification::{
+        BenchmarkQualification, BenchmarkQualificationReviewDecision,
+        BenchmarkQualificationReviewRequest, BenchmarkReadiness, QualificationIssueSeverity,
+        QualificationPopulation, qualify_benchmark_bundle, review_benchmark_qualification,
+    },
     contamination::{
         CohortContaminationInput, ContaminationMember, ContaminationPolicy, ContaminationReport,
         ContaminationStatus, check_contamination,
@@ -23,8 +28,10 @@ use workflow_core::{
 };
 
 use crate::{
-    CohortEvidence, CohortManifest, ContaminationPreview, PreparationBundle, PreparationEvidence,
-    PreparationIssue, PreparationManifest, PreparationPreview, PreparedProject, SuiteManifest,
+    BenchmarkQualificationCohortPreview, BenchmarkQualificationIssuePreview,
+    BenchmarkQualificationPreview, CohortEvidence, CohortManifest, ContaminationPreview,
+    PreparationBundle, PreparationEvidence, PreparationIssue, PreparationManifest,
+    PreparationPreview, PreparedProject, SuiteManifest,
     domain::{CellTargetPreview, prepared_fingerprint},
 };
 
@@ -47,7 +54,24 @@ pub fn preview_project(
     evidence: &PreparationEvidence,
 ) -> Result<PreparationPreview, PreparationError> {
     let context = build_context(manifest, evidence)?;
-    let issues = context.issues();
+    let mut issues = context.issues();
+    let benchmark_qualification = if issues.is_empty() {
+        let authority = build_benchmark_authority(manifest, &context)?;
+        let qualification = qualify_authority(manifest, &context, &authority)?;
+        issues.extend(
+            qualification
+                .issues
+                .iter()
+                .filter(|issue| issue.severity == QualificationIssueSeverity::Blocking)
+                .map(|issue| PreparationIssue {
+                    code: format!("benchmark_qualification_{}", issue.code),
+                    message: issue.message.clone(),
+                }),
+        );
+        Some(qualification_preview(&qualification))
+    } else {
+        None
+    };
     let eligible = issues.is_empty();
     Ok(PreparationPreview {
         manifest_fingerprint: manifest
@@ -85,6 +109,7 @@ pub fn preview_project(
             .as_ref()
             .map_or(0, |suite| suite.cohorts.len()),
         contamination: context.contamination_previews(),
+        benchmark_qualification,
         stages: workflow_stages(
             manifest.workflow.advisor.is_some(),
             manifest.sealed.is_some(),
@@ -124,61 +149,62 @@ pub fn compile_project(
         .resolved
         .persisted(context.dataset.id, default_generation_plan.id)
         .map_err(domain)?;
-    let development_report = context
-        .suite_reports
-        .first()
-        .cloned()
-        .ok_or_else(|| PreparationError::Invalid("development suite is required".into()))?;
-    let development_suite = build_suite(
-        &manifest.development,
-        BenchmarkSuiteKind::Development,
-        &context,
-        &development_report,
-    )?;
-    let sealed_suite = manifest
-        .sealed
-        .as_ref()
-        .zip(context.suite_reports.get(1))
-        .map(|(suite, report)| {
-            build_suite(
-                suite,
-                BenchmarkSuiteKind::SealedAcceptance,
-                &context,
-                report,
-            )
-        })
-        .transpose()?;
-    let benchmark_bundle = build_benchmark_bundle(
-        &development_suite,
-        sealed_suite.as_ref(),
-        &context.global_report,
+    let authority = build_benchmark_authority(manifest, &context)?;
+    let benchmark_qualification = qualify_authority(manifest, &context, &authority)?;
+    if benchmark_qualification.readiness != BenchmarkReadiness::Ready {
+        return Err(PreparationError::Blocked(
+            benchmark_qualification
+                .issues
+                .iter()
+                .filter(|issue| issue.severity == QualificationIssueSeverity::Blocking)
+                .map(|issue| issue.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; "),
+        ));
+    }
+    let benchmark_qualification_review = review_benchmark_qualification(
+        &benchmark_qualification,
+        BenchmarkQualificationReviewRequest {
+            decision: BenchmarkQualificationReviewDecision::Approve,
+            reviewed_by: manifest.benchmark_qualification.reviewed_by.clone(),
+            rationale: manifest.benchmark_qualification.approval_rationale.clone(),
+        },
     )
     .map_err(domain)?;
-    let workflow_definition = WorkflowDefinition::new(WorkflowDefinitionRequest {
-        name: manifest.workflow.name.clone(),
-        dataset_id: context.dataset.id,
-        project_configuration_id: project_configuration.id,
-        project_configuration_fingerprint: project_configuration.fingerprint.clone(),
-        development_suite_id: development_suite.id,
-        development_suite_fingerprint: development_suite.fingerprint.clone(),
-        sealed_suite_id: sealed_suite.as_ref().map(|suite| suite.id),
-        sealed_suite_fingerprint: sealed_suite.as_ref().map(|suite| suite.fingerprint.clone()),
-        benchmark_bundle: Some(benchmark_bundle.binding().map_err(domain)?),
-        initial_allocation: WorkflowInitialAllocation {
-            total_rows: manifest.workflow.total_rows,
-            reserved_rows: manifest.workflow.reserved_rows,
-            policy: manifest.workflow.allocation_policy.clone(),
-            constraints: manifest.workflow.allocation_constraints.clone(),
+    let qualification_binding = benchmark_qualification_review
+        .approved_binding(&benchmark_qualification)
+        .map_err(domain)?;
+    let workflow_definition = WorkflowDefinition::new_with_qualification(
+        WorkflowDefinitionRequest {
+            name: manifest.workflow.name.clone(),
+            dataset_id: context.dataset.id,
+            project_configuration_id: project_configuration.id,
+            project_configuration_fingerprint: project_configuration.fingerprint.clone(),
+            development_suite_id: authority.development_suite.id,
+            development_suite_fingerprint: authority.development_suite.fingerprint.clone(),
+            sealed_suite_id: authority.sealed_suite.as_ref().map(|suite| suite.id),
+            sealed_suite_fingerprint: authority
+                .sealed_suite
+                .as_ref()
+                .map(|suite| suite.fingerprint.clone()),
+            benchmark_bundle: Some(authority.benchmark_bundle.binding().map_err(domain)?),
+            initial_allocation: WorkflowInitialAllocation {
+                total_rows: manifest.workflow.total_rows,
+                reserved_rows: manifest.workflow.reserved_rows,
+                policy: manifest.workflow.allocation_policy.clone(),
+                constraints: manifest.workflow.allocation_constraints.clone(),
+            },
+            analysis_protocol: manifest.workflow.analysis_protocol.clone(),
+            optimization_protocol: manifest.workflow.optimization_protocol.clone(),
+            advisor: manifest.workflow.advisor.clone(),
+            training_iteration_policy: manifest.workflow.training_iteration_policy,
+            quality_gate: manifest.workflow.quality_gate.clone(),
+            governance: manifest.workflow.governance.clone(),
+            budget: manifest.workflow.budget.clone(),
+            policy: manifest.workflow.policy.clone(),
         },
-        analysis_protocol: manifest.workflow.analysis_protocol.clone(),
-        optimization_protocol: manifest.workflow.optimization_protocol.clone(),
-        advisor: manifest.workflow.advisor.clone(),
-        training_iteration_policy: manifest.workflow.training_iteration_policy,
-        quality_gate: manifest.workflow.quality_gate.clone(),
-        governance: manifest.workflow.governance.clone(),
-        budget: manifest.workflow.budget.clone(),
-        policy: manifest.workflow.policy.clone(),
-    })
+        Some(qualification_binding),
+    )
     .map_err(domain)?;
     let manifest_fingerprint = manifest
         .fingerprint()
@@ -189,10 +215,16 @@ pub fn compile_project(
         manifest_fingerprint,
         dataset_id: context.dataset.id,
         project_configuration_id: project_configuration.id,
-        development_suite_id: development_suite.id,
-        sealed_suite_id: sealed_suite.as_ref().map(|suite| suite.id),
-        benchmark_bundle_id: Some(benchmark_bundle.id),
-        benchmark_bundle_fingerprint: Some(benchmark_bundle.fingerprint.clone()),
+        development_suite_id: authority.development_suite.id,
+        sealed_suite_id: authority.sealed_suite.as_ref().map(|suite| suite.id),
+        benchmark_bundle_id: Some(authority.benchmark_bundle.id),
+        benchmark_bundle_fingerprint: Some(authority.benchmark_bundle.fingerprint.clone()),
+        benchmark_qualification_id: Some(benchmark_qualification.id),
+        benchmark_qualification_fingerprint: Some(benchmark_qualification.fingerprint.clone()),
+        benchmark_qualification_review_id: Some(benchmark_qualification_review.id),
+        benchmark_qualification_review_fingerprint: Some(
+            benchmark_qualification_review.fingerprint.clone(),
+        ),
         workflow_definition_id: workflow_definition.id,
         created_at: chrono::Utc::now(),
         fingerprint: String::new(),
@@ -215,9 +247,11 @@ pub fn compile_project(
             .map(|cohort| cohort.role.clone())
             .collect(),
         contamination_reports: canonical_reports(context.global_report, context.suite_reports),
-        development_suite,
-        sealed_suite,
-        benchmark_bundle,
+        development_suite: authority.development_suite,
+        sealed_suite: authority.sealed_suite,
+        benchmark_bundle: authority.benchmark_bundle,
+        benchmark_qualification,
+        benchmark_qualification_review,
         workflow_definition,
         preparation,
     })
@@ -228,6 +262,7 @@ struct PreparedCohort {
     cohort: EvaluationCohort,
     role: CohortRoleDecision,
     evidence: CohortEvidence,
+    selected_members: Vec<dataset_core::domain::SnapshotMember>,
 }
 
 struct BuildContext {
@@ -336,6 +371,12 @@ fn build_context(
             ))?
             .clone();
         validate_evidence(cohort_manifest, &cohort_evidence, &resolved.dataset.labels)?;
+        let selected_members = cohort_evidence
+            .members
+            .iter()
+            .filter(|member| member.split == cohort_manifest.split)
+            .cloned()
+            .collect();
         let cohort = EvaluationCohort::new(
             &cohort_manifest.name,
             cohort_evidence.snapshot.id,
@@ -355,6 +396,7 @@ fn build_context(
             cohort,
             role,
             evidence: cohort_evidence,
+            selected_members,
         });
     }
     let contamination_inputs = cohorts
@@ -430,6 +472,99 @@ fn canonical_reports(
     reports
 }
 
+struct BenchmarkAuthority {
+    development_suite: workflow_core::benchmark::BenchmarkSuite,
+    sealed_suite: Option<workflow_core::benchmark::BenchmarkSuite>,
+    benchmark_bundle: workflow_core::benchmark_bundle::BenchmarkBundle,
+}
+
+fn build_benchmark_authority(
+    manifest: &PreparationManifest,
+    context: &BuildContext,
+) -> Result<BenchmarkAuthority, PreparationError> {
+    let development_report = context
+        .suite_reports
+        .first()
+        .ok_or_else(|| PreparationError::Invalid("development suite is required".into()))?;
+    let development_suite = build_suite(
+        &manifest.development,
+        BenchmarkSuiteKind::Development,
+        context,
+        development_report,
+    )?;
+    let sealed_suite = manifest
+        .sealed
+        .as_ref()
+        .zip(context.suite_reports.get(1))
+        .map(|(suite, report)| {
+            build_suite(suite, BenchmarkSuiteKind::SealedAcceptance, context, report)
+        })
+        .transpose()?;
+    let benchmark_bundle = build_benchmark_bundle(
+        &development_suite,
+        sealed_suite.as_ref(),
+        &context.global_report,
+    )
+    .map_err(domain)?;
+    Ok(BenchmarkAuthority {
+        development_suite,
+        sealed_suite,
+        benchmark_bundle,
+    })
+}
+
+fn qualify_authority(
+    manifest: &PreparationManifest,
+    context: &BuildContext,
+    authority: &BenchmarkAuthority,
+) -> Result<BenchmarkQualification, PreparationError> {
+    let populations = context
+        .cohorts
+        .iter()
+        .map(|cohort| QualificationPopulation {
+            cohort_id: cohort.cohort.id,
+            members: cohort.selected_members.as_slice(),
+        })
+        .collect();
+    qualify_benchmark_bundle(
+        &authority.benchmark_bundle,
+        &authority.development_suite,
+        authority.sealed_suite.as_ref(),
+        populations,
+        manifest.benchmark_qualification.policy.clone(),
+    )
+    .map_err(domain)
+}
+
+fn qualification_preview(value: &BenchmarkQualification) -> BenchmarkQualificationPreview {
+    BenchmarkQualificationPreview {
+        readiness: value.readiness,
+        policy: value.policy.clone(),
+        cohorts: value
+            .cohorts
+            .iter()
+            .map(|cohort| BenchmarkQualificationCohortPreview {
+                total_support: cohort.total_support,
+                label_support: cohort.label_support.clone(),
+                required_slice_support: cohort.required_slice_support.clone(),
+                normalized_duplicate_rows: cohort.normalized_duplicate_rows,
+                distinct_producers: cohort.source_composition.distinct_producers,
+            })
+            .collect(),
+        issues: value
+            .issues
+            .iter()
+            .map(|issue| BenchmarkQualificationIssuePreview {
+                severity: issue.severity,
+                code: issue.code.clone(),
+                message: issue.message.clone(),
+                observed: issue.observed,
+                required: issue.required,
+            })
+            .collect(),
+    }
+}
+
 fn validate_manifest_shape(manifest: &PreparationManifest) -> Result<(), PreparationError> {
     if manifest.version != 1 {
         return Err(PreparationError::Version(manifest.version));
@@ -437,11 +572,26 @@ fn validate_manifest_shape(manifest: &PreparationManifest) -> Result<(), Prepara
     if manifest.name.trim().is_empty()
         || manifest.workflow.name.trim().is_empty()
         || manifest.development.name.trim().is_empty()
+        || manifest
+            .benchmark_qualification
+            .reviewed_by
+            .trim()
+            .is_empty()
+        || manifest
+            .benchmark_qualification
+            .approval_rationale
+            .trim()
+            .is_empty()
     {
         return Err(PreparationError::Invalid(
-            "project, workflow, and development suite names must not be empty".into(),
+            "project, workflow, development suite, benchmark reviewer, and approval rationale must not be empty".into(),
         ));
     }
+    manifest
+        .benchmark_qualification
+        .policy
+        .validate()
+        .map_err(domain)?;
     if manifest.development.cohorts.is_empty()
         || manifest
             .sealed
@@ -699,6 +849,9 @@ mod tests {
     use workflow_core::{
         allocation::InitialAllocationPolicy,
         benchmark::{AcceptanceContract, BenchmarkMetric, MetricRequirement, MetricTarget},
+        benchmark_qualification::{
+            BenchmarkQualificationPolicy, BenchmarkReadiness, QualificationConfidence,
+        },
         contamination::{ContaminationKind, ContaminationStatus},
         governance::{CohortOrigin, CohortRole, DisclosureLevel},
         workflow::{
@@ -708,9 +861,9 @@ mod tests {
     };
 
     use crate::{
-        CohortEvidence, CohortManifest, ContaminationManifest, PreparationError,
-        PreparationEvidence, PreparationManifest, SuiteManifest, WorkflowManifest, compile_project,
-        preview_project,
+        BenchmarkQualificationManifest, CohortEvidence, CohortManifest, ContaminationManifest,
+        PreparationError, PreparationEvidence, PreparationManifest, SuiteManifest,
+        WorkflowManifest, compile_project, preview_project,
     };
 
     const PROJECT: &str = r#"
@@ -746,6 +899,14 @@ batch_size = 20
         assert_eq!(first.cells.len(), 4);
         assert_eq!(first.estimated_initial_requests, 4);
         assert_eq!(first.contamination[0].status, ContaminationStatus::Clean);
+        assert_eq!(
+            first
+                .benchmark_qualification
+                .as_ref()
+                .expect("qualification preview")
+                .readiness,
+            BenchmarkReadiness::Ready
+        );
         assert!(
             !serde_json::to_value(&manifest.workflow)
                 .expect("legacy workflow manifest JSON")
@@ -785,6 +946,43 @@ batch_size = 20
                 .expect("fingerprint"),
             bundle.preparation.fingerprint
         );
+        let binding = bundle
+            .workflow_definition
+            .benchmark_qualification
+            .as_ref()
+            .expect("qualification authority");
+        assert_eq!(binding.qualification_id, bundle.benchmark_qualification.id);
+        assert_eq!(binding.review_id, bundle.benchmark_qualification_review.id);
+    }
+
+    #[test]
+    fn blocked_benchmark_readiness_is_visible_and_cannot_be_approved() {
+        let (mut manifest, evidence) = fixture();
+        manifest
+            .benchmark_qualification
+            .policy
+            .minimum_overall_support = 100;
+
+        let preview = preview_project(&manifest, &evidence).expect("blocked preview");
+        assert!(!preview.eligible);
+        assert_eq!(
+            preview
+                .benchmark_qualification
+                .as_ref()
+                .expect("qualification preview")
+                .readiness,
+            BenchmarkReadiness::Blocked
+        );
+        assert!(
+            preview
+                .issues
+                .iter()
+                .any(|issue| issue.code.contains("insufficient_support"))
+        );
+        assert!(matches!(
+            compile_project(&manifest, &evidence),
+            Err(PreparationError::Blocked(_))
+        ));
     }
 
     #[test]
@@ -1011,6 +1209,20 @@ batch_size = 20
             name: "support encoder".into(),
             project,
             contamination: ContaminationManifest::default(),
+            benchmark_qualification: BenchmarkQualificationManifest {
+                policy: BenchmarkQualificationPolicy {
+                    minimum_overall_support: 2,
+                    minimum_label_support: 1,
+                    confidence: QualificationConfidence::Eighty,
+                    maximum_proportion_margin_of_error: 0.49,
+                    maximum_normalized_duplicate_rate: 0.0,
+                    minimum_distinct_producers: 1,
+                    maximum_single_producer_share: 1.0,
+                    maximum_label_imbalance_ratio: 1.0,
+                },
+                reviewed_by: "test operator".into(),
+                approval_rationale: "fixture meets the explicit readiness policy".into(),
+            },
             development: SuiteManifest {
                 name: "development".into(),
                 required_model_formats: Vec::new(),
@@ -1067,7 +1279,21 @@ batch_size = 20
                     CohortEvidence {
                         snapshot,
                         source_dataset,
-                        members: vec![member],
+                        members: vec![
+                            member.clone(),
+                            SnapshotMember {
+                                id: Uuid::new_v4(),
+                                source_row_id: Uuid::new_v4(),
+                                text: "I do not recognize this transaction".into(),
+                                label: "fraud".into(),
+                                source_provenance: SourceProvenance::Imported {
+                                    import_id: Uuid::new_v4(),
+                                    source_path: "benchmark.jsonl".into(),
+                                    source_row_number: 2,
+                                },
+                                ..member
+                            },
+                        ],
                     },
                 )]),
             },

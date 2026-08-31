@@ -87,6 +87,12 @@ fn result_state<T, E>(result: &Result<Option<T>, E>) -> &'static str {
 pub(in crate::commands::doctor) async fn benchmark_bundle_facts_check(
     store: &SqliteStore,
 ) -> DoctorCheck {
+    use workflow_core::benchmark_qualification::{
+        BenchmarkQualificationReviewDecision, BenchmarkReadiness,
+    };
+    use workflow_core::ports::BenchmarkQualificationQuery;
+    use workflow_core::ports::BenchmarkQualificationStore;
+
     let result: anyhow::Result<(usize, usize, usize, usize)> = async {
         const PAGE_SIZE: u32 = 1_000;
         let mut bundle_page = Vec::new();
@@ -111,6 +117,28 @@ pub(in crate::commands::doctor) async fn benchmark_bundle_facts_check(
         let bundles = bundle_page
             .iter()
             .map(|bundle| (bundle.id, bundle))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        let mut qualification_page = Vec::new();
+        offset = 0;
+        loop {
+            let page = store
+                .query_benchmark_qualifications(BenchmarkQualificationQuery {
+                    limit: PAGE_SIZE,
+                    offset,
+                    ..BenchmarkQualificationQuery::default()
+                })
+                .await?;
+            let page_len = page.len();
+            qualification_page.extend(page);
+            if page_len < PAGE_SIZE as usize {
+                break;
+            }
+            offset = offset.saturating_add(PAGE_SIZE);
+        }
+        let qualifications = qualification_page
+            .iter()
+            .map(|qualification| (qualification.id, qualification))
             .collect::<std::collections::BTreeMap<_, _>>();
 
         let mut definition_page = Vec::new();
@@ -164,6 +192,39 @@ pub(in crate::commands::doctor) async fn benchmark_bundle_facts_check(
                     definition.id
                 )
             })?;
+            if let Some(qualification_binding) = &definition.benchmark_qualification {
+                let qualification = qualifications
+                    .get(&qualification_binding.qualification_id)
+                    .with_context(|| {
+                        format!(
+                            "workflow definition {} benchmark qualification is missing: {}",
+                            definition.id, qualification_binding.qualification_id
+                        )
+                    })?;
+                anyhow::ensure!(
+                    qualification.readiness == BenchmarkReadiness::Ready
+                        && qualification.benchmark_bundle_id == binding.bundle_id
+                        && qualification.benchmark_bundle_fingerprint == binding.bundle_fingerprint,
+                    "workflow definition {} qualification is not ready for its bundle",
+                    definition.id
+                );
+                let review = store
+                    .get_benchmark_qualification_review(qualification_binding.review_id)
+                    .await?
+                    .with_context(|| {
+                        format!(
+                            "workflow definition {} benchmark qualification review is missing: {}",
+                            definition.id, qualification_binding.review_id
+                        )
+                    })?;
+                anyhow::ensure!(
+                    review.decision == BenchmarkQualificationReviewDecision::Approve
+                        && review.qualification_id == qualification.id
+                        && review.fingerprint == qualification_binding.review_fingerprint,
+                    "workflow definition {} benchmark qualification review is not approved and bound",
+                    definition.id
+                );
+            }
         }
 
         let mut legacy_preparations = 0_usize;
@@ -219,6 +280,39 @@ pub(in crate::commands::doctor) async fn benchmark_bundle_facts_check(
                                 preparation.id
                             )
                         })?;
+                    match (
+                        preparation.benchmark_qualification_id,
+                        preparation.benchmark_qualification_review_id,
+                        preparation.benchmark_qualification_fingerprint.as_deref(),
+                        preparation
+                            .benchmark_qualification_review_fingerprint
+                            .as_deref(),
+                    ) {
+                        (Some(qualification_id), Some(review_id), Some(qualification_fingerprint), Some(review_fingerprint)) => {
+                            let definition_binding = definition
+                                .benchmark_qualification
+                                .as_ref()
+                                .with_context(|| {
+                                    format!(
+                                        "preparation {} qualification projection points to an unqualified workflow",
+                                        preparation.id
+                                    )
+                                })?;
+                            anyhow::ensure!(
+                                definition_binding.qualification_id == qualification_id
+                                    && definition_binding.review_id == review_id
+                                    && definition_binding.qualification_fingerprint == qualification_fingerprint
+                                    && definition_binding.review_fingerprint == review_fingerprint,
+                                "preparation {} qualification projection differs from workflow authority",
+                                preparation.id
+                            );
+                        }
+                        (None, None, None, None) => {}
+                        _ => anyhow::bail!(
+                            "preparation {} has an incomplete benchmark qualification projection",
+                            preparation.id
+                        ),
+                    }
                 }
                 _ => anyhow::bail!(
                     "preparation {} has an incomplete benchmark bundle projection",
