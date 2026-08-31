@@ -16,6 +16,7 @@ mod project_bootstrap;
 mod project_preparation;
 mod promotion;
 mod provenance;
+mod quality;
 mod recovery;
 mod research;
 mod semantic;

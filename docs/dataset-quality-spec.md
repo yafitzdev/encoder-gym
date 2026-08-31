@@ -132,9 +132,23 @@ The plan additionally pins:
 - canonical source-set fingerprint;
 - creation time and plan fingerprint.
 
+The exact normalized evaluator-guidance payload is persisted atomically beside
+the plan. Starting or recovering an audit loads that payload and verifies its
+fingerprint; it never re-resolves a mutable current semantic or authenticity
+binding. Historical binding references remain provenance parents of the pinned
+payload.
+
 The runner reloads each source row and verifies its fingerprint before sending
 it to an evaluator. New accepted rows do not mutate an existing plan and are not
 silently included. A new audit plan is required to cover them.
+
+Qualification candidates are also filtered through persisted cohort governance
+before candidate text is loaded. Members of current development, diagnostic,
+sealed-acceptance, or external-benchmark cohort splits are excluded, as are all
+rows with any historical sealed/external role. Only an explicitly current
+training-role cohort may remain eligible. Cohort, role-chain, snapshot, and
+complete split-membership integrity are verified before selection so evaluation
+evidence cannot leak into a qualified training snapshot through tampered facts.
 
 ## Replaceable evaluator contract
 

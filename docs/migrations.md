@@ -98,6 +98,15 @@ applied automatically when the SQLite store connects.
   assignments linking a generation execution to its approved profile and
   binding; the execution JSON pins the resolved context and source-novelty
   guard fingerprints.
+- `0043_dataset_architect`: immutable architect briefs and runs, durable tool
+  calls, reviewable allocation proposals, append-only reviews, and atomic
+  generation-plan strategy applications.
+- `0044_dataset_quality`: immutable quality plans and complete source manifests,
+  the exact normalized evaluator guidance pinned at plan creation, exact
+  evaluator requests paired one-to-one with durable attempts, row assessments,
+  reproducible invalid-output-aware reports, append-only row/manifest review
+  chains, complete curation selections, and an atomic link between an approved
+  manifest and its ordinary dataset snapshot.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

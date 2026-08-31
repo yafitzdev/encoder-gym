@@ -11,6 +11,7 @@ analysis-core.workspace = true
 artifact-core.workspace = true
 dataset-core.workspace = true
 dataset-architect-core.workspace = true
+dataset-quality-core.workspace = true
 evaluation-core.workspace = true
 generation-core.workspace = true
 optimization-core.workspace = true

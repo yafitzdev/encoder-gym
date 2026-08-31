@@ -74,6 +74,18 @@ pub enum ArtifactKind {
     GenerationPlan,
     GenerationJob,
     DatasetImport,
+    DatasetSourceRow,
+    QualityAuditPlan,
+    QualitySemanticGuidance,
+    QualityAuditRun,
+    QualityEvaluatorAttempt,
+    RowQualityAssessment,
+    DatasetQualityReport,
+    RowQualityReview,
+    CurationProposal,
+    CurationManifestReview,
+    ApprovedCurationManifest,
+    CurationApplication,
     Snapshot,
     BaseModel,
     TrainingRun,
@@ -125,6 +137,18 @@ impl ArtifactKind {
             Self::GenerationPlan => "generation_plan",
             Self::GenerationJob => "generation_job",
             Self::DatasetImport => "dataset_import",
+            Self::DatasetSourceRow => "dataset_source_row",
+            Self::QualityAuditPlan => "quality_audit_plan",
+            Self::QualitySemanticGuidance => "quality_semantic_guidance",
+            Self::QualityAuditRun => "quality_audit_run",
+            Self::QualityEvaluatorAttempt => "quality_evaluator_attempt",
+            Self::RowQualityAssessment => "row_quality_assessment",
+            Self::DatasetQualityReport => "dataset_quality_report",
+            Self::RowQualityReview => "row_quality_review",
+            Self::CurationProposal => "curation_proposal",
+            Self::CurationManifestReview => "curation_manifest_review",
+            Self::ApprovedCurationManifest => "approved_curation_manifest",
+            Self::CurationApplication => "curation_application",
             Self::Snapshot => "snapshot",
             Self::BaseModel => "base_model",
             Self::TrainingRun => "training_run",
@@ -176,7 +200,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use serde_json::json;
 
-    use super::fingerprint;
+    use super::{ArtifactKind, fingerprint};
 
     #[test]
     fn recursively_sorts_arbitrary_json_object_keys() {
@@ -205,5 +229,39 @@ mod tests {
             fingerprint(&measurement).expect("original fingerprint"),
             fingerprint(&restored).expect("restored fingerprint")
         );
+    }
+
+    #[test]
+    fn dataset_quality_artifact_names_are_stable() {
+        let cases = [
+            (ArtifactKind::DatasetSourceRow, "dataset_source_row"),
+            (ArtifactKind::QualityAuditPlan, "quality_audit_plan"),
+            (
+                ArtifactKind::QualitySemanticGuidance,
+                "quality_semantic_guidance",
+            ),
+            (ArtifactKind::QualityAuditRun, "quality_audit_run"),
+            (
+                ArtifactKind::QualityEvaluatorAttempt,
+                "quality_evaluator_attempt",
+            ),
+            (ArtifactKind::RowQualityAssessment, "row_quality_assessment"),
+            (ArtifactKind::DatasetQualityReport, "dataset_quality_report"),
+            (ArtifactKind::RowQualityReview, "row_quality_review"),
+            (ArtifactKind::CurationProposal, "curation_proposal"),
+            (
+                ArtifactKind::CurationManifestReview,
+                "curation_manifest_review",
+            ),
+            (
+                ArtifactKind::ApprovedCurationManifest,
+                "approved_curation_manifest",
+            ),
+            (ArtifactKind::CurationApplication, "curation_application"),
+        ];
+
+        for (kind, expected) in cases {
+            assert_eq!(kind.as_str(), expected);
+        }
     }
 }

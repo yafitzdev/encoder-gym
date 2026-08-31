@@ -32,6 +32,26 @@ The allocation and its result carry reproducible SHA-256 fingerprints. Compact
 distribution explanations are derived from that persisted result rather than
 stored as mutable presentation state.
 
+Qualified snapshots add a separate, reviewable evidence chain:
+
+```text
+qualified snapshot
+  -> curation application
+    -> approved manifest + exact manifest approval
+      -> complete curation proposal + append-only row reviews
+        -> quality report
+          -> normalized assessments + evaluator attempts
+            -> audit run + complete source-set plan
+              -> pinned semantic/authenticity guidance
+              -> generated or imported source rows
+```
+
+The audit stores the exact bounded guidance payload resolved at creation.
+Later semantic or authenticity binding changes cannot alter or prevent replay
+of the historical audit. Provenance redacts candidate text, local import paths,
+provider-controlled errors and metadata, rationales, and human review reasons
+while retaining fingerprints, budgets, decisions, and parent identities.
+
 Generated rows also embed the resolved context in generation metadata. A
 workflow advisory assessment links to the same generation semantic context,
 so its prompt cannot silently pick up a later catalog revision.
