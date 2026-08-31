@@ -155,4 +155,53 @@ async fn roles_and_exposures_are_append_only_and_sealed_resolution_is_atomic() {
             .risk,
         AdaptiveRiskLevel::Compromised
     );
+
+    let development = EvaluationCohort::new(
+        "adaptive development",
+        snapshot_id,
+        snapshot_fingerprint,
+        SnapshotSplit::Test,
+        CohortOrigin::InternalSnapshot,
+    )
+    .expect("development cohort");
+    let development_role = CohortRoleDecision::initial(
+        &development,
+        CohortRole::Development,
+        "adaptive diagnostics are explicitly permitted",
+    )
+    .expect("development role");
+    store
+        .create_cohort(&development, &development_role)
+        .await
+        .expect("development cohort persisted");
+    let architecture_exposure = EvidenceExposure::new(
+        &development,
+        &development_role,
+        EvidenceExposureRequest {
+            evaluation_run_id: None,
+            workflow_run_id: None,
+            workflow_iteration: None,
+            purpose: ExposurePurpose::DatasetArchitecture,
+            disclosure: DisclosureLevel::Slices,
+            adaptation_eligible: true,
+            note: Some("aggregate diagnostics informed dataset architecture".into()),
+        },
+    )
+    .expect("dataset architecture exposure");
+    store
+        .append_exposure(&architecture_exposure, None)
+        .await
+        .expect("dataset architecture exposure persisted");
+    assert_eq!(
+        store
+            .query_exposures(ExposureQuery {
+                cohort_id: development.id,
+                purpose: Some(ExposurePurpose::DatasetArchitecture),
+                limit: 10,
+                offset: 0,
+            })
+            .await
+            .expect("architecture exposure query"),
+        vec![architecture_exposure]
+    );
 }
