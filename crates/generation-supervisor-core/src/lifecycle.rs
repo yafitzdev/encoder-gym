@@ -218,6 +218,11 @@ pub struct ChildReservation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replaces_reservation_id: Option<Uuid>,
     pub input_fingerprint: String,
+    /// Worst-case finite usage authorized before this child can perform any
+    /// external work. Reservations, including interrupted ones, consume this
+    /// envelope so recovery cannot double-spend a run budget.
+    #[serde(default, skip_serializing_if = "SupervisorUsage::is_zero")]
+    pub reserved_usage: SupervisorUsage,
     pub reserved_at: DateTime<Utc>,
     pub fingerprint: String,
 }
@@ -249,11 +254,22 @@ impl ChildReservation {
             attempt,
             replaces_reservation_id,
             input_fingerprint: required(input_fingerprint, "child input fingerprint")?,
+            reserved_usage: SupervisorUsage::default(),
             reserved_at,
             fingerprint: String::new(),
         };
         value.fingerprint = value.reproduce_fingerprint()?;
         Ok(value)
+    }
+
+    pub fn with_reserved_usage(
+        mut self,
+        reserved_usage: SupervisorUsage,
+    ) -> Result<Self, SupervisorError> {
+        reserved_usage.validate_for_child(self.kind)?;
+        self.reserved_usage = reserved_usage;
+        self.fingerprint = self.reproduce_fingerprint()?;
+        Ok(self)
     }
 
     pub fn reproduce_fingerprint(&self) -> Result<String, SupervisorError> {
@@ -347,6 +363,84 @@ pub struct SupervisorUsage {
 }
 
 impl SupervisorUsage {
+    pub fn is_zero(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn validate_for_child(&self, kind: ChildKind) -> Result<(), SupervisorError> {
+        let valid = match kind {
+            ChildKind::GenerationSegment => {
+                self.generation_segments == 1
+                    && self.generated_rows > 0
+                    && self.quality_audits == 0
+                    && self.evaluator_requests == 0
+                    && self.evaluator_attempts == 0
+                    && self.prompt_revisions == 0
+                    && self.revision_canaries == 0
+                    && self.pi_model_turns == 0
+                    && self.pi_tool_calls == 0
+                    && self.pi_input_tokens == 0
+                    && self.pi_output_tokens == 0
+            }
+            ChildKind::RevisionCanary => {
+                self.generation_segments == 1
+                    && self.generated_rows > 0
+                    && self.quality_audits == 0
+                    && self.evaluator_requests == 0
+                    && self.evaluator_attempts == 0
+                    && self.prompt_revisions == 0
+                    && self.revision_canaries == 1
+                    && self.pi_model_turns == 0
+                    && self.pi_tool_calls == 0
+                    && self.pi_input_tokens == 0
+                    && self.pi_output_tokens == 0
+            }
+            ChildKind::QualityAudit => {
+                self.generation_segments == 0
+                    && self.generated_rows == 0
+                    && self.quality_audits == 1
+                    && self.evaluator_requests > 0
+                    && self.evaluator_attempts >= self.evaluator_requests
+                    && self.prompt_revisions == 0
+                    && self.revision_canaries == 0
+                    && self.pi_model_turns == 0
+                    && self.pi_tool_calls == 0
+                    && self.pi_input_tokens == 0
+                    && self.pi_output_tokens == 0
+            }
+            ChildKind::PiModelTurn => {
+                self.generation_segments == 0
+                    && self.generated_rows == 0
+                    && self.quality_audits == 0
+                    && self.evaluator_requests == 0
+                    && self.evaluator_attempts == 0
+                    && self.prompt_revisions == 0
+                    && self.revision_canaries == 0
+                    && self.pi_model_turns == 1
+                    && self.pi_tool_calls == 0
+            }
+            ChildKind::PiToolCall => {
+                self.generation_segments == 0
+                    && self.generated_rows == 0
+                    && self.quality_audits == 0
+                    && self.evaluator_requests == 0
+                    && self.evaluator_attempts == 0
+                    && self.prompt_revisions == 0
+                    && self.revision_canaries == 0
+                    && self.pi_tool_calls == 1
+                    && self.pi_model_turns == 0
+                    && self.pi_input_tokens == 0
+                    && self.pi_output_tokens == 0
+            }
+        };
+        if !valid {
+            return Err(SupervisorError::Validation(format!(
+                "reserved usage does not match child kind {kind:?}"
+            )));
+        }
+        Ok(())
+    }
+
     pub fn checked_add(&self, delta: &Self) -> Result<Self, SupervisorError> {
         macro_rules! add {
             ($field:ident) => {

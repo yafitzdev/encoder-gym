@@ -28,7 +28,10 @@ use generation_supervisor_core::{
         RowQualityThresholds, SupervisorBudgets,
     },
     decision::{DeterministicQualityDecision, SupervisorDecisionState},
-    lifecycle::{ChildKind, ChildOutcome, ChildOutcomeState, ChildReservation, SupervisorRun},
+    lifecycle::{
+        ChildKind, ChildOutcome, ChildOutcomeState, ChildReservation, SupervisorRun,
+        SupervisorUsage,
+    },
     observation::{
         BatchQualityObservation, QualityScope, QualityWindowKind, RowQualityObservation,
     },
@@ -147,11 +150,39 @@ async fn supervisor_evidence_round_trips_with_generation_provenance_and_integrit
         artifact_core::fingerprint(&spec).expect("spec fingerprint"),
         Utc::now(),
     )
-    .expect("reservation");
+    .expect("reservation")
+    .with_reserved_usage(SupervisorUsage {
+        generation_segments: 1,
+        generated_rows: 1,
+        ..Default::default()
+    })
+    .expect("reserved usage");
     store
         .reserve_child(&reservation)
         .await
         .expect("reservation persists before work");
+    let over_budget = ChildReservation::create(
+        Uuid::new_v4(),
+        run.id,
+        ChildKind::GenerationSegment,
+        "over-budget-segment",
+        Uuid::new_v4(),
+        1,
+        None,
+        "over-budget-input",
+        Utc::now(),
+    )
+    .expect("reservation")
+    .with_reserved_usage(SupervisorUsage {
+        generation_segments: 1,
+        generated_rows: 10,
+        ..Default::default()
+    })
+    .expect("reserved usage");
+    assert!(
+        store.reserve_child(&over_budget).await.is_err(),
+        "worst-case child budgets must be rejected before external work"
+    );
     store
         .create_generation_execution(&job, &spec)
         .await

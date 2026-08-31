@@ -9,7 +9,13 @@ publish = false
 agent-runtime-core.workspace = true
 artifact-core.workspace = true
 chrono.workspace = true
+dataset-core.workspace = true
+dataset-quality-core.workspace = true
+dataset-quality-runner.workspace = true
+generation-core.workspace = true
 generation-supervisor-core.workspace = true
+research-core.workspace = true
+semantic-catalog.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -17,8 +23,10 @@ tokio.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-dataset-quality-core.workspace = true
-generation-core.workspace = true
+dataset-quality-fake.workspace = true
+generation-fake.workspace = true
+synthetic-data-sqlite = { path = "../generation-sqlite" }
+tempfile.workspace = true
 
 [lints]
 workspace = true

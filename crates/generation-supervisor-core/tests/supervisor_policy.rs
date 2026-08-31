@@ -612,6 +612,11 @@ fn every_finite_budget_and_external_intent_fails_closed() {
         "request-fp",
         now(),
     )
+    .unwrap()
+    .with_reserved_usage(SupervisorUsage {
+        pi_model_turns: 1,
+        ..Default::default()
+    })
     .unwrap();
     let interrupted = ChildOutcome::record(
         Uuid::from_u128(703),

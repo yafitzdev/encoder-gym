@@ -14,6 +14,7 @@ use generation_supervisor_core::{
     decision::DeterministicQualityDecision,
     lifecycle::{
         ChildOutcome, ChildReservation, SupervisorRun, SupervisorRunEvent, SupervisorRunState,
+        SupervisorUsage,
     },
     observation::{
         BatchQualityObservation, QualityEvidenceManifest, QualityScope, RowQualityObservation,
@@ -924,24 +925,73 @@ impl GenerationSupervisorStore for SqliteStore {
             if reservation.reproduce_fingerprint()? != reservation.fingerprint {
                 return Err(integrity("child reservation fingerprint mismatch"));
             }
-            if load_run(self, reservation.run_id).await?.is_none() {
-                return Err(integrity("child reservation supervisor run is missing"));
+            reservation
+                .reserved_usage
+                .validate_for_child(reservation.kind)?;
+            let mut tx = self.pool().begin().await.map_err(sql_error)?;
+            let run_json: Option<String> =
+                sqlx::query_scalar("SELECT run_json FROM generation_supervisor_runs WHERE id = ?")
+                    .bind(reservation.run_id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(sql_error)?;
+            let run: SupervisorRun = run_json
+                .ok_or_else(|| integrity("child reservation supervisor run is missing"))
+                .and_then(|value| decode(&value))?;
+            if run.reproduce_fingerprint()? != run.fingerprint {
+                return Err(integrity("supervisor run fingerprint mismatch"));
             }
+            let contract_json: Option<String> = sqlx::query_scalar(
+                "SELECT contract_json FROM generation_quality_contracts WHERE id = ?",
+            )
+            .bind(run.contract_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            let contract: GenerationQualityContract = contract_json
+                .ok_or_else(|| integrity("child reservation contract is missing"))
+                .and_then(|value| decode(&value))?;
+            contract.validate()?;
+            if run.contract_fingerprint != contract.fingerprint {
+                return Err(integrity("supervisor run contract binding mismatch"));
+            }
+            let existing_json = sqlx::query_scalar::<_, String>(
+                "SELECT reservation_json FROM generation_supervisor_child_reservations WHERE run_id = ? ORDER BY reserved_at, id",
+            )
+            .bind(reservation.run_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(sql_error)?;
+            let mut usage = SupervisorUsage::default();
+            for value in existing_json {
+                let existing: ChildReservation = decode(&value)?;
+                if existing.reproduce_fingerprint()? != existing.fingerprint {
+                    return Err(integrity("child reservation fingerprint mismatch"));
+                }
+                usage = usage.checked_add(&existing.reserved_usage)?;
+            }
+            usage.reserve(&reservation.reserved_usage, &contract)?;
             if let Some(replaces) = reservation.replaces_reservation_id {
-                let prior: ChildReservation = load_json_required(
-                    self,
+                let prior_json: Option<String> = sqlx::query_scalar(
                     "SELECT reservation_json FROM generation_supervisor_child_reservations WHERE id = ?",
-                    replaces,
-                    None,
                 )
-                .await?;
-                let outcome: ChildOutcome = load_json_required(
-                    self,
+                .bind(replaces)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+                let prior: ChildReservation = prior_json
+                    .ok_or_else(|| integrity("replacement reservation is missing"))
+                    .and_then(|value| decode(&value))?;
+                let outcome_json: Option<String> = sqlx::query_scalar(
                     "SELECT outcome_json FROM generation_supervisor_child_outcomes WHERE reservation_id = ?",
-                    replaces,
-                    None,
                 )
-                .await?;
+                .bind(replaces)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+                let outcome: ChildOutcome = outcome_json
+                    .ok_or_else(|| integrity("replacement outcome is missing"))
+                    .and_then(|value| decode(&value))?;
                 if prior.run_id != reservation.run_id
                     || prior.kind != reservation.kind
                     || prior.logical_input_key != reservation.logical_input_key
@@ -968,9 +1018,10 @@ impl GenerationSupervisorStore for SqliteStore {
             .bind(&reservation.fingerprint)
             .bind(encode(&reservation)?)
             .bind(reservation.reserved_at)
-            .execute(self.pool())
+            .execute(&mut *tx)
             .await
             .map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
             Ok(())
         })
     }
@@ -2177,6 +2228,23 @@ async fn verify_row_binding(
         {
             return Err(integrity(
                 "row observation assessment provenance does not reproduce",
+            ));
+        }
+        let audit = load_child_reservation_by_child(store, run_id, assessment.audit_run_id)
+            .await?
+            .ok_or_else(|| integrity("row quality audit is not a reserved supervisor child"))?;
+        if audit.kind != generation_supervisor_core::lifecycle::ChildKind::QualityAudit {
+            return Err(integrity("row assessment child has the wrong kind"));
+        }
+        let audit_outcome = load_child_outcome(store, audit.id)
+            .await?
+            .ok_or_else(|| integrity("row quality audit has no durable outcome"))?;
+        if audit_outcome.state
+            != generation_supervisor_core::lifecycle::ChildOutcomeState::Succeeded
+            || audit_outcome.output_id != Some(assessment.audit_run_id)
+        {
+            return Err(integrity(
+                "row assessment is not bound to a successful quality child",
             ));
         }
         let source = load_source_row(store, assessment.source_row_id)

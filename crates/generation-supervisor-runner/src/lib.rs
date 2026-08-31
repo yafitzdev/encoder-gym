@@ -1,6 +1,7 @@
 //! Host-controlled bounded Pi diagnosis for deterministic generation pauses.
 
 mod inputs;
+pub mod orchestration;
 mod tools;
 
 use std::{sync::Arc, time::Duration};
