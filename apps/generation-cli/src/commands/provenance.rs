@@ -48,6 +48,18 @@ const fn artifact_kind(kind: ArtifactKindArg) -> ArtifactKind {
         ArtifactKindArg::GenerationPlan => ArtifactKind::GenerationPlan,
         ArtifactKindArg::GenerationJob => ArtifactKind::GenerationJob,
         ArtifactKindArg::DatasetImport => ArtifactKind::DatasetImport,
+        ArtifactKindArg::DatasetSourceRow => ArtifactKind::DatasetSourceRow,
+        ArtifactKindArg::QualityAuditPlan => ArtifactKind::QualityAuditPlan,
+        ArtifactKindArg::QualitySemanticGuidance => ArtifactKind::QualitySemanticGuidance,
+        ArtifactKindArg::QualityAuditRun => ArtifactKind::QualityAuditRun,
+        ArtifactKindArg::QualityEvaluatorAttempt => ArtifactKind::QualityEvaluatorAttempt,
+        ArtifactKindArg::RowQualityAssessment => ArtifactKind::RowQualityAssessment,
+        ArtifactKindArg::DatasetQualityReport => ArtifactKind::DatasetQualityReport,
+        ArtifactKindArg::RowQualityReview => ArtifactKind::RowQualityReview,
+        ArtifactKindArg::CurationProposal => ArtifactKind::CurationProposal,
+        ArtifactKindArg::CurationManifestReview => ArtifactKind::CurationManifestReview,
+        ArtifactKindArg::ApprovedCurationManifest => ArtifactKind::ApprovedCurationManifest,
+        ArtifactKindArg::CurationApplication => ArtifactKind::CurationApplication,
         ArtifactKindArg::Snapshot => ArtifactKind::Snapshot,
         ArtifactKindArg::BaseModel => ArtifactKind::BaseModel,
         ArtifactKindArg::TrainingRun => ArtifactKind::TrainingRun,
@@ -69,5 +81,68 @@ const fn artifact_kind(kind: ArtifactKindArg) -> ArtifactKind {
         ArtifactKindArg::WorkflowApproval => ArtifactKind::WorkflowApproval,
         ArtifactKindArg::StopDecision => ArtifactKind::StopDecision,
         ArtifactKindArg::ModelPromotion => ArtifactKind::ModelPromotion,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dataset_quality_cli_kinds_map_exactly() {
+        let mappings = [
+            (
+                ArtifactKindArg::DatasetSourceRow,
+                ArtifactKind::DatasetSourceRow,
+            ),
+            (
+                ArtifactKindArg::QualityAuditPlan,
+                ArtifactKind::QualityAuditPlan,
+            ),
+            (
+                ArtifactKindArg::QualitySemanticGuidance,
+                ArtifactKind::QualitySemanticGuidance,
+            ),
+            (
+                ArtifactKindArg::QualityAuditRun,
+                ArtifactKind::QualityAuditRun,
+            ),
+            (
+                ArtifactKindArg::QualityEvaluatorAttempt,
+                ArtifactKind::QualityEvaluatorAttempt,
+            ),
+            (
+                ArtifactKindArg::RowQualityAssessment,
+                ArtifactKind::RowQualityAssessment,
+            ),
+            (
+                ArtifactKindArg::DatasetQualityReport,
+                ArtifactKind::DatasetQualityReport,
+            ),
+            (
+                ArtifactKindArg::RowQualityReview,
+                ArtifactKind::RowQualityReview,
+            ),
+            (
+                ArtifactKindArg::CurationProposal,
+                ArtifactKind::CurationProposal,
+            ),
+            (
+                ArtifactKindArg::CurationManifestReview,
+                ArtifactKind::CurationManifestReview,
+            ),
+            (
+                ArtifactKindArg::ApprovedCurationManifest,
+                ArtifactKind::ApprovedCurationManifest,
+            ),
+            (
+                ArtifactKindArg::CurationApplication,
+                ArtifactKind::CurationApplication,
+            ),
+        ];
+
+        for (argument, expected) in mappings {
+            assert_eq!(artifact_kind(argument), expected);
+        }
     }
 }

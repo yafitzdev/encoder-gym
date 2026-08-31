@@ -23,8 +23,9 @@ pub fn run_json<'a>(database_url: &str, arguments: impl IntoIterator<Item = &'a 
     );
     serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
         panic!(
-            "stdout was not one JSON value: {error}\n{}",
-            String::from_utf8_lossy(&output.stdout)
+            "stdout was not one JSON value: {error}\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
         )
     })
 }

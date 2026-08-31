@@ -60,7 +60,7 @@ mod facts;
 
 use facts::{
     analysis_facts_check, architect_facts_check, bootstrap_facts_check, evaluation_facts_check,
-    optimization_facts_check, research_facts_check, workflow_facts_check,
+    optimization_facts_check, quality_facts_check, research_facts_check, workflow_facts_check,
 };
 
 #[derive(Debug, Serialize)]
@@ -86,7 +86,7 @@ enum CheckStatus {
 }
 
 pub async fn execute(args: DoctorArgs, store: &SqliteStore) -> anyhow::Result<()> {
-    let mut checks = database_checks(store).await;
+    let mut checks = Box::pin(database_checks(store)).await;
     let configured = match args.config.as_deref() {
         Some(path) => match config::resolve_path(path) {
             Ok(config) => {
@@ -110,8 +110,15 @@ pub async fn execute(args: DoctorArgs, store: &SqliteStore) -> anyhow::Result<()
         }
     };
     checks.push(artifact_check(configured.as_ref()));
-    checks.extend(model_artifact_checks(store).await);
-    checks.push(backend_check(args.check_backend, configured.as_ref(), store).await);
+    checks.extend(Box::pin(model_artifact_checks(store)).await);
+    checks.push(
+        Box::pin(backend_check(
+            args.check_backend,
+            configured.as_ref(),
+            store,
+        ))
+        .await,
+    );
     let healthy = checks
         .iter()
         .all(|check| !matches!(check.status, CheckStatus::Fail));
@@ -215,16 +222,28 @@ async fn database_checks(store: &SqliteStore) -> Vec<DoctorCheck> {
         Ok(count) => checks.push(fail("migrations", format!("{count} failed migration(s)"))),
         Err(error) => checks.push(fail("migrations", error.to_string())),
     }
-    checks.push(evaluation_facts_check(store).await);
-    checks.push(analysis_facts_check(store).await);
-    checks.push(optimization_facts_check(store).await);
-    checks.push(bootstrap_facts_check(store).await);
-    checks.push(workflow_facts_check(store).await);
-    checks.push(semantic_facts_check(store).await);
-    checks.push(research_facts_check(store).await);
-    checks.push(architect_facts_check(store).await);
-    checks.push(generation_execution_facts_check(store).await);
+    checks.push(Box::pin(evaluation_facts_check(store)).await);
+    checks.push(Box::pin(analysis_facts_check(store)).await);
+    checks.push(Box::pin(optimization_facts_check(store)).await);
+    checks.push(Box::pin(bootstrap_facts_check(store)).await);
+    checks.push(Box::pin(workflow_facts_check(store)).await);
+    checks.push(Box::pin(semantic_facts_check(store)).await);
+    checks.push(Box::pin(research_facts_check(store)).await);
+    checks.push(Box::pin(architect_facts_check(store)).await);
+    checks.push(isolated_quality_facts_check(store).await);
+    checks.push(Box::pin(generation_execution_facts_check(store)).await);
     checks
+}
+
+async fn isolated_quality_facts_check(store: &SqliteStore) -> DoctorCheck {
+    let store = store.clone();
+    match tokio::spawn(async move { quality_facts_check(&store).await }).await {
+        Ok(check) => check,
+        Err(error) => fail(
+            "dataset_quality_facts",
+            format!("quality fact verification task failed: {error}"),
+        ),
+    }
 }
 
 async fn generation_execution_facts_check(store: &SqliteStore) -> DoctorCheck {

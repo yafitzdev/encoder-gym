@@ -99,6 +99,77 @@ is structurally ineligible. Generation pins the context and makes no architect
 or Pi call. See `dataset-architect-spec.md` and the checked-in offline example in
 `examples/architect/`.
 
+Dataset-qualification commands are:
+
+- `synth quality policy-preview --preset fast|balanced|strict` to inspect the
+  complete finite policy before writing state;
+- `quality audit-create <DATASET_ID>` and `audit-start <RUN_ID>` to pin every
+  accepted source row and run the deterministic fake evaluator by default;
+- `audit-status|audit-watch|audit-cancel|audit-recover` for durable control;
+- `assessments <RUN_ID>` and `summary <RUN_ID>` for immutable row evidence
+  and persisted quality coverage;
+- `curate <RUN_ID>`, `row-review <ASSESSMENT_ID>` (compatibility form),
+  `row-review --report-id <REPORT_ID> --source-row-id <ROW_ID>`, and
+  `manifest-review <PROPOSAL_ID>` for deterministic selection plus explicit
+  append-only operator decisions; and
+- `snapshot create <DATASET_ID> --quality-manifest <MANIFEST_ID> ...` to build
+  an ordinary immutable snapshot containing only approved members.
+
+The deterministic fake remains the default. External evaluation is an explicit
+two-step opt-in using the existing saved OpenAI-compatible generation backend:
+
+```powershell
+synth backend configure --base-url https://provider.example/v1 --model provider-model
+synth quality audit-create <DATASET_ID> --preset fast --egress external-candidate-text --evaluator openai-compatible
+$env:SYNTH_OPENAI_API_KEY = "..."
+synth quality audit-start <RUN_ID> --api-key-env SYNTH_OPENAI_API_KEY
+# The same option is available on audit-recover.
+```
+
+The V1 OpenAI-compatible evaluator supports only the `fast` preset. The
+`balanced` and `strict` presets require one or more genuinely independent
+reviewer model or backend configurations, which the current CLI cannot yet
+pin. The deterministic fake evaluator continues to support all three presets
+for offline workflows.
+
+Creation fixes the quality prompt policy, zero temperature, deterministic
+seed, protocol, response limits, per-request output-token ceiling, endpoint,
+and model into the evaluator identity fingerprint stored on the run. The
+adapter clamps the aggregate request allowance to a default 16,384 output
+tokens before emitting `max_tokens`. Start and recovery read the credential
+only from the named environment variable and require reconstructed identities
+to equal the persisted identities before any request. The credential and its
+environment-variable name are not persisted. A non-loopback endpoint must use
+HTTPS even when it accepts unauthenticated requests.
+
+The saved generation backend is currently the reconstruction source rather than
+an immutable evaluator-configuration snapshot. Changing its endpoint or model
+therefore makes an existing external audit safely non-runnable instead of
+silently changing providers. Presets still impose finite row, request, attempt,
+input-token, output-token, and total-token ceilings. `--max-cost-microusd` is
+rejected with `--evaluator openai-compatible` until provider pricing can be
+persisted and reproduced as part of the audit configuration.
+
+Audit creation resolves semantic-catalog and optional approved authenticity
+guidance once, stores that exact normalized payload, and never consults a newer
+current binding while resuming. Unevaluated, invalid, borderline, and
+quarantined rows are excluded unless an explicit row review includes them.
+The report/row review target works even when no assessment exists, and the CLI
+fully verifies the persisted report and source-row membership before appending
+the reviewer and reason. A proposal with newer row reviews is stale and cannot
+be approved until `quality curate <RUN_ID>` produces its successor.
+
+Routine large-population output is bounded: audit creation/start/status,
+curation, and manifest approval return identifiers, fingerprints, counts, and
+compact progress/report summaries instead of embedding every plan item,
+proposal entry, or manifest member. Use `quality proposal <PROPOSAL_ID>` and
+`quality manifest <MANIFEST_ID>` when full verified row membership is intended.
+`quality summary <RUN_ID>` includes structurally accepted population rows,
+assessed rows, qualified rows, and `remaining_qualified_rows`; that last value
+is the persisted audit population minus qualified rows, not a generation target.
+Legacy snapshots remain valid and visibly lack a curation application. See
+`dataset-quality-spec.md`.
+
 Declarative project-preparation commands are:
 
 - `synth project preview <MANIFEST>` to resolve exact initial cell targets,

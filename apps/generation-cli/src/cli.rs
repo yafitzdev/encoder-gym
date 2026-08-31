@@ -75,6 +75,11 @@ pub enum Command {
         #[command(subcommand)]
         command: SnapshotCommand,
     },
+    /// Audit semantic row quality and curate explicit training membership.
+    Quality {
+        #[command(subcommand)]
+        command: QualityCommand,
+    },
     /// Register and verify local pretrained encoder bundles.
     Encoder {
         #[command(subcommand)]
@@ -568,6 +573,9 @@ pub enum SnapshotCommand {
         /// Project TOML supplying defaults; explicit flags take precedence.
         #[arg(long)]
         config: Option<PathBuf>,
+        /// Approved curation manifest whose included rows exclusively form the snapshot.
+        #[arg(long)]
+        quality_manifest: Option<Uuid>,
     },
     List {
         #[arg(long)]
@@ -593,6 +601,175 @@ pub enum SnapshotCommand {
         #[arg(long = "file")]
         output: PathBuf,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum QualityCommand {
+    /// Resolve an outcome-oriented quality preset without writing state.
+    PolicyPreview(QualityPolicyArgs),
+    /// Pin the complete accepted source population and queue one immutable audit.
+    AuditCreate(QualityAuditCreateArgs),
+    /// Run or resume a queued audit in the foreground.
+    AuditStart(QualityAuditExecutionArgs),
+    /// Show immutable plan identity/counts and exact persisted audit progress.
+    AuditStatus { run_id: Uuid },
+    /// Poll exact persisted progress until the audit reaches a terminal state.
+    AuditWatch {
+        run_id: Uuid,
+        #[arg(long, default_value_t = 500, value_parser = clap::value_parser!(u64).range(50..=60_000))]
+        poll_ms: u64,
+    },
+    /// Request cancellation before any further evaluator request begins.
+    AuditCancel { run_id: Uuid },
+    /// Recover interrupted attempts and resume within the original finite budget.
+    AuditRecover(QualityAuditExecutionArgs),
+    /// List immutable normalized row assessments from one audit.
+    Assessments(QualityAssessmentsArgs),
+    /// Show persisted aggregate quality coverage for one completed audit.
+    Summary { run_id: Uuid },
+    /// Compile the latest append-only row reviews into a curation proposal.
+    Curate { run_id: Uuid },
+    /// Append a human decision for an assessment row or an exact report row.
+    RowReview(QualityRowReviewArgs),
+    /// Show and fully verify an immutable curation proposal.
+    Proposal { proposal_id: Uuid },
+    /// Append an exact proposal review and create a manifest on approval.
+    ManifestReview(QualityManifestReviewArgs),
+    /// Show and fully verify an approved curation manifest.
+    Manifest { manifest_id: Uuid },
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct QualityPolicyArgs {
+    /// Overall evidence threshold and review depth.
+    #[arg(long, value_enum, default_value_t = QualityPresetArg::Balanced)]
+    pub preset: QualityPresetArg,
+    /// Whether candidate text is permitted to leave this local process.
+    #[arg(long, value_enum, default_value_t = QualityEgressArg::LocalOnly)]
+    pub egress: QualityEgressArg,
+    /// Whether an approved authenticity profile participates in scoring.
+    #[arg(long, value_enum, default_value_t = QualityAuthenticityArg::Off)]
+    pub authenticity: QualityAuthenticityArg,
+    /// Optional hard provider-cost ceiling in millionths of a US dollar.
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    pub max_cost_microusd: Option<u64>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct QualityAuditCreateArgs {
+    pub dataset_id: Uuid,
+    #[command(flatten)]
+    pub policy: QualityPolicyArgs,
+    /// Replaceable evaluator implementation. V1 defaults to the deterministic offline fake.
+    #[arg(long, value_enum, default_value_t = QualityEvaluatorArg::Fake)]
+    pub evaluator: QualityEvaluatorArg,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct QualityAuditExecutionArgs {
+    pub run_id: Uuid,
+    /// Environment variable containing the process-local evaluator credential.
+    #[arg(long, default_value = "SYNTH_OPENAI_API_KEY")]
+    pub api_key_env: String,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct QualityAssessmentsArgs {
+    pub run_id: Uuid,
+    #[arg(long, value_enum)]
+    pub verdict: Option<QualityVerdictArg>,
+    #[command(flatten)]
+    pub page: PageArgs,
+}
+
+#[derive(Debug, clap::Args)]
+#[command(
+    group(
+        ArgGroup::new("target")
+            .required(true)
+            .multiple(false)
+            .args(["assessment_id", "report_id"])
+    ),
+    group(
+        ArgGroup::new("decision")
+            .required(true)
+            .multiple(false)
+            .args(["include", "exclude", "request_reassessment"])
+    )
+)]
+pub struct QualityRowReviewArgs {
+    /// Existing compatibility target: review the immutable row referenced by this assessment.
+    pub assessment_id: Option<Uuid>,
+    /// Review an exact persisted report row, including invalid or unaudited rows.
+    #[arg(long, requires = "source_row_id", conflicts_with = "assessment_id")]
+    pub report_id: Option<Uuid>,
+    /// Source row in --report-id; the complete report is verified before review.
+    #[arg(long, requires = "report_id", conflicts_with = "assessment_id")]
+    pub source_row_id: Option<Uuid>,
+    #[arg(long)]
+    pub include: bool,
+    #[arg(long)]
+    pub exclude: bool,
+    #[arg(long)]
+    pub request_reassessment: bool,
+    #[arg(long, default_value = "local-operator")]
+    pub reviewer: String,
+    #[arg(long)]
+    pub reason: String,
+}
+
+#[derive(Debug, clap::Args)]
+#[command(group(
+    ArgGroup::new("decision")
+        .required(true)
+        .multiple(false)
+        .args(["approve", "reject", "request_revision"])
+))]
+pub struct QualityManifestReviewArgs {
+    pub proposal_id: Uuid,
+    #[arg(long)]
+    pub approve: bool,
+    #[arg(long)]
+    pub reject: bool,
+    #[arg(long)]
+    pub request_revision: bool,
+    #[arg(long, default_value = "local-operator")]
+    pub reviewer: String,
+    #[arg(long)]
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum QualityPresetArg {
+    Fast,
+    Balanced,
+    Strict,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum QualityEgressArg {
+    LocalOnly,
+    ExternalCandidateText,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum QualityAuthenticityArg {
+    Off,
+    WhenAvailable,
+    Required,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum QualityEvaluatorArg {
+    Fake,
+    OpenaiCompatible,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum QualityVerdictArg {
+    Qualified,
+    Borderline,
+    Quarantined,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1756,6 +1933,18 @@ pub enum ArtifactKindArg {
     GenerationPlan,
     GenerationJob,
     DatasetImport,
+    DatasetSourceRow,
+    QualityAuditPlan,
+    QualitySemanticGuidance,
+    QualityAuditRun,
+    QualityEvaluatorAttempt,
+    RowQualityAssessment,
+    DatasetQualityReport,
+    RowQualityReview,
+    CurationProposal,
+    CurationManifestReview,
+    ApprovedCurationManifest,
+    CurationApplication,
     Snapshot,
     BaseModel,
     TrainingRun,

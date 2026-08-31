@@ -61,6 +61,51 @@ Nothing is applied until an operator approves it; stale coverage blocks the
 handoff, and generation consumes only the resulting immutable plan/context.
 See [`docs/dataset-architect-spec.md`](docs/dataset-architect-spec.md).
 
+Before training, the optional dataset-quality gate can audit every accepted
+generated or imported row. Its evaluator is blind to the assigned targets and
+only supplies bounded evidence; deterministic policy and append-only operator
+reviews decide which rows enter an immutable curation manifest:
+
+```text
+cargo run -p synthetic-data-cli -- quality policy-preview --preset balanced
+cargo run -p synthetic-data-cli -- quality audit-create <DATASET_ID> --preset balanced --evaluator fake
+cargo run -p synthetic-data-cli -- quality audit-start <RUN_ID>
+cargo run -p synthetic-data-cli -- quality summary <RUN_ID>
+cargo run -p synthetic-data-cli -- quality curate <RUN_ID>
+cargo run -p synthetic-data-cli -- quality row-review --report-id <REPORT_ID> --source-row-id <ROW_ID> --include --reviewer operator --reason "manual evidence checked"
+cargo run -p synthetic-data-cli -- quality manifest-review <PROPOSAL_ID> --approve --reviewer operator --reason "reviewed for training"
+cargo run -p synthetic-data-cli -- snapshot create <DATASET_ID> --name qualified --quality-manifest <MANIFEST_ID>
+```
+
+The qualified snapshot retains the complete audit, guidance, review, and source
+provenance chain. The deterministic fake requires no provider, while the
+replaceable OpenAI-compatible evaluator is isolated behind the same internal
+contract. See [`docs/dataset-quality-spec.md`](docs/dataset-quality-spec.md).
+The old `row-review <ASSESSMENT_ID>` form remains supported. The report/row form
+is required for invalid or unaudited rows that have no assessment. Audit,
+curation, and approval commands return bounded ID/fingerprint/count summaries;
+use `quality proposal <ID>` or `quality manifest <ID>` for the fully verified
+row-level artifact. `quality summary` reports both accepted/assessed coverage
+and the remaining population that is not yet qualified.
+
+To opt into external candidate-text egress, first persist the same
+OpenAI-compatible base URL and model used by generation, then create and start
+the audit explicitly:
+
+```powershell
+cargo run -p synthetic-data-cli -- backend configure --base-url https://provider.example/v1 --model provider-model
+cargo run -p synthetic-data-cli -- quality audit-create <DATASET_ID> --preset fast --egress external-candidate-text --evaluator openai-compatible
+$env:SYNTH_OPENAI_API_KEY = "..."
+cargo run -p synthetic-data-cli -- quality audit-start <RUN_ID> --api-key-env SYNTH_OPENAI_API_KEY
+```
+
+The key remains process-local. Non-loopback evaluator endpoints require HTTPS,
+and start/recovery refuse to run if the current saved endpoint or model no
+longer reconstructs the exact evaluator identities pinned at audit creation.
+External audits retain finite row, request, attempt, and token ceilings. An
+explicit monetary ceiling is currently rejected because provider pricing is
+not yet an immutable persisted audit input.
+
 The fastest complete offline journey starts from the checked-in local benchmark
 files and requires no copied UUIDs:
 
