@@ -170,7 +170,7 @@ impl BenchmarkQualificationStore for SqliteStore {
     }
 }
 
-async fn load_review_by(
+pub(crate) async fn load_review_by(
     connection: &mut SqliteConnection,
     column: &'static str,
     id: Uuid,
@@ -195,7 +195,7 @@ async fn load_review_by(
     Ok(Some(review))
 }
 
-async fn load_qualification(
+pub(crate) async fn load_qualification(
     connection: &mut SqliteConnection,
     id: Uuid,
     require_current_roles: bool,

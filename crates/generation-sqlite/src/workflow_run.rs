@@ -383,7 +383,8 @@ pub(crate) async fn load_workflow_definition(
 ) -> Result<Option<WorkflowDefinition>, WorkflowStoreError> {
     let Some(row) = sqlx::query_as::<_, DefinitionRow>(
         "SELECT id, name, dataset_id, project_configuration_id, development_suite_id, \
-         sealed_suite_id, benchmark_bundle_id, artifact_json, fingerprint, created_at \
+         sealed_suite_id, benchmark_bundle_id, benchmark_qualification_id, \
+         benchmark_qualification_review_id, artifact_json, fingerprint, created_at \
          FROM workflow_definitions WHERE id = ?",
     )
     .bind(id)
@@ -405,7 +406,34 @@ pub(crate) async fn load_workflow_definition(
             })?;
         binding.validate_bundle(&bundle).map_err(store_error)?;
     }
+    validate_persisted_qualification_binding(connection, &definition, false).await?;
     Ok(Some(definition))
+}
+
+async fn validate_persisted_qualification_binding(
+    connection: &mut SqliteConnection,
+    definition: &WorkflowDefinition,
+    require_current_roles: bool,
+) -> Result<(), WorkflowStoreError> {
+    let Some(binding) = definition.benchmark_qualification.as_ref() else {
+        return Ok(());
+    };
+    let qualification = crate::benchmark_qualification::load_qualification(
+        connection,
+        binding.qualification_id,
+        require_current_roles,
+    )
+    .await?
+    .ok_or_else(|| WorkflowStoreError("workflow benchmark qualification not found".into()))?;
+    let review =
+        crate::benchmark_qualification::load_review_by(connection, "id", binding.review_id)
+            .await?
+            .ok_or_else(|| {
+                WorkflowStoreError("workflow benchmark qualification review not found".into())
+            })?;
+    binding
+        .validate(&qualification, &review)
+        .map_err(store_error)
 }
 
 async fn validate_definition_references(
@@ -422,6 +450,7 @@ async fn validate_definition_references(
     binding
         .validate_bundle(&persisted_bundle)
         .map_err(store_error)?;
+    validate_persisted_qualification_binding(connection, definition, true).await?;
     let configuration: Option<(Uuid, String)> =
         sqlx::query_as("SELECT dataset_id, fingerprint FROM project_configurations WHERE id = ?")
             .bind(definition.project_configuration_id)
@@ -482,8 +511,9 @@ pub(crate) async fn insert_workflow_definition(
     sqlx::query(
         "INSERT INTO workflow_definitions \
          (id, name, dataset_id, project_configuration_id, development_suite_id, \
-          sealed_suite_id, benchmark_bundle_id, artifact_json, fingerprint, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          sealed_suite_id, benchmark_bundle_id, benchmark_qualification_id, \
+          benchmark_qualification_review_id, artifact_json, fingerprint, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(definition.id)
     .bind(&definition.name)
@@ -496,6 +526,18 @@ pub(crate) async fn insert_workflow_definition(
             .benchmark_bundle
             .as_ref()
             .map(|binding| binding.bundle_id),
+    )
+    .bind(
+        definition
+            .benchmark_qualification
+            .as_ref()
+            .map(|binding| binding.qualification_id),
+    )
+    .bind(
+        definition
+            .benchmark_qualification
+            .as_ref()
+            .map(|binding| binding.review_id),
     )
     .bind(to_json(definition)?)
     .bind(&definition.fingerprint)
@@ -620,6 +662,8 @@ struct DefinitionRow {
     development_suite_id: Uuid,
     sealed_suite_id: Option<Uuid>,
     benchmark_bundle_id: Option<Uuid>,
+    benchmark_qualification_id: Option<Uuid>,
+    benchmark_qualification_review_id: Option<Uuid>,
     artifact_json: String,
     fingerprint: String,
     created_at: chrono::DateTime<chrono::Utc>,
@@ -639,6 +683,16 @@ impl DefinitionRow {
                 .as_ref()
                 .map(|binding| binding.bundle_id)
                 != self.benchmark_bundle_id
+            || value
+                .benchmark_qualification
+                .as_ref()
+                .map(|binding| binding.qualification_id)
+                != self.benchmark_qualification_id
+            || value
+                .benchmark_qualification
+                .as_ref()
+                .map(|binding| binding.review_id)
+                != self.benchmark_qualification_review_id
             || value.fingerprint != self.fingerprint
             || value.created_at != self.created_at
         {

@@ -158,6 +158,12 @@ applied automatically when the SQLite store connects.
   `reject` decision per immutable qualification. A foreign key pins the exact
   readiness artifact; uniqueness closes the review after its first decision,
   and triggers reject mutation or deletion.
+- `0053_workflow_benchmark_qualification`: nullable qualification and review
+  authority pins on workflow definitions. Existing definitions retain paired
+  `NULL` values for historical readability. A new binding must resolve to the
+  definition's exact benchmark bundle, a `ready` qualification, and its
+  explicit `approve` review; partial, invalid, or subsequently changed
+  authority is rejected by database triggers and revalidated by the adapter.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild
