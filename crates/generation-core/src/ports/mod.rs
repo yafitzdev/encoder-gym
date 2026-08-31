@@ -12,6 +12,7 @@ use crate::{
         GenerationResult, ValidationStatus,
     },
     jobs::{GenerationAttempt, GenerationExecutionSpec, GenerationJob},
+    strategy::GenerationStrategyAssignment,
 };
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -187,6 +188,21 @@ pub trait BackendConfigurationStore: Send + Sync {
         &self,
         name: &str,
     ) -> BoxFuture<'_, Result<Option<BackendConfiguration>, StoreError>>;
+}
+
+/// Persistence boundary for the exact approved strategy context pinned to a
+/// generation job. Kept separate so ordinary generation stores need not know
+/// about optional strategy guidance.
+pub trait GenerationStrategyStore: Send + Sync {
+    fn save_generation_strategy(
+        &self,
+        assignment: &GenerationStrategyAssignment,
+    ) -> BoxFuture<'_, Result<(), StoreError>>;
+
+    fn get_generation_strategy(
+        &self,
+        job_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<GenerationStrategyAssignment>, StoreError>>;
 }
 
 pub trait GenerationStore:

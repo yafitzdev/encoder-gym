@@ -5,6 +5,7 @@ use std::{
     collections::BTreeSet,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
+    sync::Mutex,
     thread,
     time::{Duration, Instant},
 };
@@ -13,8 +14,13 @@ use serde_json::Value;
 use support::{run, run_json};
 use uuid::Uuid;
 
+static EXTERNAL_QUALITY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 #[test]
 fn external_quality_audit_runs_through_a_loopback_openai_compatible_process() {
+    let _serial = EXTERNAL_QUALITY_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback provider");
     let address = listener.local_addr().expect("loopback address");
     listener
@@ -105,12 +111,15 @@ fn external_quality_audit_runs_through_a_loopback_openai_compatible_process() {
 
 #[test]
 fn assessment_less_invalid_report_rows_can_be_explicitly_included_or_excluded() {
+    let _serial = EXTERNAL_QUALITY_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback provider");
     let address = listener.local_addr().expect("loopback address");
     listener
         .set_nonblocking(true)
         .expect("nonblocking provider listener");
-    let provider = thread::spawn(move || serve_one_invalid_quality_response(listener));
+    let provider = thread::spawn(move || serve_invalid_quality_responses(listener));
 
     let directory = tempfile::tempdir().expect("temporary directory");
     let database = directory.path().join("invalid-quality-row-review.db");
@@ -179,7 +188,10 @@ fn assessment_less_invalid_report_rows_can_be_explicitly_included_or_excluded() 
             "_ENCODER_GYM_TEST_MISSING_QUALITY_API_KEY",
         ],
     );
-    assert_eq!(outcome["run"]["state"], "completed");
+    assert_eq!(
+        outcome["run"]["state"], "completed",
+        "invalid-evaluator audit did not quarantine malformed output: {outcome}"
+    );
     assert_eq!(outcome["run"]["progress"]["assessed_rows"], 0);
     assert_eq!(outcome["run"]["progress"]["invalid_rows"], 2);
     assert_eq!(outcome["report"]["totals"]["invalid_rows"], 2);
@@ -322,6 +334,9 @@ fn assessment_less_invalid_report_rows_can_be_explicitly_included_or_excluded() 
 
 #[test]
 fn external_quality_audit_pins_backend_identity_and_rejects_policy_or_config_drift() {
+    let _serial = EXTERNAL_QUALITY_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let directory = tempfile::tempdir().expect("temporary directory");
     let database = directory.path().join("external-quality-cli.db");
     let database_url = format!(
@@ -1131,18 +1146,51 @@ fn serve_one_quality_response(listener: TcpListener) -> Result<(), String> {
     write_quality_response(&mut stream, "loopback-quality-model", content, 50)
 }
 
-fn serve_one_invalid_quality_response(listener: TcpListener) -> Result<(), String> {
-    let mut stream = accept_quality_connection(&listener)?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .map_err(|error| format!("provider read timeout failed: {error}"))?;
-    read_http_request(&mut stream)?;
-    write_quality_response(
-        &mut stream,
-        "loopback-invalid-quality-model",
-        serde_json::json!({"assessments": []}).to_string(),
-        10,
-    )
+fn serve_invalid_quality_responses(listener: TcpListener) -> Result<(), String> {
+    // The fast policy retries malformed evaluator output once before
+    // quarantining it. Keep the provider alive for the complete persisted
+    // attempt budget so this test never turns an invalid-output case into a
+    // transport failure on the retry.
+    for attempt in 0..2 {
+        let stream = if attempt == 0 {
+            Some(accept_quality_connection(&listener)?)
+        } else {
+            accept_optional_quality_connection(&listener, Duration::from_secs(5))?
+        };
+        let Some(mut stream) = stream else {
+            break;
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .map_err(|error| format!("provider read timeout failed: {error}"))?;
+        read_http_request(&mut stream)?;
+        write_quality_response(
+            &mut stream,
+            "loopback-invalid-quality-model",
+            serde_json::json!({"assessments": []}).to_string(),
+            10,
+        )?;
+    }
+    Ok(())
+}
+
+fn accept_optional_quality_connection(
+    listener: &TcpListener,
+    timeout: Duration,
+) -> Result<Option<TcpStream>, String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => return Ok(Some(stream)),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Ok(None);
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(format!("provider accept failed: {error}")),
+        }
+    }
 }
 
 fn accept_quality_connection(listener: &TcpListener) -> Result<TcpStream, String> {

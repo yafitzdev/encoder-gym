@@ -170,6 +170,23 @@ is the persisted audit population minus qualified rows, not a generation target.
 Legacy snapshots remain valid and visibly lack a curation application. See
 `dataset-quality-spec.md`.
 
+Generation-quality supervisor commands are:
+
+- `synth supervisor contract-preview|contract-create|contract-show` for one
+  immutable contract over exact dataset, plan, coverage, contexts, generator,
+  evaluator, thresholds, monitoring policy, approval, and finite budgets;
+- `supervisor start|run|status|watch|cancel|recover` for finite segment control;
+- `supervisor issues|strategy-coverage` for persisted scoped evidence;
+- `supervisor diagnose|revision-show|revision-review|revision-authorize` for
+  bounded Pi diagnosis and explicit or pre-authorized guidance changes;
+- `supervisor canary` for the independently assessed inactive candidate; and
+- `supervisor trace-row|integrity` plus `synth doctor` for deep provenance.
+
+`run` stops at the next human, diagnosis, canary, or terminal boundary; `watch`
+is read-only. Generator and evaluator are selected independently as `fake` or
+`openai_compatible` in a strict contract document. See
+`generation-quality-supervisor.md` and `examples/supervisor/`.
+
 Declarative project-preparation commands are:
 
 - `synth project preview <MANIFEST>` to resolve exact initial cell targets,

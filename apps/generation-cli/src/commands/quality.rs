@@ -1050,6 +1050,18 @@ async fn openai_compatible_evaluator_bundle(
     })
 }
 
+pub(crate) async fn openai_compatible_primary_evaluator(
+    store: &SqliteStore,
+    api_key: Option<String>,
+) -> anyhow::Result<Arc<dyn QualityEvaluator>> {
+    let mut adapters = openai_compatible_evaluator_bundle(store, 0, api_key)
+        .await?
+        .adapters;
+    adapters
+        .pop()
+        .context("OpenAI-compatible evaluator bundle has no primary adapter")
+}
+
 fn openai_compatible_config(
     base_url: &str,
     model: &str,
@@ -1067,7 +1079,7 @@ fn openai_compatible_config(
     config
 }
 
-fn read_optional_api_key(name: &str) -> anyhow::Result<Option<String>> {
+pub(crate) fn read_optional_api_key(name: &str) -> anyhow::Result<Option<String>> {
     let valid_name = !name.is_empty()
         && name.len() <= 128
         && name.chars().all(|character| {
@@ -1126,7 +1138,7 @@ pub(crate) async fn resolve_create_guidance(
     ))
 }
 
-fn guidance_from_semantics(
+pub(crate) fn guidance_from_semantics(
     plan_id: Uuid,
     context: ResolvedSemanticContext,
 ) -> anyhow::Result<Option<SemanticEvaluatorGuidance>> {
@@ -1196,7 +1208,7 @@ fn semantic_target_guidance(target: &ResolvedSemanticTarget) -> SemanticTargetGu
     }
 }
 
-fn guidance_from_authenticity(
+pub(crate) fn guidance_from_authenticity(
     context: ResolvedAuthenticityContext,
 ) -> anyhow::Result<(GuidanceReference, AuthenticityEvaluatorGuidance)> {
     ensure!(

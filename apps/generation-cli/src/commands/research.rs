@@ -342,7 +342,7 @@ async fn resolve_dataset_id(store: &SqliteStore, id: Uuid) -> anyhow::Result<Uui
         .with_context(|| format!("neither dataset nor generation plan found: {id}"))
 }
 
-fn resolve_sidecar(args: &ResearchRuntimeArgs) -> anyhow::Result<PathBuf> {
+pub(crate) fn resolve_sidecar(args: &ResearchRuntimeArgs) -> anyhow::Result<PathBuf> {
     let path = args.pi_sidecar.clone().unwrap_or_else(|| {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../adapters/research-agent-pi/dist/main.js")
@@ -355,14 +355,14 @@ fn resolve_sidecar(args: &ResearchRuntimeArgs) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
-fn read_json(path: &PathBuf) -> anyhow::Result<Value> {
+pub(crate) fn read_json(path: &PathBuf) -> anyhow::Result<Value> {
     serde_json::from_slice(
         &std::fs::read(path).with_context(|| format!("could not read {}", path.display()))?,
     )
     .with_context(|| format!("invalid JSON in {}", path.display()))
 }
 
-fn read_document<T: for<'de> Deserialize<'de>>(path: &PathBuf) -> anyhow::Result<T> {
+pub(crate) fn read_document<T: for<'de> Deserialize<'de>>(path: &PathBuf) -> anyhow::Result<T> {
     let bytes =
         std::fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
     match path.extension().and_then(|value| value.to_str()) {

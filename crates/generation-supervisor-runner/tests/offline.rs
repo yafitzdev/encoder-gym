@@ -27,9 +27,9 @@ use generation_supervisor_core::{
     },
     contract::{
         AcceptedCoverageBinding, ArtifactBinding, BaselinePolicy, BatchQualityThresholds,
-        GenerationQualityContract, GeneratorIdentity, MonitoringPolicy, MonitoringScope,
-        PromptRevisionKind, PromptRevisionPolicy, ProtectedPromptField, RevisionApprovalPolicy,
-        RowQualityThresholds, SupervisorBudgets,
+        ConfigurationBinding, GenerationQualityContract, GeneratorIdentity, MonitoringPolicy,
+        MonitoringScope, PromptRevisionKind, PromptRevisionPolicy, ProtectedPromptField,
+        RevisionApprovalPolicy, RowQualityThresholds, SupervisorBudgets,
     },
     decision::DeterministicQualityDecision,
     observation::{
@@ -100,7 +100,7 @@ fn contract() -> GenerationQualityContract {
         },
         Some(ArtifactBinding::new(Uuid::from_u128(4), "semantic-fp").unwrap()),
         None,
-        None,
+        ConfigurationBinding::new("construction-fp").unwrap(),
         None,
         GeneratorIdentity::create(
             GenerationBackendIdentity {

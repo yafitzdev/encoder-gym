@@ -3244,6 +3244,8 @@ dependencies = [
  "dataset-quality-runner",
  "dotenvy",
  "evaluation-core",
+ "generation-supervisor-core",
+ "generation-supervisor-runner",
  "optimization-core",
  "project-config",
  "project-preparation",

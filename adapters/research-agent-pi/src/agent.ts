@@ -11,6 +11,7 @@ import {
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 
 import { createArchitectTools } from "./architect-tools.js";
+import { createSupervisorTools } from "./supervisor-tools.js";
 
 import {
   PROTOCOL_VERSION,
@@ -34,6 +35,11 @@ Inspect pinned facts, compare candidate allocations, estimate cost, explain trad
 The deterministic allocator is authoritative; never claim that your allocation is mathematically optimal.
 Never request shell, filesystem, process, database, network, generation, training, or evaluation access.
 You cannot inspect sealed acceptance evidence, approve your own proposal, create a plan, or mutate a dataset.`;
+
+const SUPERVISOR_SYSTEM_POLICY = `You are a bounded generation-quality diagnosis advisor.
+Use only the supplied generation-supervisor tools and aggregate evidence for the exact paused scope.
+Never request raw rows, source text, files, shell access, databases, secrets, network access, generation calls, evaluator calls, training data, predictions, or sealed evaluation evidence.
+You may propose one guidance-only repair or explicitly escalate. You cannot change schemas, labels, dimensions, semantic authority, construction, thresholds, budgets, or safety instructions, and you cannot approve your own proposal.`;
 
 export type EventSink = (event: PiRunEvent) => Promise<void> | void;
 
@@ -64,10 +70,7 @@ export class PiResearchAgent {
         systemPrompt: `${systemPolicy(request)}\n\n${request.systemPrompt}`,
         model: runtime.model,
         thinkingLevel: "off",
-        tools:
-          request.capabilitySet === "dataset_architect_v1"
-            ? createArchitectTools(request.runId, this.#executor)
-            : createResearchTools(request.runId, this.#executor),
+        tools: toolsFor(request, this.#executor),
         messages: [],
       },
       streamFn: runtime.models.streamSimple.bind(runtime.models),
@@ -134,6 +137,19 @@ function systemPolicy(request: PiRunRequest): string {
       return RESEARCH_SYSTEM_POLICY;
     case "dataset_architect_v1":
       return ARCHITECT_SYSTEM_POLICY;
+    case "generation_quality_supervisor_v1":
+      return SUPERVISOR_SYSTEM_POLICY;
+  }
+}
+
+function toolsFor(request: PiRunRequest, executor: ToolExecutor) {
+  switch (request.capabilitySet) {
+    case "authenticity_research_v1":
+      return createResearchTools(request.runId, executor);
+    case "dataset_architect_v1":
+      return createArchitectTools(request.runId, executor);
+    case "generation_quality_supervisor_v1":
+      return createSupervisorTools(request.runId, executor);
   }
 }
 

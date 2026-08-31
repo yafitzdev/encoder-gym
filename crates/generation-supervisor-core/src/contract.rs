@@ -32,6 +32,20 @@ pub struct ArtifactBinding {
     pub exposure: ArtifactExposure,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigurationBinding {
+    pub fingerprint: String,
+}
+
+impl ConfigurationBinding {
+    pub fn new(fingerprint: impl Into<String>) -> Result<Self, SupervisorError> {
+        Ok(Self {
+            fingerprint: required(fingerprint, "configuration fingerprint")?,
+        })
+    }
+}
+
 impl ArtifactBinding {
     pub fn new(id: Uuid, fingerprint: impl Into<String>) -> Result<Self, SupervisorError> {
         if id.is_nil() {
@@ -416,8 +430,7 @@ pub struct GenerationQualityContract {
     pub semantic_context: Option<ArtifactBinding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authenticity_context: Option<ArtifactBinding>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub construction_context: Option<ArtifactBinding>,
+    pub construction_context: ConfigurationBinding,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strategy_context: Option<ArtifactBinding>,
     pub generator: GeneratorIdentity,
@@ -443,7 +456,7 @@ impl GenerationQualityContract {
         starting_coverage: AcceptedCoverageBinding,
         semantic_context: Option<ArtifactBinding>,
         authenticity_context: Option<ArtifactBinding>,
-        construction_context: Option<ArtifactBinding>,
+        construction_context: ConfigurationBinding,
         strategy_context: Option<ArtifactBinding>,
         generator: GeneratorIdentity,
         evaluator: EvaluatorIdentity,
@@ -503,10 +516,6 @@ impl GenerationQualityContract {
                 "authenticity context fingerprint",
                 &self.authenticity_context,
             ),
-            (
-                "construction context fingerprint",
-                &self.construction_context,
-            ),
             ("strategy context fingerprint", &self.strategy_context),
         ] {
             if let Some(binding) = binding {
@@ -518,6 +527,10 @@ impl GenerationQualityContract {
                 }
             }
         }
+        required(
+            self.construction_context.fingerprint.clone(),
+            "construction context fingerprint",
+        )?;
         if self.dataset.exposure == ArtifactExposure::SealedAcceptance
             || self.plan.exposure == ArtifactExposure::SealedAcceptance
         {
@@ -714,7 +727,7 @@ mod tests {
             },
             Some(ArtifactBinding::new(Uuid::new_v4(), "semantic-fp").unwrap()),
             Some(ArtifactBinding::new(Uuid::new_v4(), "authenticity-fp").unwrap()),
-            None,
+            ConfigurationBinding::new("construction-fp").unwrap(),
             Some(ArtifactBinding::new(Uuid::new_v4(), "strategy-fp").unwrap()),
             generator,
             evaluator,

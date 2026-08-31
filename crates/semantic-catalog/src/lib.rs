@@ -366,6 +366,14 @@ impl ResolvedSemanticContext {
         ))
         .map_err(|error| SemanticError::Fingerprint(error.to_string()))
     }
+
+    /// Stable identity of the resolved semantic authority. Unlike the
+    /// timestamped resolution artifact fingerprint, this remains identical
+    /// when the same binding/profile facts are resolved again.
+    pub fn authority_fingerprint(&self) -> Result<String, SemanticError> {
+        fingerprint(&(self.dataset_id, &self.targets, &self.sources))
+            .map_err(|error| SemanticError::Fingerprint(error.to_string()))
+    }
 }
 
 /// Resolves only explicit current bindings. Dataset overrides are layered over
@@ -655,6 +663,14 @@ mod tests {
         assert_eq!(hard.examples, vec!["Indirect intent"]);
         assert_eq!(context.sources[0].layer, SemanticLayer::Reusable);
         assert_eq!(context.sources[1].layer, SemanticLayer::DatasetOverride);
+        let mut later_resolution = context.clone();
+        later_resolution.resolved_at += chrono::Duration::seconds(1);
+        later_resolution.fingerprint = later_resolution.reproduce_fingerprint().unwrap();
+        assert_ne!(later_resolution.fingerprint, context.fingerprint);
+        assert_eq!(
+            later_resolution.authority_fingerprint().unwrap(),
+            context.authority_fingerprint().unwrap()
+        );
     }
 
     #[test]

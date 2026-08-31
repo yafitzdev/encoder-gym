@@ -80,6 +80,11 @@ pub enum Command {
         #[command(subcommand)]
         command: QualityCommand,
     },
+    /// Run bounded generation quality supervision and governed prompt repair.
+    Supervisor {
+        #[command(subcommand)]
+        command: SupervisorCommand,
+    },
     /// Register and verify local pretrained encoder bundles.
     Encoder {
         #[command(subcommand)]
@@ -263,6 +268,109 @@ pub enum ResearchCommand {
     },
     /// Resolve the currently approved authenticity context for a dataset or plan.
     Context { dataset_or_plan_id: Uuid },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SupervisorCommand {
+    /// Resolve a complete quality contract without writing state.
+    ContractPreview { file: PathBuf },
+    /// Resolve and persist one immutable generation quality contract.
+    ContractCreate { file: PathBuf },
+    /// Show one immutable generation quality contract.
+    ContractShow { id: Uuid },
+    /// Queue a finite supervised generation run without provider I/O.
+    Start(SupervisorStartArgs),
+    /// Execute finite segments until pause, review, canary, or terminal state.
+    Run(SupervisorExecutionArgs),
+    /// Show exact durable run state, usage, active prompt, and latest decisions.
+    Status { id: Uuid },
+    /// Poll persisted state. This command never starts provider work.
+    Watch {
+        id: Uuid,
+        #[arg(long, default_value_t = 500, value_parser = clap::value_parser!(u64).range(50..=60_000))]
+        poll_ms: u64,
+    },
+    /// Persist cancellation before forwarding it to exact linked children.
+    Cancel { id: Uuid },
+    /// Fail closed after interruption without replaying uncertain calls.
+    Recover { id: Uuid },
+    /// Inspect normalized quality windows and deterministic issue decisions.
+    Issues { id: Uuid },
+    /// Run bounded Pi diagnosis for a deterministically paused scope.
+    Diagnose(SupervisorDiagnoseArgs),
+    /// Show a diagnosis session, proposal, and latest review.
+    RevisionShow { session_id: Uuid },
+    /// Append an explicit revision review and create a canary candidate on approval.
+    RevisionReview(SupervisorRevisionReviewArgs),
+    /// Authorize an exact revision through the contract's finite pre-authorization envelope.
+    RevisionAuthorize { id: Uuid, session_id: Uuid },
+    /// Generate and independently assess the exact authorized revision canary.
+    Canary(SupervisorExecutionArgs),
+    /// Show exact target and observed coverage per approved generation strategy.
+    StrategyCoverage { id: Uuid },
+    /// Trace one generated row through prompt, strategy, generation, and quality facts.
+    TraceRow { row_id: Uuid },
+    /// Deeply verify all persisted generation-supervisor provenance.
+    Integrity,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct SupervisorStartArgs {
+    pub contract_id: Uuid,
+    #[arg(long = "guidance", required = true)]
+    pub guidance: Vec<String>,
+    #[arg(long, default_value_t = 42)]
+    pub strategy_seed: u64,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct SupervisorExecutionArgs {
+    pub id: Uuid,
+    /// Environment variable containing the generation API key.
+    #[arg(long, default_value = "SYNTH_OPENAI_API_KEY")]
+    pub api_key_env: String,
+    /// Optional distinct environment variable containing the evaluator API key.
+    #[arg(long)]
+    pub evaluator_api_key_env: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct SupervisorDiagnoseArgs {
+    pub id: Uuid,
+    /// Scripted Pi turns for a deterministic offline diagnosis.
+    #[arg(long)]
+    pub script: Option<PathBuf>,
+    #[arg(long, default_value = "fake")]
+    pub provider: String,
+    #[arg(long, default_value = "scripted")]
+    pub model: String,
+    /// Environment-variable name passed to Pi; the secret is never persisted.
+    #[arg(long)]
+    pub api_key_env: Option<String>,
+    #[command(flatten)]
+    pub runtime: ResearchRuntimeArgs,
+}
+
+#[derive(Debug, clap::Args)]
+#[command(group(
+    ArgGroup::new("decision")
+        .required(true)
+        .multiple(false)
+        .args(["approve", "reject", "request_revision"])
+))]
+pub struct SupervisorRevisionReviewArgs {
+    pub id: Uuid,
+    pub session_id: Uuid,
+    #[arg(long)]
+    pub approve: bool,
+    #[arg(long)]
+    pub reject: bool,
+    #[arg(long)]
+    pub request_revision: bool,
+    #[arg(long, default_value = "local-operator")]
+    pub reviewer: String,
+    #[arg(long)]
+    pub reason: String,
 }
 
 #[derive(Debug, clap::Args)]

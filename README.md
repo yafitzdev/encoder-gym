@@ -106,6 +106,15 @@ External audits retain finite row, request, attempt, and token ceilings. An
 explicit monetary ceiling is currently rejected because provider pricing is
 not yet an immutable persisted audit input.
 
+During generation, the optional quality supervisor can stop weak-but-valid or
+drifting segments before they fill the plan. Deterministic policy remains the
+authority; bounded Pi may only propose a protected guidance revision, and a
+reviewed revision activates only after an independently assessed canary. Both
+the generator and blind evaluator are replaceable (`fake` or
+OpenAI-compatible) and separately fingerprinted. See
+[`docs/generation-quality-supervisor.md`](docs/generation-quality-supervisor.md)
+and [`examples/supervisor/`](examples/supervisor/).
+
 The fastest complete offline journey starts from the checked-in local benchmark
 files and requires no copied UUIDs:
 

@@ -19,9 +19,9 @@ use generation_supervisor_core::{
     SupervisorError,
     contract::{
         AcceptedCoverageBinding, ArtifactBinding, BaselinePolicy, BatchQualityThresholds,
-        GenerationQualityContract, GeneratorIdentity, MonitoringPolicy, MonitoringScope,
-        PromptRevisionKind, PromptRevisionPolicy, ProtectedPromptField, RevisionApprovalPolicy,
-        RowQualityThresholds, SupervisorBudgets,
+        ConfigurationBinding, GenerationQualityContract, GeneratorIdentity, MonitoringPolicy,
+        MonitoringScope, PromptRevisionKind, PromptRevisionPolicy, ProtectedPromptField,
+        RevisionApprovalPolicy, RowQualityThresholds, SupervisorBudgets,
     },
     decision::{
         DeterministicQualityDecision, QualityFailureKind, SupervisorDecisionState,
@@ -33,7 +33,7 @@ use generation_supervisor_core::{
     },
     observation::{
         AssessmentEvidence, BatchQualityObservation, QualityScope, QualityWindowKind,
-        RowQualityObservation,
+        RowCriterionFailure, RowQualityObservation,
     },
     revision::{
         AdvisorRuntimeIdentity, AdvisorUsage, DiagnosisCause, ExpectedImprovement,
@@ -119,7 +119,7 @@ fn contract() -> GenerationQualityContract {
         },
         Some(ArtifactBinding::new(Uuid::from_u128(4), "semantic-fp").unwrap()),
         None,
-        None,
+        ConfigurationBinding::new("construction-fp").unwrap(),
         None,
         generator,
         evaluator,
@@ -207,6 +207,26 @@ fn sealed_acceptance_artifacts_cannot_enter_the_supervision_contract() {
         .validate()
         .expect_err("sealed dataset binding must be rejected");
     assert!(matches!(error, SupervisorError::Validation(_)));
+}
+
+#[test]
+fn shared_generator_evaluator_identity_cannot_claim_independence() {
+    let mut value = contract();
+    value.evaluator = EvaluatorIdentity::new(
+        value.generator.backend.name.clone(),
+        value.generator.backend.model.clone(),
+        "quality-v1",
+        "same-model-evaluator-config",
+        EvaluatorIndependence::Primary,
+        EvaluatorExecutionLocation::LocalProcess,
+    )
+    .unwrap();
+    value.generator_evaluator_relationship = GeneratorEvaluatorRelationship::IndependentBackend;
+    value.fingerprint = value.reproduce_fingerprint().unwrap();
+    assert!(matches!(
+        value.validate(),
+        Err(SupervisorError::Validation(_))
+    ));
 }
 
 fn evidence(contract: &GenerationQualityContract, score: u16) -> AssessmentEvidence {
@@ -432,6 +452,79 @@ fn minimum_support_prevents_premature_drift_claim() {
 }
 
 #[test]
+fn semantic_quality_failures_remain_independently_visible() {
+    let mut contract = contract();
+    contract.authenticity_context =
+        Some(ArtifactBinding::new(Uuid::from_u128(4_199), "authenticity-fp").unwrap());
+    contract.strategy_context =
+        Some(ArtifactBinding::new(Uuid::from_u128(4_198), "strategy-fp").unwrap());
+    contract.row_thresholds.minimum_difficulty_score = Some(bp(7_000));
+    contract.row_thresholds.minimum_authenticity_score = Some(bp(7_000));
+    contract.row_thresholds.minimum_strategy_score = Some(bp(7_000));
+    let mut policy_thresholds = contract.quality_policy.thresholds.clone();
+    policy_thresholds.minimum_authenticity_score = Some(bp(7_000));
+    contract.quality_policy = QualityPolicy::new(
+        None,
+        policy_thresholds,
+        contract.quality_policy.invalid_output_policy,
+        contract.quality_policy.borderline_review_policy,
+        contract.quality_policy.budgets.clone(),
+        contract.quality_policy.egress_policy,
+        contract.quality_policy.audit_mode,
+    )
+    .unwrap();
+    contract.fingerprint = contract.reproduce_fingerprint().unwrap();
+    contract.validate().unwrap();
+
+    let failures = |kind: RowCriterionFailure| {
+        let mut row = row_observation(
+            &contract,
+            Uuid::from_u128(4_200),
+            Uuid::from_u128(4_201),
+            77 + kind as u128,
+            "A concrete customer situation with enough context",
+            9_000,
+            ValidationStatus::Accepted,
+        );
+        if kind == RowCriterionFailure::StrategyAdherence {
+            row.strategy_directive_id = Some(Uuid::from_u128(4_202));
+            row.strategy_assignment_fingerprint = Some("strategy-assignment".into());
+        }
+        let evidence = row.assessment.as_mut().unwrap();
+        evidence.provider_verdict = QualityVerdict::Qualified;
+        evidence.difficulty_score = Some(bp(9_000));
+        evidence.authenticity_score = Some(bp(9_000));
+        evidence.strategy_score = Some(bp(9_000));
+        evidence.issue_codes.clear();
+        match kind {
+            RowCriterionFailure::DifficultyAdherence => {
+                evidence.difficulty_score = Some(bp(4_000));
+            }
+            RowCriterionFailure::AuthenticityAdherence => {
+                evidence.authenticity_score = Some(bp(4_000));
+            }
+            RowCriterionFailure::StrategyAdherence => {
+                evidence.strategy_score = Some(bp(4_000));
+            }
+            RowCriterionFailure::LabelLeakage => evidence.label_leakage_risk = bp(4_000),
+            RowCriterionFailure::ShortcutRisk => evidence.shortcut_risk = bp(4_000),
+            _ => unreachable!("case is limited to independently scored semantic criteria"),
+        }
+        row.criterion_failures(&contract)
+    };
+
+    for expected in [
+        RowCriterionFailure::DifficultyAdherence,
+        RowCriterionFailure::AuthenticityAdherence,
+        RowCriterionFailure::StrategyAdherence,
+        RowCriterionFailure::LabelLeakage,
+        RowCriterionFailure::ShortcutRisk,
+    ] {
+        assert_eq!(failures(expected), BTreeSet::from([expected]));
+    }
+}
+
+#[test]
 fn pause_is_scoped_until_explicit_systemic_threshold_is_crossed() {
     let contract = contract();
     let run_id = Uuid::from_u128(43);
@@ -583,6 +676,41 @@ fn guidance_revision_needs_exact_review_and_successful_canary() {
         canary_decision.state,
         SupervisorDecisionState::RevisionPassed
     );
+
+    let mut failed_window = window(
+        &contract,
+        run_id,
+        108,
+        QualityWindowKind::RevisionCanary,
+        &[4_000; 5],
+        now() + Duration::minutes(2),
+    );
+    failed_window.prompt_version_id = candidate.id;
+    failed_window.prompt_version_fingerprint = candidate.fingerprint.clone();
+    failed_window.fingerprint = failed_window.reproduce_fingerprint().unwrap();
+    let failed_decision = DeterministicQualityDecision::evaluate(
+        Uuid::from_u128(608),
+        &contract,
+        &failed_window,
+        None,
+        now() + Duration::minutes(2),
+    )
+    .unwrap();
+    assert_eq!(
+        failed_decision.state,
+        SupervisorDecisionState::RevisionFailed
+    );
+    assert!(matches!(
+        PromptRevisionActivation::create(
+            Uuid::from_u128(609),
+            &candidate,
+            &authorization,
+            &failed_decision,
+            now() + Duration::minutes(2),
+        ),
+        Err(SupervisorError::InvalidTransition(_))
+    ));
+
     PromptRevisionActivation::create(
         Uuid::from_u128(607),
         &candidate,

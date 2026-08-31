@@ -25,16 +25,16 @@ use generation_core::{
     planning::equal_target_plan,
     ports::{
         BoxFuture, DatasetStore, GenerationBackend, GenerationBackendError, GenerationStore,
-        PlanStore, RowQuery, RowStore,
+        GenerationStrategyStore, PlanStore, RowQuery, RowStore,
     },
 };
 use generation_supervisor_core::{
     advisor::{AdvisorConfiguration, AdvisorSessionState},
     contract::{
         AcceptedCoverageBinding, ArtifactBinding, BaselinePolicy, BatchQualityThresholds,
-        GenerationQualityContract, GeneratorIdentity, MonitoringPolicy, MonitoringScope,
-        PromptRevisionKind, PromptRevisionPolicy, ProtectedPromptField, RevisionApprovalPolicy,
-        RowQualityThresholds, SupervisorBudgets,
+        ConfigurationBinding, GenerationQualityContract, GeneratorIdentity, MonitoringPolicy,
+        MonitoringScope, PromptRevisionKind, PromptRevisionPolicy, ProtectedPromptField,
+        RevisionApprovalPolicy, RowQualityThresholds, SupervisorBudgets,
     },
     decision::{SupervisorDecisionState, SupervisorIssueCode},
     lifecycle::SupervisorRunState,
@@ -44,6 +44,7 @@ use generation_supervisor_core::{
 use generation_supervisor_runner::orchestration::{
     GenerationQualitySupervisorRunner, RevisionReviewInput, SupervisorExecutionConfiguration,
 };
+use semantic_catalog::SemanticCatalogStore;
 use serde_json::json;
 use synthetic_data_sqlite::SqliteStore;
 use uuid::Uuid;
@@ -226,6 +227,7 @@ async fn weak_segment_is_repaired_only_after_review_and_passing_canary() {
         AuditMode::FullPopulation,
     )
     .expect("quality policy");
+    let construction_plan = RowConstructionPlan::llm_text_default().expect("construction plan");
     let contract = GenerationQualityContract::create(
         Uuid::new_v4(),
         ArtifactBinding::new(
@@ -247,7 +249,8 @@ async fn weak_segment_is_repaired_only_after_review_and_passing_canary() {
         .expect("coverage binding"),
         None,
         None,
-        None,
+        ConfigurationBinding::new(construction_plan.fingerprint.clone())
+            .expect("construction binding"),
         None,
         GeneratorIdentity::create(
             GenerationBackendIdentity {
@@ -335,6 +338,9 @@ async fn weak_segment_is_repaired_only_after_review_and_passing_canary() {
     let supervisor_store: Arc<dyn GenerationSupervisorStore> = shared.clone();
     let advisor_store: Arc<dyn SupervisorAdvisorStore> = shared.clone();
     let quality_store: Arc<dyn dataset_quality_core::ports::DatasetQualityStore> = shared.clone();
+    let semantic_store: Arc<dyn SemanticCatalogStore> = shared.clone();
+    let research_store: Arc<dyn research_core::ports::ResearchStore> = shared.clone();
+    let strategy_store: Arc<dyn GenerationStrategyStore> = shared.clone();
     let candidates: Arc<dyn QualityCandidateSource> = shared;
     let runner = GenerationQualitySupervisorRunner::new(
         generation_store,
@@ -342,6 +348,9 @@ async fn weak_segment_is_repaired_only_after_review_and_passing_canary() {
         advisor_store,
         quality_store,
         candidates,
+        semantic_store,
+        research_store,
+        strategy_store,
         Arc::new(RepairableGenerationBackend),
         vec![evaluator],
         SupervisorExecutionConfiguration {
@@ -355,7 +364,7 @@ async fn weak_segment_is_repaired_only_after_review_and_passing_canary() {
             quality_policy,
             evaluator_guidance: EvaluatorGuidance::default(),
             text_length: None,
-            construction_plan: RowConstructionPlan::llm_text_default().expect("construction plan"),
+            construction_plan,
             semantic_context: None,
             authenticity_context: None,
             authenticity_source_excerpts: vec![],

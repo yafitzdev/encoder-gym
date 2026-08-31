@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "plan_id": "00000000-0000-0000-0000-000000000000",
+  "generator": "fake",
+  "evaluator": "fake",
+  "quality_policy": {
+    "thresholds": {
+      "minimum_assigned_label_score": 7000,
+      "minimum_label_margin": 500,
+      "minimum_dimension_adherence_score": 7000,
+      "maximum_label_leakage_risk": 2000,
+      "maximum_shortcut_risk": 2000,
+      "minimum_evaluator_confidence": 7000,
+      "borderline_margin": 500
+    },
+    "invalid_output_policy": "quarantine",
+    "budgets": {
+      "maximum_rows_per_batch": 20,
+      "maximum_evaluator_requests": 20,
+      "maximum_attempts_per_request": 2,
+      "maximum_input_tokens": 200000,
+      "maximum_output_tokens": 50000,
+      "maximum_total_tokens": 250000
+    }
+  },
+  "supplemental_row_requirements": {},
+  "batch_thresholds": {
+    "minimum_qualified_rate": 8000,
+    "maximum_borderline_rate": 2000,
+    "maximum_quarantined_rate": 2000,
+    "maximum_invalid_rate": 1000,
+    "maximum_exact_duplicate_rate": 0,
+    "maximum_normalized_duplicate_rate": 500,
+    "maximum_template_repetition_rate": 2000,
+    "maximum_qualified_rate_drop": 1000,
+    "maximum_shortcut_concentration": 2000,
+    "required_patterns": []
+  },
+  "monitoring": {
+    "initial_canary_rows_per_scope": 20,
+    "revision_canary_rows_per_scope": 20,
+    "rolling_window_rows_per_scope": 20,
+    "minimum_evidence_rows_per_scope": 10,
+    "baseline_minimum_rows_per_scope": 10,
+    "scope": "cell",
+    "baseline_policy": "initial_canary",
+    "systemic_pause_minimum_scopes": 2
+  },
+  "budgets": {
+    "maximum_generation_segments": 100,
+    "maximum_generated_rows": 100000,
+    "maximum_quality_audits": 100,
+    "maximum_evaluator_requests": 2000,
+    "maximum_evaluator_attempts": 4000,
+    "maximum_evaluator_input_tokens": 20000000,
+    "maximum_evaluator_output_tokens": 5000000,
+    "maximum_evaluator_total_tokens": 25000000,
+    "maximum_prompt_revisions": 3,
+    "maximum_revision_canaries": 3,
+    "maximum_pi_model_turns": 6,
+    "maximum_pi_tool_calls": 21,
+    "maximum_pi_input_tokens": 60000,
+    "maximum_pi_output_tokens": 15000,
+    "maximum_retries_per_external_call": 2,
+    "maximum_duration_seconds": 86400
+  },
+  "approval_policy": {
+    "mode": "explicit_review"
+  },
+  "revision_policy": {
+    "maximum_instructions": 4,
+    "maximum_characters_per_instruction": 300,
+    "maximum_total_characters": 800,
+    "allowed_kind": "replace_generation_guidance",
+    "protected_fields": [
+      "system_prompt",
+      "output_schema",
+      "target_label",
+      "target_dimensions",
+      "construction_graph",
+      "semantic_authority",
+      "quality_thresholds",
+      "budgets",
+      "safety_instructions"
+    ]
+  }
+}

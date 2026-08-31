@@ -9,8 +9,21 @@ pub async fn source_novelty_guard(
     store: &SqliteStore,
     context: Option<&ResolvedAuthenticityContext>,
 ) -> anyhow::Result<Option<SourceExcerptNoveltyValidator>> {
-    let Some(context) = context else {
+    let excerpts = source_excerpts(store, context).await?;
+    if excerpts.is_empty() {
         return Ok(None);
+    }
+    Ok(Some(SourceExcerptNoveltyValidator::new(
+        excerpts.iter().map(String::as_str),
+    )?))
+}
+
+pub async fn source_excerpts(
+    store: &SqliteStore,
+    context: Option<&ResolvedAuthenticityContext>,
+) -> anyhow::Result<Vec<String>> {
+    let Some(context) = context else {
+        return Ok(vec![]);
     };
     let profile = store
         .get_profile(context.profile_id)
@@ -44,11 +57,11 @@ pub async fn source_novelty_guard(
                 && item.reproduce_fingerprint()? == item.fingerprint,
             "profile evidence {id} failed its fingerprint check"
         );
-        excerpts.push(item.excerpt.as_str());
+        excerpts.push(item.excerpt.clone());
     }
     anyhow::ensure!(
         !excerpts.is_empty(),
         "approved authenticity profile has no evidence for novelty validation"
     );
-    Ok(Some(SourceExcerptNoveltyValidator::new(excerpts)?))
+    Ok(excerpts)
 }

@@ -65,6 +65,10 @@ pub async fn job(command: JobCommand, store: &SqliteStore) -> anyhow::Result<()>
                 .get_generation_execution_spec(id)
                 .await?
                 .with_context(|| format!("generation execution specification not found: {id}"))?;
+            anyhow::ensure!(
+                execution.supervision_schedule_fingerprint.is_none(),
+                "supervised generation uses row-specific immutable prompt schedules; inspect it with `synth supervisor trace-row <row-id>`"
+            );
             let dataset = store
                 .get_dataset(job.dataset_id)
                 .await?

@@ -26,9 +26,9 @@ use generation_core::{
 use generation_supervisor_core::{
     contract::{
         AcceptedCoverageBinding, ArtifactBinding, BaselinePolicy, BatchQualityThresholds,
-        GenerationQualityContract, GeneratorIdentity, MonitoringPolicy, MonitoringScope,
-        PromptRevisionKind, PromptRevisionPolicy, ProtectedPromptField, RevisionApprovalPolicy,
-        RowQualityThresholds, SupervisorBudgets,
+        ConfigurationBinding, GenerationQualityContract, GeneratorIdentity, MonitoringPolicy,
+        MonitoringScope, PromptRevisionKind, PromptRevisionPolicy, ProtectedPromptField,
+        RevisionApprovalPolicy, RowQualityThresholds, SupervisorBudgets,
     },
     decision::{DeterministicQualityDecision, SupervisorDecisionState},
     lifecycle::{
@@ -410,7 +410,12 @@ async fn quality_contract(
         AcceptedCoverageBinding::from_counts(&coverage).expect("coverage binding"),
         None,
         None,
-        None,
+        ConfigurationBinding::new(
+            generation_core::construction::RowConstructionPlan::llm_text_default()
+                .expect("construction plan")
+                .fingerprint,
+        )
+        .expect("construction binding"),
         None,
         generator,
         evaluator,

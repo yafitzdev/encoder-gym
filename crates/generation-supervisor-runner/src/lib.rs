@@ -224,8 +224,10 @@ impl GenerationSupervisorAdvisorRunner {
                     if let Err(error) = self.handle_event(&brief, &mut session, event).await {
                         let _ = agent.cancel(session.id).await;
                         self.interrupt_uncertain_calls(session.id).await?;
-                        session.fail(error.to_string(), Utc::now())?;
-                        self.store.save_session(&session).await?;
+                        if !session.state.is_terminal() {
+                            session.fail(error.to_string(), Utc::now())?;
+                            self.store.save_session(&session).await?;
+                        }
                         return Err(error);
                     }
                 }
@@ -323,7 +325,7 @@ impl GenerationSupervisorAdvisorRunner {
                 };
                 let mut call = self.model_call(session.id, sequence).await?;
                 call.succeed(usage.clone(), Utc::now())?;
-                session.record_usage(&brief.contract, usage, Utc::now())?;
+                session.record_completed_model_usage(&brief.contract, usage, Utc::now())?;
                 self.store
                     .save_model_call_and_session(&call, session)
                     .await?;

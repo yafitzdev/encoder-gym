@@ -220,12 +220,90 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
     );
     let comparison_id = string_at(&comparison, "/id");
 
+    // Development evidence must not be a split of the growing generation
+    // dataset. Rebuilding a stratified snapshot after adding rows can move a
+    // previously held-out source row across a split boundary, which the
+    // training-benchmark gate correctly blocks. Keep the benchmark population
+    // independent so this E2E exercises iteration rather than accidental
+    // holdout reuse.
+    let development_csv_path = directory.path().join("development.csv");
+    std::fs::write(&development_csv_path, development_csv()).expect("write development CSV");
+    let development_dataset = run_json(
+        &database_url,
+        [
+            "dataset",
+            "create",
+            "--name",
+            "development-support",
+            "--task",
+            "Classify intentionally ambiguous support messages.",
+            "--label",
+            "billing",
+            "--label",
+            "fraud",
+        ],
+    );
+    let development_dataset_id = string_at(&development_dataset, "/id");
+    let development_import = run_json(
+        &database_url,
+        [
+            "dataset",
+            "import",
+            &development_dataset_id,
+            "--input",
+            path(&development_csv_path),
+            "--format",
+            "csv",
+        ],
+    );
+    assert_eq!(development_import["accepted_rows"], 12);
+    let development_snapshot = run_json(
+        &database_url,
+        [
+            "snapshot",
+            "create",
+            &development_dataset_id,
+            "--name",
+            "development-evidence-only",
+            "--train-ratio",
+            "0",
+            "--validation-ratio",
+            "0",
+            "--test-ratio",
+            "1",
+            "--seed",
+            "13",
+        ],
+    );
+    let development_snapshot_id = string_at(&development_snapshot, "/snapshot/id");
+    let development_evaluation = run_json(
+        &database_url,
+        [
+            "evaluation",
+            "run",
+            &checkpoint_id,
+            "--snapshot-id",
+            &development_snapshot_id,
+            "--split",
+            "test",
+            "--config",
+            path(&config_path),
+        ],
+    );
+    assert!(
+        development_evaluation["run"]["metrics"]["overall"]["accuracy"]
+            .as_f64()
+            .expect("development accuracy")
+            < 1.0,
+        "independent ambiguous development examples must trigger an iteration"
+    );
+    let development_evaluation_id = string_at(&development_evaluation, "/run/id");
     let development_cohort = run_json(
         &database_url,
         [
             "cohort",
             "create",
-            &snapshot_id,
+            &development_snapshot_id,
             "--name",
             "development-test-split",
             "--split",
@@ -251,10 +329,10 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
             "kind": "development",
             "task": "Classify intentionally ambiguous support messages.",
             "labels": ["billing", "fraud"],
-            "required_model_formats": [evaluation["run"]["source_identity"]["checkpoint_model_format"]],
+            "required_model_formats": [development_evaluation["run"]["source_identity"]["checkpoint_model_format"]],
             "cohorts": [{
                 "cohort_id": development_cohort_id,
-                "protocol": evaluation["run"]["protocol"],
+                "protocol": development_evaluation["run"]["protocol"],
                 "disclosure": "row_content",
                 "adaptation_eligible": true
             }],
@@ -291,7 +369,7 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
         run_json(&database_url, ["benchmark", "validate", &benchmark_id])["valid"],
         true
     );
-    let run_mapping = format!("{development_cohort_id}={evaluation_id}");
+    let run_mapping = format!("{development_cohort_id}={development_evaluation_id}");
     let acceptance = run_json(
         &database_url,
         ["benchmark", "assess", &benchmark_id, "--run", &run_mapping],
@@ -1387,13 +1465,13 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
             path(&export_path),
         ],
     );
-    assert_eq!(exported["row_count"], 26);
+    assert_eq!(exported["row_count"], 22);
     assert_eq!(
         std::fs::read_to_string(&export_path)
             .expect("read export")
             .lines()
             .count(),
-        26
+        22
     );
 
     let listed = run_json(
@@ -1520,6 +1598,23 @@ fn ambiguous_csv() -> String {
     }
     for punctuation in fraud {
         csv.push_str(&format!("same support message{punctuation},fraud\n"));
+    }
+    csv
+}
+
+fn development_csv() -> String {
+    let billing = ["!", "!!", "!!!", ".!", "!?", "!?!"];
+    let fraud = ["?", "??", "???", ".?", "?!", "?!?"];
+    let mut csv = String::from("text,label\n");
+    for punctuation in billing {
+        csv.push_str(&format!(
+            "independent benchmark message{punctuation},billing\n"
+        ));
+    }
+    for punctuation in fraud {
+        csv.push_str(&format!(
+            "independent benchmark message{punctuation},fraud\n"
+        ));
     }
     csv
 }

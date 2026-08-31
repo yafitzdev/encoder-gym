@@ -64,7 +64,8 @@ mod facts;
 use facts::{
     analysis_facts_check, architect_facts_check, benchmark_bundle_facts_check,
     bootstrap_facts_check, evaluation_facts_check, optimization_facts_check, quality_facts_check,
-    research_facts_check, training_benchmark_facts_check, workflow_facts_check,
+    research_facts_check, supervisor_facts_check, training_benchmark_facts_check,
+    workflow_facts_check,
 };
 
 #[derive(Debug, Serialize)]
@@ -237,6 +238,7 @@ async fn database_checks(store: &SqliteStore) -> Vec<DoctorCheck> {
     checks.push(Box::pin(research_facts_check(store)).await);
     checks.push(Box::pin(architect_facts_check(store)).await);
     checks.push(isolated_quality_facts_check(store).await);
+    checks.push(Box::pin(supervisor_facts_check(store)).await);
     checks.push(Box::pin(generation_execution_facts_check(store)).await);
     checks
 }
@@ -355,11 +357,20 @@ async fn generation_execution_facts_check(store: &SqliteStore) -> DoctorCheck {
                 );
             }
             let strategy = store.generation_strategy_assignment(job.id).await?;
+            // Supervised jobs pin row-specific strategy guidance in the immutable
+            // supervision schedule instead of attaching one job-wide strategy to
+            // the prompt builder. The assignment is still persisted so the
+            // schedule and row provenance can be independently reproduced.
+            let strategy_fingerprint_matches = execution.strategy_context_fingerprint.as_deref()
+                == strategy
+                    .as_ref()
+                    .map(|value| value.context.fingerprint.as_str());
+            let supervised_strategy_assignment =
+                execution.supervision_schedule_fingerprint.is_some()
+                    && execution.strategy_context_fingerprint.is_none()
+                    && strategy.is_some();
             anyhow::ensure!(
-                execution.strategy_context_fingerprint.as_deref()
-                    == strategy
-                        .as_ref()
-                        .map(|value| value.context.fingerprint.as_str()),
+                strategy_fingerprint_matches || supervised_strategy_assignment,
                 "generation execution {} strategy fingerprint differs",
                 job.id
             );

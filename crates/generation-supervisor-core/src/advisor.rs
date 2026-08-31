@@ -290,6 +290,41 @@ impl AdvisorSession {
         now: DateTime<Utc>,
     ) -> Result<(), SupervisorError> {
         self.require_state(AdvisorSessionState::Running)?;
+        self.apply_usage(contract, delta, now)
+    }
+
+    /// Records the provider's completion accounting for a model turn. Pi can
+    /// emit this event after a terminating host tool has already moved the
+    /// session to `awaiting_review` or `escalated`; accepting that one bounded
+    /// accounting event keeps paid usage complete without reopening the run.
+    pub fn record_completed_model_usage(
+        &mut self,
+        contract: &GenerationQualityContract,
+        delta: AdvisorUsage,
+        now: DateTime<Utc>,
+    ) -> Result<(), SupervisorError> {
+        if !matches!(
+            self.state,
+            AdvisorSessionState::Running
+                | AdvisorSessionState::AwaitingReview
+                | AdvisorSessionState::Escalated
+        ) || delta.model_turns != 1
+            || delta.tool_calls != 0
+        {
+            return Err(SupervisorError::InvalidTransition(
+                "completed model usage is valid only for one bounded live or just-finished turn"
+                    .into(),
+            ));
+        }
+        self.apply_usage(contract, delta, now)
+    }
+
+    fn apply_usage(
+        &mut self,
+        contract: &GenerationQualityContract,
+        delta: AdvisorUsage,
+        now: DateTime<Utc>,
+    ) -> Result<(), SupervisorError> {
         let next = AdvisorUsage {
             model_turns: self
                 .usage

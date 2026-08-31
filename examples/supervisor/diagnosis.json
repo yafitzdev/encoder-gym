@@ -1,0 +1,42 @@
+[
+  {
+    "text": "Inspect the bounded evidence, preview one narrow repair, submit it, and finish.",
+    "toolCalls": [
+      { "name": "inspect_quality_contract", "arguments": {} },
+      { "name": "inspect_quality_window", "arguments": {} },
+      { "name": "inspect_failure_breakdown", "arguments": {} },
+      { "name": "inspect_current_prompt_guidance", "arguments": {} },
+      {
+        "name": "preview_prompt_revision",
+        "arguments": {
+          "replacement_guidance": [
+            "Vary phrasing and add concrete situational detail without naming the label."
+          ],
+          "expected_improvements": [
+            { "metric": "qualified_rate", "minimum_delta_basis_points": 1500 }
+          ]
+        }
+      },
+      {
+        "name": "submit_prompt_revision",
+        "arguments": {
+          "cause": "repetition_mode_collapse",
+          "summary": "The current guidance permits shortcut-heavy synthetic templates.",
+          "replacement_guidance": [
+            "Vary phrasing and add concrete situational detail without naming the label."
+          ],
+          "expected_improvements": [
+            { "metric": "qualified_rate", "minimum_delta_basis_points": 1500 }
+          ]
+        }
+      },
+      {
+        "name": "finish_supervision",
+        "arguments": {
+          "outcome": "revision_submitted",
+          "summary": "A bounded guidance-only repair is ready for operator review."
+        }
+      }
+    ]
+  }
+]

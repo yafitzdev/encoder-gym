@@ -194,3 +194,58 @@ test("the Dataset Architect iterates through only its application-owned tools", 
     "finish_architecture",
   ]);
 });
+
+test("the generation supervisor exposes exactly its seven bounded tools", async () => {
+  const calls: string[] = [];
+  const input = request();
+  input.capabilitySet = "generation_quality_supervisor_v1";
+  input.maxModelTurns = 1;
+  input.scriptedTurns = [
+    {
+      toolCalls: [
+        { name: "inspect_quality_contract", arguments: {} },
+        { name: "inspect_quality_window", arguments: {} },
+        { name: "inspect_failure_breakdown", arguments: {} },
+        { name: "inspect_current_prompt_guidance", arguments: {} },
+        {
+          name: "preview_prompt_revision",
+          arguments: {
+            replacement_guidance: ["Add concrete situational detail."],
+            expected_improvements: [{ metric: "qualified_rate", minimum_delta_basis_points: 1000 }],
+          },
+        },
+        {
+          name: "submit_prompt_revision",
+          arguments: {
+            cause: "repetition_mode_collapse",
+            summary: "Rows repeat one synthetic shortcut.",
+            replacement_guidance: ["Add concrete situational detail."],
+            expected_improvements: [{ metric: "qualified_rate", minimum_delta_basis_points: 1000 }],
+          },
+        },
+        {
+          name: "finish_supervision",
+          arguments: { outcome: "revision_submitted", summary: "Repair submitted." },
+        },
+      ],
+    },
+  ];
+  const agent = new PiResearchAgent({
+    async execute(call) {
+      calls.push(call.name);
+      return { content: { accepted: true } };
+    },
+  });
+
+  await agent.run(input);
+
+  assert.deepEqual(calls, [
+    "inspect_quality_contract",
+    "inspect_quality_window",
+    "inspect_failure_breakdown",
+    "inspect_current_prompt_guidance",
+    "preview_prompt_revision",
+    "submit_prompt_revision",
+    "finish_supervision",
+  ]);
+});

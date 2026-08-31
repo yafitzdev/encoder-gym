@@ -17,7 +17,7 @@ use dataset_quality_core::{
     assessment::{EvaluatorGuidance, RowQualityAssessment},
     lifecycle::{QualityAuditRun, QualityAuditRunState},
     policy::{AuditMode, QualityPolicy},
-    population::{AuditPlan, GuidanceReference, GuidanceReferences},
+    population::{AuditPlan, GuidanceReferences},
     ports::{DatasetQualityStore, QualityAdapterError, QualityCandidateSource, QualityEvaluator},
 };
 use dataset_quality_runner::{DatasetQualityRunner, QualityRunnerError};
@@ -32,7 +32,7 @@ use generation_core::{
         JobRunnerError, JobRunnerPolicy, JobState,
     },
     planning::calculate_generation_needs,
-    ports::{GenerationBackend, GenerationStore, RowQuery, StoreError},
+    ports::{GenerationBackend, GenerationStore, GenerationStrategyStore, RowQuery, StoreError},
     prompting::{PromptBuilder, SupervisedGenerationSchedule, SupervisedRowGuidance},
     validation::{SourceExcerptNoveltyValidator, TextLengthValidator, ValidationPipeline},
 };
@@ -58,6 +58,7 @@ use generation_supervisor_core::{
     },
     strategy::StrategyAssignmentSet,
 };
+use semantic_catalog::{GenerationSemanticAssignment, SemanticCatalogStore};
 use serde::Serialize;
 use thiserror::Error;
 use uuid::Uuid;
@@ -155,6 +156,9 @@ pub struct GenerationQualitySupervisorRunner {
     advisor_store: Arc<dyn SupervisorAdvisorStore>,
     quality_store: Arc<dyn DatasetQualityStore>,
     candidates: Arc<dyn QualityCandidateSource>,
+    semantic_store: Arc<dyn SemanticCatalogStore>,
+    research_store: Arc<dyn research_core::ports::ResearchStore>,
+    strategy_store: Arc<dyn GenerationStrategyStore>,
     backend: Arc<dyn GenerationBackend>,
     evaluators: Vec<Arc<dyn QualityEvaluator>>,
     configuration: SupervisorExecutionConfiguration,
@@ -168,6 +172,9 @@ impl GenerationQualitySupervisorRunner {
         advisor_store: Arc<dyn SupervisorAdvisorStore>,
         quality_store: Arc<dyn DatasetQualityStore>,
         candidates: Arc<dyn QualityCandidateSource>,
+        semantic_store: Arc<dyn SemanticCatalogStore>,
+        research_store: Arc<dyn research_core::ports::ResearchStore>,
+        strategy_store: Arc<dyn GenerationStrategyStore>,
         backend: Arc<dyn GenerationBackend>,
         evaluators: Vec<Arc<dyn QualityEvaluator>>,
         configuration: SupervisorExecutionConfiguration,
@@ -192,6 +199,9 @@ impl GenerationQualitySupervisorRunner {
             advisor_store,
             quality_store,
             candidates,
+            semantic_store,
+            research_store,
+            strategy_store,
             backend,
             evaluators,
             configuration,
@@ -502,6 +512,7 @@ impl GenerationQualitySupervisorRunner {
         self.generation_store
             .create_generation_execution(&job, &execution)
             .await?;
+        self.persist_generation_contexts(job.id).await?;
 
         let runner = self.job_runner(schedule, novelty_guard);
         let generated = match runner
@@ -1121,6 +1132,7 @@ impl GenerationQualitySupervisorRunner {
         self.generation_store
             .create_generation_execution(&job, &execution)
             .await?;
+        self.persist_generation_contexts(job.id).await?;
 
         let generated = match self
             .job_runner(schedule, novelty_guard)
@@ -1425,7 +1437,7 @@ impl GenerationQualitySupervisorRunner {
         dataset: &DatasetDefinition,
         source_rows: Vec<SourceRow>,
     ) -> Result<(Option<Uuid>, Vec<RowQualityAssessment>), SupervisorLoopError> {
-        let guidance_references = guidance_references(contract)?;
+        let guidance_references = guidance_references(&self.configuration.evaluator_guidance);
         let guidance_fingerprint = self
             .configuration
             .evaluator_guidance
@@ -1662,6 +1674,39 @@ impl GenerationQualitySupervisorRunner {
         Ok(spec)
     }
 
+    async fn persist_generation_contexts(&self, job_id: Uuid) -> Result<(), SupervisorLoopError> {
+        if let Some(context) = &self.configuration.semantic_context {
+            let assignment = GenerationSemanticAssignment::new(job_id, context.clone())
+                .map_err(|error| SupervisorLoopError::Validation(error.to_string()))?;
+            self.semantic_store
+                .save_generation_semantics(&assignment)
+                .await
+                .map_err(|error| SupervisorLoopError::Validation(error.to_string()))?;
+        }
+        if let Some(context) = &self.configuration.authenticity_context {
+            let assignment = research_core::profile::GenerationAuthenticityAssignment::new(
+                job_id,
+                context.clone(),
+            )
+            .map_err(|error| SupervisorLoopError::Validation(error.to_string()))?;
+            self.research_store
+                .save_generation_authenticity(&assignment)
+                .await
+                .map_err(|error| SupervisorLoopError::Validation(error.to_string()))?;
+        }
+        if let Some(context) = &self.configuration.strategy_context {
+            let assignment = generation_core::strategy::GenerationStrategyAssignment::create(
+                job_id,
+                context.clone(),
+            )
+            .map_err(|error| SupervisorLoopError::Validation(error.to_string()))?;
+            self.strategy_store
+                .save_generation_strategy(&assignment)
+                .await?;
+        }
+        Ok(())
+    }
+
     fn job_runner(
         &self,
         schedule: SupervisedGenerationSchedule,
@@ -1739,12 +1784,31 @@ impl GenerationQualitySupervisorRunner {
                 "quality evaluator policy does not match the immutable supervisor contract".into(),
             ));
         }
+        self.configuration
+            .construction_plan
+            .compile()
+            .map_err(|error| SupervisorLoopError::Validation(error.to_string()))?;
+        self.configuration
+            .construction_plan
+            .validate_for_dataset(dataset)
+            .map_err(|error| SupervisorLoopError::Validation(error.to_string()))?;
+        if self.configuration.construction_plan.fingerprint
+            != contract.construction_context.fingerprint
+        {
+            return Err(SupervisorLoopError::Validation(
+                "runtime construction plan does not match the immutable contract".into(),
+            ));
+        }
         match (
             &contract.semantic_context,
             &self.configuration.semantic_context,
         ) {
             (None, None) => {}
-            (Some(binding), Some(context)) if binding.fingerprint == context.fingerprint => {}
+            (Some(binding), Some(context))
+                if binding.fingerprint
+                    == context
+                        .authority_fingerprint()
+                        .map_err(|error| SupervisorLoopError::Validation(error.to_string()))? => {}
             _ => {
                 return Err(SupervisorLoopError::Validation(
                     "semantic runtime context does not match the contract".into(),
@@ -1758,7 +1822,7 @@ impl GenerationQualitySupervisorRunner {
             (None, None) => {}
             (Some(binding), Some(context))
                 if binding.id == context.binding_id
-                    && binding.fingerprint == context.fingerprint => {}
+                    && binding.fingerprint == context.binding_fingerprint => {}
             _ => {
                 return Err(SupervisorLoopError::Validation(
                     "authenticity runtime context does not match the contract".into(),
@@ -2318,21 +2382,17 @@ fn effective_coverage(
         .collect()
 }
 
-fn guidance_references(
-    contract: &GenerationQualityContract,
-) -> Result<GuidanceReferences, SupervisorLoopError> {
-    Ok(GuidanceReferences {
-        semantic_context: contract
-            .semantic_context
+fn guidance_references(guidance: &EvaluatorGuidance) -> GuidanceReferences {
+    GuidanceReferences {
+        semantic_context: guidance
+            .semantic
             .as_ref()
-            .map(|value| GuidanceReference::new(value.id, value.fingerprint.clone()))
-            .transpose()?,
-        authenticity_context: contract
-            .authenticity_context
+            .map(|value| value.reference.clone()),
+        authenticity_context: guidance
+            .authenticity
             .as_ref()
-            .map(|value| GuidanceReference::new(value.id, value.fingerprint.clone()))
-            .transpose()?,
-    })
+            .map(|value| value.reference.clone()),
+    }
 }
 
 fn verify_segment_sources(job_id: Uuid, rows: &[SourceRow]) -> Result<(), SupervisorLoopError> {

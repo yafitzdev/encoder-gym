@@ -31,6 +31,8 @@ evaluation-core.workspace = true
 generation-core.workspace = true
 generation-fake.workspace = true
 generation-openai-compatible = { package = "synthetic-data-openai-compatible", path = "../../crates/generation-openai-compatible" }
+generation-supervisor-core.workspace = true
+generation-supervisor-runner.workspace = true
 optimization-core.workspace = true
 project-config.workspace = true
 project-preparation.workspace = true

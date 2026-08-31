@@ -3,7 +3,7 @@ use generation_core::{
     jobs::{
         GenerationAttempt, GenerationAttemptState, GenerationExecutionSpec, GenerationJob, JobState,
     },
-    ports::{BoxFuture, GenerationExecutionStore, StoreError},
+    ports::{BoxFuture, GenerationExecutionStore, GenerationStrategyStore, StoreError},
     strategy::GenerationStrategyAssignment,
 };
 use research_core::profile::GenerationAuthenticityAssignment;
@@ -191,6 +191,50 @@ impl SqliteStore {
             ));
         }
         Ok(Some(assignment))
+    }
+}
+
+impl GenerationStrategyStore for SqliteStore {
+    fn save_generation_strategy(
+        &self,
+        assignment: &GenerationStrategyAssignment,
+    ) -> BoxFuture<'_, Result<(), StoreError>> {
+        let assignment = assignment.clone();
+        Box::pin(async move {
+            if assignment.reproduce_fingerprint().map_err(store_error)? != assignment.fingerprint
+                || assignment
+                    .context
+                    .reproduce_fingerprint()
+                    .map_err(store_error)?
+                    != assignment.context.fingerprint
+            {
+                return Err(StoreError(
+                    "generation strategy assignment fingerprint mismatch".into(),
+                ));
+            }
+            sqlx::query(
+                "INSERT INTO generation_job_strategies (job_id, context_id, \
+                 context_fingerprint, assignment_fingerprint, assignment_json, created_at) \
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(assignment.job_id)
+            .bind(assignment.context.id)
+            .bind(&assignment.context.fingerprint)
+            .bind(&assignment.fingerprint)
+            .bind(to_json(&assignment)?)
+            .bind(assignment.created_at)
+            .execute(self.pool())
+            .await
+            .map_err(store_error)?;
+            Ok(())
+        })
+    }
+
+    fn get_generation_strategy(
+        &self,
+        job_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<GenerationStrategyAssignment>, StoreError>> {
+        Box::pin(async move { self.generation_strategy_assignment(job_id).await })
     }
 }
 

@@ -24,7 +24,19 @@ export const ARCHITECT_TOOL_NAMES = [
 ] as const;
 
 export type ArchitectToolName = (typeof ARCHITECT_TOOL_NAMES)[number];
-export type AgentToolName = ResearchToolName | ArchitectToolName;
+
+export const SUPERVISOR_TOOL_NAMES = [
+  "inspect_quality_contract",
+  "inspect_quality_window",
+  "inspect_failure_breakdown",
+  "inspect_current_prompt_guidance",
+  "preview_prompt_revision",
+  "submit_prompt_revision",
+  "finish_supervision",
+] as const;
+
+export type SupervisorToolName = (typeof SUPERVISOR_TOOL_NAMES)[number];
+export type AgentToolName = ResearchToolName | ArchitectToolName | SupervisorToolName;
 
 export interface ToolExecutionRequest {
   runId: string;
@@ -55,7 +67,10 @@ export interface ScriptedTurn {
 
 export interface PiRunRequest {
   protocolVersion: typeof PROTOCOL_VERSION;
-  capabilitySet: "authenticity_research_v1" | "dataset_architect_v1";
+  capabilitySet:
+    | "authenticity_research_v1"
+    | "dataset_architect_v1"
+    | "generation_quality_supervisor_v1";
   runId: string;
   runSpecificationFingerprint: string;
   provider: string;
