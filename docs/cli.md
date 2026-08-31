@@ -359,7 +359,8 @@ Finite-workflow commands are:
   initial pipeline until development completion, an approval pause, a bounded
   stop, or a failure;
 - `synth workflow status <RUN_ID>` to show the persisted run, usage, complete
-  attempt chain, linked generation jobs, and per-cell coverage;
+  attempt chain, reserved child executions, linked generation jobs, and
+  per-cell coverage;
 - `synth workflow watch <RUN_ID>` to wait until a concurrently running workflow
   pauses or stops, while `history|list` remain scriptable snapshots;
 - `synth workflow approve <RUN_ID> --recommendation-id <ID>` to persist an
@@ -367,7 +368,8 @@ Finite-workflow commands are:
 - `synth workflow resume <RUN_ID>` to resume an interrupted running stage or
   start the next bounded retry after a retryable failure;
 - `synth workflow cancel <RUN_ID>` to persist cancellation and forward it to an
-  active generation job for observation between batches;
+  exact linked generation, quality-audit, training, or evaluation child for
+  observation at its existing cancellation boundary;
 - `synth workflow finalize <RUN_ID>` to explicitly run only the configured
   sealed aggregate-only suite after development has stopped; and
 - `synth workflow promote <RUN_ID>` plus `promotion-show <ID>` to persist and

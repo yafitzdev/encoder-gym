@@ -934,6 +934,14 @@ impl SqliteStore {
             return Ok(None);
         };
         let attempts = self.list_workflow_attempts(id).await.map_err(store_error)?;
+        let mut child_executions = Vec::new();
+        for attempt in &attempts {
+            child_executions.extend(
+                self.list_workflow_child_executions(attempt.id)
+                    .await
+                    .map_err(store_error)?,
+            );
+        }
         let mut parents = self
             .workflow_definition_node(run.definition_id)
             .await?
@@ -961,7 +969,11 @@ impl SqliteStore {
             ArtifactKind::WorkflowRun,
             id,
             run.latest_attempt_fingerprint.clone(),
-            &serde_json::json!({"run": run, "attempts": attempts}),
+            &serde_json::json!({
+                "run": run,
+                "attempts": attempts,
+                "child_executions": child_executions,
+            }),
             parents,
         )?))
     }

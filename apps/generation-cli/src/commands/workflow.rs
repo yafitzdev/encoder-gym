@@ -69,6 +69,7 @@ use crate::cli::{WorkflowCommand, WorkflowRunStateArg};
 use crate::document::read as read_document;
 
 mod artifacts;
+pub(crate) mod child_execution;
 mod quality_gate;
 mod queries;
 mod stage_execution;
@@ -132,6 +133,13 @@ pub async fn execute(command: WorkflowCommand, store: &SqliteStore) -> anyhow::R
                 .pop()
                 .context("workflow run has no stage attempt")?;
             let retrying = previous.state == StageAttemptState::Failed && previous.retryable;
+            let recovering = previous.state == StageAttemptState::Running
+                && run.state == WorkflowRunState::AwaitingUser
+                && !run.cancel_requested;
+            if recovering {
+                run.resume_interrupted(&previous)?;
+                store.save_workflow_run(&run, Some(previous.id)).await?;
+            }
             let attempt = if retrying {
                 WorkflowStageAttempt::start(
                     &definition,
@@ -222,53 +230,68 @@ pub async fn execute(command: WorkflowCommand, store: &SqliteStore) -> anyhow::R
         WorkflowCommand::Cancel { id } => {
             let mut run = require_run(store, id).await?;
             let attempts = store.list_workflow_attempts(id).await?;
+            let expected = run.latest_attempt_id;
+            run.request_cancel()?;
+            // Close the parent authority first. The child-reservation trigger
+            // will now reject any new work racing with cancellation.
+            store.save_workflow_run(&run, expected).await?;
             if let Some(current) = attempts.last() {
-                let plan_kind = match current.stage {
-                    WorkflowStage::Generation => Some("generation_plan"),
-                    WorkflowStage::DatasetDiffGeneration => Some("iteration_generation_plan"),
-                    _ => None,
-                };
-                if let Some(kind) = plan_kind
-                    && let Ok(plan_id) = artifact_id(&attempts, kind)
+                let mut linked =
+                    child_execution::request_attempt_cancellation(store, current.id).await?;
+                if linked == 0
+                    && let Some(predecessor_id) = current.predecessor_id
                 {
-                    for job in store
-                        .list_jobs(JobQuery {
-                            plan_id: Some(plan_id),
-                            limit: 10_000,
-                            ..JobQuery::default()
-                        })
-                        .await?
+                    linked = child_execution::request_attempt_cancellation(store, predecessor_id)
+                        .await?;
+                }
+                // Compatibility for workflows whose current stage predates
+                // migration 0050. New work is cancelled only through its exact
+                // child-execution link.
+                if linked == 0 {
+                    let plan_kind = match current.stage {
+                        WorkflowStage::Generation => Some("generation_plan"),
+                        WorkflowStage::DatasetDiffGeneration => Some("iteration_generation_plan"),
+                        _ => None,
+                    };
+                    if let Some(kind) = plan_kind
+                        && let Ok(plan_id) = artifact_id(&attempts, kind)
                     {
-                        if matches!(job.state, JobState::Queued | JobState::Running) {
-                            store.request_job_cancellation(job.id).await?;
+                        for job in store
+                            .list_jobs(JobQuery {
+                                plan_id: Some(plan_id),
+                                limit: 10_000,
+                                ..JobQuery::default()
+                            })
+                            .await?
+                        {
+                            if matches!(job.state, JobState::Queued | JobState::Running) {
+                                store.request_job_cancellation(job.id).await?;
+                            }
                         }
                     }
-                }
-                if matches!(
-                    current.stage,
-                    WorkflowStage::QualityAudit | WorkflowStage::IterationQualityAudit
-                ) {
-                    let definition = require_definition(store, run.definition_id).await?;
-                    let audit_run_id =
-                        quality_gate::audit_run_id(&definition, &run, current.stage)?;
-                    if let Some(mut audit_run) = store.get_audit_run(audit_run_id).await?
-                        && matches!(
-                            audit_run.state,
-                            QualityAuditRunState::Queued | QualityAuditRunState::Running
-                        )
-                    {
-                        if audit_run.state == QualityAuditRunState::Queued {
-                            audit_run.cancel()?;
-                        } else {
-                            audit_run.request_cancel()?;
+                    if matches!(
+                        current.stage,
+                        WorkflowStage::QualityAudit | WorkflowStage::IterationQualityAudit
+                    ) {
+                        let definition = require_definition(store, run.definition_id).await?;
+                        let audit_run_id =
+                            quality_gate::audit_run_id(&definition, &run, current.stage)?;
+                        if let Some(mut audit_run) = store.get_audit_run(audit_run_id).await?
+                            && matches!(
+                                audit_run.state,
+                                QualityAuditRunState::Queued | QualityAuditRunState::Running
+                            )
+                        {
+                            if audit_run.state == QualityAuditRunState::Queued {
+                                audit_run.cancel()?;
+                            } else {
+                                audit_run.request_cancel()?;
+                            }
+                            store.save_audit_run(&audit_run).await?;
                         }
-                        store.save_audit_run(&audit_run).await?;
                     }
                 }
             }
-            let expected = run.latest_attempt_id;
-            run.request_cancel()?;
-            store.save_workflow_run(&run, expected).await?;
             crate::presentation::print(&run)
         }
     }

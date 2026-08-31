@@ -93,6 +93,25 @@ impl GenerationJob {
         self.requested_rows.saturating_sub(self.accepted_rows)
     }
 
+    /// Replaces the generated identity while the job is still a pristine
+    /// queued value. This lets an orchestrator durably reserve the identity
+    /// before the job enters persistence.
+    pub fn with_reserved_id(mut self, id: Uuid) -> Result<Self, JobIdentityError> {
+        if id.is_nil()
+            || self.state != JobState::Queued
+            || self.generated_rows != 0
+            || self.accepted_rows != 0
+            || self.rejected_rows != 0
+            || self.failed_requests != 0
+            || self.cancel_requested
+            || self.error_message.is_some()
+        {
+            return Err(JobIdentityError);
+        }
+        self.id = id;
+        Ok(self)
+    }
+
     pub fn transition(&mut self, next: JobState) -> Result<(), JobTransitionError> {
         let allowed = matches!(
             (self.state, next),
@@ -122,6 +141,10 @@ pub struct JobTransitionError {
     pub from: JobState,
     pub to: JobState,
 }
+
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+#[error("a reserved generation-job identity requires a non-nil pristine queued job")]
+pub struct JobIdentityError;
 
 #[derive(Debug, Clone)]
 pub struct JobRunnerPolicy {

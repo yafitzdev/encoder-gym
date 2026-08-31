@@ -187,7 +187,8 @@ async fn run(args: TrainingRunArgs, store: SqliteStore) -> anyhow::Result<()> {
     )?;
     let request =
         training_request(&store, training_run.id, args.snapshot_id, configuration).await?;
-    let completed = execute_training(training_run, request, backend, artifact_root, store).await?;
+    let completed =
+        execute_training(training_run, request, backend, artifact_root, None, store).await?;
     print_json(&completed)
 }
 
@@ -260,7 +261,7 @@ async fn continue_run(args: TrainingContinueArgs, store: SqliteStore) -> anyhow:
             |config| config.training.artifact_root,
         )
     });
-    let completed = execute_training(run, request, backend, artifact_root, store).await?;
+    let completed = execute_training(run, request, backend, artifact_root, None, store).await?;
     print_json(&completed)
 }
 
@@ -412,8 +413,13 @@ pub(crate) fn reusable_workflow_run(
 pub(crate) async fn run_workflow(
     configured: &project_config::ResolvedProjectConfig,
     input: WorkflowTrainingInput,
+    child: &workflow_core::execution::WorkflowChildExecution,
     store: SqliteStore,
 ) -> anyhow::Result<CompletedTraining> {
+    anyhow::ensure!(
+        child.child_kind == workflow_core::execution::WorkflowChildKind::TrainingRun,
+        "training received a non-training workflow child reservation"
+    );
     let snapshot_id = input.snapshot_id;
     let input_binding = input.binding.clone();
     let configuration = configured.training_configuration()?;
@@ -456,7 +462,8 @@ pub(crate) async fn run_workflow(
         transformer_configuration,
         backend_fingerprint,
     )?
-    .with_input_binding(input_binding.clone())?;
+    .with_input_binding(input_binding.clone())?
+    .with_reserved_id(child.child_execution_id)?;
     let request = input.into_request(run.id, configuration);
     request.validate()?;
     execute_training(
@@ -464,6 +471,7 @@ pub(crate) async fn run_workflow(
         request,
         backend,
         configured.training.artifact_root.clone(),
+        Some(child),
         store,
     )
     .await
@@ -527,9 +535,36 @@ async fn execute_training(
     request: TrainingRequest,
     backend: Arc<dyn TrainingBackend>,
     artifact_root: PathBuf,
+    child: Option<&workflow_core::execution::WorkflowChildExecution>,
     store: SqliteStore,
 ) -> anyhow::Result<CompletedTraining> {
-    store.create_training_run(&training_run).await?;
+    if let Some(existing) = store.get_training_run(training_run.id).await? {
+        anyhow::ensure!(
+            child.is_some()
+                && existing.state == TrainingRunState::Queued
+                && existing.snapshot_id == training_run.snapshot_id
+                && existing.base_model_id == training_run.base_model_id
+                && existing.parent_checkpoint_id == training_run.parent_checkpoint_id
+                && existing.transformer_configuration == training_run.transformer_configuration
+                && existing.backend_configuration_fingerprint
+                    == training_run.backend_configuration_fingerprint
+                && existing.input_binding == training_run.input_binding
+                && existing.backend_name == training_run.backend_name
+                && existing.model_format == training_run.model_format
+                && existing.configuration == training_run.configuration,
+            "reserved workflow training run differs from the exact queued request"
+        );
+    } else {
+        store.create_training_run(&training_run).await?;
+    }
+    if let Some(child) = child {
+        super::workflow::child_execution::synchronize_parent_before_start(
+            &store,
+            child.workflow_run_id,
+            child,
+        )
+        .await?;
+    }
     store
         .acquire_execution_lease(WorkflowKind::Training, training_run.id)
         .await?;

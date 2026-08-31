@@ -248,6 +248,9 @@ pub(in crate::commands::doctor) async fn benchmark_bundle_facts_check(
 }
 
 pub(in crate::commands::doctor) async fn workflow_facts_check(store: &SqliteStore) -> DoctorCheck {
+    use dataset_quality_core::ports::DatasetQualityStore;
+    use workflow_core::execution::WorkflowChildKind;
+
     const PAGE_SIZE: u32 = 1_000;
     let mut definitions = Vec::new();
     let mut offset = 0_u32;
@@ -293,6 +296,7 @@ pub(in crate::commands::doctor) async fn workflow_facts_check(store: &SqliteStor
         offset = offset.saturating_add(PAGE_SIZE);
     }
     let mut failures = Vec::new();
+    let mut checked_children = 0_usize;
     for definition in &definitions {
         if definition.reproduce_fingerprint().ok().as_deref()
             != Some(definition.fingerprint.as_str())
@@ -328,6 +332,62 @@ pub(in crate::commands::doctor) async fn workflow_facts_check(store: &SqliteStor
             {
                 failures.push(format!("run {} attempt chain is invalid", run.id));
                 break;
+            }
+            match store.list_workflow_child_executions(attempt.id).await {
+                Ok(children) => {
+                    for (child_index, child) in children.iter().enumerate() {
+                        if usize::try_from(child.ordinal).ok() != Some(child_index + 1) {
+                            failures.push(format!(
+                                "run {} attempt {} child execution ordinals are invalid",
+                                run.id, attempt.id
+                            ));
+                            break;
+                        }
+                        let exists: anyhow::Result<bool> = match child.child_kind {
+                            WorkflowChildKind::GenerationJob => store
+                                .get_job(child.child_execution_id)
+                                .await
+                                .map(|value| value.is_some())
+                                .map_err(Into::into),
+                            WorkflowChildKind::QualityAuditRun => store
+                                .get_audit_run(child.child_execution_id)
+                                .await
+                                .map(|value| value.is_some())
+                                .map_err(Into::into),
+                            WorkflowChildKind::TrainingRun => store
+                                .get_training_run(child.child_execution_id)
+                                .await
+                                .map(|value| value.is_some())
+                                .map_err(Into::into),
+                            WorkflowChildKind::EvaluationRun => store
+                                .get_evaluation_run(child.child_execution_id)
+                                .await
+                                .map(|value| value.is_some())
+                                .map_err(Into::into),
+                        };
+                        match exists {
+                            Ok(true) => checked_children = checked_children.saturating_add(1),
+                            Ok(false)
+                                if run.latest_attempt_id == Some(attempt.id)
+                                    || run.cancel_requested =>
+                            {
+                                checked_children = checked_children.saturating_add(1);
+                            }
+                            Ok(false) => failures.push(format!(
+                                "run {} attempt {} child execution is missing: {}",
+                                run.id, attempt.id, child.child_execution_id
+                            )),
+                            Err(error) => failures.push(format!(
+                                "run {} attempt {} child execution failed validation: {error}",
+                                run.id, attempt.id
+                            )),
+                        }
+                    }
+                }
+                Err(error) => failures.push(format!(
+                    "run {} attempt {} child execution links: {error}",
+                    run.id, attempt.id
+                )),
             }
         }
         if attempts.last().map(|attempt| attempt.id) != run.latest_attempt_id
@@ -414,9 +474,10 @@ pub(in crate::commands::doctor) async fn workflow_facts_check(store: &SqliteStor
         pass(
             "workflow_facts",
             format!(
-                "{} definition(s), {} run chain(s), and {} workflow artifact(s) verified",
+                "{} definition(s), {} run chain(s), {} child execution link(s), and {} workflow artifact(s) verified",
                 definitions.len(),
                 runs.len(),
+                checked_children,
                 checked_artifacts,
             ),
         )

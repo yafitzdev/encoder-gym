@@ -5,7 +5,7 @@ use generation_core::{
     domain::GenerationParameters,
     jobs::{
         GenerationBackendIdentity, GenerationExecutionPolicy, GenerationExecutionSpec,
-        GenerationJob, JobRunner, JobRunnerPolicy,
+        GenerationJob, JobRunner, JobRunnerPolicy, JobState,
     },
     planning::calculate_generation_needs,
     ports::{
@@ -185,8 +185,13 @@ pub async fn resume(args: ResumeGenerationArgs, store: SqliteStore) -> anyhow::R
 pub(crate) async fn run_workflow(
     plan_id: uuid::Uuid,
     configured: &project_config::ResolvedProjectConfig,
+    child: &workflow_core::execution::WorkflowChildExecution,
     store: SqliteStore,
 ) -> anyhow::Result<GenerationJob> {
+    anyhow::ensure!(
+        child.child_kind == workflow_core::execution::WorkflowChildKind::GenerationJob,
+        "generation received a non-generation workflow child reservation"
+    );
     let plan = store
         .get_plan(plan_id)
         .await?
@@ -224,13 +229,33 @@ pub(crate) async fn run_workflow(
     let novelty_guard =
         super::authenticity::source_novelty_guard(&store, authenticity_context.as_ref()).await?;
     let strategy_context = store.generation_strategy_context_for_plan(plan.id).await?;
-    let job = GenerationJob::queued(
+    let queued_job = GenerationJob::queued(
         plan.dataset_id,
         plan.id,
         backend.name(),
         backend.model(),
         requested_rows,
-    );
+    )
+    .with_reserved_id(child.child_execution_id)?;
+    let existing_job = store.get_job(child.child_execution_id).await?;
+    if let Some(existing) = &existing_job {
+        anyhow::ensure!(
+            existing.dataset_id == queued_job.dataset_id
+                && existing.plan_id == queued_job.plan_id
+                && existing.backend_name == queued_job.backend_name
+                && existing.backend_model == queued_job.backend_model
+                && existing.requested_rows == queued_job.requested_rows,
+            "reserved workflow generation job differs from the exact plan or backend"
+        );
+        if existing.state == JobState::Completed {
+            return Ok(existing.clone());
+        }
+        anyhow::ensure!(
+            existing.state == JobState::Queued,
+            "reserved workflow generation job is not queued or completed"
+        );
+    }
+    let job = existing_job.unwrap_or(queued_job);
     let policy = runner_policy(&options, Some(configured));
     let prompt_identity = if strategy_context.is_some() {
         PromptBuilder::strategy_template_identity(authenticity_context.is_some())?
@@ -273,15 +298,32 @@ pub(crate) async fn run_workflow(
         .clone()
         .map(|context| GenerationStrategyAssignment::create(job.id, context))
         .transpose()?;
-    store
-        .create_generation_execution_bundle_with_contexts(
-            &job,
-            &execution,
-            &semantics,
-            authenticity.as_ref(),
-            strategy.as_ref(),
-        )
-        .await?;
+    if store.get_generation_execution_spec(job.id).await?.is_none() {
+        store
+            .create_generation_execution_bundle_with_contexts(
+                &job,
+                &execution,
+                &semantics,
+                authenticity.as_ref(),
+                strategy.as_ref(),
+            )
+            .await?;
+    } else {
+        let persisted = store
+            .get_generation_execution_spec(job.id)
+            .await?
+            .context("reserved workflow generation execution is missing")?;
+        anyhow::ensure!(
+            persisted == execution,
+            "reserved workflow generation execution differs from current immutable inputs"
+        );
+    }
+    super::workflow::child_execution::synchronize_parent_before_start(
+        &store,
+        child.workflow_run_id,
+        child,
+    )
+    .await?;
     store
         .acquire_execution_lease(WorkflowKind::Generation, job.id)
         .await?;
@@ -310,6 +352,23 @@ pub(crate) async fn run_workflow(
         .await;
     let completed = result?;
     release?;
+    if store
+        .list_recovery_records(false)
+        .await?
+        .iter()
+        .any(|record| {
+            record.workflow_kind == WorkflowKind::Generation && record.workflow_id == job.id
+        })
+    {
+        store
+            .resolve_recovery(
+                WorkflowKind::Generation,
+                job.id,
+                RecoveryState::Resumed,
+                None,
+            )
+            .await?;
+    }
     Ok(completed)
 }
 

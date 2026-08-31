@@ -6,6 +6,7 @@ pub mod approval;
 pub mod benchmark;
 pub mod benchmark_bundle;
 pub mod contamination;
+pub mod execution;
 pub mod governance;
 pub mod ports;
 pub mod promotion;

@@ -115,6 +115,9 @@ manifest to the resulting snapshot. See
 - Automatic cross-slice execution is finite, budgeted, persisted, idempotent,
   cancellable, and either explicitly approved per iteration or constrained by
   a persisted pre-authorization envelope.
+- Every long-running workflow stage durably reserves its exact child execution
+  identity before startup; cancellation and recovery target those links rather
+  than inferring children from mutable plan or presentation state.
 - Deterministic benchmark contracts decide pass, fail, inconclusive, or invalid;
   an LLM may provide advisory interpretation but never acceptance authority.
 - Every new workflow definition binds one immutable benchmark bundle. Its

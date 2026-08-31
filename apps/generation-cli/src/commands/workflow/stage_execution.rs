@@ -1,5 +1,6 @@
 use super::{quality_gate, training_benchmark_gate, *};
 use crate::commands::{evaluation, generation, optimization, snapshot, training};
+use workflow_core::execution::WorkflowChildKind;
 
 pub(super) fn execute_initial_stage<'a>(
     store: &'a SqliteStore,
@@ -46,7 +47,16 @@ pub(super) fn execute_initial_stage<'a>(
                     .next();
                 let job = match existing {
                     Some(job) => job,
-                    None => generation::run_workflow(plan_id, configured, store.clone()).await?,
+                    None => {
+                        let child = child_execution::reserve_next(
+                            store,
+                            attempt,
+                            WorkflowChildKind::GenerationJob,
+                            "primary",
+                        )
+                        .await?;
+                        generation::run_workflow(plan_id, configured, &child, store.clone()).await?
+                    }
                 };
                 ensure!(
                     job.state == JobState::Completed,
@@ -67,7 +77,7 @@ pub(super) fn execute_initial_stage<'a>(
                 )]
             }
             WorkflowStage::QualityAudit | WorkflowStage::IterationQualityAudit => {
-                quality_gate::execute_audit(store, definition, run, attempt.stage)
+                quality_gate::execute_audit(store, definition, run, attempt)
                     .await?
                     .links
             }
@@ -212,7 +222,16 @@ pub(super) fn execute_initial_stage<'a>(
                         .await?,
                         run,
                     },
-                    None => training::run_workflow(configured, input, store.clone()).await?,
+                    None => {
+                        let child = child_execution::reserve_next(
+                            store,
+                            attempt,
+                            WorkflowChildKind::TrainingRun,
+                            "primary",
+                        )
+                        .await?;
+                        training::run_workflow(configured, input, &child, store.clone()).await?
+                    }
                 };
                 let checkpoint = completed
                     .checkpoints
@@ -259,10 +278,18 @@ pub(super) fn execute_initial_stage<'a>(
                     let evaluation = match existing {
                         Some(evaluation) => evaluation,
                         None => {
+                            let child = child_execution::reserve_next(
+                                store,
+                                attempt,
+                                WorkflowChildKind::EvaluationRun,
+                                cohort.cohort_id.to_string(),
+                            )
+                            .await?;
                             evaluation::run_workflow(
                                 checkpoint_id,
                                 cohort.snapshot_id,
                                 &cohort.protocol,
+                                &child,
                                 store.clone(),
                             )
                             .await?
@@ -627,7 +654,16 @@ pub(super) fn execute_initial_stage<'a>(
                     .next();
                 let job = match existing {
                     Some(job) => job,
-                    None => generation::run_workflow(plan_id, configured, store.clone()).await?,
+                    None => {
+                        let child = child_execution::reserve_next(
+                            store,
+                            attempt,
+                            WorkflowChildKind::GenerationJob,
+                            "primary",
+                        )
+                        .await?;
+                        generation::run_workflow(plan_id, configured, &child, store.clone()).await?
+                    }
                 };
                 ensure!(
                     job.state == JobState::Completed,
@@ -752,7 +788,16 @@ pub(super) fn execute_initial_stage<'a>(
                         .await?,
                         run: training_run,
                     },
-                    None => training::run_workflow(configured, input, store.clone()).await?,
+                    None => {
+                        let child = child_execution::reserve_next(
+                            store,
+                            attempt,
+                            WorkflowChildKind::TrainingRun,
+                            "primary",
+                        )
+                        .await?;
+                        training::run_workflow(configured, input, &child, store.clone()).await?
+                    }
                 };
                 let checkpoint = completed
                     .checkpoints
@@ -802,10 +847,18 @@ pub(super) fn execute_initial_stage<'a>(
                         }) {
                         Some(value) => value,
                         None => {
+                            let child = child_execution::reserve_next(
+                                store,
+                                attempt,
+                                WorkflowChildKind::EvaluationRun,
+                                cohort.cohort_id.to_string(),
+                            )
+                            .await?;
                             evaluation::run_workflow(
                                 checkpoint_id,
                                 cohort.snapshot_id,
                                 &cohort.protocol,
+                                &child,
                                 store.clone(),
                             )
                             .await?
@@ -1004,10 +1057,18 @@ pub(super) fn execute_initial_stage<'a>(
                         }) {
                         Some(value) => value,
                         None => {
+                            let child = child_execution::reserve_next(
+                                store,
+                                attempt,
+                                WorkflowChildKind::EvaluationRun,
+                                cohort.cohort_id.to_string(),
+                            )
+                            .await?;
                             evaluation::run_workflow(
                                 checkpoint_id,
                                 cohort.snapshot_id,
                                 &cohort.protocol,
+                                &child,
                                 store.clone(),
                             )
                             .await?

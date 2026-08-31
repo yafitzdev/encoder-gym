@@ -2,6 +2,10 @@ use super::*;
 
 pub(super) async fn print_status(store: &SqliteStore, run: WorkflowRun) -> anyhow::Result<()> {
     let attempts = store.list_workflow_attempts(run.id).await?;
+    let mut child_executions = Vec::new();
+    for attempt in &attempts {
+        child_executions.extend(store.list_workflow_child_executions(attempt.id).await?);
+    }
     let mut generation = Vec::new();
     for plan_id in attempts
         .iter()
@@ -59,6 +63,7 @@ pub(super) async fn print_status(store: &SqliteStore, run: WorkflowRun) -> anyho
         "attempt_count": attempts.len(),
         "latest_attempt": attempts.last(),
         "attempts": attempts,
+        "child_executions": child_executions,
         "generation": generation,
         "evidence_risk": evidence_risk,
     }))

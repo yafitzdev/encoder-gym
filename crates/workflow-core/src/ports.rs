@@ -12,6 +12,7 @@ use crate::approval::WorkflowApprovalDecision;
 use crate::benchmark::{AcceptanceAssessment, AcceptanceState, BenchmarkSuite, BenchmarkSuiteKind};
 use crate::benchmark_bundle::BenchmarkBundle;
 use crate::contamination::{ContaminationOverride, ContaminationReport, ContaminationStatus};
+use crate::execution::WorkflowChildExecution;
 use crate::governance::{CohortRoleDecision, EvaluationCohort, EvidenceExposure, ExposurePurpose};
 use crate::promotion::ModelPromotion;
 use crate::stop::StopDecision;
@@ -412,6 +413,18 @@ pub trait WorkflowRunStore: Send + Sync {
         &self,
         run_id: Uuid,
     ) -> BoxFuture<'_, Result<Vec<WorkflowStageAttempt>, WorkflowStoreError>>;
+
+    /// Appends one immutable control-plane link before a long-running child
+    /// execution is started. Ordinals are consecutive within an attempt.
+    fn create_workflow_child_execution(
+        &self,
+        execution: &WorkflowChildExecution,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    fn list_workflow_child_executions(
+        &self,
+        attempt_id: Uuid,
+    ) -> BoxFuture<'_, Result<Vec<WorkflowChildExecution>, WorkflowStoreError>>;
 
     fn save_workflow_run(
         &self,

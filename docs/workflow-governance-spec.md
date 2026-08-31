@@ -365,6 +365,13 @@ can expand that envelope.
 Every stage is idempotent, cancellable at existing batch boundaries, lease-safe,
 and restartable without duplicating a verified artifact. Recovery cannot infer
 approval, replay a completed provider request, or repeat a sealed evaluation.
+Before generation, quality audit, training, or evaluation starts, the running
+attempt appends an immutable control-plane link containing the exact child kind,
+logical input key, and reserved child ID. These links are distinct from terminal
+artifact lineage. Parent cancellation is persisted first, atomically closing
+new reservations, and is then forwarded only to the linked children. Recovery
+reuses an interrupted generation identity in place and records explicit
+replacement identities for non-resumable training or evaluation children.
 Quality-audit plan and run identities are derived deterministically from the
 workflow run and cycle. Recovery reuses their pinned guidance and exact source
 population; source, policy, backend, or protocol drift fails closed instead of

@@ -438,6 +438,15 @@ recovery and still consumes the cumulative attempt ceiling because its remote
 outcome is unknowable. Training and evaluation preserve interrupted history and
 are not silently replayed under the same artifact identity.
 
+The workflow attempt separately owns immutable child-execution links. A link is
+written before the reserved generation job, quality audit, training run, or
+per-cohort evaluation begins and records an ordered logical slot plus exact
+child ID. SQLite permits insertion only for the current uncancelled running
+attempt and rejects updates or deletion. Cancellation closes the parent first,
+then targets these links; it no longer discovers work by broad plan queries.
+Recovery can therefore resume the linked generation job in place or identify
+the exact interrupted training/evaluation child and its replacement.
+
 Snapshots, registered base-model bundles, resolved configurations, evaluation
 inputs, analysis protocols/reports, optimization evidence/proposals, reviews,
 benchmark suites, global and training-combined contamination reports, benchmark

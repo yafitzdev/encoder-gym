@@ -3,17 +3,23 @@ pub mod support;
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
+    process::{Command, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use dataset_quality_core::policy::{EvaluatorEgressPolicy, QualityPreset};
 use serde_json::Value;
-use workflow_core::workflow::{WorkflowQualityAuthenticity, WorkflowQualityGateRequest};
+use synthetic_data_sqlite::SqliteStore;
+use workflow_core::{
+    execution::WorkflowChildKind,
+    ports::{WorkflowRunQuery, WorkflowRunStore},
+    workflow::{WorkflowQualityAuthenticity, WorkflowQualityGateRequest, WorkflowRunState},
+};
 
 use support::{
     run, run_json,
@@ -166,6 +172,16 @@ fn quality_gated_workflow_pauses_for_the_exact_latest_manifest_and_trains_qualif
     assert_eq!(artifact_count(&resumed, "curation_application"), 1);
     assert_eq!(artifact_count(&resumed, "snapshot"), 1);
     assert_eq!(artifact_count(&resumed, "training_run"), 1);
+    let child_kinds = resumed["child_executions"]
+        .as_array()
+        .expect("workflow child executions")
+        .iter()
+        .map(|child| child["child_kind"].as_str().expect("child kind"))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(child_kinds.contains("generation_job"));
+    assert!(child_kinds.contains("quality_audit_run"));
+    assert!(child_kinds.contains("training_run"));
+    assert!(child_kinds.contains("evaluation_run"));
     let snapshot_id = latest_artifact_id(&resumed, "snapshot");
     let shown = run_json(fixture.database_url(), ["snapshot", "show", &snapshot_id]);
     assert_eq!(shown["qualified"], true);
@@ -199,6 +215,7 @@ fn quality_gated_workflow_pauses_for_the_exact_latest_manifest_and_trains_qualif
         ["provenance", "workflow-run", &workflow_run_id],
     );
     let provenance = serde_json::to_string(&provenance).expect("workflow provenance JSON");
+    assert!(provenance.contains("child_executions"));
     for kind in [
         "quality_audit_plan",
         "quality_audit_run",
@@ -564,6 +581,170 @@ fn cancellation_is_persisted_before_work_starts_and_resume_is_safe() {
 }
 
 #[test]
+fn cancellation_targets_the_exact_active_generation_child() {
+    let server = BlockingFailingServer::start();
+    let fixture = WorkflowFixture::new(GenerationMode::OpenAiCompatible {
+        base_url: server.base_url(),
+        model: "blocking-generation".into(),
+    });
+    let prepared = fixture.prepare();
+    let definition_id = string_at(&prepared, "/preparation/workflow_definition_id");
+    let process = Command::new(env!("CARGO_BIN_EXE_synth"))
+        .args([
+            "--database-url",
+            fixture.database_url(),
+            "--output",
+            "json",
+            "workflow",
+            "start",
+            &definition_id,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("workflow process starts");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !server.request_seen.load(Ordering::Acquire) {
+        assert!(
+            Instant::now() < deadline,
+            "generation request did not start"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let (workflow_run_id, job_id) = runtime.block_on(async {
+        let store = SqliteStore::connect(fixture.database_url())
+            .await
+            .expect("database connects");
+        let run = store
+            .query_workflow_runs(WorkflowRunQuery {
+                definition_id: None,
+                state: Some(WorkflowRunState::Running),
+                limit: 10,
+                offset: 0,
+            })
+            .await
+            .expect("running workflows query")
+            .into_iter()
+            .next()
+            .expect("running workflow");
+        let attempt_id = run.latest_attempt_id.expect("running attempt");
+        let child = store
+            .list_workflow_child_executions(attempt_id)
+            .await
+            .expect("child executions")
+            .into_iter()
+            .find(|child| child.child_kind == WorkflowChildKind::GenerationJob)
+            .expect("generation child");
+        (run.id, child.child_execution_id)
+    });
+
+    let requested = run_json(
+        fixture.database_url(),
+        ["workflow", "cancel", &workflow_run_id.to_string()],
+    );
+    assert_eq!(requested["cancel_requested"], true);
+    let child = run_json(
+        fixture.database_url(),
+        ["job", "status", &job_id.to_string()],
+    );
+    assert_eq!(child["id"], job_id.to_string());
+    assert_eq!(child["cancel_requested"], true);
+
+    server.release.store(true, Ordering::Release);
+    let output = process.wait_with_output().expect("workflow process exits");
+    assert!(
+        output.status.success(),
+        "workflow process failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let status: Value = serde_json::from_slice(&output.stdout).expect("workflow status JSON");
+    assert_eq!(status["run"]["state"], "cancelled");
+    assert_eq!(status["latest_attempt"]["state"], "cancelled");
+    assert_eq!(child_execution_count(&status, "generation_job"), 1);
+}
+
+#[test]
+fn interrupted_generation_resumes_the_exact_reserved_child_identity() {
+    let server = BlockingFailingServer::start();
+    let fixture = WorkflowFixture::new(GenerationMode::OpenAiCompatible {
+        base_url: server.base_url(),
+        model: "interrupted-generation".into(),
+    });
+    let prepared = fixture.prepare();
+    let definition_id = string_at(&prepared, "/preparation/workflow_definition_id");
+    let mut process = Command::new(env!("CARGO_BIN_EXE_synth"))
+        .args([
+            "--database-url",
+            fixture.database_url(),
+            "--output",
+            "json",
+            "workflow",
+            "start",
+            &definition_id,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("workflow process starts");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !server.request_seen.load(Ordering::Acquire) {
+        assert!(
+            Instant::now() < deadline,
+            "generation request did not start"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let (workflow_run_id, job_id) =
+        running_child_ids(fixture.database_url(), WorkflowChildKind::GenerationJob);
+    process.kill().expect("workflow process is killed");
+    process.wait().expect("killed workflow process exits");
+    server.release.store(true, Ordering::Release);
+
+    let recovery = run_json(fixture.database_url(), ["recovery", "list"]);
+    assert!(
+        recovery
+            .as_array()
+            .expect("recovery records")
+            .iter()
+            .any(|record| record["workflow_kind"] == "encoder_workflow"
+                && record["workflow_id"] == workflow_run_id.to_string())
+    );
+    assert!(
+        recovery
+            .as_array()
+            .expect("recovery records")
+            .iter()
+            .any(|record| record["workflow_kind"] == "generation"
+                && record["workflow_id"] == job_id.to_string())
+    );
+
+    let resumed = run_json(
+        fixture.database_url(),
+        ["workflow", "resume", &workflow_run_id.to_string()],
+    );
+    assert_eq!(child_execution_count(&resumed, "generation_job"), 1);
+    assert_eq!(
+        resumed["child_executions"]
+            .as_array()
+            .expect("child executions")[0]["child_execution_id"],
+        job_id.to_string()
+    );
+    let jobs = run_json(
+        fixture.database_url(),
+        [
+            "job",
+            "list",
+            "--plan-id",
+            &latest_artifact_id(&resumed, "generation_plan"),
+        ],
+    );
+    assert_eq!(jobs.as_array().expect("generation jobs").len(), 1);
+}
+
+#[test]
 fn failing_backend_retries_are_bounded_and_append_only() {
     let server = AlwaysFailingServer::start();
     let fixture = WorkflowFixture::new(GenerationMode::OpenAiCompatible {
@@ -580,9 +761,11 @@ fn failing_backend_retries_are_bounded_and_append_only() {
     );
     let run_id = string_at(&first, "/run/id");
     assert_failed_generation_attempt(&first, 1, true);
+    assert_eq!(child_execution_count(&first, "generation_job"), 1);
 
     let second = run_json(fixture.database_url(), ["workflow", "resume", &run_id]);
     assert_failed_generation_attempt(&second, 2, false);
+    assert_eq!(child_execution_count(&second, "generation_job"), 2);
     let mut failed_attempts = generation_failures(&second);
     failed_attempts.sort_by_key(|attempt| attempt["attempt"].as_u64());
     assert_eq!(failed_attempts.len(), 2);
@@ -705,6 +888,45 @@ fn artifact_count(status: &Value, kind: &str) -> usize {
         .count()
 }
 
+fn child_execution_count(status: &Value, kind: &str) -> usize {
+    status["child_executions"]
+        .as_array()
+        .expect("workflow child executions")
+        .iter()
+        .filter(|child| child["child_kind"] == kind)
+        .count()
+}
+
+fn running_child_ids(database_url: &str, kind: WorkflowChildKind) -> (uuid::Uuid, uuid::Uuid) {
+    tokio::runtime::Runtime::new()
+        .expect("runtime")
+        .block_on(async {
+            let store = SqliteStore::connect(database_url)
+                .await
+                .expect("database connects");
+            let run = store
+                .query_workflow_runs(WorkflowRunQuery {
+                    definition_id: None,
+                    state: Some(WorkflowRunState::Running),
+                    limit: 10,
+                    offset: 0,
+                })
+                .await
+                .expect("running workflows query")
+                .into_iter()
+                .next()
+                .expect("running workflow");
+            let child = store
+                .list_workflow_child_executions(run.latest_attempt_id.expect("running attempt"))
+                .await
+                .expect("child executions")
+                .into_iter()
+                .find(|child| child.child_kind == kind)
+                .expect("requested child kind");
+            (run.id, child.child_execution_id)
+        })
+}
+
 fn latest_artifact_id(status: &Value, kind: &str) -> String {
     status["attempts"]
         .as_array()
@@ -730,6 +952,75 @@ struct AlwaysFailingServer {
     address: std::net::SocketAddr,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
+}
+
+struct BlockingFailingServer {
+    address: std::net::SocketAddr,
+    stop: Arc<AtomicBool>,
+    request_seen: Arc<AtomicBool>,
+    release: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl BlockingFailingServer {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("mock server binds");
+        let address = listener.local_addr().expect("mock server address");
+        listener
+            .set_nonblocking(true)
+            .expect("mock server becomes nonblocking");
+        let stop = Arc::new(AtomicBool::new(false));
+        let request_seen = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let thread_seen = Arc::clone(&request_seen);
+        let thread_release = Arc::clone(&release);
+        let thread = thread::spawn(move || {
+            while !thread_stop.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut request = [0_u8; 8192];
+                        let _ = stream.read(&mut request);
+                        thread_seen.store(true, Ordering::Release);
+                        while !thread_release.load(Ordering::Acquire)
+                            && !thread_stop.load(Ordering::Relaxed)
+                        {
+                            thread::sleep(Duration::from_millis(5));
+                        }
+                        if !thread_stop.load(Ordering::Relaxed) {
+                            fail_request_without_read(&mut stream);
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("mock server accept failed: {error}"),
+                }
+            }
+        });
+        Self {
+            address,
+            stop,
+            request_seen,
+            release,
+            thread: Some(thread),
+        }
+    }
+
+    fn base_url(&self) -> String {
+        format!("http://{}/v1", self.address)
+    }
+}
+
+impl Drop for BlockingFailingServer {
+    fn drop(&mut self) {
+        self.release.store(true, Ordering::Release);
+        self.stop.store(true, Ordering::Relaxed);
+        let _ = TcpStream::connect(self.address);
+        if let Some(thread) = self.thread.take() {
+            thread.join().expect("mock server stops");
+        }
+    }
 }
 
 impl AlwaysFailingServer {
@@ -777,9 +1068,11 @@ impl Drop for AlwaysFailingServer {
 fn fail_request(stream: &mut TcpStream) {
     let mut request = [0_u8; 8192];
     let _ = stream.read(&mut request);
-    stream
-        .write_all(
+    fail_request_without_read(stream);
+}
+
+fn fail_request_without_read(stream: &mut TcpStream) {
+    let _ = stream.write_all(
             b"HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
-        )
-        .expect("mock response writes");
+        );
 }

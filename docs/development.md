@@ -135,8 +135,9 @@ The smaller acceptance scenarios make workflow failure semantics independently
 diagnosable:
 
 - `workflow_resilience_e2e.rs` covers interrupted-process recovery, repeatable
-  resume, cancellation, a deterministic HTTP backend failure, bounded retry
-  exhaustion, append-only attempt lineage, and the no-accepted-rows invariant.
+  resume of the exact reserved child identity, active-child cancellation,
+  a deterministic HTTP backend failure, bounded retry exhaustion, append-only
+  attempt/execution lineage, and the no-accepted-rows invariant.
 - `workflow_governance_e2e.rs` proves unsafe sealed-evidence disclosure and an
   overbroad preauthorization envelope are rejected before project or workflow
   artifacts are persisted.

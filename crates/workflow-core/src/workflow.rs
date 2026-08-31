@@ -447,6 +447,27 @@ impl WorkflowRun {
         self.updated_at = Utc::now();
         Ok(())
     }
+
+    /// Reactivates the exact running attempt that process recovery placed in
+    /// `awaiting_user`. Paused approval/user stages cannot use this path.
+    pub fn resume_interrupted(
+        &mut self,
+        attempt: &WorkflowStageAttempt,
+    ) -> Result<(), WorkflowError> {
+        if self.state != WorkflowRunState::AwaitingUser
+            || self.cancel_requested
+            || attempt.state != StageAttemptState::Running
+            || attempt.workflow_run_id != self.id
+            || self.latest_attempt_id != Some(attempt.id)
+            || self.latest_attempt_fingerprint.as_deref() != Some(&attempt.fingerprint)
+            || self.current_stage != Some(attempt.stage)
+        {
+            return Err(WorkflowError::NotInterrupted);
+        }
+        self.state = WorkflowRunState::Running;
+        self.updated_at = Utc::now();
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -639,6 +660,8 @@ pub enum WorkflowError {
     TerminalRun,
     #[error("workflow cancellation was requested")]
     CancellationRequested,
+    #[error("workflow run is not paused on the exact interrupted running attempt")]
+    NotInterrupted,
     #[error("stage {next:?} cannot follow {previous:?} in state {state:?}")]
     IllegalStage {
         previous: Option<WorkflowStage>,
@@ -1409,6 +1432,32 @@ mod tests {
             1,
         )
         .expect("legal successor");
+    }
+
+    #[test]
+    fn only_the_exact_interrupted_running_attempt_can_reactivate_a_run() {
+        let definition = definition();
+        let mut run = WorkflowRun::queued(&definition).expect("run");
+        let attempt = WorkflowStageAttempt::start(
+            &definition,
+            &mut run,
+            WorkflowStage::InitialAllocation,
+            None,
+            1,
+        )
+        .expect("running attempt");
+        run.state = WorkflowRunState::AwaitingUser;
+        run.resume_interrupted(&attempt)
+            .expect("exact interrupted attempt resumes");
+        assert_eq!(run.state, WorkflowRunState::Running);
+
+        let mut stale = run.clone();
+        stale.state = WorkflowRunState::AwaitingUser;
+        stale.latest_attempt_id = Some(Uuid::new_v4());
+        assert_eq!(
+            stale.resume_interrupted(&attempt),
+            Err(WorkflowError::NotInterrupted)
+        );
     }
 
     #[test]

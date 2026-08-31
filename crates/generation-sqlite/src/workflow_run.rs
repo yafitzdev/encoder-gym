@@ -3,6 +3,7 @@ use uuid::Uuid;
 use workflow_core::{
     benchmark_bundle::BenchmarkBundle,
     contamination::ContaminationReport,
+    execution::WorkflowChildExecution,
     ports::{
         BoxFuture, WorkflowDefinitionQuery, WorkflowRunQuery, WorkflowRunStore, WorkflowStoreError,
     },
@@ -267,6 +268,92 @@ impl WorkflowRunStore for SqliteStore {
             .into_iter()
             .map(AttemptRow::into_domain)
             .collect()
+        })
+    }
+
+    fn create_workflow_child_execution(
+        &self,
+        execution: &WorkflowChildExecution,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>> {
+        let execution = execution.clone();
+        Box::pin(async move {
+            execution.validate_integrity().map_err(store_error)?;
+            let mut transaction = self.pool().begin().await.map_err(store_error)?;
+            let attempt = sqlx::query_as::<_, AttemptRow>(
+                "SELECT id, workflow_run_id, sequence, iteration, stage, attempt, state, \
+                 predecessor_id, predecessor_fingerprint, retryable, artifact_json, fingerprint, \
+                 started_at, finished_at FROM workflow_stage_attempts WHERE id = ?",
+            )
+            .bind(execution.workflow_stage_attempt_id)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(store_error)?
+            .ok_or_else(|| WorkflowStoreError("workflow child parent attempt not found".into()))?
+            .into_domain()?;
+            execution
+                .validate_for_attempt(&attempt)
+                .map_err(store_error)?;
+            sqlx::query(
+                "INSERT INTO workflow_child_executions \
+                 (id, workflow_run_id, workflow_stage_attempt_id, stage, ordinal, child_kind, \
+                  logical_key, child_execution_id, artifact_json, fingerprint, created_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(execution.id)
+            .bind(execution.workflow_run_id)
+            .bind(execution.workflow_stage_attempt_id)
+            .bind(enum_string(&execution.stage)?)
+            .bind(execution.ordinal)
+            .bind(enum_string(&execution.child_kind)?)
+            .bind(&execution.logical_key)
+            .bind(execution.child_execution_id)
+            .bind(to_json(&execution)?)
+            .bind(&execution.fingerprint)
+            .bind(execution.created_at)
+            .execute(&mut *transaction)
+            .await
+            .map_err(store_error)?;
+            transaction.commit().await.map_err(store_error)?;
+            Ok(())
+        })
+    }
+
+    fn list_workflow_child_executions(
+        &self,
+        attempt_id: Uuid,
+    ) -> BoxFuture<'_, Result<Vec<WorkflowChildExecution>, WorkflowStoreError>> {
+        Box::pin(async move {
+            let attempt = sqlx::query_as::<_, AttemptRow>(
+                "SELECT id, workflow_run_id, sequence, iteration, stage, attempt, state, \
+                 predecessor_id, predecessor_fingerprint, retryable, artifact_json, fingerprint, \
+                 started_at, finished_at FROM workflow_stage_attempts WHERE id = ?",
+            )
+            .bind(attempt_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(store_error)?
+            .ok_or_else(|| WorkflowStoreError("workflow child parent attempt not found".into()))?
+            .into_domain()?;
+            let rows = sqlx::query_as::<_, ChildExecutionRow>(
+                "SELECT id, workflow_run_id, workflow_stage_attempt_id, stage, ordinal, child_kind, \
+                 logical_key, child_execution_id, artifact_json, fingerprint, created_at \
+                 FROM workflow_child_executions WHERE workflow_stage_attempt_id = ? \
+                 ORDER BY ordinal ASC",
+            )
+            .bind(attempt_id)
+            .fetch_all(self.pool())
+            .await
+            .map_err(store_error)?;
+            rows.into_iter()
+                .map(ChildExecutionRow::into_domain)
+                .map(|result| {
+                    let execution = result?;
+                    execution
+                        .validate_for_attempt(&attempt)
+                        .map_err(store_error)?;
+                    Ok(execution)
+                })
+                .collect()
         })
     }
 
@@ -621,6 +708,44 @@ struct AttemptRow {
     fingerprint: String,
     started_at: chrono::DateTime<chrono::Utc>,
     finished_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, FromRow)]
+struct ChildExecutionRow {
+    id: Uuid,
+    workflow_run_id: Uuid,
+    workflow_stage_attempt_id: Uuid,
+    stage: String,
+    ordinal: i64,
+    child_kind: String,
+    logical_key: String,
+    child_execution_id: Uuid,
+    artifact_json: String,
+    fingerprint: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl ChildExecutionRow {
+    fn into_domain(self) -> Result<WorkflowChildExecution, WorkflowStoreError> {
+        let value: WorkflowChildExecution = from_json(&self.artifact_json)?;
+        if value.id != self.id
+            || value.workflow_run_id != self.workflow_run_id
+            || value.workflow_stage_attempt_id != self.workflow_stage_attempt_id
+            || enum_string(&value.stage)? != self.stage
+            || i64::from(value.ordinal) != self.ordinal
+            || enum_string(&value.child_kind)? != self.child_kind
+            || value.logical_key != self.logical_key
+            || value.child_execution_id != self.child_execution_id
+            || value.fingerprint != self.fingerprint
+            || value.created_at != self.created_at
+        {
+            return Err(WorkflowStoreError(
+                "workflow child execution normalized fields do not match artifact".into(),
+            ));
+        }
+        value.validate_integrity().map_err(store_error)?;
+        Ok(value)
+    }
 }
 
 impl AttemptRow {

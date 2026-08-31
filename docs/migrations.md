@@ -142,6 +142,13 @@ applied automatically when the SQLite store connects.
   the SQLite adapter deeply resolves the exact current clean
   `TrainingBenchmarkCheck` and reproduces the input digest from the verified
   persisted snapshot.
+- `0050_workflow_child_executions`: append-only control-plane ownership links
+  from one current running workflow attempt to exact generation, quality-audit,
+  training, or evaluation child IDs. Consecutive ordinals preserve launch
+  order, logical keys distinguish per-cohort evaluations, and SQL triggers
+  reject stale/cancelled parents, wrong stage-kind combinations, mutation, and
+  deletion. These are execution-control facts rather than terminal artifact
+  lineage.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

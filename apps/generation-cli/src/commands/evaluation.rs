@@ -81,6 +81,7 @@ pub async fn execute(command: EvaluationCommand, store: SqliteStore) -> anyhow::
                         parse_intersections(dimension_intersections)?
                     },
                 },
+                None,
                 store,
             )
             .await?;
@@ -298,8 +299,13 @@ pub(crate) async fn run_workflow(
     checkpoint_id: uuid::Uuid,
     snapshot_id: uuid::Uuid,
     protocol: &EvaluationProtocol,
+    child: &workflow_core::execution::WorkflowChildExecution,
     store: SqliteStore,
 ) -> anyhow::Result<CompletedEvaluation> {
+    anyhow::ensure!(
+        child.child_kind == workflow_core::execution::WorkflowChildKind::EvaluationRun,
+        "evaluation received a non-evaluation workflow child reservation"
+    );
     run(
         checkpoint_id,
         Some(snapshot_id),
@@ -314,6 +320,7 @@ pub(crate) async fn run_workflow(
             confidence_level: Some(protocol.confidence_level),
             dimension_intersections: protocol.dimension_intersections.clone(),
         },
+        Some(child),
         store,
     )
     .await
@@ -352,6 +359,7 @@ async fn run(
     snapshot_id: Option<uuid::Uuid>,
     split: SnapshotSplit,
     overrides: ProtocolOverrides,
+    child: Option<&workflow_core::execution::WorkflowChildExecution>,
     store: SqliteStore,
 ) -> anyhow::Result<CompletedEvaluation> {
     let checkpoint = store
@@ -447,7 +455,7 @@ async fn run(
         labels: dataset.labels.clone(),
     };
     let input_fingerprint = run_input_fingerprint(&protocol, &source_identity)?;
-    let evaluation_run = EvaluationRun::queued_with_protocol(
+    let mut evaluation_run = EvaluationRun::queued_with_protocol(
         checkpoint.id,
         snapshot.id,
         protocol,
@@ -455,7 +463,47 @@ async fn run(
         total_examples,
         input_fingerprint,
     )?;
-    store.create_evaluation_run(&evaluation_run).await?;
+    if let Some(child) = child {
+        evaluation_run = evaluation_run.with_reserved_id(child.child_execution_id)?;
+    }
+    if let Some(existing) = store.get_evaluation_run(evaluation_run.id).await? {
+        anyhow::ensure!(
+            child.is_some()
+                && matches!(
+                    existing.state,
+                    EvaluationRunState::Queued | EvaluationRunState::Completed
+                )
+                && existing.checkpoint_id == evaluation_run.checkpoint_id
+                && existing.snapshot_id == evaluation_run.snapshot_id
+                && existing.split == evaluation_run.split
+                && existing.input_fingerprint == evaluation_run.input_fingerprint
+                && existing.protocol == evaluation_run.protocol
+                && existing.protocol_fingerprint == evaluation_run.protocol_fingerprint
+                && existing.source_identity == evaluation_run.source_identity
+                && existing.total_examples == evaluation_run.total_examples,
+            "reserved workflow evaluation run differs from the exact queued request"
+        );
+        if existing.state == EvaluationRunState::Completed {
+            let prediction_preview = store
+                .query_predictions(PredictionQuery::page(existing.id, 100, 0))
+                .await?;
+            return Ok(CompletedEvaluation {
+                predictions_truncated: existing.total_examples > 100,
+                run: existing,
+                predictions: prediction_preview,
+            });
+        }
+    } else {
+        store.create_evaluation_run(&evaluation_run).await?;
+    }
+    if let Some(child) = child {
+        super::workflow::child_execution::synchronize_parent_before_start(
+            &store,
+            child.workflow_run_id,
+            child,
+        )
+        .await?;
+    }
     store
         .acquire_execution_lease(WorkflowKind::Evaluation, evaluation_run.id)
         .await?;

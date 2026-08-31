@@ -9,6 +9,7 @@ use dataset_quality_fake::FAKE_QUALITY_BACKEND;
 use generation_core::ports::DatasetStore;
 use synthetic_data_sqlite::SqliteStore;
 use uuid::Uuid;
+use workflow_core::execution::WorkflowChildKind;
 use workflow_core::workflow::{
     WORKFLOW_QUALITY_EVALUATOR_BACKEND, WorkflowArtifactLink, WorkflowDefinition,
     WorkflowQualityAuthenticity, WorkflowRun, WorkflowStage, WorkflowStageAttempt,
@@ -33,8 +34,9 @@ pub(super) async fn execute_audit(
     store: &SqliteStore,
     definition: &WorkflowDefinition,
     run: &WorkflowRun,
-    stage: WorkflowStage,
+    attempt: &WorkflowStageAttempt,
 ) -> anyhow::Result<AuditArtifacts> {
+    let stage = attempt.stage;
     ensure!(
         matches!(
             stage,
@@ -156,11 +158,19 @@ pub(super) async fn execute_audit(
         "workflow quality evaluator identity differs from the immutable gate"
     );
     let outcome = match audit_run.state {
-        QualityAuditRunState::Queued
-        | QualityAuditRunState::Running
-        | QualityAuditRunState::Completed => {
+        QualityAuditRunState::Queued | QualityAuditRunState::Running => {
+            let child = super::child_execution::reserve(
+                store,
+                attempt,
+                WorkflowChildKind::QualityAuditRun,
+                "primary",
+                audit_run.id,
+            )
+            .await?;
+            super::child_execution::synchronize_parent_before_start(store, run.id, &child).await?;
             quality::execute_fake_audit(store, audit_run.id).await?
         }
+        QualityAuditRunState::Completed => quality::execute_fake_audit(store, audit_run.id).await?,
         QualityAuditRunState::Failed | QualityAuditRunState::Cancelled => {
             anyhow::bail!(
                 "workflow quality audit {} is terminal in state {:?}",

@@ -34,6 +34,8 @@ pub enum EvaluationDomainError {
         from: EvaluationRunState,
         to: EvaluationRunState,
     },
+    #[error("a reserved evaluation-run identity requires a non-nil pristine queued run")]
+    RunIdentity,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -295,6 +297,27 @@ impl EvaluationRun {
         self.state = next;
         self.updated_at = Utc::now();
         Ok(())
+    }
+
+    /// Replaces the generated identity before a pristine queued run enters
+    /// persistence so orchestration can reserve and link it durably.
+    pub fn with_reserved_id(mut self, id: Uuid) -> Result<Self, EvaluationDomainError> {
+        if id.is_nil()
+            || self.state != EvaluationRunState::Queued
+            || self.processed_examples != 0
+            || self.completed_batches != 0
+            || self.current_batch != 0
+            || self.correct_predictions != 0
+            || self.elapsed_milliseconds != 0
+            || self.cancel_requested
+            || self.example_count != 0
+            || self.metrics.is_some()
+            || self.error_message.is_some()
+        {
+            return Err(EvaluationDomainError::RunIdentity);
+        }
+        self.id = id;
+        Ok(self)
     }
 }
 

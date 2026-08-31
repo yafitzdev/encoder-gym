@@ -824,6 +824,19 @@ impl TrainingRun {
         Ok(self)
     }
 
+    /// Replaces the generated identity before a pristine queued run enters
+    /// persistence so orchestration can reserve and link it durably.
+    pub fn with_reserved_id(mut self, id: Uuid) -> Result<Self, TrainingDomainError> {
+        self.validate_new()?;
+        if id.is_nil() {
+            return Err(TrainingDomainError::TrainingRunEvidence(
+                "reserved run identity must not be nil".into(),
+            ));
+        }
+        self.id = id;
+        Ok(self)
+    }
+
     pub fn transition(&mut self, next: TrainingRunState) -> Result<(), TrainingDomainError> {
         let allowed = matches!(
             (self.state, next),

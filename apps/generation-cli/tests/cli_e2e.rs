@@ -578,7 +578,10 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
         &database_url,
         ["workflow", "approve", &automatic_workflow_id],
     );
-    assert_eq!(completed_workflow["run"]["state"], "development_complete");
+    assert_eq!(
+        completed_workflow["run"]["state"], "development_complete",
+        "workflow did not complete: {completed_workflow}"
+    );
     assert_eq!(completed_workflow["run"]["iteration"], 1);
     let completed_artifact_kinds = completed_workflow["attempts"]
         .as_array()
