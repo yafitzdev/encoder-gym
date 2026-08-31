@@ -9,6 +9,10 @@ members = [
     "crates/artifact-core",
     "crates/dataset-core",
     "crates/dataset-import",
+    "crates/dataset-quality-core",
+    "crates/dataset-quality-fake",
+    "crates/dataset-quality-openai-compatible",
+    "crates/dataset-quality-runner",
     "crates/dataset-architect-core",
     "crates/dataset-architect-runner",
     "crates/evaluation-core",
@@ -71,6 +75,10 @@ generation-core = { package = "synthetic-data-core", path = "crates/generation-c
 generation-fake = { package = "synthetic-data-fake", path = "crates/generation-fake" }
 dataset-core = { package = "dataset-core", path = "crates/dataset-core" }
 dataset-import = { package = "dataset-import", path = "crates/dataset-import" }
+dataset-quality-core = { package = "dataset-quality-core", path = "crates/dataset-quality-core" }
+dataset-quality-fake = { package = "dataset-quality-fake", path = "crates/dataset-quality-fake" }
+dataset-quality-openai-compatible = { package = "dataset-quality-openai-compatible", path = "crates/dataset-quality-openai-compatible" }
+dataset-quality-runner = { package = "dataset-quality-runner", path = "crates/dataset-quality-runner" }
 dataset-architect-core = { package = "dataset-architect-core", path = "crates/dataset-architect-core" }
 dataset-architect-runner = { package = "dataset-architect-runner", path = "crates/dataset-architect-runner" }
 training-core = { package = "training-core", path = "crates/training-core" }

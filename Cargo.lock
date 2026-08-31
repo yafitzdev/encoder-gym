@@ -728,6 +728,67 @@ dependencies = [
 ]
 
 [[package]]
+name = "dataset-quality-core"
+version = "0.1.0"
+dependencies = [
+ "artifact-core",
+ "chrono",
+ "dataset-core",
+ "serde",
+ "serde_json",
+ "synthetic-data-core",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "dataset-quality-fake"
+version = "0.1.0"
+dependencies = [
+ "artifact-core",
+ "chrono",
+ "dataset-core",
+ "dataset-quality-core",
+ "serde",
+ "serde_json",
+ "synthetic-data-core",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "dataset-quality-openai-compatible"
+version = "0.1.0"
+dependencies = [
+ "artifact-core",
+ "axum",
+ "chrono",
+ "dataset-core",
+ "dataset-quality-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "synthetic-data-core",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "dataset-quality-runner"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dataset-core",
+ "dataset-quality-core",
+ "serde",
+ "serde_json",
+ "synthetic-data-core",
+ "thiserror 2.0.20",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1021,6 +1082,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53c0fa8157de1303bfffdaa1cc2a673bfffb60102f76b0ef4441659124373fed"
 
 [[package]]
+name = "futures-macro"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fb9654ba8355388abeb8dcb4fc62f511300867002afc858860463bdd9fe0c44"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.4",
+]
+
+[[package]]
 name = "futures-sink"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1040,6 +1112,7 @@ checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
 dependencies = [
  "futures-core",
  "futures-io",
+ "futures-macro",
  "futures-sink",
  "futures-task",
  "memchr",
@@ -2087,6 +2160,7 @@ dependencies = [
  "artifact-core",
  "chrono",
  "dataset-core",
+ "dataset-quality-core",
  "evaluation-core",
  "optimization-core",
  "project-config",
@@ -2406,6 +2480,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "futures-core",
+ "futures-util",
  "http",
  "http-body",
  "http-body-util",
@@ -2425,12 +2500,14 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams",
  "web-sys",
  "webpki-roots",
 ]
@@ -3122,6 +3199,10 @@ dependencies = [
  "dataset-architect-runner",
  "dataset-core",
  "dataset-import",
+ "dataset-quality-core",
+ "dataset-quality-fake",
+ "dataset-quality-openai-compatible",
+ "dataset-quality-runner",
  "dotenvy",
  "evaluation-core",
  "optimization-core",
@@ -3224,6 +3305,7 @@ dependencies = [
  "dataset-architect-core",
  "dataset-core",
  "dataset-import",
+ "dataset-quality-core",
  "evaluation-core",
  "optimization-core",
  "project-config",
@@ -3478,6 +3560,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3d06f0b082ba57c26b79407372e57cf2a1e28124f78e9479fe80322cf53420b"
 dependencies = [
  "futures-core",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-util"
+version = "0.7.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "futures-sink",
  "pin-project-lite",
  "tokio",
 ]
@@ -3893,6 +3988,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-streams"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15053d8d85c7eccdbefef60f06769760a563c7f0a9d6902a13d35c7800b0ad65"
+dependencies = [
+ "futures-util",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "web-sys"
 version = "0.3.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4293,6 +4401,7 @@ dependencies = [
  "artifact-core",
  "chrono",
  "dataset-core",
+ "dataset-quality-core",
  "evaluation-core",
  "optimization-core",
  "semantic-catalog",

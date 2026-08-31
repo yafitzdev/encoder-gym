@@ -1,0 +1,24 @@
+[package]
+name = "dataset-quality-openai-compatible"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+artifact-core.workspace = true
+chrono.workspace = true
+dataset-quality-core.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+dataset-core.workspace = true
+generation-core.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
