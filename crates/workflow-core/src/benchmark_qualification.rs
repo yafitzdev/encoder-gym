@@ -380,11 +380,25 @@ pub struct ApprovedBenchmarkQualificationBinding {
 }
 
 impl ApprovedBenchmarkQualificationBinding {
+    pub fn validate_shape(&self) -> Result<(), BenchmarkQualificationError> {
+        if self.qualification_id.is_nil()
+            || self.review_id.is_nil()
+            || self.benchmark_bundle_id.is_nil()
+            || !canonical_fingerprint(&self.qualification_fingerprint)
+            || !canonical_fingerprint(&self.review_fingerprint)
+            || !canonical_fingerprint(&self.benchmark_bundle_fingerprint)
+        {
+            return Err(BenchmarkQualificationError::BindingMismatch);
+        }
+        Ok(())
+    }
+
     pub fn validate(
         &self,
         qualification: &BenchmarkQualification,
         review: &BenchmarkQualificationReview,
     ) -> Result<(), BenchmarkQualificationError> {
+        self.validate_shape()?;
         let expected = review.approved_binding(qualification)?;
         if self != &expected {
             return Err(BenchmarkQualificationError::BindingMismatch);

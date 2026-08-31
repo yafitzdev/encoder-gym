@@ -8,6 +8,9 @@ use uuid::Uuid;
 use crate::advisor::AdvisorConfiguration;
 use crate::allocation::{InitialAllocationPolicy, InitialCellConstraint};
 use crate::benchmark_bundle::{BenchmarkBundleBinding, BenchmarkBundleError};
+use crate::benchmark_qualification::{
+    ApprovedBenchmarkQualificationBinding, BenchmarkQualificationError,
+};
 use analysis_core::protocol::AnalysisProtocol;
 use dataset_quality_core::policy::{
     AuditMode, EvaluatorEgressPolicy, QualityPolicy, QualityPolicyPresetControls, QualityPreset,
@@ -211,6 +214,8 @@ pub struct WorkflowDefinition {
     pub sealed_suite_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub benchmark_bundle: Option<BenchmarkBundleBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub benchmark_qualification: Option<ApprovedBenchmarkQualificationBinding>,
     pub initial_allocation: WorkflowInitialAllocation,
     #[serde(default)]
     pub analysis_protocol: Option<AnalysisProtocol>,
@@ -231,7 +236,18 @@ pub struct WorkflowDefinition {
 
 impl WorkflowDefinition {
     pub fn new(request: WorkflowDefinitionRequest) -> Result<Self, WorkflowError> {
+        Self::new_with_qualification(request, None)
+    }
+
+    pub fn new_with_qualification(
+        request: WorkflowDefinitionRequest,
+        benchmark_qualification: Option<ApprovedBenchmarkQualificationBinding>,
+    ) -> Result<Self, WorkflowError> {
         validate_request(&request)?;
+        validate_benchmark_qualification_binding(
+            benchmark_qualification.as_ref(),
+            request.benchmark_bundle.as_ref(),
+        )?;
         let analysis_protocol = request.analysis_protocol.unwrap_or_default();
         analysis_protocol
             .validate()
@@ -285,6 +301,7 @@ impl WorkflowDefinition {
             sealed_suite_id: request.sealed_suite_id,
             sealed_suite_fingerprint: request.sealed_suite_fingerprint,
             benchmark_bundle: request.benchmark_bundle,
+            benchmark_qualification,
             initial_allocation: request.initial_allocation,
             analysis_protocol: Some(analysis_protocol),
             optimization_protocol: Some(optimization_protocol),
@@ -650,6 +667,10 @@ pub enum WorkflowError {
     BenchmarkBundleFingerprint,
     #[error("workflow benchmark suite references do not match the benchmark bundle binding")]
     BenchmarkBundleSuiteMismatch,
+    #[error("workflow benchmark qualification binding is invalid")]
+    InvalidBenchmarkQualificationBinding,
+    #[error("workflow benchmark qualification does not match the benchmark bundle")]
+    BenchmarkQualificationBundleMismatch,
     #[error("preauthorization exceeds the workflow budget or has invalid permissions")]
     InvalidEnvelope,
     #[error("workflow definition fingerprint mismatch")]
@@ -773,6 +794,36 @@ fn validate_definition(value: &WorkflowDefinition) -> Result<(), WorkflowError> 
             value.sealed_suite_fingerprint.as_deref(),
             benchmark_bundle,
         )?;
+    }
+    validate_benchmark_qualification_binding(
+        value.benchmark_qualification.as_ref(),
+        value.benchmark_bundle.as_ref(),
+    )?;
+    Ok(())
+}
+
+fn validate_benchmark_qualification_binding(
+    qualification: Option<&ApprovedBenchmarkQualificationBinding>,
+    bundle: Option<&BenchmarkBundleBinding>,
+) -> Result<(), WorkflowError> {
+    let Some(qualification) = qualification else {
+        return Ok(());
+    };
+    qualification
+        .validate_shape()
+        .map_err(|error| match error {
+            BenchmarkQualificationError::BindingMismatch => {
+                WorkflowError::InvalidBenchmarkQualificationBinding
+            }
+            other => WorkflowError::Fingerprint(other.to_string()),
+        })?;
+    let Some(bundle) = bundle else {
+        return Err(WorkflowError::BenchmarkBundleRequired);
+    };
+    if qualification.benchmark_bundle_id != bundle.bundle_id
+        || qualification.benchmark_bundle_fingerprint != bundle.bundle_fingerprint
+    {
+        return Err(WorkflowError::BenchmarkQualificationBundleMismatch);
     }
     Ok(())
 }
@@ -1069,6 +1120,16 @@ fn definition_fingerprint(value: &WorkflowDefinition) -> Result<String, Workflow
                     .map_err(|error| WorkflowError::Fingerprint(error.to_string()))?,
             );
     }
+    if value.benchmark_qualification.is_some() {
+        document
+            .as_object_mut()
+            .expect("definition document object")
+            .insert(
+                "benchmark_qualification".into(),
+                serde_json::to_value(&value.benchmark_qualification)
+                    .map_err(|error| WorkflowError::Fingerprint(error.to_string()))?,
+            );
+    }
     artifact_core::fingerprint(&document)
         .map_err(|error| WorkflowError::Fingerprint(error.to_string()))
 }
@@ -1186,6 +1247,19 @@ mod tests {
         }
     }
 
+    fn benchmark_qualification_binding(
+        bundle: &BenchmarkBundleBinding,
+    ) -> ApprovedBenchmarkQualificationBinding {
+        ApprovedBenchmarkQualificationBinding {
+            qualification_id: Uuid::new_v4(),
+            qualification_fingerprint: format!("sha256:{}", "a".repeat(64)),
+            review_id: Uuid::new_v4(),
+            review_fingerprint: format!("sha256:{}", "b".repeat(64)),
+            benchmark_bundle_id: bundle.bundle_id,
+            benchmark_bundle_fingerprint: bundle.bundle_fingerprint.clone(),
+        }
+    }
+
     fn definition() -> WorkflowDefinition {
         WorkflowDefinition::new(definition_request()).expect("definition")
     }
@@ -1259,6 +1333,33 @@ mod tests {
             None,
         ));
         assert!(WorkflowDefinition::new(development_only).is_ok());
+
+        let request = definition_request();
+        let qualification =
+            benchmark_qualification_binding(request.benchmark_bundle.as_ref().expect("bundle"));
+        let definition = WorkflowDefinition::new_with_qualification(
+            request.clone(),
+            Some(qualification.clone()),
+        )
+        .expect("qualified definition");
+        assert_eq!(
+            definition.benchmark_qualification.as_ref(),
+            Some(&qualification)
+        );
+
+        let mut wrong_bundle = qualification.clone();
+        wrong_bundle.benchmark_bundle_id = Uuid::new_v4();
+        assert_eq!(
+            WorkflowDefinition::new_with_qualification(request.clone(), Some(wrong_bundle)),
+            Err(WorkflowError::BenchmarkQualificationBundleMismatch)
+        );
+
+        let mut malformed = qualification;
+        malformed.review_fingerprint = "sha256:not-a-digest".into();
+        assert_eq!(
+            WorkflowDefinition::new_with_qualification(request, Some(malformed)),
+            Err(WorkflowError::InvalidBenchmarkQualificationBinding)
+        );
     }
 
     #[test]
@@ -1292,6 +1393,12 @@ mod tests {
                 .as_object()
                 .expect("definition object")
                 .contains_key("benchmark_bundle")
+        );
+        assert!(
+            !encoded
+                .as_object()
+                .expect("definition object")
+                .contains_key("benchmark_qualification")
         );
         let decoded: WorkflowDefinition =
             serde_json::from_value(encoded).expect("legacy definition remains readable");
