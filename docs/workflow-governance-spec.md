@@ -25,6 +25,7 @@ The workflow must reuse the current artifact-producing paths below.
 | Dataset definition | `synthetic-data-core` through `DatasetStore`; dataset/config CLI | UUID, labels, arbitrary dimensions, task | Source identity for allocation and every later cell |
 | Generation plan | `explicit_target_plan` or equal shortcut through `PlanStore` | UUID and immutable absolute cell targets | Initial allocator and approved optimization application create normal plans |
 | Generation job/rows | `JobRunner` through `GenerationStore` and `GenerationBackend` | queued/running/completed/failed/cancelled; row/job/provider provenance | Workflow starts and observes a bounded existing runner; it never generates directly |
+| Quality audit/curation | `dataset-quality-core` contracts through `DatasetQualityRunner` and `DatasetQualityStore` | immutable full-population plan, evaluator identities, report, proposal, human approval, manifest, and application | An optional definition-pinned gate pauses before every snapshot until the exact latest proposal has an approved manifest |
 | Dataset snapshot | `dataset-core::build_snapshot` through `SnapshotStore` | UUID, source row IDs, deterministic split, fingerprint | Immutable training/evaluation source and parent of later snapshot lineage |
 | Training run/checkpoint | `TrainingRunner` through `TrainingBackend`, `TrainingStore`, and `CheckpointSink` | queued/running/completed/failed/cancelled; artifact checksum and fingerprint | Workflow requests a configured run and links its verified final checkpoint |
 | Evaluation run/predictions | `EvaluationRunner` through `Predictor`, `EvaluationExampleSource`, and `EvaluationStore` | queued/running/completed/failed/cancelled; cohort/protocol/input fingerprints | Development or sealed suite execution under role/disclosure policy |
@@ -162,6 +163,8 @@ contains:
 - contamination thresholds and optional group dimension;
 - development and sealed deterministic acceptance contracts;
 - advisor egress policy, iteration governance, training policy, and stop rules.
+- an optional full-population quality policy, authenticity requirement, and
+  provider-neutral evaluator backend/protocol identity.
 
 `project preview` is a pure, read-only compilation. It resolves persisted
 snapshot evidence and reports exact cell targets, initial/request ceilings,
@@ -179,7 +182,7 @@ does not start the workflow; `workflow start` remains a separate authorization.
 
 ## Workflow lifecycle
 
-A resolved workflow proceeds through legal durable stages:
+A resolved legacy workflow proceeds through legal durable stages:
 
 ```text
 allocation -> generation -> snapshot -> training -> development evaluation
@@ -188,6 +191,36 @@ allocation -> generation -> snapshot -> training -> development evaluation
   -> applied diff -> next snapshot -> next training/evaluation/comparison
   -> stop or another finite iteration
 ```
+
+When a definition includes `quality_gate`, both snapshot boundaries are
+replaced by the stricter sequence:
+
+```text
+generation -> quality audit -> curation review (awaiting user)
+  -> exact manifest approval -> qualified snapshot -> training
+
+applied diff -> generation -> iteration quality audit
+  -> iteration curation review (awaiting user)
+  -> exact manifest approval -> qualified iteration snapshot -> training
+```
+
+The resolved workflow definition stores the complete quality policy and exact
+evaluator backend/protocol, not a mutable provider configuration or credential.
+The current unattended workflow adapter supports only `deterministic-fake`, and
+workflow-definition construction rejects every other backend identity in V1.
+Other evaluators remain available through the standalone quality CLI until a
+workflow definition can safely pin their process-local credential selector.
+Definitions that omit the gate retain their historical stage order and
+fingerprint behavior.
+
+The review stage always persists the exact proposal ID and returns
+`awaiting_user`. Calling `workflow resume` before that proposal (or its latest
+review-derived successor) has an approved manifest is an idempotent no-op: it
+does not fail the stage or consume a retry. After approval, a separate curation
+approval stage verifies the complete evidence chain, then snapshot application
+atomically links the manifest and selected membership. Training checks that
+same curation application and manifest again, so an ordinary or same-name
+unqualified snapshot cannot satisfy a configured gate.
 
 Terminal or paused states include completed, failed, cancelled, exhausted,
 inconclusive, and awaiting user. Final sealed evaluation and promotion are
@@ -206,6 +239,10 @@ can expand that envelope.
 Every stage is idempotent, cancellable at existing batch boundaries, lease-safe,
 and restartable without duplicating a verified artifact. Recovery cannot infer
 approval, replay a completed provider request, or repeat a sealed evaluation.
+Quality-audit plan and run identities are derived deterministically from the
+workflow run and cycle. Recovery reuses their pinned guidance and exact source
+population; source, policy, backend, or protocol drift fails closed instead of
+creating an orphan or duplicate audit.
 Execution errors become explicit failed attempts; retryable failures pause and
 `workflow resume` starts the same stage with an incremented attempt number up to
 the persisted ceiling. Every new candidate currently uses the resolved

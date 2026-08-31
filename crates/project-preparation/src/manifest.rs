@@ -263,6 +263,8 @@ pub struct WorkflowManifest {
     pub advisor: Option<AdvisorConfiguration>,
     #[serde(default)]
     pub training_iteration_policy: Option<TrainingIterationPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_gate: Option<workflow_core::workflow::WorkflowQualityGateRequest>,
     pub governance: IterationGovernance,
     pub budget: WorkflowBudget,
     pub policy: WorkflowPolicy,

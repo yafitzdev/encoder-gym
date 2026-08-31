@@ -1,9 +1,20 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use chrono::Utc;
-use dataset_core::domain::{SplitConfiguration, SplitRatios};
+use dataset_core::{
+    domain::{
+        DatasetImport, ImportFieldMapping, ImportFormat, ImportRowStatus, ImportState, ImportedRow,
+        SourceProvenance, SourceRow, SplitConfiguration, SplitRatios,
+    },
+    ports::{ImportStore, SnapshotStore},
+    splitting::build_snapshot,
+};
 use generation_core::{
-    domain::{DatasetDefinition, DimensionDefinition},
+    deduplication::normalize_text,
+    domain::{DatasetDefinition, DimensionDefinition, GenerationCell},
     ports::DatasetStore,
 };
 use project_config::GenerationBackendKind;
@@ -24,6 +35,7 @@ pub struct WorkflowFixture {
     _directory: TempDir,
     database_url: String,
     manifest_path: PathBuf,
+    pub development_snapshot_id: Uuid,
     pub sealed_snapshot_id: Uuid,
 }
 
@@ -81,6 +93,7 @@ impl WorkflowFixture {
             _directory: directory,
             database_url,
             manifest_path,
+            development_snapshot_id,
             sealed_snapshot_id,
         }
     }
@@ -189,63 +202,78 @@ async fn insert_snapshot(
     label: &str,
     dimensions: &str,
 ) -> Uuid {
-    let snapshot_id = Uuid::new_v4();
     let split = SplitConfiguration::new(SplitRatios::new(0.0, 0.0, 1.0).expect("ratios"), 42);
-    sqlx::query(
-        "INSERT INTO dataset_snapshots \
-         (id, source_dataset_id, name, description, split_configuration_json, member_count, \
-          fingerprint, created_at) VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
-    )
-    .bind(snapshot_id)
-    .bind(dataset_id)
-    .bind(name)
-    .bind(serde_json::to_string(&split).expect("split JSON"))
-    .bind(1_i64)
-    .bind(format!("sha256:{snapshot_id}"))
-    .bind(Utc::now())
-    .execute(store.pool())
-    .await
-    .expect("snapshot persisted");
     let source_row_id = Uuid::new_v4();
     let created_at = Utc::now();
-    let provenance = format!(
-        r#"{{"kind":"generated","generation_job_id":"{}","backend":"fake","model":"deterministic-v1"}}"#,
-        Uuid::nil()
-    );
-    sqlx::query(
-        "INSERT INTO dataset_source_rows \
-         (id, dataset_id, source_kind, source_ref, cell_key, text, normalized_text, label, \
-          dimensions_json, provenance_json, created_at) \
-         VALUES (?, ?, 'generated', ?, ?, ?, ?, ?, ?, ?, ?)",
+    let dimensions =
+        serde_json::from_str::<BTreeMap<String, String>>(dimensions).expect("fixture dimensions");
+    let source_path = format!("fixture://{name}.jsonl");
+    let mapping = ImportFieldMapping::new(
+        "text",
+        "label",
+        dimensions
+            .keys()
+            .map(|name| (name.clone(), name.clone()))
+            .collect(),
     )
-    .bind(source_row_id)
-    .bind(dataset_id)
-    .bind(source_row_id.to_string())
-    .bind(format!("{label}/{source_row_id}"))
-    .bind(text)
-    .bind(text.to_ascii_lowercase())
-    .bind(label)
-    .bind(dimensions)
-    .bind(&provenance)
-    .bind(created_at)
-    .execute(store.pool())
-    .await
-    .expect("source row persisted");
-    sqlx::query(
-        "INSERT INTO dataset_snapshot_members \
-         (id, snapshot_id, source_row_id, split, text, label, dimensions_json, \
-          source_provenance_json, source_created_at) VALUES (?, ?, ?, 'test', ?, ?, ?, ?, ?)",
+    .expect("fixture import mapping");
+    let mut dataset_import = DatasetImport::queued(
+        dataset_id,
+        source_path.clone(),
+        ImportFormat::Jsonl,
+        mapping,
     )
-    .bind(Uuid::new_v4())
-    .bind(snapshot_id)
-    .bind(source_row_id)
-    .bind(text)
-    .bind(label)
-    .bind(dimensions)
-    .bind(provenance)
-    .bind(created_at)
-    .execute(store.pool())
-    .await
-    .expect("snapshot member persisted");
-    snapshot_id
+    .expect("fixture import");
+    dataset_import.state = ImportState::Completed;
+    dataset_import.processed_rows = 1;
+    dataset_import.accepted_rows = 1;
+    store
+        .create_import(&dataset_import)
+        .await
+        .expect("fixture import persisted");
+    let cell_key = GenerationCell {
+        label: label.into(),
+        dimensions: dimensions.clone(),
+    }
+    .key();
+    let imported_row = ImportedRow {
+        id: source_row_id,
+        import_id: dataset_import.id,
+        dataset_id,
+        source_row_number: 1,
+        text: text.into(),
+        normalized_text: normalize_text(text),
+        label: label.into(),
+        dimensions: dimensions.clone(),
+        cell_key: Some(cell_key),
+        status: ImportRowStatus::Accepted,
+        issues: Vec::new(),
+        created_at,
+    };
+    store
+        .insert_imported_rows(&dataset_import, std::slice::from_ref(&imported_row))
+        .await
+        .expect("fixture source row persisted");
+    let provenance = SourceProvenance::Imported {
+        import_id: dataset_import.id,
+        source_path,
+        source_row_number: 1,
+    };
+    let source_row = SourceRow {
+        id: source_row_id,
+        dataset_id,
+        text: text.into(),
+        label: label.into(),
+        dimensions: dimensions.clone(),
+        fields: BTreeMap::new(),
+        provenance: provenance.clone(),
+        created_at,
+    };
+    let (snapshot, members) =
+        build_snapshot(dataset_id, name, None, split, vec![source_row]).expect("fixture snapshot");
+    store
+        .create_snapshot(&snapshot, &members)
+        .await
+        .expect("snapshot persisted");
+    snapshot.id
 }

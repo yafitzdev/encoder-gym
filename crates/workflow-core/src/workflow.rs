@@ -8,6 +8,9 @@ use uuid::Uuid;
 use crate::advisor::AdvisorConfiguration;
 use crate::allocation::{InitialAllocationPolicy, InitialCellConstraint};
 use analysis_core::protocol::AnalysisProtocol;
+use dataset_quality_core::policy::{
+    AuditMode, EvaluatorEgressPolicy, QualityPolicy, QualityPolicyPresetControls, QualityPreset,
+};
 use optimization_core::protocol::OptimizationProtocol;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -32,6 +35,10 @@ pub struct WorkflowDefinitionRequest {
     pub advisor: Option<AdvisorConfiguration>,
     #[serde(default)]
     pub training_iteration_policy: Option<TrainingIterationPolicy>,
+    /// Optional immutable qualification gate. Definitions which omit it keep
+    /// the legacy generation -> snapshot path unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_gate: Option<WorkflowQualityGateRequest>,
     pub governance: IterationGovernance,
     pub budget: WorkflowBudget,
     pub policy: WorkflowPolicy,
@@ -103,6 +110,91 @@ pub enum TrainingIterationPolicy {
     Fresh,
 }
 
+/// Whether authenticity evidence is part of the immutable workflow quality
+/// policy. `Required` deliberately fails closed if no approved context can be
+/// pinned when the audit is created.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowQualityAuthenticity {
+    Off,
+    Required,
+}
+
+/// The only evaluator adapter that governed workflows can currently execute
+/// unattended without persisting a credential selector. Unsupported backend
+/// identities are rejected when the immutable definition is constructed.
+pub const WORKFLOW_QUALITY_EVALUATOR_BACKEND: &str = "deterministic-fake";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowQualityGateRequest {
+    pub preset: QualityPreset,
+    pub egress_policy: EvaluatorEgressPolicy,
+    pub authenticity: WorkflowQualityAuthenticity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maximum_cost_microusd: Option<u64>,
+    /// Provider-neutral adapter identity. The application rejects adapters it
+    /// cannot reconstruct exactly; no credentials are persisted here.
+    pub evaluator_backend: String,
+    pub evaluator_protocol_version: String,
+}
+
+/// Fully resolved, fingerprinted quality policy pinned into a workflow
+/// definition. Runtime code consumes these exact values and never
+/// reinterprets the preset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowQualityGate {
+    pub policy: QualityPolicy,
+    pub authenticity: WorkflowQualityAuthenticity,
+    pub evaluator_backend: String,
+    pub evaluator_protocol_version: String,
+}
+
+impl WorkflowQualityGate {
+    fn resolve(request: WorkflowQualityGateRequest) -> Result<Self, WorkflowError> {
+        let evaluator_backend = required(request.evaluator_backend, "quality evaluator backend")?;
+        let evaluator_protocol_version = required(
+            request.evaluator_protocol_version,
+            "quality evaluator protocol version",
+        )?;
+        let policy = request
+            .preset
+            .compile(QualityPolicyPresetControls {
+                audit_mode: AuditMode::FullPopulation,
+                egress_policy: request.egress_policy,
+                evaluate_authenticity: request.authenticity
+                    == WorkflowQualityAuthenticity::Required,
+                maximum_cost_microusd: request.maximum_cost_microusd,
+            })
+            .map_err(|_| WorkflowError::InvalidQualityGate)?;
+        let value = Self {
+            policy,
+            authenticity: request.authenticity,
+            evaluator_backend,
+            evaluator_protocol_version,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
+    fn validate(&self) -> Result<(), WorkflowError> {
+        self.policy
+            .verify_integrity()
+            .map_err(|_| WorkflowError::InvalidQualityGate)?;
+        if self.evaluator_backend.trim().is_empty()
+            || self.evaluator_backend != WORKFLOW_QUALITY_EVALUATOR_BACKEND
+            || self.evaluator_protocol_version.trim().is_empty()
+            || self.policy.audit_mode != AuditMode::FullPopulation
+            || (self.authenticity == WorkflowQualityAuthenticity::Required)
+                != self.policy.thresholds.minimum_authenticity_score.is_some()
+        {
+            return Err(WorkflowError::InvalidQualityGate);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowDefinition {
     pub id: Uuid,
@@ -123,6 +215,8 @@ pub struct WorkflowDefinition {
     pub advisor: Option<AdvisorConfiguration>,
     #[serde(default)]
     pub training_iteration_policy: Option<TrainingIterationPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_gate: Option<WorkflowQualityGate>,
     pub governance: IterationGovernance,
     pub budget: WorkflowBudget,
     pub policy: WorkflowPolicy,
@@ -165,6 +259,10 @@ impl WorkflowDefinition {
                 .validate()
                 .map_err(|_| WorkflowError::InvalidAdvisorConfiguration)?;
         }
+        let quality_gate = request
+            .quality_gate
+            .map(WorkflowQualityGate::resolve)
+            .transpose()?;
         let mut value = Self {
             id: Uuid::new_v4(),
             name: required(request.name, "workflow name")?,
@@ -190,6 +288,7 @@ impl WorkflowDefinition {
                     .training_iteration_policy
                     .unwrap_or(TrainingIterationPolicy::Fresh),
             ),
+            quality_gate,
             governance: request.governance,
             budget: request.budget,
             policy: request.policy,
@@ -234,6 +333,9 @@ impl WorkflowRunState {
 pub enum WorkflowStage {
     InitialAllocation,
     Generation,
+    QualityAudit,
+    CurationReview,
+    CurationApproval,
     Snapshot,
     Training,
     DevelopmentEvaluation,
@@ -244,6 +346,9 @@ pub enum WorkflowStage {
     Approval,
     ProposalApplication,
     DatasetDiffGeneration,
+    IterationQualityAudit,
+    IterationCurationReview,
+    IterationCurationApproval,
     IterationSnapshot,
     IterationTraining,
     IterationEvaluation,
@@ -431,7 +536,13 @@ impl WorkflowStageAttempt {
     ) -> Result<Self, WorkflowError> {
         validate_definition(definition)?;
         validate_run_identity(definition, run)?;
-        if self.state != StageAttemptState::Running
+        let cancelling_pause = outcome.state == StageAttemptState::Cancelled
+            && run.cancel_requested
+            && (matches!(
+                self.state,
+                StageAttemptState::AwaitingApproval | StageAttemptState::AwaitingUser
+            ) || (self.state == StageAttemptState::Failed && self.retryable));
+        if (self.state != StageAttemptState::Running && !cancelling_pause)
             || run.latest_attempt_id != Some(self.id)
             || run.latest_attempt_fingerprint.as_deref() != Some(&self.fingerprint)
         {
@@ -500,6 +611,8 @@ pub enum WorkflowError {
     InvalidOptimizationProtocol,
     #[error("workflow advisor configuration does not match the workflow policy")]
     InvalidAdvisorConfiguration,
+    #[error("workflow quality-gate configuration is invalid")]
+    InvalidQualityGate,
     #[error("sealed suite id and fingerprint must either both be present or both absent")]
     SealedSuitePair,
     #[error("preauthorization exceeds the workflow budget or has invalid permissions")]
@@ -596,6 +709,9 @@ fn validate_request(request: &WorkflowDefinitionRequest) -> Result<(), WorkflowE
 }
 
 fn validate_definition(value: &WorkflowDefinition) -> Result<(), WorkflowError> {
+    if let Some(gate) = &value.quality_gate {
+        gate.validate()?;
+    }
     if value.reproduce_fingerprint()? != value.fingerprint {
         return Err(WorkflowError::DefinitionFingerprint);
     }
@@ -629,12 +745,35 @@ fn validate_stage_start(
     } else {
         previous.is_some_and(|value| {
             value.state == StageAttemptState::Completed
-                && legal_successors(value.stage, definition.policy.enable_advisor).contains(&stage)
+                && legal_successors(
+                    value.stage,
+                    definition.policy.enable_advisor,
+                    definition.quality_gate.is_some(),
+                )
+                .contains(&stage)
         }) || previous.is_some_and(|value| {
             value.state == StageAttemptState::Failed && value.retryable && value.stage == stage
         }) || (run.state == WorkflowRunState::AwaitingApproval
             && previous_stage == Some(WorkflowStage::Approval)
             && stage == WorkflowStage::ProposalApplication)
+            || (run.state == WorkflowRunState::AwaitingUser
+                && previous.is_some_and(|value| value.state == StageAttemptState::AwaitingUser)
+                && matches!(
+                    (previous_stage, stage),
+                    (
+                        Some(WorkflowStage::CurationReview),
+                        WorkflowStage::CurationApproval
+                    ) | (
+                        Some(WorkflowStage::CurationReview),
+                        WorkflowStage::CurationReview
+                    ) | (
+                        Some(WorkflowStage::IterationCurationReview),
+                        WorkflowStage::IterationCurationApproval
+                    ) | (
+                        Some(WorkflowStage::IterationCurationReview),
+                        WorkflowStage::IterationCurationReview
+                    )
+                ))
     };
     if !allowed {
         return Err(WorkflowError::IllegalStage {
@@ -646,11 +785,19 @@ fn validate_stage_start(
     Ok(())
 }
 
-fn legal_successors(stage: WorkflowStage, advisor: bool) -> &'static [WorkflowStage] {
+fn legal_successors(
+    stage: WorkflowStage,
+    advisor: bool,
+    quality_gate: bool,
+) -> &'static [WorkflowStage] {
     use WorkflowStage::*;
     match stage {
         InitialAllocation => &[Generation],
+        Generation if quality_gate => &[QualityAudit],
         Generation => &[Snapshot],
+        QualityAudit => &[CurationReview],
+        CurationReview => &[CurationApproval],
+        CurationApproval => &[Snapshot],
         Snapshot => &[Training],
         Training => &[DevelopmentEvaluation],
         DevelopmentEvaluation => &[AcceptanceAssessment],
@@ -661,7 +808,11 @@ fn legal_successors(stage: WorkflowStage, advisor: bool) -> &'static [WorkflowSt
         OptimizationProposal => &[Approval],
         Approval => &[ProposalApplication],
         ProposalApplication => &[DatasetDiffGeneration],
+        DatasetDiffGeneration if quality_gate => &[IterationQualityAudit],
         DatasetDiffGeneration => &[IterationSnapshot],
+        IterationQualityAudit => &[IterationCurationReview],
+        IterationCurationReview => &[IterationCurationApproval],
+        IterationCurationApproval => &[IterationSnapshot],
         IterationSnapshot => &[IterationTraining],
         IterationTraining => &[IterationEvaluation],
         IterationEvaluation => &[Comparison],
@@ -774,6 +925,16 @@ fn definition_fingerprint(value: &WorkflowDefinition) -> Result<String, Workflow
                 .map_err(|error| WorkflowError::Fingerprint(error.to_string()))?,
         );
     }
+    if value.quality_gate.is_some() {
+        document
+            .as_object_mut()
+            .expect("definition document object")
+            .insert(
+                "quality_gate".into(),
+                serde_json::to_value(&value.quality_gate)
+                    .map_err(|error| WorkflowError::Fingerprint(error.to_string()))?,
+            );
+    }
     artifact_core::fingerprint(&document)
         .map_err(|error| WorkflowError::Fingerprint(error.to_string()))
 }
@@ -834,6 +995,7 @@ mod tests {
                 temperature: Some(0.0),
             }),
             training_iteration_policy: Some(TrainingIterationPolicy::Fresh),
+            quality_gate: None,
             governance: IterationGovernance::ReviewEachIteration,
             budget: WorkflowBudget {
                 maximum_iterations: 2,
@@ -855,6 +1017,37 @@ mod tests {
             },
         })
         .expect("definition")
+    }
+
+    fn gated_definition() -> WorkflowDefinition {
+        let definition = definition();
+        WorkflowDefinition::new(WorkflowDefinitionRequest {
+            name: definition.name,
+            dataset_id: definition.dataset_id,
+            project_configuration_id: definition.project_configuration_id,
+            project_configuration_fingerprint: definition.project_configuration_fingerprint,
+            development_suite_id: definition.development_suite_id,
+            development_suite_fingerprint: definition.development_suite_fingerprint,
+            sealed_suite_id: definition.sealed_suite_id,
+            sealed_suite_fingerprint: definition.sealed_suite_fingerprint,
+            initial_allocation: definition.initial_allocation,
+            analysis_protocol: definition.analysis_protocol,
+            optimization_protocol: definition.optimization_protocol,
+            advisor: definition.advisor,
+            training_iteration_policy: definition.training_iteration_policy,
+            quality_gate: Some(WorkflowQualityGateRequest {
+                preset: QualityPreset::Fast,
+                egress_policy: EvaluatorEgressPolicy::LocalOnly,
+                authenticity: WorkflowQualityAuthenticity::Off,
+                maximum_cost_microusd: Some(10_000),
+                evaluator_backend: "deterministic-fake".into(),
+                evaluator_protocol_version: "quality-evaluator-v1".into(),
+            }),
+            governance: definition.governance,
+            budget: definition.budget,
+            policy: definition.policy,
+        })
+        .expect("gated definition")
     }
 
     #[test]
@@ -940,6 +1133,16 @@ mod tests {
             optimization_protocol: definition.optimization_protocol,
             advisor: definition.advisor,
             training_iteration_policy: definition.training_iteration_policy,
+            quality_gate: definition
+                .quality_gate
+                .map(|gate| WorkflowQualityGateRequest {
+                    preset: gate.policy.preset.expect("preset-backed test gate"),
+                    egress_policy: gate.policy.egress_policy,
+                    authenticity: gate.authenticity,
+                    maximum_cost_microusd: gate.policy.budgets.maximum_cost_microusd,
+                    evaluator_backend: gate.evaluator_backend,
+                    evaluator_protocol_version: gate.evaluator_protocol_version,
+                }),
             governance: definition.governance,
             budget: definition.budget,
             policy: definition.policy,
@@ -1004,5 +1207,137 @@ mod tests {
             ),
             Err(WorkflowError::StageAttemptsExceeded)
         ));
+    }
+
+    #[test]
+    fn optional_quality_gate_resolves_a_full_population_policy_and_changes_both_paths() {
+        let legacy = definition();
+        let gated = gated_definition();
+        let gate = gated.quality_gate.as_ref().expect("quality gate");
+        assert_eq!(gate.policy.audit_mode, AuditMode::FullPopulation);
+        assert_eq!(gate.policy.preset, Some(QualityPreset::Fast));
+        assert!(gate.policy.verify_integrity().is_ok());
+
+        assert_eq!(
+            legal_successors(WorkflowStage::Generation, true, false),
+            &[WorkflowStage::Snapshot]
+        );
+        assert_eq!(
+            legal_successors(WorkflowStage::Generation, true, true),
+            &[WorkflowStage::QualityAudit]
+        );
+        assert_eq!(
+            legal_successors(WorkflowStage::DatasetDiffGeneration, true, false),
+            &[WorkflowStage::IterationSnapshot]
+        );
+        assert_eq!(
+            legal_successors(WorkflowStage::DatasetDiffGeneration, true, true),
+            &[WorkflowStage::IterationQualityAudit]
+        );
+        assert!(
+            !serde_json::to_value(&legacy)
+                .expect("legacy definition JSON")
+                .as_object()
+                .expect("definition object")
+                .contains_key("quality_gate"),
+            "an absent quality gate must not change the persisted legacy shape"
+        );
+        assert_ne!(legacy.fingerprint, gated.fingerprint);
+
+        let definition = definition();
+        let unsupported = WorkflowDefinition::new(WorkflowDefinitionRequest {
+            name: definition.name,
+            dataset_id: definition.dataset_id,
+            project_configuration_id: definition.project_configuration_id,
+            project_configuration_fingerprint: definition.project_configuration_fingerprint,
+            development_suite_id: definition.development_suite_id,
+            development_suite_fingerprint: definition.development_suite_fingerprint,
+            sealed_suite_id: definition.sealed_suite_id,
+            sealed_suite_fingerprint: definition.sealed_suite_fingerprint,
+            initial_allocation: definition.initial_allocation,
+            analysis_protocol: definition.analysis_protocol,
+            optimization_protocol: definition.optimization_protocol,
+            advisor: definition.advisor,
+            training_iteration_policy: definition.training_iteration_policy,
+            quality_gate: Some(WorkflowQualityGateRequest {
+                preset: QualityPreset::Fast,
+                egress_policy: EvaluatorEgressPolicy::ExternalCandidateText,
+                authenticity: WorkflowQualityAuthenticity::Off,
+                maximum_cost_microusd: Some(10_000),
+                evaluator_backend: "openai-compatible".into(),
+                evaluator_protocol_version: "quality-evaluator-v1".into(),
+            }),
+            governance: definition.governance,
+            budget: definition.budget,
+            policy: definition.policy,
+        });
+        assert_eq!(unsupported, Err(WorkflowError::InvalidQualityGate));
+    }
+
+    #[test]
+    fn curation_pause_allows_only_the_explicit_approval_stage() {
+        let definition = gated_definition();
+        let mut run = WorkflowRun::queued(&definition).expect("run");
+        run.state = WorkflowRunState::Running;
+        run.current_stage = Some(WorkflowStage::CurationReview);
+        let now = Utc::now();
+        let mut review = WorkflowStageAttempt {
+            id: Uuid::new_v4(),
+            workflow_run_id: run.id,
+            sequence: 7,
+            iteration: 0,
+            stage: WorkflowStage::CurationReview,
+            attempt: 1,
+            state: StageAttemptState::AwaitingUser,
+            predecessor_id: Some(Uuid::new_v4()),
+            predecessor_fingerprint: Some("sha256:predecessor".into()),
+            reason: Some("approve exact proposal".into()),
+            retryable: false,
+            artifacts: Vec::new(),
+            usage_after: run.usage.clone(),
+            started_at: now,
+            finished_at: Some(now),
+            fingerprint: String::new(),
+        };
+        review.fingerprint = attempt_fingerprint(&review).expect("review fingerprint");
+        run.state = WorkflowRunState::AwaitingUser;
+        run.latest_attempt_id = Some(review.id);
+        run.latest_attempt_fingerprint = Some(review.fingerprint.clone());
+
+        assert!(matches!(
+            WorkflowStageAttempt::start(
+                &definition,
+                &mut run.clone(),
+                WorkflowStage::Snapshot,
+                Some(&review),
+                1,
+            ),
+            Err(WorkflowError::IllegalStage { .. })
+        ));
+        let mut cancelled_run = run.clone();
+        cancelled_run.cancel_requested = true;
+        let cancelled = review
+            .finish(
+                &definition,
+                &mut cancelled_run,
+                StageOutcome {
+                    state: StageAttemptState::Cancelled,
+                    reason: Some("operator cancelled while approval was pending".into()),
+                    retryable: false,
+                    artifacts: Vec::new(),
+                    usage_after: run.usage.clone(),
+                },
+            )
+            .expect("paused review cancellation");
+        assert_eq!(cancelled.state, StageAttemptState::Cancelled);
+        assert_eq!(cancelled_run.state, WorkflowRunState::Cancelled);
+        WorkflowStageAttempt::start(
+            &definition,
+            &mut run,
+            WorkflowStage::CurationApproval,
+            Some(&review),
+            1,
+        )
+        .expect("approval continuation");
     }
 }

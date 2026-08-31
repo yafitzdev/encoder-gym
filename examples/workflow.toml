@@ -10,6 +10,17 @@ sealed_suite_id = "00000000-0000-0000-0000-000000000000"
 sealed_suite_fingerprint = "sha256:replace-sealed-suite"
 training_iteration_policy = "fresh"
 
+# Optional immutable pre-training quality gate. Omit this entire table to keep
+# the legacy generation -> snapshot workflow. Governed workflows accept only
+# the deterministic local evaluator in V1; use the standalone quality CLI for
+# external evaluator backends.
+[quality_gate]
+preset = "fast"
+egress_policy = "local_only"
+authenticity = "off"
+evaluator_backend = "deterministic-fake"
+evaluator_protocol_version = "quality-evaluator-v1"
+
 [initial_allocation]
 total_rows = 20000
 reserved_rows = 2000

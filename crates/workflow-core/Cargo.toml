@@ -9,6 +9,7 @@ artifact-core.workspace = true
 analysis-core.workspace = true
 chrono.workspace = true
 dataset-core.workspace = true
+dataset-quality-core.workspace = true
 evaluation-core.workspace = true
 generation-core.workspace = true
 optimization-core.workspace = true

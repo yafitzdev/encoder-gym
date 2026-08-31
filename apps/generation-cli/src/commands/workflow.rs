@@ -4,6 +4,7 @@ use advisor_fake::FakeAnalysisAdvisor;
 use advisor_openai_compatible::OpenAICompatibleAdvisor;
 use analysis_core::{ports::AnalysisStore, runner::run_analysis};
 use anyhow::{Context, ensure};
+use dataset_quality_core::{lifecycle::QualityAuditRunState, ports::DatasetQualityStore};
 use evaluation_core::ports::EvaluationStore;
 use generation_core::{
     coverage::calculate_coverage,
@@ -53,6 +54,7 @@ use crate::cli::{WorkflowCommand, WorkflowRunStateArg};
 use crate::document::read as read_document;
 
 mod artifacts;
+mod quality_gate;
 mod queries;
 mod stage_execution;
 
@@ -226,6 +228,27 @@ pub async fn execute(command: WorkflowCommand, store: &SqliteStore) -> anyhow::R
                         }
                     }
                 }
+                if matches!(
+                    current.stage,
+                    WorkflowStage::QualityAudit | WorkflowStage::IterationQualityAudit
+                ) {
+                    let definition = require_definition(store, run.definition_id).await?;
+                    let audit_run_id =
+                        quality_gate::audit_run_id(&definition, &run, current.stage)?;
+                    if let Some(mut audit_run) = store.get_audit_run(audit_run_id).await?
+                        && matches!(
+                            audit_run.state,
+                            QualityAuditRunState::Queued | QualityAuditRunState::Running
+                        )
+                    {
+                        if audit_run.state == QualityAuditRunState::Queued {
+                            audit_run.cancel()?;
+                        } else {
+                            audit_run.request_cancel()?;
+                        }
+                        store.save_audit_run(&audit_run).await?;
+                    }
+                }
             }
             let expected = run.latest_attempt_id;
             run.request_cancel()?;
@@ -295,7 +318,13 @@ async fn drive_pipeline_inner(
         "workflow project configuration fingerprint changed"
     );
     loop {
-        if run.cancel_requested && attempt.state == StageAttemptState::Running {
+        let cancellable_attempt = attempt.state == StageAttemptState::Running
+            || matches!(
+                attempt.state,
+                StageAttemptState::AwaitingApproval | StageAttemptState::AwaitingUser
+            )
+            || (attempt.state == StageAttemptState::Failed && attempt.retryable);
+        if run.cancel_requested && cancellable_attempt {
             let usage = run.usage.clone();
             let finished = attempt.finish(
                 &definition,
@@ -325,8 +354,11 @@ async fn drive_pipeline_inner(
             {
                 return Ok(run);
             }
-            let Some(next) = initial_successor(attempt.stage, definition.policy.enable_advisor)
-            else {
+            let Some(next) = initial_successor(
+                attempt.stage,
+                definition.policy.enable_advisor,
+                definition.quality_gate.is_some(),
+            ) else {
                 return Ok(run);
             };
             let started =
@@ -348,6 +380,63 @@ async fn drive_pipeline_inner(
                 &definition,
                 &mut run,
                 WorkflowStage::ProposalApplication,
+                Some(&attempt),
+                1,
+            )?;
+            store
+                .commit_workflow_attempt(&run, &started, attempt.id)
+                .await?;
+            attempt = started;
+            continue;
+        }
+        if attempt.state == StageAttemptState::AwaitingUser
+            && matches!(
+                attempt.stage,
+                WorkflowStage::CurationReview | WorkflowStage::IterationCurationReview
+            )
+        {
+            let history = store.list_workflow_attempts(run.id).await?;
+            let gate = quality_gate::approved_manifest(store, &definition, &history, attempt.stage)
+                .await?;
+            if gate.approved.is_none() {
+                let proposal_kind = quality_gate::proposal_kind(attempt.stage)?;
+                let paused_proposal_id = attempt
+                    .artifacts
+                    .iter()
+                    .find(|artifact| artifact.kind == proposal_kind)
+                    .map(|artifact| artifact.artifact_id);
+                if paused_proposal_id != Some(gate.proposal.id) {
+                    // Append a replacement pause only when new append-only row
+                    // reviews produced an immutable successor proposal. This
+                    // keeps status pointed at the exact proposal to approve
+                    // without counting a retry or rewriting history.
+                    let started = WorkflowStageAttempt::start(
+                        &definition,
+                        &mut run,
+                        attempt.stage,
+                        Some(&attempt),
+                        attempt.attempt,
+                    )?;
+                    store
+                        .commit_workflow_attempt(&run, &started, attempt.id)
+                        .await?;
+                    attempt = started;
+                    continue;
+                }
+                // Repeated resumes before the exact latest proposal is
+                // approved are intentionally no-ops: the persisted pause and
+                // proposal identity remain unchanged and consume no retries.
+                return Ok(run);
+            }
+            let approval_stage = match attempt.stage {
+                WorkflowStage::CurationReview => WorkflowStage::CurationApproval,
+                WorkflowStage::IterationCurationReview => WorkflowStage::IterationCurationApproval,
+                _ => unreachable!("matched curation review stage"),
+            };
+            let started = WorkflowStageAttempt::start(
+                &definition,
+                &mut run,
+                approval_stage,
                 Some(&attempt),
                 1,
             )?;
@@ -976,10 +1065,17 @@ async fn record_suite_exposures(
     Ok(())
 }
 
-const fn initial_successor(stage: WorkflowStage, advisor: bool) -> Option<WorkflowStage> {
+const fn initial_successor(
+    stage: WorkflowStage,
+    advisor: bool,
+    quality_gate: bool,
+) -> Option<WorkflowStage> {
     match stage {
         WorkflowStage::InitialAllocation => Some(WorkflowStage::Generation),
+        WorkflowStage::Generation if quality_gate => Some(WorkflowStage::QualityAudit),
         WorkflowStage::Generation => Some(WorkflowStage::Snapshot),
+        WorkflowStage::QualityAudit => Some(WorkflowStage::CurationReview),
+        WorkflowStage::CurationApproval => Some(WorkflowStage::Snapshot),
         WorkflowStage::Snapshot => Some(WorkflowStage::Training),
         WorkflowStage::Training => Some(WorkflowStage::DevelopmentEvaluation),
         WorkflowStage::DevelopmentEvaluation => Some(WorkflowStage::AcceptanceAssessment),
@@ -990,7 +1086,12 @@ const fn initial_successor(stage: WorkflowStage, advisor: bool) -> Option<Workfl
         WorkflowStage::OptimizationProposal => Some(WorkflowStage::Approval),
         WorkflowStage::Approval => Some(WorkflowStage::ProposalApplication),
         WorkflowStage::ProposalApplication => Some(WorkflowStage::DatasetDiffGeneration),
+        WorkflowStage::DatasetDiffGeneration if quality_gate => {
+            Some(WorkflowStage::IterationQualityAudit)
+        }
         WorkflowStage::DatasetDiffGeneration => Some(WorkflowStage::IterationSnapshot),
+        WorkflowStage::IterationQualityAudit => Some(WorkflowStage::IterationCurationReview),
+        WorkflowStage::IterationCurationApproval => Some(WorkflowStage::IterationSnapshot),
         WorkflowStage::IterationSnapshot => Some(WorkflowStage::IterationTraining),
         WorkflowStage::IterationTraining => Some(WorkflowStage::IterationEvaluation),
         WorkflowStage::IterationEvaluation => Some(WorkflowStage::Comparison),

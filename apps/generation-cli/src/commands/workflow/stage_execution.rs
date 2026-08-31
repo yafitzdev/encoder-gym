@@ -1,4 +1,4 @@
-use super::*;
+use super::{quality_gate, *};
 use crate::commands::{evaluation, generation, optimization, snapshot, training};
 
 pub(super) fn execute_initial_stage<'a>(
@@ -65,39 +65,96 @@ pub(super) fn execute_initial_stage<'a>(
                     &artifact_core::fingerprint(&job)?,
                 )]
             }
-            WorkflowStage::Snapshot => {
-                let expected_name = format!(
-                    "{}-workflow-{}-{}",
-                    configured.snapshot.name, run.id, run.iteration
-                );
-                let existing = dataset_core::ports::SnapshotStore::query_snapshots(
-                    store,
-                    dataset_core::ports::SnapshotQuery {
-                        dataset_id: Some(definition.dataset_id),
-                        limit: 10_000,
-                        offset: 0,
-                    },
-                )
-                .await?
-                .into_iter()
-                .find(|snapshot| snapshot.name == expected_name);
-                let snapshot = match existing {
-                    Some(snapshot) => snapshot,
-                    None => {
-                        snapshot::create_workflow(
-                            definition.dataset_id,
-                            run.id,
-                            run.iteration,
-                            configured,
-                            store,
-                        )
-                        .await?
-                    }
+            WorkflowStage::QualityAudit | WorkflowStage::IterationQualityAudit => {
+                quality_gate::execute_audit(store, definition, run, attempt.stage)
+                    .await?
+                    .links
+            }
+            WorkflowStage::CurationReview | WorkflowStage::IterationCurationReview => {
+                let proposal =
+                    quality_gate::create_review_proposal(store, &history, attempt.stage).await?;
+                let proposal_kind = quality_gate::proposal_kind(attempt.stage)?;
+                return Ok(StageExecution {
+                    artifacts: vec![link(proposal_kind, proposal.id, &proposal.fingerprint)],
+                    usage,
+                    state: StageAttemptState::AwaitingUser,
+                    reason: Some(format!(
+                        "explicit approval of exact curation proposal {} is required; review it with `quality proposal {}` and approve it with `quality manifest-review {} --approve --reviewer <name> --reason <reason>`, then resume this workflow",
+                        proposal.id, proposal.id, proposal.id
+                    )),
+                });
+            }
+            WorkflowStage::CurationApproval | WorkflowStage::IterationCurationApproval => {
+                let review_stage = if attempt.stage == WorkflowStage::CurationApproval {
+                    WorkflowStage::CurationReview
+                } else {
+                    WorkflowStage::IterationCurationReview
                 };
-                vec![link("snapshot", snapshot.id, &snapshot.fingerprint)]
+                let evidence =
+                    quality_gate::approved_manifest(store, definition, &history, review_stage)
+                        .await?
+                        .approved
+                        .context("the exact latest workflow curation proposal is not approved")?;
+                let proposal_kind = quality_gate::proposal_kind(review_stage)?;
+                let manifest_kind = if attempt.stage == WorkflowStage::CurationApproval {
+                    "quality_manifest"
+                } else {
+                    "iteration_quality_manifest"
+                };
+                vec![
+                    link(
+                        proposal_kind,
+                        evidence.proposal.id,
+                        &evidence.proposal.fingerprint,
+                    ),
+                    link(
+                        "curation_manifest_review",
+                        evidence.manifest.approval_id,
+                        &evidence.manifest.approval_fingerprint,
+                    ),
+                    link(
+                        manifest_kind,
+                        evidence.manifest.id,
+                        &evidence.manifest.fingerprint,
+                    ),
+                ]
+            }
+            WorkflowStage::Snapshot => {
+                let manifest_id = definition
+                    .quality_gate
+                    .as_ref()
+                    .map(|_| artifact_id(&history, "quality_manifest"))
+                    .transpose()?;
+                let result = snapshot::create_workflow(
+                    definition.dataset_id,
+                    run.id,
+                    run.iteration,
+                    configured,
+                    manifest_id,
+                    store,
+                )
+                .await?;
+                let mut links = vec![link(
+                    "snapshot",
+                    result.snapshot.id,
+                    &result.snapshot.fingerprint,
+                )];
+                if let Some(application) = result.curation_application {
+                    links.push(link(
+                        "curation_application",
+                        application.id,
+                        &application.fingerprint,
+                    ));
+                }
+                links
             }
             WorkflowStage::Training => {
                 let snapshot_id = artifact_id(&history, "snapshot")?;
+                if definition.quality_gate.is_some() {
+                    let manifest_id = artifact_id(&history, "quality_manifest")?;
+                    snapshot::require_workflow_qualification(store, snapshot_id, manifest_id)
+                        .await?;
+                }
                 let existing = training_core::ports::TrainingStore::query_training_runs(
                     store,
                     training_core::ports::TrainingRunQuery {
@@ -552,39 +609,33 @@ pub(super) fn execute_initial_stage<'a>(
                 )]
             }
             WorkflowStage::IterationSnapshot => {
-                let expected_name = format!(
-                    "{}-workflow-{}-{}",
-                    configured.snapshot.name, run.id, run.iteration
-                );
-                let existing = dataset_core::ports::SnapshotStore::query_snapshots(
+                let manifest_id = definition
+                    .quality_gate
+                    .as_ref()
+                    .map(|_| artifact_id(&history, "iteration_quality_manifest"))
+                    .transpose()?;
+                let result = snapshot::create_workflow(
+                    definition.dataset_id,
+                    run.id,
+                    run.iteration,
+                    configured,
+                    manifest_id,
                     store,
-                    dataset_core::ports::SnapshotQuery {
-                        dataset_id: Some(definition.dataset_id),
-                        limit: 10_000,
-                        offset: 0,
-                    },
                 )
-                .await?
-                .into_iter()
-                .find(|snapshot| snapshot.name == expected_name);
-                let snapshot = match existing {
-                    Some(snapshot) => snapshot,
-                    None => {
-                        snapshot::create_workflow(
-                            definition.dataset_id,
-                            run.id,
-                            run.iteration,
-                            configured,
-                            store,
-                        )
-                        .await?
-                    }
-                };
-                vec![link(
+                .await?;
+                let mut links = vec![link(
                     "iteration_snapshot",
-                    snapshot.id,
-                    &snapshot.fingerprint,
-                )]
+                    result.snapshot.id,
+                    &result.snapshot.fingerprint,
+                )];
+                if let Some(application) = result.curation_application {
+                    links.push(link(
+                        "iteration_curation_application",
+                        application.id,
+                        &application.fingerprint,
+                    ));
+                }
+                links
             }
             WorkflowStage::IterationTraining => {
                 ensure!(
@@ -595,6 +646,11 @@ pub(super) fn execute_initial_stage<'a>(
                     "unsupported workflow iteration training policy"
                 );
                 let snapshot_id = artifact_id(&history, "iteration_snapshot")?;
+                if definition.quality_gate.is_some() {
+                    let manifest_id = artifact_id(&history, "iteration_quality_manifest")?;
+                    snapshot::require_workflow_qualification(store, snapshot_id, manifest_id)
+                        .await?;
+                }
                 let existing = training_core::ports::TrainingStore::query_training_runs(
                     store,
                     training_core::ports::TrainingRunQuery {

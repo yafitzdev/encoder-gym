@@ -11,12 +11,328 @@ use std::{
     time::Duration,
 };
 
+use dataset_quality_core::policy::{EvaluatorEgressPolicy, QualityPreset};
 use serde_json::Value;
+use workflow_core::workflow::{WorkflowQualityAuthenticity, WorkflowQualityGateRequest};
 
 use support::{
     run_json,
     workflow_fixture::{GenerationMode, WorkflowFixture},
 };
+
+#[test]
+fn quality_gated_workflow_pauses_for_the_exact_latest_manifest_and_trains_qualified_data() {
+    let fixture = WorkflowFixture::new(GenerationMode::Fake);
+    let manifest_path = fixture.write_variant("quality-gated-workflow.toml", |manifest| {
+        manifest.workflow.quality_gate = Some(WorkflowQualityGateRequest {
+            preset: QualityPreset::Fast,
+            egress_policy: EvaluatorEgressPolicy::LocalOnly,
+            authenticity: WorkflowQualityAuthenticity::Off,
+            maximum_cost_microusd: None,
+            evaluator_backend: "deterministic-fake".into(),
+            evaluator_protocol_version: "quality-evaluator-v1".into(),
+        });
+    });
+    let manifest_path = manifest_path.to_str().expect("UTF-8 manifest path");
+    let prepared = run_json(
+        fixture.database_url(),
+        ["project", "prepare", manifest_path],
+    );
+    let definition_id = string_at(&prepared, "/preparation/workflow_definition_id");
+
+    let paused = run_json(
+        fixture.database_url(),
+        ["workflow", "start", &definition_id],
+    );
+    let workflow_run_id = string_at(&paused, "/run/id");
+    assert_eq!(paused["run"]["state"], "awaiting_user");
+    assert_eq!(
+        paused["latest_attempt"]["stage"], "curation_review",
+        "quality-gated workflow did not reach its review pause: {paused}"
+    );
+    assert_eq!(
+        paused["latest_attempt"]["state"], "awaiting_user",
+        "quality-gated workflow did not persist its review pause: {paused}"
+    );
+    assert_eq!(artifact_count(&paused, "quality_audit_plan"), 1);
+    assert_eq!(artifact_count(&paused, "quality_audit_run"), 1);
+    assert_eq!(artifact_count(&paused, "quality_report"), 1);
+    let initial_proposal_id = latest_artifact_id(&paused, "curation_proposal");
+    let audit_run_id = latest_artifact_id(&paused, "quality_audit_run");
+
+    let repeated = run_json(
+        fixture.database_url(),
+        ["workflow", "resume", &workflow_run_id],
+    );
+    assert_eq!(repeated["attempt_count"], paused["attempt_count"]);
+    assert_eq!(
+        repeated["latest_attempt"]["id"],
+        paused["latest_attempt"]["id"]
+    );
+    assert_eq!(
+        latest_artifact_id(&repeated, "curation_proposal"),
+        initial_proposal_id
+    );
+
+    // Approve the displayed proposal, then append newer row reviews. Resume
+    // must materialize a successor and refuse the now-stale manifest.
+    let stale_approval = run_json(
+        fixture.database_url(),
+        [
+            "quality",
+            "manifest-review",
+            &initial_proposal_id,
+            "--approve",
+            "--reviewer",
+            "workflow-test",
+            "--reason",
+            "approve before the later append-only row reviews",
+        ],
+    );
+    let stale_manifest_id = string_at(&stale_approval, "/manifest/id");
+    let assessments = run_json(
+        fixture.database_url(),
+        ["quality", "assessments", &audit_run_id, "--limit", "100"],
+    );
+    let assessments = assessments.as_array().expect("quality assessments");
+    assert!(!assessments.is_empty());
+    for assessment in assessments {
+        let assessment_id = string_at(assessment, "/id");
+        run_json(
+            fixture.database_url(),
+            [
+                "quality",
+                "row-review",
+                &assessment_id,
+                "--include",
+                "--reviewer",
+                "workflow-test",
+                "--reason",
+                "include this row in the workflow training snapshot",
+            ],
+        );
+    }
+
+    let refreshed_pause = run_json(
+        fixture.database_url(),
+        ["workflow", "resume", &workflow_run_id],
+    );
+    assert_eq!(refreshed_pause["run"]["state"], "awaiting_user");
+    assert_eq!(
+        refreshed_pause["latest_attempt"]["stage"],
+        "curation_review"
+    );
+    assert_eq!(artifact_count(&refreshed_pause, "snapshot"), 0);
+    let successor_proposal_id = latest_artifact_id(&refreshed_pause, "curation_proposal");
+    assert_ne!(successor_proposal_id, initial_proposal_id);
+    assert_eq!(
+        latest_artifact_id(&refreshed_pause, "curation_proposal"),
+        successor_proposal_id
+    );
+    assert!(
+        !refreshed_pause["attempts"]
+            .as_array()
+            .expect("attempts")
+            .iter()
+            .flat_map(|attempt| attempt["artifacts"].as_array().expect("artifacts"))
+            .any(|artifact| artifact["kind"] == "quality_manifest"
+                && artifact["artifact_id"] == stale_manifest_id),
+        "a stale approved manifest must not enter workflow history"
+    );
+
+    let approved = run_json(
+        fixture.database_url(),
+        [
+            "quality",
+            "manifest-review",
+            &successor_proposal_id,
+            "--approve",
+            "--reviewer",
+            "workflow-test",
+            "--reason",
+            "approve the exact latest reviewed proposal",
+        ],
+    );
+    let manifest_id = string_at(&approved, "/manifest/id");
+    let resumed = run_json(
+        fixture.database_url(),
+        ["workflow", "resume", &workflow_run_id],
+    );
+    assert!(matches!(
+        resumed["run"]["state"].as_str(),
+        Some("awaiting_approval" | "development_complete")
+    ));
+    assert_eq!(artifact_count(&resumed, "quality_manifest"), 1);
+    assert_eq!(artifact_count(&resumed, "curation_application"), 1);
+    assert_eq!(artifact_count(&resumed, "snapshot"), 1);
+    assert_eq!(artifact_count(&resumed, "training_run"), 1);
+    let snapshot_id = latest_artifact_id(&resumed, "snapshot");
+    let shown = run_json(fixture.database_url(), ["snapshot", "show", &snapshot_id]);
+    assert_eq!(shown["qualified"], true);
+    assert_eq!(shown["manifest_id"], manifest_id);
+    let qualified_member_ids = run_json(
+        fixture.database_url(),
+        ["snapshot", "members", &snapshot_id],
+    )
+    .as_array()
+    .expect("qualified snapshot members")
+    .iter()
+    .map(|member| string_at(member, "/source_row_id"))
+    .collect::<std::collections::BTreeSet<_>>();
+    for evidence_snapshot_id in [fixture.development_snapshot_id, fixture.sealed_snapshot_id] {
+        let evidence_member_ids = run_json(
+            fixture.database_url(),
+            ["snapshot", "members", &evidence_snapshot_id.to_string()],
+        )
+        .as_array()
+        .expect("evaluation snapshot members")
+        .iter()
+        .map(|member| string_at(member, "/source_row_id"))
+        .collect::<std::collections::BTreeSet<_>>();
+        assert!(
+            qualified_member_ids.is_disjoint(&evidence_member_ids),
+            "qualified training data must be disjoint from every evaluation cohort"
+        );
+    }
+    let provenance = run_json(
+        fixture.database_url(),
+        ["provenance", "workflow-run", &workflow_run_id],
+    );
+    let provenance = serde_json::to_string(&provenance).expect("workflow provenance JSON");
+    for kind in [
+        "quality_audit_plan",
+        "quality_audit_run",
+        "dataset_quality_report",
+        "curation_proposal",
+        "curation_manifest_review",
+        "approved_curation_manifest",
+        "curation_application",
+    ] {
+        assert!(
+            provenance.contains(kind),
+            "quality-gated workflow provenance omitted {kind}: {provenance}"
+        );
+    }
+}
+
+#[test]
+fn same_name_unqualified_snapshot_cannot_satisfy_a_workflow_quality_gate() {
+    let fixture = WorkflowFixture::new(GenerationMode::Fake);
+    let manifest_path = fixture.write_variant("quality-gated-collision.toml", |manifest| {
+        manifest.workflow.quality_gate = Some(WorkflowQualityGateRequest {
+            preset: QualityPreset::Fast,
+            egress_policy: EvaluatorEgressPolicy::LocalOnly,
+            authenticity: WorkflowQualityAuthenticity::Off,
+            maximum_cost_microusd: None,
+            evaluator_backend: "deterministic-fake".into(),
+            evaluator_protocol_version: "quality-evaluator-v1".into(),
+        });
+    });
+    let manifest_path = manifest_path.to_str().expect("UTF-8 manifest path");
+    let prepared = run_json(
+        fixture.database_url(),
+        ["project", "prepare", manifest_path],
+    );
+    let definition_id = string_at(&prepared, "/preparation/workflow_definition_id");
+    let dataset_id = string_at(&prepared, "/preparation/dataset_id");
+    let paused = run_json(
+        fixture.database_url(),
+        ["workflow", "start", &definition_id],
+    );
+    let workflow_run_id = string_at(&paused, "/run/id");
+    let proposal_id = latest_artifact_id(&paused, "curation_proposal");
+    run_json(
+        fixture.database_url(),
+        [
+            "quality",
+            "manifest-review",
+            &proposal_id,
+            "--approve",
+            "--reviewer",
+            "workflow-test",
+            "--reason",
+            "approve the exact displayed proposal",
+        ],
+    );
+
+    let colliding_name = format!("baseline-workflow-{workflow_run_id}-0");
+    run_json(
+        fixture.database_url(),
+        [
+            "snapshot",
+            "create",
+            &dataset_id,
+            "--name",
+            &colliding_name,
+            "--train-ratio",
+            "0.8",
+            "--validation-ratio",
+            "0.0",
+            "--test-ratio",
+            "0.2",
+            "--seed",
+            "42",
+        ],
+    );
+    let rejected = run_json(
+        fixture.database_url(),
+        ["workflow", "resume", &workflow_run_id],
+    );
+    assert_eq!(rejected["run"]["state"], "awaiting_user");
+    assert_eq!(rejected["latest_attempt"]["stage"], "snapshot");
+    assert_eq!(rejected["latest_attempt"]["state"], "failed");
+    assert!(
+        rejected["latest_attempt"]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("not qualified by the exact approved manifest"))
+    );
+    assert_eq!(artifact_count(&rejected, "training_run"), 0);
+}
+
+#[test]
+fn quality_gated_workflow_can_be_cancelled_while_waiting_for_manifest_approval() {
+    let fixture = WorkflowFixture::new(GenerationMode::Fake);
+    let manifest_path = fixture.write_variant("quality-gated-cancellation.toml", |manifest| {
+        manifest.workflow.quality_gate = Some(WorkflowQualityGateRequest {
+            preset: QualityPreset::Fast,
+            egress_policy: EvaluatorEgressPolicy::LocalOnly,
+            authenticity: WorkflowQualityAuthenticity::Off,
+            maximum_cost_microusd: None,
+            evaluator_backend: "deterministic-fake".into(),
+            evaluator_protocol_version: "quality-evaluator-v1".into(),
+        });
+    });
+    let prepared = run_json(
+        fixture.database_url(),
+        [
+            "project",
+            "prepare",
+            manifest_path.to_str().expect("UTF-8 manifest path"),
+        ],
+    );
+    let definition_id = string_at(&prepared, "/preparation/workflow_definition_id");
+    let paused = run_json(
+        fixture.database_url(),
+        ["workflow", "start", &definition_id],
+    );
+    let workflow_run_id = string_at(&paused, "/run/id");
+    assert_eq!(paused["latest_attempt"]["stage"], "curation_review");
+    assert_eq!(paused["latest_attempt"]["state"], "awaiting_user");
+
+    let requested = run_json(
+        fixture.database_url(),
+        ["workflow", "cancel", &workflow_run_id],
+    );
+    assert_eq!(requested["cancel_requested"], true);
+    let cancelled = run_json(
+        fixture.database_url(),
+        ["workflow", "resume", &workflow_run_id],
+    );
+    assert_eq!(cancelled["run"]["state"], "cancelled");
+    assert_eq!(cancelled["latest_attempt"]["state"], "cancelled");
+    assert_eq!(artifact_count(&cancelled, "snapshot"), 0);
+    assert_eq!(artifact_count(&cancelled, "training_run"), 0);
+}
 
 #[test]
 fn interrupted_workflow_resumes_once_and_then_stays_idempotent() {
@@ -239,6 +555,19 @@ fn artifact_count(status: &Value, kind: &str) -> usize {
         .flat_map(|attempt| attempt["artifacts"].as_array().expect("attempt artifacts"))
         .filter(|artifact| artifact["kind"] == kind)
         .count()
+}
+
+fn latest_artifact_id(status: &Value, kind: &str) -> String {
+    status["attempts"]
+        .as_array()
+        .expect("workflow attempts")
+        .iter()
+        .rev()
+        .flat_map(|attempt| attempt["artifacts"].as_array().expect("attempt artifacts"))
+        .find(|artifact| artifact["kind"] == kind)
+        .and_then(|artifact| artifact["artifact_id"].as_str())
+        .unwrap_or_else(|| panic!("workflow has no {kind} artifact: {status}"))
+        .to_owned()
 }
 
 fn string_at(value: &Value, pointer: &str) -> String {

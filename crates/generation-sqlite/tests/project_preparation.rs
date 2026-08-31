@@ -225,6 +225,7 @@ async fn fixture(store: &SqliteStore) -> (PreparationManifest, PreparationEviden
             optimization_protocol: None,
             advisor: None,
             training_iteration_policy: None,
+            quality_gate: None,
             governance: IterationGovernance::ReviewEachIteration,
             budget: WorkflowBudget {
                 maximum_iterations: 2,

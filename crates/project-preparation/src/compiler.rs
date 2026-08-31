@@ -87,6 +87,7 @@ pub fn preview_project(
         stages: workflow_stages(
             manifest.workflow.advisor.is_some(),
             manifest.sealed.is_some(),
+            manifest.workflow.quality_gate.is_some(),
         ),
         governance_mode: match manifest.workflow.governance {
             IterationGovernance::ReviewEachIteration => "review_each_iteration",
@@ -165,6 +166,7 @@ pub fn compile_project(
         optimization_protocol: manifest.workflow.optimization_protocol.clone(),
         advisor: manifest.workflow.advisor.clone(),
         training_iteration_policy: manifest.workflow.training_iteration_policy,
+        quality_gate: manifest.workflow.quality_gate.clone(),
         governance: manifest.workflow.governance.clone(),
         budget: manifest.workflow.budget.clone(),
         policy: manifest.workflow.policy.clone(),
@@ -594,16 +596,26 @@ fn default_protocol(context: &BuildContext, split: SnapshotSplit) -> EvaluationP
     }
 }
 
-fn workflow_stages(has_advisor: bool, has_sealed_suite: bool) -> Vec<WorkflowStage> {
-    let mut stages = vec![
-        WorkflowStage::InitialAllocation,
-        WorkflowStage::Generation,
+fn workflow_stages(
+    has_advisor: bool,
+    has_sealed_suite: bool,
+    has_quality_gate: bool,
+) -> Vec<WorkflowStage> {
+    let mut stages = vec![WorkflowStage::InitialAllocation, WorkflowStage::Generation];
+    if has_quality_gate {
+        stages.extend([
+            WorkflowStage::QualityAudit,
+            WorkflowStage::CurationReview,
+            WorkflowStage::CurationApproval,
+        ]);
+    }
+    stages.extend([
         WorkflowStage::Snapshot,
         WorkflowStage::Training,
         WorkflowStage::DevelopmentEvaluation,
         WorkflowStage::AcceptanceAssessment,
         WorkflowStage::ErrorAnalysis,
-    ];
+    ]);
     if has_advisor {
         stages.push(WorkflowStage::Advisor);
     }
@@ -612,6 +624,15 @@ fn workflow_stages(has_advisor: bool, has_sealed_suite: bool) -> Vec<WorkflowSta
         WorkflowStage::Approval,
         WorkflowStage::ProposalApplication,
         WorkflowStage::DatasetDiffGeneration,
+    ]);
+    if has_quality_gate {
+        stages.extend([
+            WorkflowStage::IterationQualityAudit,
+            WorkflowStage::IterationCurationReview,
+            WorkflowStage::IterationCurationApproval,
+        ]);
+    }
+    stages.extend([
         WorkflowStage::IterationSnapshot,
         WorkflowStage::IterationTraining,
         WorkflowStage::IterationEvaluation,
@@ -652,6 +673,7 @@ mod tests {
         DatasetSnapshot, SnapshotMember, SnapshotSplit, SourceProvenance, SplitConfiguration,
         SplitRatios,
     };
+    use dataset_quality_core::policy::{EvaluatorEgressPolicy, QualityPreset};
     use project_config::{ProjectConfig, ProjectOverrides};
     use uuid::Uuid;
     use workflow_core::{
@@ -659,7 +681,10 @@ mod tests {
         benchmark::AcceptanceContract,
         contamination::{ContaminationKind, ContaminationStatus},
         governance::{CohortOrigin, CohortRole, DisclosureLevel},
-        workflow::{IterationGovernance, WorkflowBudget, WorkflowPolicy},
+        workflow::{
+            IterationGovernance, WorkflowBudget, WorkflowPolicy, WorkflowQualityAuthenticity,
+            WorkflowQualityGateRequest, WorkflowStage,
+        },
     };
 
     use crate::{
@@ -701,6 +726,13 @@ batch_size = 20
         assert_eq!(first.cells.len(), 4);
         assert_eq!(first.estimated_initial_requests, 4);
         assert_eq!(first.contamination[0].status, ContaminationStatus::Clean);
+        assert!(
+            !serde_json::to_value(&manifest.workflow)
+                .expect("legacy workflow manifest JSON")
+                .as_object()
+                .expect("workflow manifest object")
+                .contains_key("quality_gate")
+        );
     }
 
     #[test]
@@ -733,6 +765,51 @@ batch_size = 20
                 .expect("fingerprint"),
             bundle.preparation.fingerprint
         );
+    }
+
+    #[test]
+    fn optional_quality_gate_is_resolved_and_visible_in_both_preview_cycles() {
+        let (mut manifest, evidence) = fixture();
+        manifest.workflow.quality_gate = Some(WorkflowQualityGateRequest {
+            preset: QualityPreset::Fast,
+            egress_policy: EvaluatorEgressPolicy::LocalOnly,
+            authenticity: WorkflowQualityAuthenticity::Off,
+            maximum_cost_microusd: None,
+            evaluator_backend: "deterministic-fake".into(),
+            evaluator_protocol_version: "quality-evaluator-v1".into(),
+        });
+
+        let preview = preview_project(&manifest, &evidence).expect("gated preview");
+        let initial = preview.stages.windows(5).any(|stages| {
+            stages
+                == [
+                    WorkflowStage::Generation,
+                    WorkflowStage::QualityAudit,
+                    WorkflowStage::CurationReview,
+                    WorkflowStage::CurationApproval,
+                    WorkflowStage::Snapshot,
+                ]
+        });
+        let iteration = preview.stages.windows(5).any(|stages| {
+            stages
+                == [
+                    WorkflowStage::DatasetDiffGeneration,
+                    WorkflowStage::IterationQualityAudit,
+                    WorkflowStage::IterationCurationReview,
+                    WorkflowStage::IterationCurationApproval,
+                    WorkflowStage::IterationSnapshot,
+                ]
+        });
+        assert!(initial && iteration);
+
+        let bundle = compile_project(&manifest, &evidence).expect("gated compile");
+        let gate = bundle
+            .workflow_definition
+            .quality_gate
+            .expect("resolved gate");
+        assert_eq!(gate.policy.preset, Some(QualityPreset::Fast));
+        assert_eq!(gate.evaluator_backend, "deterministic-fake");
+        assert!(gate.policy.verify_integrity().is_ok());
     }
 
     #[test]
@@ -921,6 +998,7 @@ batch_size = 20
                 optimization_protocol: None,
                 advisor: None,
                 training_iteration_policy: None,
+                quality_gate: None,
                 governance: IterationGovernance::ReviewEachIteration,
                 budget: WorkflowBudget {
                     maximum_iterations: 2,
