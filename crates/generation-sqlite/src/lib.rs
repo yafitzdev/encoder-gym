@@ -10,6 +10,7 @@ mod benchmark_qualification;
 mod contamination;
 mod evaluation;
 mod generation_execution;
+mod generation_supervisor;
 mod governance;
 mod imports;
 mod optimization;

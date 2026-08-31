@@ -10,7 +10,12 @@ use generation_core::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{SupervisorError, fingerprint};
+use crate::{
+    SupervisorError,
+    contract::GenerationQualityContract,
+    fingerprint,
+    observation::{ContractRowVerdict, RowQualityObservation, StructuralOutcome},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -124,6 +129,21 @@ pub struct StrategyAssignmentSet {
     pub assignments: Vec<StrategyAssignment>,
     pub created_at: DateTime<Utc>,
     pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StrategyCoverage {
+    pub target: u32,
+    pub attempted: u32,
+    pub structurally_accepted: u32,
+    pub assessed: u32,
+    pub qualified: u32,
+    pub borderline: u32,
+    pub quarantined: u32,
+    pub unassessed: u32,
+    pub invalid: u32,
+    pub remaining: u32,
 }
 
 impl StrategyAssignmentSet {
@@ -269,6 +289,104 @@ impl StrategyAssignmentSet {
         }
         counts
     }
+
+    /// Derives strategy coverage exclusively from immutable assignments and
+    /// persisted row observations. `remaining` means rows still needed to
+    /// reach the qualified target, not merely rows that have not been tried.
+    pub fn coverage(
+        &self,
+        contract: &GenerationQualityContract,
+        observations: &[RowQualityObservation],
+    ) -> Result<BTreeMap<StrategyScope, StrategyCoverage>, SupervisorError> {
+        contract.validate()?;
+        if self.plan_id != contract.plan.id
+            || self.plan_fingerprint != contract.plan.fingerprint
+            || contract.strategy_context.as_ref().is_none_or(|binding| {
+                binding.id != self.strategy_context_id
+                    || binding.fingerprint != self.strategy_context_fingerprint
+            })
+        {
+            return Err(SupervisorError::Integrity(
+                "strategy coverage assignments are outside the quality contract".into(),
+            ));
+        }
+        let assignments = self
+            .assignments
+            .iter()
+            .map(|assignment| (assignment.fingerprint.as_str(), assignment))
+            .collect::<BTreeMap<_, _>>();
+        let mut coverage = self
+            .target_counts()
+            .into_iter()
+            .map(|(scope, target)| {
+                (
+                    scope,
+                    StrategyCoverage {
+                        target,
+                        ..StrategyCoverage::default()
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        for observation in observations {
+            observation.validate(contract)?;
+            let assignment_fingerprint = observation
+                .strategy_assignment_fingerprint
+                .as_deref()
+                .ok_or_else(|| {
+                    SupervisorError::Integrity(
+                        "strategy coverage row has no exact assignment binding".into(),
+                    )
+                })?;
+            let assignment = assignments.get(assignment_fingerprint).ok_or_else(|| {
+                SupervisorError::Integrity(
+                    "strategy coverage row references an unknown assignment".into(),
+                )
+            })?;
+            if assignment.cell_key != observation.cell_key
+                || assignment.directive_id != observation.strategy_directive_id
+            {
+                return Err(SupervisorError::Integrity(
+                    "strategy coverage row does not match its assignment".into(),
+                ));
+            }
+            let item = coverage.get_mut(&assignment.scope()).ok_or_else(|| {
+                SupervisorError::Integrity("strategy coverage scope is missing".into())
+            })?;
+            item.attempted = checked_increment(item.attempted)?;
+            if observation.structural_outcome == StructuralOutcome::Accepted {
+                item.structurally_accepted = checked_increment(item.structurally_accepted)?;
+            }
+            if observation.assessment.is_some() {
+                item.assessed = checked_increment(item.assessed)?;
+            }
+            match observation.contract_verdict(contract) {
+                ContractRowVerdict::Qualified => {
+                    item.qualified = checked_increment(item.qualified)?
+                }
+                ContractRowVerdict::Borderline => {
+                    item.borderline = checked_increment(item.borderline)?;
+                }
+                ContractRowVerdict::Quarantined => {
+                    item.quarantined = checked_increment(item.quarantined)?;
+                }
+                ContractRowVerdict::Unassessed => {
+                    item.unassessed = checked_increment(item.unassessed)?;
+                }
+                ContractRowVerdict::Invalid => item.invalid = checked_increment(item.invalid)?,
+            }
+        }
+        for item in coverage.values_mut() {
+            item.remaining = item.target.saturating_sub(item.qualified);
+        }
+        Ok(coverage)
+    }
+}
+
+fn checked_increment(value: u32) -> Result<u32, SupervisorError> {
+    value
+        .checked_add(1)
+        .ok_or_else(|| SupervisorError::Validation("strategy coverage count overflow".into()))
 }
 
 #[derive(Debug)]

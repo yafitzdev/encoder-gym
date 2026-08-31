@@ -3338,6 +3338,7 @@ dependencies = [
  "dataset-import",
  "dataset-quality-core",
  "evaluation-core",
+ "generation-supervisor-core",
  "optimization-core",
  "project-config",
  "project-preparation",

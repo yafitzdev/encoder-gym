@@ -46,6 +46,7 @@ pub enum SupervisorIssueCode {
     ExcessBorderlineRate,
     ExcessQuarantinedRate,
     ExcessInvalidRate,
+    ExactDuplication,
     NormalizedDuplication,
     TemplateModeCollapse,
     ShortcutConcentration,
@@ -212,6 +213,12 @@ impl DeterministicQualityDecision {
                 "invalid_rate",
                 window.rates.invalid,
                 batch.maximum_invalid_rate,
+            ),
+            (
+                SupervisorIssueCode::ExactDuplication,
+                "exact_duplicate_rate",
+                window.rates.exact_duplicates,
+                batch.maximum_exact_duplicate_rate,
             ),
             (
                 SupervisorIssueCode::NormalizedDuplication,

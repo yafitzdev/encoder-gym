@@ -99,6 +99,7 @@ fn contract() -> GenerationQualityContract {
             maximum_borderline_rate: bp(2_000),
             maximum_quarantined_rate: bp(2_500),
             maximum_invalid_rate: bp(1_000),
+            maximum_exact_duplicate_rate: bp(0),
             maximum_normalized_duplicate_rate: bp(1_000),
             maximum_template_repetition_rate: bp(10_000),
             maximum_qualified_rate_drop: bp(1_000),
@@ -152,6 +153,25 @@ fn contract() -> GenerationQualityContract {
         now(),
     )
     .unwrap()
+}
+
+#[test]
+fn sealed_acceptance_artifacts_cannot_enter_the_supervision_contract() {
+    let mut value = contract();
+    value.semantic_context =
+        Some(ArtifactBinding::sealed_acceptance(Uuid::new_v4(), "sealed-evidence").unwrap());
+    let error = value
+        .validate()
+        .expect_err("sealed evidence must be rejected");
+    assert!(matches!(error, SupervisorError::Validation(_)));
+
+    let mut value = contract();
+    value.dataset.exposure =
+        generation_supervisor_core::contract::ArtifactExposure::SealedAcceptance;
+    let error = value
+        .validate()
+        .expect_err("sealed dataset binding must be rejected");
+    assert!(matches!(error, SupervisorError::Validation(_)));
 }
 
 fn evidence(contract: &GenerationQualityContract, score: u16) -> AssessmentEvidence {
@@ -489,6 +509,7 @@ fn guidance_revision_needs_exact_review_and_successful_canary() {
     let review = PromptRevisionReview::create(
         Uuid::from_u128(605),
         &proposal,
+        None,
         RevisionReviewDecision::Approve,
         "operator",
         "The patch changes guidance only.",

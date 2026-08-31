@@ -404,6 +404,10 @@ pub struct PromptRevisionReview {
     pub id: Uuid,
     pub proposal_id: Uuid,
     pub proposal_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predecessor_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predecessor_fingerprint: Option<String>,
     pub decision: RevisionReviewDecision,
     pub reviewer: String,
     pub rationale: String,
@@ -415,6 +419,7 @@ impl PromptRevisionReview {
     pub fn create(
         id: Uuid,
         proposal: &PromptRevisionProposal,
+        predecessor: Option<&Self>,
         decision: RevisionReviewDecision,
         reviewer: impl Into<String>,
         rationale: impl Into<String>,
@@ -425,10 +430,21 @@ impl PromptRevisionReview {
                 "review identity and exact proposal fingerprint are required".into(),
             ));
         }
+        if predecessor.is_some_and(|value| {
+            value.proposal_id != proposal.id
+                || value.proposal_fingerprint != proposal.fingerprint
+                || value.reproduce_fingerprint().ok().as_deref() != Some(value.fingerprint.as_str())
+        }) {
+            return Err(SupervisorError::Integrity(
+                "revision review predecessor is invalid or belongs to another proposal".into(),
+            ));
+        }
         let mut value = Self {
             id,
             proposal_id: proposal.id,
             proposal_fingerprint: proposal.fingerprint.clone(),
+            predecessor_id: predecessor.map(|value| value.id),
+            predecessor_fingerprint: predecessor.map(|value| value.fingerprint.clone()),
             decision,
             reviewer: required(reviewer, "revision reviewer")?,
             rationale: required(rationale, "revision review rationale")?,

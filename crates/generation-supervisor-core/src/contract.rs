@@ -7,6 +7,7 @@ use dataset_quality_core::{
     assessment::{EvaluatorIdentity, GeneratorEvaluatorRelationship},
     policy::BasisPoints,
 };
+use generation_core::coverage::CellCounts;
 use generation_core::jobs::GenerationBackendIdentity;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -15,11 +16,20 @@ use crate::{SupervisorError, fingerprint, required};
 
 pub const GENERATION_QUALITY_CONTRACT_SCHEMA_VERSION: u32 = 1;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactExposure {
+    Operational,
+    GovernedDevelopmentAggregate,
+    SealedAcceptance,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactBinding {
     pub id: Uuid,
     pub fingerprint: String,
+    pub exposure: ArtifactExposure,
 }
 
 impl ArtifactBinding {
@@ -32,7 +42,26 @@ impl ArtifactBinding {
         Ok(Self {
             id,
             fingerprint: required(fingerprint, "artifact binding fingerprint")?,
+            exposure: ArtifactExposure::Operational,
         })
+    }
+
+    pub fn governed_development(
+        id: Uuid,
+        fingerprint: impl Into<String>,
+    ) -> Result<Self, SupervisorError> {
+        let mut value = Self::new(id, fingerprint)?;
+        value.exposure = ArtifactExposure::GovernedDevelopmentAggregate;
+        Ok(value)
+    }
+
+    pub fn sealed_acceptance(
+        id: Uuid,
+        fingerprint: impl Into<String>,
+    ) -> Result<Self, SupervisorError> {
+        let mut value = Self::new(id, fingerprint)?;
+        value.exposure = ArtifactExposure::SealedAcceptance;
+        Ok(value)
     }
 
     pub fn validate(&self, field: &str) -> Result<(), SupervisorError> {
@@ -52,6 +81,21 @@ impl ArtifactBinding {
 pub struct AcceptedCoverageBinding {
     pub accepted_rows: u64,
     pub fingerprint: String,
+}
+
+impl AcceptedCoverageBinding {
+    pub fn from_counts(
+        counts: &std::collections::BTreeMap<String, CellCounts>,
+    ) -> Result<Self, SupervisorError> {
+        let normalized = counts
+            .iter()
+            .map(|(key, value)| (key, value.attempted, value.accepted, value.rejected))
+            .collect::<Vec<_>>();
+        Ok(Self {
+            accepted_rows: counts.values().map(|value| u64::from(value.accepted)).sum(),
+            fingerprint: fingerprint(&normalized)?,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,6 +179,7 @@ pub struct BatchQualityThresholds {
     pub maximum_borderline_rate: BasisPoints,
     pub maximum_quarantined_rate: BasisPoints,
     pub maximum_invalid_rate: BasisPoints,
+    pub maximum_exact_duplicate_rate: BasisPoints,
     pub maximum_normalized_duplicate_rate: BasisPoints,
     pub maximum_template_repetition_rate: BasisPoints,
     pub maximum_qualified_rate_drop: BasisPoints,
@@ -448,7 +493,19 @@ impl GenerationQualityContract {
         ] {
             if let Some(binding) = binding {
                 binding.validate(name)?;
+                if binding.exposure == ArtifactExposure::SealedAcceptance {
+                    return Err(SupervisorError::Validation(format!(
+                        "{name} cannot bind sealed acceptance evidence"
+                    )));
+                }
             }
+        }
+        if self.dataset.exposure == ArtifactExposure::SealedAcceptance
+            || self.plan.exposure == ArtifactExposure::SealedAcceptance
+        {
+            return Err(SupervisorError::Validation(
+                "generation supervision cannot bind sealed acceptance artifacts".into(),
+            ));
         }
         self.generator.validate()?;
         self.evaluator
@@ -593,6 +650,7 @@ mod tests {
                 maximum_borderline_rate: bp(1_500),
                 maximum_quarantined_rate: bp(1_000),
                 maximum_invalid_rate: bp(500),
+                maximum_exact_duplicate_rate: bp(0),
                 maximum_normalized_duplicate_rate: bp(500),
                 maximum_template_repetition_rate: bp(1_000),
                 maximum_qualified_rate_drop: bp(1_000),
