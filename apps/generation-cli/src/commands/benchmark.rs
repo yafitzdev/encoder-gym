@@ -12,11 +12,14 @@ use workflow_core::{
     governance::{EvidenceExposure, EvidenceExposureRequest, ExposurePurpose},
     ports::{
         AcceptanceAssessmentQuery, BenchmarkStore, BenchmarkSuiteQuery, ContaminationStore,
-        GovernanceStore,
+        GovernanceStore, TrainingBenchmarkCheckQuery, TrainingBenchmarkCheckStore,
     },
+    training_benchmark::{TRAINING_BENCHMARK_CHECK_PROTOCOL, TrainingInputProtocol},
 };
 
-use crate::cli::{AcceptanceStateArg, BenchmarkCommand, BenchmarkSuiteKindArg};
+use crate::cli::{
+    AcceptanceStateArg, BenchmarkCommand, BenchmarkSuiteKindArg, ContaminationStatusArg,
+};
 use crate::document::read as read_document;
 
 pub async fn execute(command: BenchmarkCommand, store: &SqliteStore) -> anyhow::Result<()> {
@@ -200,6 +203,66 @@ pub async fn execute(command: BenchmarkCommand, store: &SqliteStore) -> anyhow::
                 .await?;
             crate::presentation::print_page(&values, values.len(), page)
         }
+        BenchmarkCommand::TrainingCheckShow { id } => {
+            let check = store
+                .get_training_benchmark_check(id)
+                .await?
+                .with_context(|| format!("training-benchmark check not found: {id}"))?;
+            crate::presentation::print(&check)
+        }
+        BenchmarkCommand::TrainingCheckValidate { id } => {
+            let historical = store
+                .get_training_benchmark_check(id)
+                .await?
+                .with_context(|| format!("training-benchmark check not found: {id}"))?;
+            let report = store
+                .get_contamination_report(historical.contamination_report_id)
+                .await?
+                .context("training-benchmark contamination report not found")?;
+            match store.get_executable_training_benchmark_check(id).await {
+                Ok(Some(executable)) => crate::presentation::print(&serde_json::json!({
+                    "check_id": id,
+                    "valid": executable.fingerprint == historical.fingerprint,
+                    "training_allowed": executable.training_allowed(),
+                    "status": executable.status,
+                    "counts": report.counts,
+                    "reasons": report.reasons,
+                })),
+                Ok(None) => crate::presentation::print(&serde_json::json!({
+                    "check_id": id,
+                    "valid": false,
+                    "training_allowed": false,
+                    "status": historical.status,
+                    "reasons": ["check disappeared during executable validation"],
+                })),
+                Err(error) => crate::presentation::print(&serde_json::json!({
+                    "check_id": id,
+                    "valid": false,
+                    "training_allowed": false,
+                    "status": historical.status,
+                    "reasons": [error.to_string()],
+                })),
+            }
+        }
+        BenchmarkCommand::TrainingCheckList {
+            snapshot_id,
+            benchmark_bundle_id,
+            status,
+            page,
+        } => {
+            let values = store
+                .query_training_benchmark_checks(TrainingBenchmarkCheckQuery {
+                    training_snapshot_id: snapshot_id,
+                    benchmark_bundle_id,
+                    status: status.map(contamination_status),
+                    protocol: Some(TrainingInputProtocol::TrainAndValidationV1),
+                    check_protocol_version: Some(TRAINING_BENCHMARK_CHECK_PROTOCOL.into()),
+                    limit: page.limit,
+                    offset: page.offset,
+                })
+                .await?;
+            crate::presentation::print_page(&values, values.len(), page)
+        }
     }
 }
 
@@ -286,5 +349,16 @@ const fn acceptance_state(value: AcceptanceStateArg) -> AcceptanceState {
         AcceptanceStateArg::Fail => AcceptanceState::Fail,
         AcceptanceStateArg::Inconclusive => AcceptanceState::Inconclusive,
         AcceptanceStateArg::Invalid => AcceptanceState::Invalid,
+    }
+}
+
+const fn contamination_status(
+    value: ContaminationStatusArg,
+) -> workflow_core::contamination::ContaminationStatus {
+    match value {
+        ContaminationStatusArg::Clean => workflow_core::contamination::ContaminationStatus::Clean,
+        ContaminationStatusArg::Blocked => {
+            workflow_core::contamination::ContaminationStatus::Blocked
+        }
     }
 }

@@ -30,6 +30,7 @@ The workflow must reuse the current artifact-producing paths below.
 | Training run/checkpoint | `TrainingRunner` through `TrainingBackend`, `TrainingStore`, and `CheckpointSink` | queued/running/completed/failed/cancelled; artifact checksum and fingerprint | Workflow requests a configured run and links its verified final checkpoint |
 | Evaluation run/predictions | `EvaluationRunner` through `Predictor`, `EvaluationExampleSource`, and `EvaluationStore` | queued/running/completed/failed/cancelled; cohort/protocol/input fingerprints | Development or sealed suite execution under role/disclosure policy |
 | Benchmark bundle | `workflow-core::build_benchmark_bundle` through `BenchmarkBundleStore`; derived by workflow definition or project preparation | immutable development and optional sealed suite pins plus one strict global contamination-report pin | Decision-grade authority for the complete workflow benchmark population |
+| Training-benchmark check | `workflow-core::build_training_benchmark_check` through `TrainingBenchmarkCheckStore`; created automatically by governed training | immutable snapshot/population, train/validation cohort roles, bundle, strict combined report, protocol, status, and fingerprint | Required clean authority before trainer startup or completed-run reuse and later pinned by promotion |
 | Comparison/selection | pure `evaluation-core` comparison and immutable reports | compatible cohort/protocol fingerprints | V1/V2 evidence and deterministic acceptance input |
 | Analysis report | `analysis-core::run_analysis` through analysis evidence/store ports | immutable report/protocol/source fingerprints and normalized findings | Development-only diagnostic input |
 | Optimization proposal/review/application | `optimization-core` plus `OptimizationStore` | immutable evidence/protocol/proposal; append-only review; idempotent application | Produces bounded normal plan or training candidate after governance validation |
@@ -48,6 +49,7 @@ same application functions and runners.
 - exact initial-budget allocation policy and result;
 - cohort roles, exposure/disclosure policy, and deterministic acceptance;
 - benchmark-suite and benchmark-bundle identity and compatibility policy;
+- trainer-input protocol and immutable training-to-benchmark clearance policy;
 - workflow definition, run, iteration, stage, attempt, budget, approval envelope,
   and stop decision;
 - narrow ports for creating, starting, querying, cancelling, and linking ordinary
@@ -159,6 +161,73 @@ one holdout, multiple folds, confidence intervals, or statistical tests. The
 platform reports exposure and retirement; it does not promise that repeated
 development evaluation remains unbiased.
 
+## Training-to-benchmark firewall and long-range stewardship
+
+Every governed initial and iterative training stage must obtain an immutable
+`TrainingBenchmarkCheck` for the exact candidate snapshot and the definition's
+exact benchmark bundle. Protocol `training-benchmark-exact-v1` currently uses
+`train_and_validation_v1`: all train and validation members are treated as
+trainer-visible influence, while the snapshot's test members are outside this
+versioned input contract. Each non-empty consumed split is bound to one active
+internal cohort whose exact current role decision is `Training`.
+
+The application combines those training cohorts with every development and
+optional sealed cohort pinned by the bundle. It recomputes source-row,
+exact-text, normalized-text, and optional group overlap with the default
+zero-tolerance policy and the bundle's group dimension. The resulting report
+must cover the exact participant union and reproduce every cohort and role
+fingerprint. The check pins that report, the snapshot and trainer-population
+fingerprints, cohort bindings and counts, bundle and benchmark cohort identities,
+protocol versions, status, and its own fingerprint. Both clean and blocked
+results are immutable evidence; only clean authorizes training.
+
+This gate runs before constructing the training backend and before querying or
+accepting a reusable completed training run. A blocked overlap therefore fails
+the stage non-retryably without creating a training run or checkpoint. A clean
+check is converted to an opaque immutable training-input binding. That binding
+pins the selected-population fingerprint/count and a separately reproduced
+digest over the exact ordered labels and train/validation examples supplied
+through the backend port. The same verified member buffer builds the spool, the
+runner captures and verifies every ordered example fingerprint before backend
+startup and guards every subsequent backend read against that sealed sequence.
+Completed-run reuse requires the exact binding plus resolved training
+configuration. The clean
+check is linked to the training attempt, revalidated before development or
+iteration evaluation, and required again before sealed evaluation and
+promotion. Executable validation requires all pinned role decisions to remain
+current and active, so a later role transition closes the authority even when
+the immutable historical check remains inspectable.
+
+Stewardship is per immutable candidate, not a one-time project assertion. Every
+new snapshot/bundle/protocol combination needs its own check; a prior clean
+model, same-name cohort, or reusable checkpoint cannot transfer clearance. New
+promotions pin the exact clean check ID and fingerprint for the selected
+training snapshot, and provenance resolves the check to its snapshot, bundle,
+and combined contamination report. Checks, promotion pins, and training-input
+bindings introduced by migrations `0047`, `0048`, and `0049` do not rewrite
+older runs, checkpoints, or promotions. Historical promotions with paired null check fields remain readable
+and traceable, but absence of a check is visible legacy history rather than
+evidence of isolation and cannot satisfy a new governed promotion.
+
+Promotion creation and loading must rederive the decision from one exact
+authority chain: the selected checkpoint must be the final checkpoint of its
+completed bound run; the run's snapshot and input binding must resolve to the
+pinned clean check; and both the development and sealed assessments must name
+that same checkpoint and the workflow's exact suites. Matching standalone IDs
+or fingerprints are insufficient.
+
+The firewall covers only persisted, platform-controlled snapshot and cohort
+data. It is an exact/normalized/group identity check, not semantic or embedding
+deduplication. It cannot prove that paraphrases are unrelated, that benchmark
+content was absent from base-model pretraining, or that no equivalent data was
+used by training performed outside this platform.
+
+This is Milestone 1 of the longer-range
+[Benchmark Stewardship](benchmark-stewardship-spec.md) boundary. Planned
+deterministic benchmark qualification and any later bounded advisory benchmark
+architect remain separate milestones; they cannot waive this check, mutate its
+evidence, or gain authority over sealed data or approval.
+
 ## Benchmark suites and acceptance
 
 An immutable benchmark suite binds label vocabulary, cohort roles and splits,
@@ -240,7 +309,8 @@ budgets before writing anything. Preparation does not start the workflow;
 A resolved executable workflow proceeds through legal durable stages:
 
 ```text
-allocation -> generation -> snapshot -> training -> development evaluation
+allocation -> generation -> snapshot
+  -> training (benchmark check before trainer) -> development evaluation
   -> acceptance -> analysis -> optional advisor -> proposal
   -> awaiting approval / pre-authorization check
   -> applied diff -> next snapshot -> next training/evaluation/comparison
@@ -252,11 +322,12 @@ replaced by the stricter sequence:
 
 ```text
 generation -> quality audit -> curation review (awaiting user)
-  -> exact manifest approval -> qualified snapshot -> training
+  -> exact manifest approval -> qualified snapshot
+  -> training (benchmark check before trainer)
 
 applied diff -> generation -> iteration quality audit
-  -> iteration curation review (awaiting user)
-  -> exact manifest approval -> qualified iteration snapshot -> training
+  -> iteration curation review (awaiting user) -> exact manifest approval
+  -> qualified iteration snapshot -> training (benchmark check before trainer)
 ```
 
 The resolved workflow definition stores the complete quality policy and exact
@@ -302,6 +373,9 @@ Execution errors become explicit failed attempts; retryable failures pause and
 `workflow resume` starts the same stage with an incremented attempt number up to
 the persisted ceiling. Every new candidate currently uses the resolved
 `fresh` training policy; checkpoint continuation is not silently inferred.
+The training stage first creates or reuses the one executable check for its
+snapshot, bundle, check protocol, and trainer-input protocol. Only after that
+check is clean may it reuse a completed run or invoke the configured trainer.
 
 Development evaluation, diagnosis, advising, optimization, and paired
 comparison each append their own idempotent exposure fact. The recorded
@@ -342,14 +416,17 @@ Stop decisions reproduce from benchmark assessment, paired comparison, proposal
 eligibility, consumed budgets, and governance state. A successful development
 stop means ready for explicit final assessment, not proven final quality.
 
-Promotion is immutable history linking checkpoint, training snapshot,
-development assessment, optional sealed assessment, suite, policy, exposures,
-and provenance. There is no mutable unversioned `best model` decision.
+Promotion is immutable history linking checkpoint, training snapshot, its
+exact clean training-benchmark check, development assessment, optional sealed
+assessment, suite, policy, exposures, and provenance. Historical promotions
+created before migration `0048` retain a visible absent check pin. There is no
+mutable unversioned `best model` decision.
 
 ## CLI and UI boundary
 
 The complete workflow is scriptable through CLI preview/create/start/status/
-watch/approve/resume/cancel/finalize/promote and exposure-inspection commands.
+watch/approve/resume/cancel/finalize/promote, exposure-inspection, and benchmark
+`training-check-show|training-check-validate|training-check-list` commands.
 JSON stdout remains one machine-readable value; progress and warnings use
 stderr. No TUI, HTTP addition, or graphical workflow UI belongs to this phase.
 
@@ -359,4 +436,5 @@ This phase is complete only when the offline CLI end-to-end test executes an
 exact initial allocation, V1 generation/snapshot/training/development assessment,
 approved dataset diff, V2 training and compatible comparison, deterministic stop,
 explicit aggregate-only sealed assessment, promotion decision, recovery,
-provenance, exposure inspection, and doctor without network or credentials.
+training-to-benchmark firewall, provenance, exposure inspection, and doctor
+without network or credentials.

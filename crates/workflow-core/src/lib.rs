@@ -10,4 +10,5 @@ pub mod governance;
 pub mod ports;
 pub mod promotion;
 pub mod stop;
+pub mod training_benchmark;
 pub mod workflow;

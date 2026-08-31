@@ -1,14 +1,15 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::Context;
-use dataset_core::ports::SnapshotStore;
+use dataset_core::{ports::SnapshotStore, splitting::verify_snapshot};
 use generation_core::ports::DatasetStore;
 use recovery_core::{RecoveryStore, WorkflowKind};
 use synthetic_data_sqlite::SqliteStore;
 use training_core::{
     domain::{
-        EncoderTrainingMode, TrainingConfiguration, TrainingExample, TrainingRequest, TrainingRun,
-        TrainingRunState, TransformerTrainingConfiguration,
+        EncoderTrainingMode, TrainingConfiguration, TrainingExample, TrainingExampleSource,
+        TrainingInputBinding, TrainingRequest, TrainingRun, TrainingRunState,
+        TransformerTrainingConfiguration,
     },
     ports::{
         CheckpointSink, EncoderRegistry, PredictorLoader, TrainingBackend, TrainingRunQuery,
@@ -20,6 +21,9 @@ use training_linear::{
     HashingLinearBackend, HashingLinearPredictorLoader, LocalCheckpointStore, verify_checksum,
 };
 use training_transformer::{BertPredictorLoader, BertTrainingBackend};
+use workflow_core::training_benchmark::{
+    TrainingBenchmarkCheck, TrainingInputProtocol, training_population_fingerprint,
+};
 
 use crate::cli::{
     EncoderTrainingModeArg, TrainingBackendKind, TrainingCommand, TrainingContinueArgs,
@@ -41,6 +45,7 @@ pub async fn execute(command: TrainingCommand, store: SqliteStore) -> anyhow::Re
             let runs = store
                 .query_training_runs(TrainingRunQuery {
                     snapshot_id,
+                    input_authority_id: None,
                     state: state.map(training_state),
                     limit: page.limit,
                     offset: page.offset,
@@ -265,11 +270,152 @@ pub(crate) struct CompletedTraining {
     pub checkpoints: Vec<training_core::domain::TrainingCheckpoint>,
 }
 
-pub(crate) async fn run_workflow(
+pub(crate) struct WorkflowTrainingInput {
+    snapshot_id: uuid::Uuid,
+    labels: Vec<String>,
+    examples: Arc<dyn TrainingExampleSource>,
+    binding: TrainingInputBinding,
+}
+
+impl WorkflowTrainingInput {
+    pub(crate) const fn binding(&self) -> &TrainingInputBinding {
+        &self.binding
+    }
+
+    fn into_request(
+        self,
+        run_id: uuid::Uuid,
+        configuration: TrainingConfiguration,
+    ) -> TrainingRequest {
+        TrainingRequest {
+            run_id,
+            snapshot_id: self.snapshot_id,
+            labels: self.labels,
+            examples: self.examples,
+            configuration,
+            input_binding: Some(self.binding),
+        }
+    }
+}
+
+pub(crate) async fn prepare_workflow_input(
+    snapshot_id: uuid::Uuid,
+    check: &TrainingBenchmarkCheck,
+    store: &SqliteStore,
+) -> anyhow::Result<WorkflowTrainingInput> {
+    check.validate_integrity()?;
+    anyhow::ensure!(
+        check.training_allowed() && check.training_snapshot_id == snapshot_id,
+        "training-benchmark check does not authorize this snapshot"
+    );
+    let snapshot = store
+        .get_snapshot(snapshot_id)
+        .await?
+        .with_context(|| format!("snapshot not found: {snapshot_id}"))?;
+    let members = store.list_snapshot_members(snapshot.id).await?;
+    verify_snapshot(&snapshot, &members).context("governed training snapshot is invalid")?;
+    anyhow::ensure!(
+        snapshot.fingerprint == check.training_snapshot_fingerprint,
+        "governed training snapshot fingerprint differs from its check"
+    );
+    let protocol = TrainingInputProtocol::TrainAndValidationV1;
+    let population_fingerprint = training_population_fingerprint(&snapshot, &members, protocol)?;
+    let member_count = u64::try_from(
+        members
+            .iter()
+            .filter(|member| protocol.consumes(member.split))
+            .count(),
+    )
+    .context("trainer-visible member count overflow")?;
+    anyhow::ensure!(
+        population_fingerprint == check.training_population_fingerprint
+            && member_count == check.training_member_count,
+        "trainer-visible population differs from its immutable check"
+    );
+    let dataset = store
+        .get_dataset(snapshot.source_dataset_id)
+        .await?
+        .with_context(|| format!("source dataset not found: {}", snapshot.source_dataset_id))?;
+    let mut builder = TrainingExampleSpoolBuilder::new().map_err(anyhow::Error::msg)?;
+    for member in members {
+        builder
+            .push(
+                member.split,
+                &TrainingExample {
+                    snapshot_member_id: member.id,
+                    text: member.text,
+                    label: member.label,
+                },
+            )
+            .map_err(anyhow::Error::msg)?;
+    }
+    let examples =
+        Arc::new(builder.finish().map_err(anyhow::Error::msg)?) as Arc<dyn TrainingExampleSource>;
+    let fingerprint_request = TrainingRequest {
+        run_id: uuid::Uuid::nil(),
+        snapshot_id,
+        labels: dataset.labels.clone(),
+        examples: examples.clone(),
+        configuration: TrainingConfiguration::default(),
+        input_binding: None,
+    };
+    let binding = TrainingInputBinding {
+        protocol: protocol.stable_name().into(),
+        population_fingerprint,
+        member_count,
+        input_fingerprint: fingerprint_request.reproduce_input_fingerprint()?,
+        authority_kind: "training_benchmark_check".into(),
+        authority_id: check.id,
+        authority_fingerprint: check.fingerprint.clone(),
+    };
+    binding.validate()?;
+    Ok(WorkflowTrainingInput {
+        snapshot_id,
+        labels: dataset.labels,
+        examples,
+        binding,
+    })
+}
+
+pub(crate) fn reusable_workflow_run(
+    run: &TrainingRun,
     snapshot_id: uuid::Uuid,
     configured: &project_config::ResolvedProjectConfig,
+    binding: &TrainingInputBinding,
+) -> anyhow::Result<bool> {
+    let configuration = configured.training_configuration()?;
+    let (backend_name, model_format, base_model_id, transformer, backend_fingerprint) =
+        match configured.training.backend {
+            project_config::TrainingBackendKind::HashingLinear => {
+                ("hashing-linear", "hashing-linear-v1", None, None, None)
+            }
+            project_config::TrainingBackendKind::BertCpu => (
+                "bert-cpu",
+                "bert-classifier-v1",
+                configured.training.base_model_id,
+                Some(configured.training.transformer.clone()),
+                Some(configured.transformer_configuration_fingerprint()?),
+            ),
+        };
+    Ok(run.state == TrainingRunState::Completed
+        && run.snapshot_id == snapshot_id
+        && run.configuration == configuration
+        && run.backend_name == backend_name
+        && run.model_format == model_format
+        && run.base_model_id == base_model_id
+        && run.parent_checkpoint_id.is_none()
+        && run.transformer_configuration == transformer
+        && run.backend_configuration_fingerprint == backend_fingerprint
+        && run.input_binding.as_ref() == Some(binding))
+}
+
+pub(crate) async fn run_workflow(
+    configured: &project_config::ResolvedProjectConfig,
+    input: WorkflowTrainingInput,
     store: SqliteStore,
 ) -> anyhow::Result<CompletedTraining> {
+    let snapshot_id = input.snapshot_id;
+    let input_binding = input.binding.clone();
     let configuration = configured.training_configuration()?;
     let (backend, base_model_id, transformer_configuration, backend_fingerprint) =
         match configured.training.backend {
@@ -309,8 +455,10 @@ pub(crate) async fn run_workflow(
         None,
         transformer_configuration,
         backend_fingerprint,
-    )?;
-    let request = training_request(&store, run.id, snapshot_id, configuration).await?;
+    )?
+    .with_input_binding(input_binding.clone())?;
+    let request = input.into_request(run.id, configuration);
+    request.validate()?;
     execute_training(
         run,
         request,
@@ -335,8 +483,8 @@ async fn training_request(
         .get_dataset(snapshot.source_dataset_id)
         .await?
         .with_context(|| format!("source dataset not found: {}", snapshot.source_dataset_id))?;
-    const PAGE_SIZE: u32 = 512;
     let mut builder = TrainingExampleSpoolBuilder::new().map_err(anyhow::Error::msg)?;
+    const PAGE_SIZE: u32 = 512;
     let mut offset = 0_u32;
     loop {
         let members = store
@@ -368,6 +516,7 @@ async fn training_request(
         labels: dataset.labels,
         examples: Arc::new(builder.finish().map_err(anyhow::Error::msg)?),
         configuration,
+        input_binding: None,
     };
     request.validate()?;
     Ok(request)

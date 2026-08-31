@@ -53,8 +53,8 @@ use workflow_core::{
         AcceptanceAssessmentQuery, AdvisorStore, AdvisoryAssessmentQuery, BenchmarkBundleQuery,
         BenchmarkBundleStore, BenchmarkStore, ContaminationQuery, ContaminationStore,
         ExposureQuery, GovernanceStore, InitialAllocationQuery, InitialAllocationStore,
-        PromotionStore, StopDecisionStore, WorkflowApprovalStore, WorkflowDefinitionQuery,
-        WorkflowRunQuery, WorkflowRunStore,
+        PromotionStore, StopDecisionStore, TrainingBenchmarkCheckStore, WorkflowApprovalStore,
+        WorkflowDefinitionQuery, WorkflowRunQuery, WorkflowRunStore,
     },
     promotion::ModelPromotion,
     stop::decide,
@@ -72,6 +72,7 @@ mod artifacts;
 mod quality_gate;
 mod queries;
 mod stage_execution;
+mod training_benchmark_gate;
 
 use artifacts::{artifact_id, artifact_ids, artifact_ids_for_stage, artifact_link, link};
 use queries::{print_status, require_definition, require_run, resolve_pending_workflow_recovery};
@@ -277,6 +278,8 @@ const AUTHORITY_LOOKUP_PAGE_SIZE: u32 = 256;
 
 #[derive(Debug, Clone)]
 struct WorkflowBenchmarkAuthority {
+    bundle: BenchmarkBundle,
+    global_report: ContaminationReport,
     development: BenchmarkSuite,
     sealed: Option<BenchmarkSuite>,
 }
@@ -315,6 +318,11 @@ async fn load_workflow_benchmark_authority(
         _ => anyhow::bail!("persisted benchmark bundle has an incomplete sealed-suite pin"),
     };
     let authority = WorkflowBenchmarkAuthority {
+        global_report: store
+            .get_contamination_report(bundle.contamination_report_id)
+            .await?
+            .context("workflow benchmark bundle contamination report not found")?,
+        bundle,
         development,
         sealed,
     };
@@ -1367,10 +1375,42 @@ async fn create_promotion(
     let development = artifact_link(history, "development_acceptance_assessment")
         .or_else(|_| artifact_link(history, "acceptance_assessment"))?;
     let sealed = artifact_link(history, "sealed_acceptance_assessment")?;
+    let check_link = if artifact_link(history, "iteration_checkpoint").is_ok() {
+        artifact_link(history, "iteration_training_benchmark_check")?
+    } else {
+        artifact_link(history, "training_benchmark_check")?
+    };
+    let training_benchmark_check = store
+        .get_executable_training_benchmark_check(check_link.artifact_id)
+        .await?
+        .context("promotion training-benchmark check not found")?;
+    let bundle = definition
+        .benchmark_bundle
+        .as_ref()
+        .context("workflow definition has no benchmark bundle")?;
+    ensure!(
+        training_benchmark_check.fingerprint == check_link.artifact_fingerprint
+            && training_benchmark_check.training_snapshot_id == snapshot.artifact_id
+            && training_benchmark_check.training_snapshot_fingerprint
+                == snapshot.artifact_fingerprint
+            && training_benchmark_check.benchmark_bundle_id == bundle.bundle_id
+            && training_benchmark_check.benchmark_bundle_fingerprint == bundle.bundle_fingerprint
+            && training_benchmark_check.training_allowed(),
+        "promotion training-benchmark check is not clean authority for the selected model"
+    );
     let sealed_assessment = store
         .get_acceptance_assessment(sealed.artifact_id)
         .await?
         .context("sealed acceptance assessment not found")?;
+    let development_assessment = store
+        .get_acceptance_assessment(development.artifact_id)
+        .await?
+        .context("development acceptance assessment not found")?;
+    ensure!(
+        development_assessment.fingerprint == development.artifact_fingerprint
+            && sealed_assessment.fingerprint == sealed.artifact_fingerprint,
+        "promotion assessment artifact links differ from persisted assessments"
+    );
     let sealed_suite_id = definition
         .sealed_suite_id
         .context("workflow has no sealed suite")?;
@@ -1380,8 +1420,8 @@ async fn create_promotion(
         checkpoint.artifact_fingerprint,
         snapshot.artifact_id,
         snapshot.artifact_fingerprint,
-        development.artifact_id,
-        development.artifact_fingerprint,
+        &training_benchmark_check,
+        &development_assessment,
         &sealed_assessment,
         definition.development_suite_id,
         definition.development_suite_fingerprint.clone(),

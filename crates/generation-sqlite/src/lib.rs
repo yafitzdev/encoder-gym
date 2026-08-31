@@ -23,6 +23,7 @@ mod research;
 mod semantic;
 mod stop;
 mod training;
+mod training_benchmark;
 mod workflow;
 mod workflow_run;
 

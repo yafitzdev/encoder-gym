@@ -199,14 +199,26 @@ async fn detects_dead_owners_preserves_live_work_and_resumes_generation_from_cov
     store
         .save_training_run(&training)
         .await
-        .expect("training state");
+        .expect("training entered running state");
+    training.completed_epochs = 1;
+    training.current_epoch = 1;
+    training.completed_batches = 1;
+    training.batches_in_epoch = 1;
+    training.processed_examples = 1;
+    training.latest_training_loss = Some(1.0);
+    training.latest_learning_rate = Some(0.1);
+    training.elapsed_milliseconds = 1;
+    store
+        .save_training_run(&training)
+        .await
+        .expect("training progress");
     let checkpoint = TrainingCheckpoint {
         id: uuid::Uuid::new_v4(),
         run_id: training.id,
         epoch: 1,
         artifact_path: "artifacts/interrupted/model.bin".into(),
         artifact_checksum: "sha256:test".into(),
-        artifact_size_bytes: 0,
+        artifact_size_bytes: 1,
         model_format: "hashing-linear-v1".into(),
         training_loss: 1.0,
         validation_loss: None,

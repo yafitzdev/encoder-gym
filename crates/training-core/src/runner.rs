@@ -33,7 +33,7 @@ impl TrainingRunner {
         run_id: Uuid,
         request: TrainingRequest,
     ) -> Result<TrainingRun, TrainingRunnerError> {
-        request.validate()?;
+        let request = request.seal_for_backend()?;
         if request.run_id != run_id {
             return Err(TrainingRunnerError::RequestRunMismatch);
         }
@@ -45,7 +45,10 @@ impl TrainingRunner {
         if run.state != TrainingRunState::Queued {
             return Err(TrainingRunnerError::RunNotQueued(run.state));
         }
-        if run.snapshot_id != request.snapshot_id || run.configuration != request.configuration {
+        if run.snapshot_id != request.snapshot_id
+            || run.configuration != request.configuration
+            || run.input_binding != request.input_binding
+        {
             return Err(TrainingRunnerError::RequestRunMismatch);
         }
         if run.cancel_requested {

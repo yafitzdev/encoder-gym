@@ -3728,8 +3728,10 @@ dependencies = [
 name = "training-core"
 version = "0.1.0"
 dependencies = [
+ "artifact-core",
  "chrono",
  "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "uuid",
 ]

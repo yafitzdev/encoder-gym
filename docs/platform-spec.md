@@ -26,6 +26,7 @@ compose their normal application contracts into a durable local run:
 Workflow Orchestration
   -> generation plan/job
   -> immutable snapshot
+  -> immutable training-to-benchmark check
   -> training run/checkpoint
   -> development benchmark evaluation
   -> analysis and optional advisory interpretation
@@ -45,6 +46,21 @@ their exact combined cohort population. Preparation is read-only during preview
 and atomic during creation. It derives identities and fingerprints from
 persisted snapshot evidence; it does not import hidden defaults, run a slice, or
 weaken any governance check.
+
+Before governed training starts, the workflow creates or revalidates an
+immutable `TrainingBenchmarkCheck` between the exact trainer-visible population
+and that benchmark bundle. The current version treats the snapshot's train and
+validation members as model-influencing input, persists the combined strict
+contamination report, and blocks before either backend startup or completed-run
+reuse unless the check is clean. Each later immutable candidate snapshot gets
+its own check, and the selected check is pinned through final promotion and
+provenance rather than being inferred from a historical model name.
+
+This firewall is the first implemented milestone of
+[Benchmark Stewardship](benchmark-stewardship-spec.md). Later stewardship may
+add deterministic benchmark qualification and a bounded advisory benchmark
+architect, but neither may weaken deterministic eligibility, expose sealed row
+content for adaptation, or turn advisory output into approval authority.
 
 A pilot bootstrap layer may resolve local JSONL/CSV cohort declarations into
 ordinary completed imports and immutable all-test snapshots before invoking the
@@ -104,6 +120,9 @@ manifest to the resulting snapshot. See
 - Every new workflow definition binds one immutable benchmark bundle. Its
   development and optional sealed suites are globally disjoint, and an override
   cannot authorize contamination in their strict global report.
+- Every governed initial or iterative training run or completed-run reuse
+  requires one clean immutable training-to-benchmark check for its exact
+  snapshot, trainer-input protocol, and benchmark bundle.
 
 ## Slice definitions
 
@@ -116,6 +135,7 @@ manifest to the resulting snapshot. See
 - [Authenticity Research Agent](research-agent-spec.md)
 - [Dataset Architect](dataset-architect-spec.md)
 - [Dataset Qualification and Curation](dataset-quality-spec.md)
+- [Benchmark Stewardship](benchmark-stewardship-spec.md)
 
 Cross-slice composition is specified separately in
 [Controlled Workflow and Evaluation Governance](workflow-governance-spec.md).
@@ -128,6 +148,13 @@ agents, bandits, reinforcement learning, automatic external spending outside a
 persisted finite budget, or semantic deduplication. Optimization remains
 deterministic recommendation logic. The workflow layer may execute a bounded,
 pre-authorized state machine but never an open-ended agent loop.
+
+The training-to-benchmark firewall governs only data visible through the
+platform's persisted snapshots and cohorts. It checks exact source-row identity,
+exact text, normalized text, and an optional declared group identity. It is not
+semantic or embedding deduplication, cannot prove that paraphrases are
+independent, and cannot prove that benchmark content was absent from a base
+model's pretraining data or from training performed outside the platform.
 
 ## Platform completion criterion
 

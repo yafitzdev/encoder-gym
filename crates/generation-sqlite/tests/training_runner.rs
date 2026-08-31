@@ -19,8 +19,8 @@ use generation_test_support::{FakeGenerationBackend, persist_test_generation_exe
 use synthetic_data_sqlite::SqliteStore;
 use training_core::{
     domain::{
-        BatchMetrics, TrainingConfiguration, TrainingExample, TrainingRequest, TrainingRun,
-        TrainingRunState,
+        BatchMetrics, TrainingCheckpoint, TrainingConfiguration, TrainingExample, TrainingRequest,
+        TrainingRun, TrainingRunState,
     },
     ports::{
         CheckpointSink, PredictorLoader, TrainingBackend, TrainingBackendError, TrainingSession,
@@ -331,6 +331,77 @@ async fn cancellation_is_observed_between_batches_and_keeps_completed_checkpoint
             .len(),
         1
     );
+}
+
+#[tokio::test]
+async fn persistence_rejects_skipped_lifecycle_and_unbacked_completion() {
+    let (_directory, store) = store().await;
+    let (_dataset, snapshot, _members) = generated_snapshot(&store).await;
+    let configuration = TrainingConfiguration {
+        epochs: 1,
+        checkpoint_every: 1,
+        ..TrainingConfiguration::default()
+    };
+    let queued = TrainingRun::queued(
+        snapshot.id,
+        "hashing-linear",
+        "hashing-linear-v1",
+        configuration,
+    )
+    .expect("queued run");
+
+    let mut fabricated = queued.clone();
+    fabricated.state = TrainingRunState::Completed;
+    fabricated.completed_epochs = 1;
+    fabricated.current_epoch = 1;
+    fabricated.completed_batches = 1;
+    fabricated.batches_in_epoch = 1;
+    fabricated.processed_examples = 1;
+    fabricated.latest_training_loss = Some(0.1);
+    fabricated.latest_learning_rate = Some(0.1);
+    assert!(store.create_training_run(&fabricated).await.is_err());
+
+    store
+        .create_training_run(&queued)
+        .await
+        .expect("canonical queued run");
+    let mut completed = queued.clone();
+    completed
+        .transition(TrainingRunState::Running)
+        .expect("running");
+    store
+        .save_training_run(&completed)
+        .await
+        .expect("persist running");
+    completed.completed_epochs = 1;
+    completed.current_epoch = 1;
+    completed.completed_batches = 1;
+    completed.batches_in_epoch = 1;
+    completed.processed_examples = 1;
+    completed.latest_training_loss = Some(0.1);
+    completed.latest_learning_rate = Some(0.1);
+    completed
+        .transition(TrainingRunState::Completed)
+        .expect("completed shape");
+    assert!(
+        store.save_training_run(&completed).await.is_err(),
+        "completion requires a final checkpoint committed while running"
+    );
+
+    let invalid_checkpoint = TrainingCheckpoint {
+        id: uuid::Uuid::new_v4(),
+        run_id: queued.id,
+        epoch: 1,
+        artifact_path: "artifacts/forged.bin".into(),
+        artifact_checksum: "sha256:forged".into(),
+        artifact_size_bytes: 0,
+        model_format: queued.model_format,
+        training_loss: 0.1,
+        validation_loss: None,
+        is_final: true,
+        created_at: chrono::Utc::now(),
+    };
+    assert!(store.create_checkpoint(&invalid_checkpoint).await.is_err());
 }
 
 async fn generated_snapshot(

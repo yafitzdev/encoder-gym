@@ -1,6 +1,6 @@
 //! Deterministic cross-cohort leakage checks and explicit overrides.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use chrono::{DateTime, Utc};
 use dataset_core::domain::SnapshotMember;
@@ -308,9 +308,31 @@ fn compare_pair(
     right: &CohortContaminationInput,
     findings: &mut Vec<ContaminationFinding>,
 ) -> Result<(), ContaminationError> {
+    // Index the right population once. Workflow training snapshots can contain
+    // tens of thousands of rows; repeatedly normalizing every all-pairs text
+    // comparison would otherwise make this trust boundary quadratic.
+    let mut by_source = HashMap::<Uuid, Vec<&ContaminationMember>>::new();
+    let mut by_exact = HashMap::<&str, Vec<&ContaminationMember>>::new();
+    let mut by_normalized = HashMap::<String, Vec<&ContaminationMember>>::new();
+    let mut by_group = HashMap::<&str, Vec<&ContaminationMember>>::new();
+    for member in &right.members {
+        by_source
+            .entry(member.source_row_id)
+            .or_default()
+            .push(member);
+        by_exact.entry(&member.text).or_default().push(member);
+        by_normalized
+            .entry(normalize_text(&member.text))
+            .or_default()
+            .push(member);
+        if let Some(group) = member.group_id.as_deref() {
+            by_group.entry(group).or_default().push(member);
+        }
+    }
+
     for left_member in &left.members {
-        for right_member in &right.members {
-            if left_member.source_row_id == right_member.source_row_id {
+        if let Some(matches) = by_source.get(&left_member.source_row_id) {
+            for right_member in matches {
                 add_finding(
                     ContaminationKind::SourceRow,
                     left,
@@ -321,7 +343,9 @@ fn compare_pair(
                     findings,
                 )?;
             }
-            if left_member.text == right_member.text {
+        }
+        if let Some(matches) = by_exact.get(left_member.text.as_str()) {
+            for right_member in matches {
                 add_finding(
                     ContaminationKind::ExactText,
                     left,
@@ -332,9 +356,10 @@ fn compare_pair(
                     findings,
                 )?;
             }
-            let left_normalized = normalize_text(&left_member.text);
-            let right_normalized = normalize_text(&right_member.text);
-            if left_normalized == right_normalized {
+        }
+        let left_normalized = normalize_text(&left_member.text);
+        if let Some(matches) = by_normalized.get(&left_normalized) {
+            for right_member in matches {
                 add_finding(
                     ContaminationKind::NormalizedText,
                     left,
@@ -345,10 +370,10 @@ fn compare_pair(
                     findings,
                 )?;
             }
-            if let (Some(left_group), Some(right_group)) =
-                (&left_member.group_id, &right_member.group_id)
-            {
-                if left_group == right_group {
+        }
+        if let Some(left_group) = left_member.group_id.as_deref() {
+            if let Some(matches) = by_group.get(left_group) {
+                for right_member in matches {
                     add_finding(
                         ContaminationKind::Group,
                         left,

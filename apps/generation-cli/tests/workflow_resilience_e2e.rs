@@ -16,7 +16,7 @@ use serde_json::Value;
 use workflow_core::workflow::{WorkflowQualityAuthenticity, WorkflowQualityGateRequest};
 
 use support::{
-    run_json,
+    run, run_json,
     workflow_fixture::{GenerationMode, WorkflowFixture},
 };
 
@@ -363,6 +363,21 @@ fn interrupted_workflow_resumes_once_and_then_stays_idempotent() {
     ));
     assert_eq!(artifact_count(&resumed, "initial_allocation"), 1);
     assert_eq!(artifact_count(&resumed, "generation_plan"), 1);
+    let training_run_id = latest_artifact_id(&resumed, "training_run");
+    let training_check_id = latest_artifact_id(&resumed, "training_benchmark_check");
+    let training_run = run_json(
+        fixture.database_url(),
+        ["training", "status", &training_run_id],
+    );
+    assert_eq!(
+        training_run["input_binding"]["authority_id"],
+        training_check_id
+    );
+    assert_eq!(
+        training_run["input_binding"]["authority_kind"],
+        "training_benchmark_check"
+    );
+    assert!(training_run["input_binding"]["input_fingerprint"].is_string());
 
     let attempt_count = resumed["attempt_count"].clone();
     let latest_attempt_id = resumed["latest_attempt"]["id"].clone();
@@ -384,6 +399,139 @@ fn interrupted_workflow_resumes_once_and_then_stays_idempotent() {
     assert_eq!(
         run_json(fixture.database_url(), ["doctor"])["healthy"],
         true
+    );
+}
+
+#[test]
+fn benchmark_overlap_blocks_before_any_training_run_and_persists_the_check() {
+    let fixture = WorkflowFixture::new(GenerationMode::Fake);
+    let manifest_path = fixture.write_variant("leakage-firewall.toml", |manifest| {
+        manifest.project.snapshot.train_ratio = 1.0;
+        manifest.project.snapshot.validation_ratio = 0.0;
+        manifest.project.snapshot.test_ratio = 0.0;
+    });
+    let prepared = run_json(
+        fixture.database_url(),
+        [
+            "project",
+            "prepare",
+            manifest_path.to_str().expect("UTF-8 manifest path"),
+        ],
+    );
+    let definition_id = string_at(&prepared, "/preparation/workflow_definition_id");
+    let dataset_id = string_at(&prepared, "/preparation/dataset_id");
+    let input_path = manifest_path
+        .parent()
+        .expect("manifest directory")
+        .join("contaminated-training.jsonl");
+    std::fs::write(
+        &input_path,
+        concat!(
+            r#"{"text":"Why was I charged twice?","label":"billing","difficulty":"easy","writing_style":"clean","ambiguity":"obvious"}"#,
+            "\n"
+        ),
+    )
+    .expect("contaminated input writes");
+    let imported = run_json(
+        fixture.database_url(),
+        [
+            "dataset",
+            "import",
+            &dataset_id,
+            "--input",
+            input_path.to_str().expect("UTF-8 input path"),
+            "--format",
+            "jsonl",
+            "--dimension",
+            "difficulty=difficulty",
+            "--dimension",
+            "writing_style=writing_style",
+            "--dimension",
+            "ambiguity=ambiguity",
+        ],
+    );
+    assert_eq!(imported["accepted_rows"], 1);
+
+    let blocked = run_json(
+        fixture.database_url(),
+        ["workflow", "start", &definition_id],
+    );
+    assert_eq!(blocked["run"]["state"], "failed");
+    assert_eq!(blocked["latest_attempt"]["stage"], "training");
+    assert_eq!(blocked["latest_attempt"]["state"], "failed");
+    assert_eq!(blocked["latest_attempt"]["retryable"], false);
+    assert!(
+        blocked["latest_attempt"]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("blocked before backend startup"))
+    );
+    assert_eq!(artifact_count(&blocked, "training_benchmark_check"), 1);
+    assert_eq!(artifact_count(&blocked, "training_run"), 0);
+    assert_eq!(artifact_count(&blocked, "checkpoint"), 0);
+
+    let check_id = latest_artifact_id(&blocked, "training_benchmark_check");
+    let check = run_json(
+        fixture.database_url(),
+        ["benchmark", "training-check-show", &check_id],
+    );
+    assert_eq!(check["status"], "blocked");
+    assert!(
+        check["training_member_count"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
+    );
+    let validation = run_json(
+        fixture.database_url(),
+        ["benchmark", "training-check-validate", &check_id],
+    );
+    assert_eq!(validation["valid"], true);
+    assert_eq!(validation["training_allowed"], false);
+    assert!(
+        validation["reasons"]
+            .as_array()
+            .is_some_and(|reasons| !reasons.is_empty())
+    );
+    let report_id = string_at(&check, "/contamination_report_id");
+    let forbidden_override = run(
+        fixture.database_url(),
+        [
+            "contamination",
+            "override",
+            &report_id,
+            "--reason",
+            "must remain forbidden",
+            "--approved-by",
+            "workflow-test",
+        ],
+    );
+    assert!(!forbidden_override.status.success());
+    assert!(
+        String::from_utf8_lossy(&forbidden_override.stderr)
+            .contains("training-benchmark contamination reports cannot be overridden")
+    );
+    let listed = run_json(
+        fixture.database_url(),
+        [
+            "benchmark",
+            "training-check-list",
+            "--snapshot-id",
+            string_at(&check, "/training_snapshot_id").as_str(),
+        ],
+    );
+    assert_eq!(listed.as_array().expect("check list").len(), 1);
+    let trace = run_json(
+        fixture.database_url(),
+        ["provenance", "training-benchmark-check", &check_id],
+    );
+    let parent_kinds = trace["parents"]
+        .as_array()
+        .expect("check provenance parents")
+        .iter()
+        .map(|parent| parent["kind"].as_str().expect("parent kind"))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        parent_kinds,
+        std::collections::BTreeSet::from(["snapshot", "benchmark_bundle", "contamination_report",])
     );
 }
 

@@ -95,13 +95,16 @@ runner never imports or invokes the architect runner.
 
 `workflow-core` owns only cross-slice policy: initial finite allocation,
 evaluation roles and exposure rules, benchmark acceptance contracts, immutable
-benchmark-bundle authority, durable workflow state, approval envelopes, stop
-decisions, and the ports required to request or inspect ordinary slice
+benchmark-bundle authority, the versioned `TrainingInputProtocol` and
+`TrainingBenchmarkCheck` firewall, durable workflow state, approval envelopes,
+stop decisions, and the ports required to request or inspect ordinary slice
 artifacts. A bundle binds the development and optional sealed suite fingerprints
-to one zero-tolerance report over their exact cohort union. It must not import
-SQLite, CLI, provider, Candle, Axum, or adapter types. The CLI application
-assembles the concrete slice runners and workflow ports; SQLite implements
-workflow persistence in feature-owned adapter modules.
+to one zero-tolerance report over their exact cohort union. A training check
+then binds one immutable snapshot's exact trainer-visible population to that
+bundle and a separately persisted strict combined contamination report. It must
+not import SQLite, CLI, provider, Candle, Axum, or adapter types. The CLI
+application assembles the concrete slice runners and workflow ports; SQLite
+implements workflow persistence in feature-owned adapter modules.
 
 Historical bundle reads verify the immutable pinned suite, role-decision,
 report, snapshot, and member evidence without pretending that a past role
@@ -109,6 +112,27 @@ decision is still current. Executable workflow loading adds the stricter
 requirement that each pinned role decision is the current active decision. The
 CLI repeats that check before every running stage and derives all development or
 sealed suite use from the loaded bundle authority.
+
+The workflow application constructs or reloads the training check before it
+queries for a reusable completed training run and before it starts a trainer.
+For `train_and_validation_v1`, every non-empty train or validation split is
+represented by one active internal cohort with a pinned `Training` role
+decision; test members are outside that versioned trainer-input contract. The
+SQLite adapter atomically persists any new training cohorts and roles, the
+combined contamination report, and the immutable check. Executable reload
+revalidates current roles, while historical reload retains the originally
+pinned evidence. A clean check is linked to later evaluation, sealed assessment,
+and promotion stages so checkpoint reuse cannot bypass the firewall.
+
+The training runner seals the example source before a backend receives it. It
+captures one fingerprint per ordered example, reproduces the input binding,
+and wraps subsequent backend reads in per-position fingerprint checks. A
+mutable or nondeterministic source therefore cannot pass verification and then
+serve different text to the trainer. Training persistence independently
+enforces queued-only creation, legal one-batch lifecycle transitions, and an
+exact final checkpoint before completion. Promotion persistence derives the
+decision again from the selected final checkpoint, its completed run and input
+binding, the clean check, and both checkpoint-bound assessments.
 
 The generation core owns deterministic Cartesian cardinality and expansion,
 including the local cell-count safety invariant. Workflow allocation consumes
@@ -265,7 +289,23 @@ store. `training-transformer` is the Candle/Tokenizers adapter for the exact
 local BERT bundle described in ADR 001. Candle tensors, tokenizer encodings,
 BERT configuration types, and optimizer internals do not cross into core.
 
-The CLI pages immutable snapshot members into an ephemeral local spool. The
+The governed training-to-benchmark check is deliberately outside
+`training-core`: it is cross-slice policy owned by `workflow-core` and assembled
+by the workflow application. `training-core` owns only an opaque
+`TrainingInputBinding`: protocol, population identity/count, a digest reproduced
+from the exact ordered labels and train/validation examples visible through the
+backend port, and an external authority identity/fingerprint. The runner
+requires the request and persisted run to carry the identical binding and
+reproduces the backend-facing digest before startup. Trainer adapters receive
+only the authorized training examples and never benchmark rows, suite types, or
+contamination reports. The gate runs before both backend construction and
+completed-run reuse.
+
+Standalone CLI training pages immutable snapshot members into an ephemeral
+local spool. Governed training first loads and verifies complete snapshot
+membership, reproduces the check's population fingerprint, and builds the spool
+from that same in-memory member set so a database reread cannot change the
+trainer input. The
 transformer backend keeps member IDs for deterministic ordering and loads only
 the active text batch; it never holds the complete tokenized dataset.
 
@@ -311,6 +351,13 @@ have a clean zero-tolerance contamination report with no override. Workflow
 artifact links contain identities, fingerprints, bounded state, and
 compatibility facts rather than copied datasets, predictions, checkpoints, or
 proposal payloads.
+
+Its `TrainingBenchmarkCheck` constructor separately validates the immutable
+train-plus-validation population against that bundle under the same group
+identity and default zero-tolerance policy. The resulting clean or blocked
+artifact pins snapshot, population, training cohorts and roles, bundle,
+benchmark cohort set, combined report, protocol version, and fingerprint. A
+blocked check remains durable evidence but cannot authorize training.
 
 The dependency direction is deliberately outward from the workflow core's
 ports:
@@ -393,15 +440,26 @@ are not silently replayed under the same artifact identity.
 
 Snapshots, registered base-model bundles, resolved configurations, evaluation
 inputs, analysis protocols/reports, optimization evidence/proposals, reviews,
-benchmark suites, global contamination reports, benchmark bundles, campaign
-links, and outcomes have deterministic SHA-256 fingerprints. A workflow
-definition pins its exact bundle binding, and the bundle pins suite and report
-identities plus fingerprints. Floating point inputs are normalized through their
-persisted JSON representation before hashing so identities reproduce after
-reload. Checkpoint
+benchmark suites, global and training-combined contamination reports, benchmark
+bundles, training-benchmark checks, campaign links, promotions, and outcomes
+have deterministic SHA-256 fingerprints. A workflow definition pins its exact
+bundle binding, the bundle pins suite and global-report identities, and each
+training check pins the exact trainer-visible snapshot population plus its
+combined report. New promotions pin the selected clean check ID and fingerprint.
+Provenance therefore resolves a training check to its snapshot, bundle, and
+combined report, and resolves a promotion through that check; legacy promotions
+without the nullable pin remain readable and simply lack that edge. Floating
+point inputs are normalized through their persisted JSON representation before
+hashing so identities reproduce after reload. Checkpoint
 bytes are checksum-verified before every production load. Provenance traces are
 built from persisted foreign keys and source-row provenance, not presentation
 state.
+
+Workflow provenance treats stage links as shallow immutable references instead
+of recursively embedding each linked artifact's complete ancestry. Tracing the
+linked artifact still resolves its full owner-specific graph. This keeps a
+workflow run usable as an index over a long iterative history without creating
+an exponentially repeated provenance tree.
 
 Analysis findings and representative prediction links are normalized in
 SQLite. Human finding reviews are append-only children; changing review state

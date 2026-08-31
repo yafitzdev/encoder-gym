@@ -59,7 +59,8 @@ use training_core::ports::{EncoderRegistry, TrainingStore};
 use uuid::Uuid;
 use workflow_core::ports::{
     AdvisorStore, BenchmarkBundleStore, BenchmarkStore, ContaminationStore, InitialAllocationStore,
-    PromotionStore, StopDecisionStore, WorkflowApprovalStore, WorkflowRunStore,
+    PromotionStore, StopDecisionStore, TrainingBenchmarkCheckStore, WorkflowApprovalStore,
+    WorkflowRunStore,
 };
 
 use super::SqliteStore;
@@ -154,6 +155,9 @@ impl ProvenanceStore for SqliteStore {
                 ArtifactKind::BenchmarkSuite => self.benchmark_suite_node(id).await,
                 ArtifactKind::ContaminationReport => self.contamination_report_node(id).await,
                 ArtifactKind::BenchmarkBundle => self.benchmark_bundle_node(id).await,
+                ArtifactKind::TrainingBenchmarkCheck => {
+                    self.training_benchmark_check_node(id).await
+                }
                 ArtifactKind::WorkflowDefinition => self.workflow_definition_node(id).await,
                 ArtifactKind::WorkflowRun => self.workflow_run_node(id).await,
                 ArtifactKind::AcceptanceAssessment => self.acceptance_node(id).await,
@@ -824,6 +828,62 @@ impl SqliteStore {
         )?))
     }
 
+    async fn training_benchmark_check_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(value) = self
+            .get_training_benchmark_check(id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        // This check is an authority edge, not a second ownership path for the
+        // entire snapshot lineage. Keep the parent shallow: workflow
+        // provenance already contains the snapshot itself, often through the
+        // training run and checkpoint as well. Expanding the same qualified
+        // snapshot recursively through every one of those DAG edges can make
+        // an otherwise finite provenance graph exceed the process stack while
+        // serializing it.
+        let snapshot = required_provenance_parent(
+            Box::pin(self.snapshot_reference_node(value.training_snapshot_id)).await?,
+            "training-benchmark check snapshot",
+        )?;
+        require_node_fingerprint(
+            &snapshot,
+            &value.training_snapshot_fingerprint,
+            "training-benchmark check snapshot",
+        )?;
+        let bundle = required_provenance_parent(
+            self.benchmark_bundle_node(value.benchmark_bundle_id)
+                .await?,
+            "training-benchmark check bundle",
+        )?;
+        require_node_fingerprint(
+            &bundle,
+            &value.benchmark_bundle_fingerprint,
+            "training-benchmark check bundle",
+        )?;
+        let report = required_provenance_parent(
+            self.contamination_report_node(value.contamination_report_id)
+                .await?,
+            "training-benchmark check contamination report",
+        )?;
+        require_node_fingerprint(
+            &report,
+            &value.contamination_report_fingerprint,
+            "training-benchmark check contamination report",
+        )?;
+        Ok(Some(node(
+            ArtifactKind::TrainingBenchmarkCheck,
+            id,
+            Some(value.fingerprint.clone()),
+            &value,
+            vec![snapshot, bundle, report],
+        )?))
+    }
+
     async fn workflow_definition_node(
         &self,
         id: Uuid,
@@ -880,57 +940,21 @@ impl SqliteStore {
             .into_iter()
             .collect::<Vec<_>>();
         for artifact in attempts.iter().flat_map(|attempt| &attempt.artifacts) {
-            let parent = match artifact.kind.as_str() {
-                "generation_plan" | "iteration_generation_plan" => {
-                    self.plan_node(artifact.artifact_id).await?
-                }
-                "initial_allocation" => self.initial_allocation_node(artifact.artifact_id).await?,
-                "generation_job" | "dataset_diff_generation_job" => {
-                    self.job_node(artifact.artifact_id).await?
-                }
-                "quality_audit_plan" | "iteration_quality_audit_plan" => {
-                    self.quality_audit_plan_node(artifact.artifact_id).await?
-                }
-                "quality_audit_run" | "iteration_quality_audit_run" => {
-                    Box::pin(self.quality_audit_run_node(artifact.artifact_id)).await?
-                }
-                "quality_report" | "iteration_quality_report" => {
-                    Box::pin(self.dataset_quality_report_node(artifact.artifact_id)).await?
-                }
-                "curation_proposal" | "iteration_curation_proposal" => {
-                    Box::pin(self.curation_proposal_node(artifact.artifact_id)).await?
-                }
-                "curation_manifest_review" => {
-                    Box::pin(self.curation_manifest_review_node(artifact.artifact_id)).await?
-                }
-                "quality_manifest" | "iteration_quality_manifest" => {
-                    Box::pin(self.approved_curation_manifest_node(artifact.artifact_id)).await?
-                }
-                "curation_application" | "iteration_curation_application" => {
-                    Box::pin(self.curation_application_node(artifact.artifact_id)).await?
-                }
-                "snapshot" | "iteration_snapshot" => {
-                    self.snapshot_node(artifact.artifact_id).await?
-                }
-                "training_run" | "iteration_training_run" => {
-                    self.training_node(artifact.artifact_id).await?
-                }
-                "checkpoint" | "iteration_checkpoint" => {
-                    self.checkpoint_node(artifact.artifact_id).await?
-                }
-                "evaluation_run" | "iteration_evaluation_run" | "sealed_evaluation_run" => {
-                    self.evaluation_node(artifact.artifact_id).await?
-                }
-                "evaluation_comparison" => self.comparison_node(artifact.artifact_id).await?,
-                "analysis_report" | "followup_analysis_report" => {
-                    self.analysis_node(artifact.artifact_id).await?
-                }
-                "optimization_proposal" => self.optimization_node(artifact.artifact_id).await?,
-                "proposal_review" => self.optimization_review_node(artifact.artifact_id).await?,
-                _ => None,
-            };
-            if let Some(parent) = parent {
-                parents.push(parent);
+            if let Some(kind) = workflow_artifact_kind(&artifact.kind) {
+                // A workflow is already an immutable index over completed
+                // stage artifacts. Represent those edges as references instead
+                // of recursively expanding the same provenance DAG once per
+                // link. Direct artifact traces remain the checked, full view.
+                parents.push(ProvenanceNode {
+                    kind,
+                    id: artifact.artifact_id,
+                    fingerprint: Some(artifact.artifact_fingerprint.clone()),
+                    attributes: serde_json::json!({
+                        "workflow_artifact_kind": artifact.kind,
+                        "reference_only": true,
+                    }),
+                    parents: Vec::new(),
+                });
             }
         }
         Ok(Some(node(
@@ -1068,6 +1092,21 @@ impl SqliteStore {
         }
         if let Some(parent) = self.snapshot_node(value.training_snapshot_id).await? {
             parents.push(parent);
+        }
+        if let (Some(check_id), Some(check_fingerprint)) = (
+            value.training_benchmark_check_id,
+            value.training_benchmark_check_fingerprint.as_deref(),
+        ) {
+            let check = required_provenance_parent(
+                self.training_benchmark_check_node(check_id).await?,
+                "model promotion training-benchmark check",
+            )?;
+            require_node_fingerprint(
+                &check,
+                check_fingerprint,
+                "model promotion training-benchmark check",
+            )?;
+            parents.push(check);
         }
         if let Some(parent) = self
             .acceptance_node(value.development_assessment_id)
@@ -3167,6 +3206,12 @@ impl SqliteStore {
         let Some(run) = self.get_training_run(id).await.map_err(store_error)? else {
             return Ok(None);
         };
+        if run.input_binding.is_some() {
+            let mut connection = self.pool().acquire().await.map_err(store_error)?;
+            crate::training::validate_training_input_authority(&mut connection, &run, false)
+                .await
+                .map_err(store_error)?;
+        }
         let mut parents = self
             .snapshot_node(run.snapshot_id)
             .await?
@@ -3183,6 +3228,25 @@ impl SqliteStore {
             {
                 parents.push(parent_checkpoint);
             }
+        }
+        if let Some(binding) = &run.input_binding {
+            if binding.authority_kind != "training_benchmark_check" {
+                return Err(store_error(format!(
+                    "unsupported training input authority in provenance: {}",
+                    binding.authority_kind
+                )));
+            }
+            let check = required_provenance_parent(
+                self.training_benchmark_check_node(binding.authority_id)
+                    .await?,
+                "training run input authority",
+            )?;
+            require_node_fingerprint(
+                &check,
+                &binding.authority_fingerprint,
+                "training run input authority",
+            )?;
+            parents.push(check);
         }
         Ok(Some(node(
             ArtifactKind::TrainingRun,
@@ -4258,6 +4322,49 @@ fn require_node_fingerprint(
         Ok(())
     } else {
         Err(store_error(format!("{description} fingerprint mismatch")))
+    }
+}
+
+fn workflow_artifact_kind(value: &str) -> Option<ArtifactKind> {
+    match value {
+        "generation_plan" | "iteration_generation_plan" => Some(ArtifactKind::GenerationPlan),
+        "initial_allocation" => Some(ArtifactKind::InitialAllocation),
+        "generation_job" | "dataset_diff_generation_job" => Some(ArtifactKind::GenerationJob),
+        "quality_audit_plan" | "iteration_quality_audit_plan" => {
+            Some(ArtifactKind::QualityAuditPlan)
+        }
+        "quality_audit_run" | "iteration_quality_audit_run" => Some(ArtifactKind::QualityAuditRun),
+        "quality_report" | "iteration_quality_report" => Some(ArtifactKind::DatasetQualityReport),
+        "curation_proposal" | "iteration_curation_proposal" => Some(ArtifactKind::CurationProposal),
+        "curation_manifest_review" => Some(ArtifactKind::CurationManifestReview),
+        "quality_manifest" | "iteration_quality_manifest" => {
+            Some(ArtifactKind::ApprovedCurationManifest)
+        }
+        "curation_application" | "iteration_curation_application" => {
+            Some(ArtifactKind::CurationApplication)
+        }
+        "snapshot" | "iteration_snapshot" => Some(ArtifactKind::Snapshot),
+        "training_run" | "iteration_training_run" => Some(ArtifactKind::TrainingRun),
+        "training_benchmark_check" | "iteration_training_benchmark_check" => {
+            Some(ArtifactKind::TrainingBenchmarkCheck)
+        }
+        "checkpoint" | "iteration_checkpoint" => Some(ArtifactKind::Checkpoint),
+        "evaluation_run" | "iteration_evaluation_run" | "sealed_evaluation_run" => {
+            Some(ArtifactKind::EvaluationRun)
+        }
+        "evaluation_comparison" => Some(ArtifactKind::EvaluationComparison),
+        "acceptance_assessment"
+        | "development_acceptance_assessment"
+        | "sealed_acceptance_assessment"
+        | "development_acceptance_pass" => Some(ArtifactKind::AcceptanceAssessment),
+        "advisory_assessment" => Some(ArtifactKind::AdvisoryAssessment),
+        "analysis_report" | "followup_analysis_report" => Some(ArtifactKind::AnalysisReport),
+        "optimization_proposal" => Some(ArtifactKind::OptimizationProposal),
+        "proposal_review" => Some(ArtifactKind::OptimizationProposalReview),
+        "workflow_approval" => Some(ArtifactKind::WorkflowApproval),
+        "stop_decision" => Some(ArtifactKind::StopDecision),
+        "model_promotion" => Some(ArtifactKind::ModelPromotion),
+        _ => None,
     }
 }
 

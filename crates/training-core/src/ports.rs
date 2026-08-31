@@ -11,6 +11,7 @@ use crate::domain::{
 #[derive(Debug, Clone, Copy)]
 pub struct TrainingRunQuery {
     pub snapshot_id: Option<Uuid>,
+    pub input_authority_id: Option<Uuid>,
     pub state: Option<TrainingRunState>,
     pub limit: u32,
     pub offset: u32,

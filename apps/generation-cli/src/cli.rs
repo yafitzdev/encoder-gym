@@ -1710,6 +1710,25 @@ pub enum BenchmarkCommand {
         #[command(flatten)]
         page: PageArgs,
     },
+    /// Show one immutable training-to-benchmark leakage clearance.
+    TrainingCheckShow {
+        id: Uuid,
+    },
+    /// Deeply validate one clearance against current snapshots, bundle, and roles.
+    TrainingCheckValidate {
+        id: Uuid,
+    },
+    /// List immutable training-to-benchmark clearances.
+    TrainingCheckList {
+        #[arg(long)]
+        snapshot_id: Option<Uuid>,
+        #[arg(long)]
+        benchmark_bundle_id: Option<Uuid>,
+        #[arg(long, value_enum)]
+        status: Option<ContaminationStatusArg>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1965,6 +1984,7 @@ pub enum ArtifactKindArg {
     BenchmarkSuite,
     ContaminationReport,
     BenchmarkBundle,
+    TrainingBenchmarkCheck,
     WorkflowDefinition,
     WorkflowRun,
     AcceptanceAssessment,

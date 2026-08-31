@@ -88,31 +88,64 @@ pub(in crate::commands::doctor) async fn benchmark_bundle_facts_check(
     store: &SqliteStore,
 ) -> DoctorCheck {
     let result: anyhow::Result<(usize, usize, usize, usize)> = async {
-        let bundles = store
-            .query_benchmark_bundles(BenchmarkBundleQuery {
+        const PAGE_SIZE: u32 = 1_000;
+        let mut bundle_page = Vec::new();
+        let mut offset = 0_u32;
+        loop {
+            let page = store
+                .query_benchmark_bundles(BenchmarkBundleQuery {
                 development_suite_id: None,
                 sealed_suite_id: None,
                 contamination_report_id: None,
-                limit: 10_000,
-                offset: 0,
-            })
-            .await?;
-        let bundles = bundles
+                    limit: PAGE_SIZE,
+                    offset,
+                })
+                .await?;
+            let page_len = page.len();
+            bundle_page.extend(page);
+            if page_len < PAGE_SIZE as usize {
+                break;
+            }
+            offset = offset.saturating_add(PAGE_SIZE);
+        }
+        let bundles = bundle_page
             .iter()
             .map(|bundle| (bundle.id, bundle))
             .collect::<std::collections::BTreeMap<_, _>>();
 
-        let definitions = store
-            .query_workflow_definitions(WorkflowDefinitionQuery {
-                dataset_id: None,
-                limit: 10_000,
-                offset: 0,
-            })
-            .await?;
-        let definitions = definitions
+        let mut definition_page = Vec::new();
+        offset = 0;
+        loop {
+            let page = store
+                .query_workflow_definitions(WorkflowDefinitionQuery {
+                    dataset_id: None,
+                    limit: PAGE_SIZE,
+                    offset,
+                })
+                .await?;
+            let page_len = page.len();
+            definition_page.extend(page);
+            if page_len < PAGE_SIZE as usize {
+                break;
+            }
+            offset = offset.saturating_add(PAGE_SIZE);
+        }
+        let definitions = definition_page
             .iter()
             .map(|definition| (definition.id, definition))
             .collect::<std::collections::BTreeMap<_, _>>();
+
+        let mut preparations = Vec::new();
+        offset = 0;
+        loop {
+            let page = store.list_preparations(PAGE_SIZE, offset).await?;
+            let page_len = page.len();
+            preparations.extend(page);
+            if page_len < PAGE_SIZE as usize {
+                break;
+            }
+            offset = offset.saturating_add(PAGE_SIZE);
+        }
         let mut legacy_definitions = 0_usize;
         for definition in definitions.values() {
             let Some(binding) = &definition.benchmark_bundle else {
@@ -133,7 +166,6 @@ pub(in crate::commands::doctor) async fn benchmark_bundle_facts_check(
             })?;
         }
 
-        let preparations = store.list_preparations(10_000, 0).await?;
         let mut legacy_preparations = 0_usize;
         for preparation in &preparations {
             let definition = definitions
@@ -216,29 +248,50 @@ pub(in crate::commands::doctor) async fn benchmark_bundle_facts_check(
 }
 
 pub(in crate::commands::doctor) async fn workflow_facts_check(store: &SqliteStore) -> DoctorCheck {
-    let definitions = match store
-        .query_workflow_definitions(WorkflowDefinitionQuery {
-            dataset_id: None,
-            limit: 10_000,
-            offset: 0,
-        })
-        .await
-    {
-        Ok(values) => values,
-        Err(error) => return fail("workflow_facts", error.to_string()),
-    };
-    let runs = match store
-        .query_workflow_runs(WorkflowRunQuery {
-            definition_id: None,
-            state: None,
-            limit: 10_000,
-            offset: 0,
-        })
-        .await
-    {
-        Ok(values) => values,
-        Err(error) => return fail("workflow_facts", error.to_string()),
-    };
+    const PAGE_SIZE: u32 = 1_000;
+    let mut definitions = Vec::new();
+    let mut offset = 0_u32;
+    loop {
+        let page = match store
+            .query_workflow_definitions(WorkflowDefinitionQuery {
+                dataset_id: None,
+                limit: PAGE_SIZE,
+                offset,
+            })
+            .await
+        {
+            Ok(values) => values,
+            Err(error) => return fail("workflow_facts", error.to_string()),
+        };
+        let page_len = page.len();
+        definitions.extend(page);
+        if page_len < PAGE_SIZE as usize {
+            break;
+        }
+        offset = offset.saturating_add(PAGE_SIZE);
+    }
+    let mut runs = Vec::new();
+    offset = 0;
+    loop {
+        let page = match store
+            .query_workflow_runs(WorkflowRunQuery {
+                definition_id: None,
+                state: None,
+                limit: PAGE_SIZE,
+                offset,
+            })
+            .await
+        {
+            Ok(values) => values,
+            Err(error) => return fail("workflow_facts", error.to_string()),
+        };
+        let page_len = page.len();
+        runs.extend(page);
+        if page_len < PAGE_SIZE as usize {
+            break;
+        }
+        offset = offset.saturating_add(PAGE_SIZE);
+    }
     let mut failures = Vec::new();
     for definition in &definitions {
         if definition.reproduce_fingerprint().ok().as_deref()
@@ -369,6 +422,386 @@ pub(in crate::commands::doctor) async fn workflow_facts_check(store: &SqliteStor
         )
     } else {
         fail("workflow_facts", failures.join("; "))
+    }
+}
+
+pub(in crate::commands::doctor) async fn training_benchmark_facts_check(
+    store: &SqliteStore,
+) -> DoctorCheck {
+    use workflow_core::{
+        contamination::ContaminationStatus,
+        ports::{
+            ContaminationStore, PromotionStore, TrainingBenchmarkCheckQuery,
+            TrainingBenchmarkCheckStore,
+        },
+        workflow::{StageAttemptState, WorkflowStage},
+    };
+
+    let result: anyhow::Result<(usize, usize, usize, usize, usize, usize)> = async {
+        const PAGE_SIZE: u32 = 1_000;
+        let mut all_checks = Vec::new();
+        let mut offset = 0_u32;
+        loop {
+            let page = store
+                .query_training_benchmark_checks(TrainingBenchmarkCheckQuery {
+                training_snapshot_id: None,
+                benchmark_bundle_id: None,
+                status: None,
+                protocol: None,
+                check_protocol_version: None,
+                limit: PAGE_SIZE,
+                offset,
+            })
+                .await?;
+            let returned = u32::try_from(page.len()).context("check page is too large")?;
+            all_checks.extend(page);
+            if returned < PAGE_SIZE {
+                break;
+            }
+            offset = offset
+                .checked_add(returned)
+                .context("check audit offset overflow")?;
+        }
+        let checks = all_checks
+            .into_iter()
+            .map(|check| (check.id, check))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for check in checks.values() {
+            check.validate_integrity()?;
+            anyhow::ensure!(
+                store
+                    .get_contamination_override(check.contamination_report_id)
+                    .await?
+                    .is_none(),
+                "training-benchmark check {} report has a forbidden override",
+                check.id
+            );
+        }
+
+        let migration_installed_at = sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
+            "SELECT installed_on FROM _sqlx_migrations WHERE version = 47 AND success = 1",
+        )
+        .fetch_optional(store.pool())
+        .await?;
+        let promotion_migration_installed_at =
+            sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
+                "SELECT installed_on FROM _sqlx_migrations WHERE version = 48 AND success = 1",
+            )
+            .fetch_optional(store.pool())
+            .await?;
+        let mut all_definitions = Vec::new();
+        let mut offset = 0_u32;
+        loop {
+            let page = store
+                .query_workflow_definitions(WorkflowDefinitionQuery {
+                    dataset_id: None,
+                    limit: PAGE_SIZE,
+                    offset,
+                })
+                .await?;
+            let returned = u32::try_from(page.len()).context("definition page is too large")?;
+            all_definitions.extend(page);
+            if returned < PAGE_SIZE {
+                break;
+            }
+            offset = offset
+                .checked_add(returned)
+                .context("definition audit offset overflow")?;
+        }
+        let definitions = all_definitions
+            .into_iter()
+            .map(|definition| (definition.id, definition))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let mut runs = Vec::new();
+        let mut offset = 0_u32;
+        loop {
+            let page = store
+                .query_workflow_runs(WorkflowRunQuery {
+                    definition_id: None,
+                    state: None,
+                    limit: PAGE_SIZE,
+                    offset,
+                })
+                .await?;
+            let returned = u32::try_from(page.len()).context("workflow run page is too large")?;
+            runs.extend(page);
+            if returned < PAGE_SIZE {
+                break;
+            }
+            offset = offset
+                .checked_add(returned)
+                .context("workflow run audit offset overflow")?;
+        }
+        let mut verified_attempts = 0_usize;
+        let mut invalid_attempts = 0_usize;
+        let mut legacy_attempts = 0_usize;
+        let mut verified_promotions = 0_usize;
+        let mut legacy_promotions = 0_usize;
+        for run in runs {
+            let definition = definitions
+                .get(&run.definition_id)
+                .with_context(|| format!("workflow run {} definition is missing", run.id))?;
+            let attempts = store.list_workflow_attempts(run.id).await?;
+            for (index, attempt) in attempts.iter().enumerate().filter(|(_, attempt)| {
+                matches!(
+                    attempt.stage,
+                    WorkflowStage::Training | WorkflowStage::IterationTraining
+                ) && attempt.state != StageAttemptState::Running
+            }) {
+                let expected_kind = if attempt.stage == WorkflowStage::Training {
+                    "training_benchmark_check"
+                } else {
+                    "iteration_training_benchmark_check"
+                };
+                let links = attempt
+                    .artifacts
+                    .iter()
+                    .filter(|artifact| artifact.kind == expected_kind)
+                    .collect::<Vec<_>>();
+                if links.is_empty() {
+                    let is_post_migration = migration_installed_at
+                        .is_some_and(|installed| attempt.started_at >= installed);
+                    if is_post_migration {
+                        anyhow::ensure!(
+                            !attempt.artifacts.iter().any(|artifact| matches!(
+                                artifact.kind.as_str(),
+                                "training_run"
+                                    | "iteration_training_run"
+                                    | "checkpoint"
+                                    | "iteration_checkpoint"
+                            )),
+                            "governed training attempt {} retained trainer artifacts without a training-benchmark check",
+                            attempt.id
+                        );
+                    }
+                    let deterministic_invalid = attempt.state == StageAttemptState::Failed
+                        && attempt.reason.as_deref().is_some_and(|reason| {
+                            reason.starts_with("training-benchmark input invalid:")
+                        });
+                    if is_post_migration && deterministic_invalid {
+                        anyhow::ensure!(
+                            !attempt.retryable,
+                            "invalid training-benchmark attempt {} is retryable",
+                            attempt.id
+                        );
+                        invalid_attempts += 1;
+                        continue;
+                    }
+                    if attempt.state == StageAttemptState::Completed && is_post_migration {
+                        anyhow::bail!(
+                            "completed governed training attempt {} has no training-benchmark check",
+                            attempt.id
+                        );
+                    }
+                    legacy_attempts += 1;
+                    continue;
+                }
+                anyhow::ensure!(
+                    links.len() == 1,
+                    "training attempt {} has multiple training-benchmark checks",
+                    attempt.id
+                );
+                let link = links[0];
+                let check = checks.get(&link.artifact_id).with_context(|| {
+                    format!(
+                        "training attempt {} check is missing: {}",
+                        attempt.id, link.artifact_id
+                    )
+                })?;
+                anyhow::ensure!(
+                    check.fingerprint == link.artifact_fingerprint,
+                    "training attempt {} check fingerprint differs",
+                    attempt.id
+                );
+                let bundle = definition
+                    .benchmark_bundle
+                    .as_ref()
+                    .context("governed training definition has no benchmark bundle")?;
+                let snapshot_kind = if attempt.stage == WorkflowStage::Training {
+                    "snapshot"
+                } else {
+                    "iteration_snapshot"
+                };
+                let snapshot_id = attempts[..=index]
+                    .iter()
+                    .rev()
+                    .flat_map(|value| value.artifacts.iter().rev())
+                    .find(|artifact| artifact.kind == snapshot_kind)
+                    .map(|artifact| artifact.artifact_id)
+                    .with_context(|| {
+                        format!("training attempt {} snapshot link is missing", attempt.id)
+                    })?;
+                anyhow::ensure!(
+                    check.training_snapshot_id == snapshot_id
+                        && check.benchmark_bundle_id == bundle.bundle_id
+                        && check.benchmark_bundle_fingerprint == bundle.bundle_fingerprint,
+                    "training attempt {} check authority differs",
+                    attempt.id
+                );
+                match attempt.state {
+                    StageAttemptState::Completed => {
+                        anyhow::ensure!(
+                            check.status == ContaminationStatus::Clean,
+                            "completed training attempt {} used a blocked check",
+                            attempt.id
+                        );
+                        let run_kind = if attempt.stage == WorkflowStage::Training {
+                            "training_run"
+                        } else {
+                            "iteration_training_run"
+                        };
+                        let run_link = attempt
+                            .artifacts
+                            .iter()
+                            .find(|artifact| artifact.kind == run_kind)
+                            .with_context(|| {
+                                format!("training attempt {} run link is missing", attempt.id)
+                            })?;
+                        let training_run = store
+                            .get_training_run(run_link.artifact_id)
+                            .await?
+                            .with_context(|| {
+                                format!(
+                                    "training attempt {} run is missing: {}",
+                                    attempt.id, run_link.artifact_id
+                                )
+                            })?;
+                        let binding = training_run.input_binding.as_ref().with_context(|| {
+                            format!(
+                                "training attempt {} run has no immutable input binding",
+                                attempt.id
+                            )
+                        })?;
+                        store
+                            .verify_training_run_input_authority(training_run.id, false)
+                            .await?;
+                        anyhow::ensure!(
+                            artifact_core::fingerprint(&training_run)?
+                                == run_link.artifact_fingerprint
+                                && training_run.snapshot_id == check.training_snapshot_id
+                                && binding.protocol
+                                    == check.training_input_protocol.stable_name()
+                                && binding.population_fingerprint
+                                    == check.training_population_fingerprint
+                                && binding.member_count == check.training_member_count
+                                && binding.authority_kind == "training_benchmark_check"
+                                && binding.authority_id == check.id
+                                && binding.authority_fingerprint == check.fingerprint,
+                            "training attempt {} run input authority differs from its check",
+                            attempt.id
+                        );
+                    }
+                    StageAttemptState::Failed if check.status == ContaminationStatus::Blocked => {
+                        anyhow::ensure!(
+                            !attempt.retryable
+                                && !attempt.artifacts.iter().any(|artifact| matches!(
+                                    artifact.kind.as_str(),
+                                    "training_run"
+                                        | "iteration_training_run"
+                                        | "checkpoint"
+                                        | "iteration_checkpoint"
+                                )),
+                            "blocked training attempt {} retained trainer artifacts or is retryable",
+                            attempt.id
+                        );
+                    }
+                    _ => {}
+                }
+                verified_attempts += 1;
+            }
+
+            if let Some(promotion) = store.get_workflow_promotion(run.id).await? {
+                let (Some(check_id), Some(check_fingerprint)) = (
+                    promotion.training_benchmark_check_id,
+                    promotion.training_benchmark_check_fingerprint.as_deref(),
+                ) else {
+                    let is_post_migration = promotion_migration_installed_at
+                        .is_some_and(|installed| promotion.created_at >= installed);
+                    anyhow::ensure!(
+                        !is_post_migration,
+                        "post-migration promotion {} has no training-benchmark check",
+                        promotion.id
+                    );
+                    legacy_promotions += 1;
+                    continue;
+                };
+                let check = checks.get(&check_id).with_context(|| {
+                    format!(
+                        "promotion {} training-benchmark check is missing: {check_id}",
+                        promotion.id
+                    )
+                })?;
+                let bundle = definition
+                    .benchmark_bundle
+                    .as_ref()
+                    .context("promotion workflow definition has no benchmark bundle")?;
+                anyhow::ensure!(
+                    check.fingerprint == check_fingerprint
+                        && check.status == ContaminationStatus::Clean
+                        && check.training_snapshot_id == promotion.training_snapshot_id
+                        && check.training_snapshot_fingerprint
+                            == promotion.training_snapshot_fingerprint
+                        && check.benchmark_bundle_id == bundle.bundle_id
+                        && check.benchmark_bundle_fingerprint == bundle.bundle_fingerprint,
+                    "promotion {} training-benchmark authority differs",
+                    promotion.id
+                );
+                let expected_kind = if attempts.iter().any(|attempt| {
+                    attempt
+                        .artifacts
+                        .iter()
+                        .any(|artifact| artifact.kind == "iteration_checkpoint")
+                }) {
+                    "iteration_training_benchmark_check"
+                } else {
+                    "training_benchmark_check"
+                };
+                let expected_link = attempts
+                    .iter()
+                    .rev()
+                    .flat_map(|attempt| attempt.artifacts.iter().rev())
+                    .find(|artifact| artifact.kind == expected_kind)
+                    .with_context(|| {
+                        format!(
+                            "promotion {} has no final-cycle training-benchmark link",
+                            promotion.id
+                        )
+                    })?;
+                anyhow::ensure!(
+                    expected_link.artifact_id == check_id
+                        && expected_link.artifact_fingerprint == check_fingerprint,
+                    "promotion {} does not pin its final training cycle's check",
+                    promotion.id
+                );
+                verified_promotions += 1;
+            }
+        }
+        Ok((
+            checks.len(),
+            verified_attempts,
+            legacy_attempts,
+            invalid_attempts,
+            verified_promotions,
+            legacy_promotions,
+        ))
+    }
+    .await;
+
+    match result {
+        Ok((
+            checks,
+            attempts,
+            legacy_attempts,
+            invalid_attempts,
+            promotions,
+            legacy_promotions,
+        )) => pass(
+            "training_benchmark_facts",
+            format!(
+                "{checks} immutable check(s), {attempts} governed training attempt(s), {invalid_attempts} deterministic invalid-input stop(s), and {promotions} promotion binding(s) verified; {legacy_attempts} legacy or pre-clearance attempt(s) and {legacy_promotions} legacy promotion(s) remain explicitly unverified"
+            ),
+        ),
+        Err(error) => fail("training_benchmark_facts", error.to_string()),
     }
 }
 

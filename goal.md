@@ -1,77 +1,74 @@
-# Goal — Dataset Qualification and Curation
+# Goal — Benchmark Stewardship and Decision-Grade Evaluation
 
-Build a high-trust quality boundary between structurally accepted source rows
-and training snapshots. A replaceable evaluator must produce bounded semantic-
-quality evidence; deterministic policy and explicit review must produce an
-immutable curation manifest that the ordinary snapshot builder can consume.
+Build the trust boundary that makes encoder iteration scientifically useful.
+An immutable benchmark bundle is necessary, but it is not sufficient: every
+training population must be proven clean against that exact bundle, and every
+benchmark must eventually be shown capable of answering its declared
+acceptance questions.
 
-Do not add a graphical UI, HTTP API, automatic relabeling, source-row mutation,
-semantic deduplication, automatic regeneration, distributed workers, or sealed-
-holdout access. Follow `docs/dataset-quality-spec.md` as the authoritative
+Do not add a graphical UI, HTTP API, distributed execution, automatic benchmark
+approval, hidden threshold changes, or an adaptive agent with access to sealed
+row content. Follow `docs/benchmark-stewardship-spec.md` as the authoritative
 capability specification.
 
 ## Product flow
 
 ```text
-accepted generated/imported rows
-  -> immutable row-complete audit plan
-  -> bounded replaceable quality evaluator
-  -> blind label/dimension/authenticity/risk assessments
-  -> deterministic qualified/borderline/quarantined verdicts
-  -> append-only row review and complete curation proposal
-  -> explicit manifest approval
-  -> immutable qualified snapshot linked to the manifest
+task and semantic contract
+  -> candidate development and sealed evidence
+  -> immutable benchmark bundle
+  -> benchmark qualification and explicit approval
+  -> generated/curated training snapshot
+  -> mandatory training <-> benchmark leakage check
+  -> training only when the exact check is clean
+  -> development iteration under exposure budgets
+  -> one aggregate-only sealed assessment
 ```
 
-The evaluator supplies evidence. It never decides membership, rewrites a row,
-approves a manifest, starts another slice, or reads evaluation evidence.
+The first implementation milestone is the leakage firewall. For every initial
+and iterative snapshot, compare all `train` and non-empty `validation` members
+with the exact development plus optional sealed cohort union. Persist a
+zero-tolerance report and an immutable check binding before any trainer or
+previous training run can be used. Source-row, exact-text, normalized-text, and
+configured group overlap all fail closed. There is no override path.
 
 ## Required architecture
 
-- `dataset-quality-core` owns source-set manifests, explicit integer policies,
-  evaluator request/response validation, verdicts, reviews, curation, and
-  fingerprints. Provider and SQLite types never cross its boundary.
-- Audit plans pin every source-row fingerprint plus exact semantic and optional
-  authenticity guidance. New rows require a new plan.
-- A deterministic fake and an OpenAI-compatible adapter implement the project-
-  owned evaluator port. Prompt policy remains outside provider transport.
-- One durable local runner owns batching, attempts, retry, cancellation,
-  interruption, usage, and reconciled counters under finite persisted budgets.
-- Every manifest decides every pinned row. Unevaluated rows are excluded; human
-  inclusion overrides are append-only and require a reason.
-- Applying a manifest atomically persists an ordinary snapshot plus a curation
-  application. Historical snapshot shapes and fingerprints remain unchanged.
+- Reuse `workflow-core` contamination contracts; do not create a second text
+  normalization or overlap algorithm.
+- Represent the training inputs as immutable internal `Training` cohorts, one
+  per consumed snapshot split, and pin their active role decisions.
+- `TrainingBenchmarkCheck` binds the verified snapshot population, training
+  cohorts, exact `BenchmarkBundle`, exact contamination report, status, and
+  fingerprint.
+- Persist newly required cohorts, roles, report, and check atomically. Repeated
+  attempts reuse the same deeply verified authority.
+- Gate both initial and iterative training before querying or invoking a
+  backend. Evaluation and promotion reject a missing or mismatched check.
+- Keep findings free of raw benchmark text. A blocked check remains inspectable
+  but cannot be overridden into eligibility.
+- Index contamination comparisons so realistic dataset sizes do not require a
+  quadratic all-pairs text scan.
 
-## Evidence and verdicts
+## Long-range stewardship
 
-Assessments blindly rank every known label and every allowed value for each row
-dimension. They also score optional authenticity adherence, leakage risk,
-shortcut risk, and evaluator confidence in basis points. The host compares the
-blind result with pinned source facts and derives verdicts from the immutable
-policy. Evaluator output cannot contain replacement content or a membership
-decision.
+After the firewall is complete, add deterministic benchmark qualification:
+contract-support feasibility, label and slice coverage, representativeness,
+uncertainty/power evidence, source quality, and adaptive-use budgets. Then add
+a bounded Benchmark Architect that may propose cohorts, targets, and acceptance
+contracts from task semantics. The agent is advisory only; deterministic code
+validates evidence, sealed content never enters its context, and a human freezes
+the exact decision contract.
 
-## Governance and durability
+## Acceptance
 
-- Persist plans, runs, evaluator attempts, normalized assessments, immutable
-  reports, row reviews, curation proposals, manifest reviews, approved
-  manifests, applications, and snapshot links.
-- External calls are recorded before I/O and uncertain calls consume retry
-  budget. Success plus assessments plus counters commits atomically.
-- Sealed and external benchmark contents are categorically ineligible.
-- Reviews bind immutable reports/proposals, never a mutable run projection.
-- `doctor` and provenance verify every fingerprint, counter, review chain,
-  source-row link, selection entry, and qualified snapshot application.
-
-## CLI and acceptance
-
-Implement the complete CLI in `docs/dataset-quality-spec.md`. Ordinary
-acceptance uses a fresh database, fake generated/imported sources, fake
-evaluator, actual CLI process boundary, row review, manifest approval, qualified
-snapshot, provenance, export, and doctor. Prove unassessed rows never enter the
-snapshot, tampering is detected, legacy snapshots remain compatible, and all
-Rust quality gates pass.
+Prove that source-ID, exact-text, normalized-text, validation-split, and group
+leakage stop a workflow with zero training runs or checkpoints. Prove clean
+checks are reusable, iteration snapshots are checked independently, unused
+internal test rows are outside the trainer-input protocol, tampering and stale
+roles fail closed, provenance reaches the snapshot and bundle, Doctor verifies
+the full chain, and all Rust quality gates pass.
 
 Implement and commit coherent stages. Follow `AGENTS.md`,
-`docs/dataset-quality-spec.md`, `docs/architecture.md`, and
+`docs/benchmark-stewardship-spec.md`, `docs/architecture.md`, and
 `docs/development.md`.

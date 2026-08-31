@@ -265,7 +265,16 @@ Benchmark and acceptance commands are:
 - `synth benchmark assess <SUITE_ID> --run <COHORT_ID>=<RUN_ID>` with optional
   paired `--comparison <COHORT_ID>=<COMPARISON_ID>` values; and
 - `synth benchmark assessment-show|assessment-list` to inspect immutable
-  `pass`, `fail`, `inconclusive`, or `invalid` outcomes and exact reasons.
+  `pass`, `fail`, `inconclusive`, or `invalid` outcomes and exact reasons;
+- `synth benchmark training-check-show <CHECK_ID>` to inspect one immutable
+  training-to-benchmark check, including exact population, cohort, bundle,
+  combined-report, protocol, status, and fingerprint pins;
+- `synth benchmark training-check-validate <CHECK_ID>` to deeply reload the
+  pinned snapshot, bundle, reports, normalized joins, and current active role
+  decisions and report `valid`, `training_allowed`, status, and reasons; and
+- `synth benchmark training-check-list` with optional `--snapshot-id <ID>`,
+  `--benchmark-bundle-id <ID>`, and `--status clean|blocked` filters to page
+  historical checks under the current `train_and_validation_v1` input protocol.
 
 Metric contracts require at least one effective decision bound and support
 overall metrics, per-label precision/recall/F1, canonical typed slice keys,
@@ -275,6 +284,38 @@ candidate run, protocol, cohort, metrics, and internal counts agree. Sealed
 suites accept overall metrics only, require aggregate, adaptation-ineligible
 disclosure, and require a separate `--authorize-sealed` acknowledgement.
 Repeating an identical assessment returns the existing artifact.
+
+Training checks are created automatically by governed workflow training; there
+is no manual create command. The current input protocol treats every train and
+validation member as model-influencing and excludes test-only members. For each
+candidate snapshot, the workflow compares that exact population with every
+bundle-pinned development and optional sealed cohort under the bundle's group
+dimension and the default zero-overlap policy. A blocked check is still
+persisted and shown by these commands, but the stage fails non-retryably before
+backend startup and creates no training run or checkpoint.
+
+The same gate precedes lookup of a reusable completed training run, so reuse is
+not a bypass. Every governed run also stores an immutable input binding to the
+check plus a digest of the exact ordered labels and train/validation examples
+seen by the backend. The runner reproduces that digest before startup, and only
+a completed run with the exact binding and resolved training configuration may
+be reused. It also seals the verified example sequence and rejects a source
+that changes on any subsequent backend read. Training-run persistence rejects
+skipped lifecycle states and completion without the exact final checkpoint.
+Later development/iteration evaluation, sealed finalization, and promotion
+revalidate the linked clean check. Use `synth provenance
+training-benchmark-check <CHECK_ID>` to trace it to the exact snapshot,
+benchmark bundle, and combined contamination report. New `workflow promote`
+records also pin the check ID and fingerprint, and model-promotion provenance
+includes that check as a parent. Promotion additionally proves that the final
+checkpoint, completed training run, input binding, clean check, development
+assessment, and sealed assessment form one exact chain.
+
+This firewall covers only data controlled and persisted by the platform. It
+checks source-row identity, exact text, normalized text, and an optional declared
+group identity. It does not detect semantic paraphrases, prove independence
+from base-model pretraining data, or account for equivalent data supplied to a
+trainer outside the platform.
 
 `workflow define` reloads the suites and their immutable snapshot evidence,
 requires distinct development and optional sealed evidence, and recomputes one
@@ -330,7 +371,8 @@ Finite-workflow commands are:
 - `synth workflow finalize <RUN_ID>` to explicitly run only the configured
   sealed aggregate-only suite after development has stopped; and
 - `synth workflow promote <RUN_ID>` plus `promotion-show <ID>` to persist and
-  inspect the immutable promote/reject record.
+  inspect the immutable promote/reject record, including the selected clean
+  training-benchmark check pin.
 
 The workflow definition resolves analysis and optimization protocols, optional
 advisor configuration, `training_iteration_policy = "fresh"`, exact project,
@@ -341,6 +383,12 @@ are environment-variable names only. `review_each_iteration` always pauses;
 exceed its backend, model, configuration, row, request, token, or iteration
 limits. Development acceptance is not final acceptance: only `finalize` may
 touch the sealed suite, and sealed results never feed analysis or optimization.
+
+At each initial or iteration training stage, the workflow creates or reuses the
+one executable check for the exact snapshot, bundle, check protocol, and
+trainer-input protocol. This happens before either a trainer starts or a
+completed run is reused. The linked check is then required throughout downstream
+evaluation, finalization, and promotion.
 
 The workflow checks disclosure before the relevant work: diagnosis and
 follow-up diagnosis require `row_content`, comparison requires `predictions`,
@@ -357,6 +405,15 @@ available to `workflow definition-show|definition-list`, `workflow status|list`,
 and provenance inspection, but their null bundle binding is not executable.
 They cannot start or advance a workflow; run `workflow define` or project
 preparation again to create new governed authority.
+
+Migrations `0047_training_benchmark_checks`,
+`0048_promotion_training_benchmark_check`, and
+`0049_training_input_authority` do not rewrite historical training
+runs, checkpoints, or promotions. Those artifacts remain listable, inspectable,
+and traceable, but they receive no retroactive clearance. Legacy training runs
+retain an absent input binding and are ineligible for governed reuse. A legacy
+promotion has paired null training-check fields and no corresponding provenance
+parent; that visible absence cannot satisfy a new governed promotion.
 
 Stage attempts form a fingerprint-linked append-only chain. Run updates use the
 expected latest attempt as an optimistic concurrency guard. Illegal stage

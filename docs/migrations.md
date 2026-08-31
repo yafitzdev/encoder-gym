@@ -117,6 +117,31 @@ applied automatically when the SQLite store connects.
   `NULL` links so their historical JSON, status, and provenance remain readable.
   Those legacy definitions and runs are intentionally non-executable: create a
   new bundle-backed definition before starting or advancing workflow work.
+- `0047_training_benchmark_checks`: immutable, protocol-versioned clearance of
+  one training snapshot's exact trainer-visible population against one benchmark
+  bundle. The main table normalizes snapshot, bundle, combined contamination
+  report, protocol, input protocol, status, and fingerprint; its child table
+  pins the non-empty train/validation cohort and role-decision evidence. A
+  uniqueness constraint permits only one check for a snapshot, bundle, check
+  protocol, and trainer-input protocol. Existing training runs and checkpoints
+  remain readable but acquire no retroactive clearance. Main and child rows
+  are guarded against update and delete so the authority chain is append-only.
+- `0048_promotion_training_benchmark_check`: nullable model-promotion columns
+  for the exact check ID and fingerprint, with a foreign key and lookup index.
+  New governed promotions pin a clean check for their training snapshot.
+  Historical promotions keep paired `NULL` values and remain readable and
+  traceable; those legacy pairs cannot be retrofitted, while every new
+  promotion must provide both fields. The absence of a pin is visible legacy
+  history, not proof of benchmark isolation.
+- `0049_training_input_authority`: nullable, immutable projections on each
+  training run for the trainer-input protocol, selected-population fingerprint
+  and count, backend-facing input fingerprint, and opaque authority kind, ID,
+  and fingerprint. Completeness and update triggers reject partial or
+  retrofitted bindings. Legacy runs remain all-`NULL` and readable, but cannot
+  be reused by a governed workflow. New governed runs are accepted only when
+  the SQLite adapter deeply resolves the exact current clean
+  `TrainingBenchmarkCheck` and reproduces the input digest from the verified
+  persisted snapshot.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

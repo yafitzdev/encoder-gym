@@ -15,6 +15,9 @@ use crate::contamination::{ContaminationOverride, ContaminationReport, Contamina
 use crate::governance::{CohortRoleDecision, EvaluationCohort, EvidenceExposure, ExposurePurpose};
 use crate::promotion::ModelPromotion;
 use crate::stop::StopDecision;
+use crate::training_benchmark::{
+    TrainingBenchmarkCheck, TrainingCohortEvidence, TrainingInputProtocol,
+};
 use crate::workflow::{WorkflowDefinition, WorkflowRun, WorkflowRunState, WorkflowStageAttempt};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -248,6 +251,46 @@ pub trait BenchmarkBundleStore: Send + Sync {
         &self,
         query: BenchmarkBundleQuery,
     ) -> BoxFuture<'_, Result<Vec<BenchmarkBundle>, WorkflowStoreError>>;
+}
+
+#[derive(Debug, Clone)]
+pub struct TrainingBenchmarkCheckQuery {
+    pub training_snapshot_id: Option<Uuid>,
+    pub benchmark_bundle_id: Option<Uuid>,
+    pub status: Option<ContaminationStatus>,
+    pub protocol: Option<TrainingInputProtocol>,
+    pub check_protocol_version: Option<String>,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+/// Persistence boundary for immutable trainer-population leakage clearance.
+pub trait TrainingBenchmarkCheckStore: Send + Sync {
+    /// Atomically persists new internal training cohorts and their initial role
+    /// decisions, the recomputable contamination report, and the final binding.
+    fn create_training_benchmark_check(
+        &self,
+        new_training_cohorts: &[TrainingCohortEvidence],
+        report: &ContaminationReport,
+        check: &TrainingBenchmarkCheck,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    /// Loads a historically valid check using its pinned role decisions.
+    fn get_training_benchmark_check(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<TrainingBenchmarkCheck>, WorkflowStoreError>>;
+
+    /// Loads a check only while all of its role decisions are still current and active.
+    fn get_executable_training_benchmark_check(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<TrainingBenchmarkCheck>, WorkflowStoreError>>;
+
+    fn query_training_benchmark_checks(
+        &self,
+        query: TrainingBenchmarkCheckQuery,
+    ) -> BoxFuture<'_, Result<Vec<TrainingBenchmarkCheck>, WorkflowStoreError>>;
 }
 
 #[derive(Debug, Clone, Copy)]

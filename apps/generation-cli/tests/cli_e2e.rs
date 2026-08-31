@@ -6,6 +6,7 @@ use optimization_core::protocol::{
     OptimizationProtocol, RecommendationKind, TrainingCandidateRequest,
 };
 use serde_json::Value;
+use workflow_core::promotion::ModelPromotion;
 
 use support::{run, run_json, run_text};
 
@@ -661,10 +662,10 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
         .find(|artifact| artifact["kind"] == "model_promotion")
         .expect("model promotion link");
     let promotion_id = string_at(promotion_link, "/artifact_id");
-    assert_eq!(
-        run_json(&database_url, ["workflow", "promotion-show", &promotion_id],)["state"],
-        "promoted"
-    );
+    let promotion = run_json(&database_url, ["workflow", "promotion-show", &promotion_id]);
+    assert_eq!(promotion["state"], "promoted");
+    assert!(promotion["training_benchmark_check_id"].is_string());
+    assert!(promotion["training_benchmark_check_fingerprint"].is_string());
     let promotion_trace = run_json(
         &database_url,
         ["provenance", "model-promotion", &promotion_id],
@@ -674,6 +675,9 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
         "model_promotion",
         "checkpoint",
         "snapshot",
+        "training_benchmark_check",
+        "benchmark_bundle",
+        "contamination_report",
         "acceptance_assessment",
         "evaluation_run",
     ] {
@@ -1414,6 +1418,40 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
 
     let final_doctor = run_json(&database_url, ["doctor", "--config", path(&config_path)]);
     assert_eq!(final_doctor["healthy"], true);
+
+    let promotion_uuid = uuid::Uuid::parse_str(&promotion_id).expect("promotion UUID");
+    tokio::runtime::Runtime::new()
+        .expect("tamper runtime")
+        .block_on(async {
+            let pool = sqlx::SqlitePool::connect(&database_url)
+                .await
+                .expect("tamper database connects");
+            let artifact_json: String =
+                sqlx::query_scalar("SELECT artifact_json FROM model_promotions WHERE id = ?")
+                    .bind(promotion_uuid)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("promotion JSON");
+            let mut artifact: ModelPromotion =
+                serde_json::from_str(&artifact_json).expect("promotion decodes");
+            artifact.checkpoint_id = uuid::Uuid::new_v4();
+            artifact.checkpoint_fingerprint = "sha256:substituted-checkpoint".into();
+            artifact.fingerprint = artifact
+                .reproduce_fingerprint()
+                .expect("tampered promotion fingerprint");
+            sqlx::query("UPDATE model_promotions SET artifact_json = ? WHERE id = ?")
+                .bind(serde_json::to_string(&artifact).expect("promotion encodes"))
+                .bind(promotion_uuid)
+                .execute(&pool)
+                .await
+                .expect("artifact-only tampering");
+        });
+    assert!(
+        !run(&database_url, ["workflow", "promotion-show", &promotion_id],)
+            .status
+            .success(),
+        "artifact-only checkpoint substitution must fail against normalized promotion facts"
+    );
 }
 
 fn string_at(value: &Value, pointer: &str) -> String {

@@ -1,4 +1,4 @@
-use super::{quality_gate, *};
+use super::{quality_gate, training_benchmark_gate, *};
 use crate::commands::{evaluation, generation, optimization, snapshot, training};
 
 pub(super) fn execute_initial_stage<'a>(
@@ -156,18 +156,54 @@ pub(super) fn execute_initial_stage<'a>(
                     snapshot::require_workflow_qualification(store, snapshot_id, manifest_id)
                         .await?;
                 }
-                let existing = training_core::ports::TrainingStore::query_training_runs(
+                let check = match training_benchmark_gate::ensure_check(
+                    store,
+                    definition,
+                    snapshot_id,
+                    benchmark_authority,
+                )
+                .await?
+                {
+                    training_benchmark_gate::GateResult::Checked(check) => check,
+                    training_benchmark_gate::GateResult::DeterministicallyInvalid(reason) => {
+                        return Ok(StageExecution::failed(Vec::new(), usage, reason));
+                    }
+                };
+                let check_link = link("training_benchmark_check", check.id, &check.fingerprint);
+                if !check.training_allowed() {
+                    return Ok(StageExecution::failed(
+                        vec![check_link],
+                        usage,
+                        format!(
+                            "training blocked before backend startup by immutable benchmark-leakage check {}; inspect it with `benchmark training-check-show {}`",
+                            check.id, check.id
+                        ),
+                    ));
+                }
+                let input = training::prepare_workflow_input(snapshot_id, &check, store).await?;
+                let binding = input.binding().clone();
+                let candidates = training_core::ports::TrainingStore::query_training_runs(
                     store,
                     training_core::ports::TrainingRunQuery {
                         snapshot_id: Some(snapshot_id),
+                        input_authority_id: Some(check.id),
                         state: Some(training_core::domain::TrainingRunState::Completed),
-                        limit: 1,
+                        limit: 10_000,
                         offset: 0,
                     },
                 )
-                .await?
-                .into_iter()
-                .next();
+                .await?;
+                let mut eligible = Vec::new();
+                for run in candidates {
+                    if training::reusable_workflow_run(&run, snapshot_id, configured, &binding)? {
+                        eligible.push(run);
+                    }
+                }
+                ensure!(
+                    eligible.len() <= 1,
+                    "multiple completed training runs claim the same immutable workflow input"
+                );
+                let existing = eligible.pop();
                 let completed = match existing {
                     Some(run) => training::CompletedTraining {
                         checkpoints: training_core::ports::TrainingStore::list_checkpoints(
@@ -176,7 +212,7 @@ pub(super) fn execute_initial_stage<'a>(
                         .await?,
                         run,
                     },
-                    None => training::run_workflow(snapshot_id, configured, store.clone()).await?,
+                    None => training::run_workflow(configured, input, store.clone()).await?,
                 };
                 let checkpoint = completed
                     .checkpoints
@@ -184,6 +220,7 @@ pub(super) fn execute_initial_stage<'a>(
                     .find(|value| value.is_final)
                     .context("training completed without a final checkpoint")?;
                 vec![
+                    check_link,
                     link(
                         "training_run",
                         completed.run.id,
@@ -193,6 +230,14 @@ pub(super) fn execute_initial_stage<'a>(
                 ]
             }
             WorkflowStage::DevelopmentEvaluation => {
+                require_stage_training_check(
+                    store,
+                    &history,
+                    "training_benchmark_check",
+                    "snapshot",
+                    benchmark_authority,
+                )
+                .await?;
                 let checkpoint_id = artifact_id(&history, "checkpoint")?;
                 let suite = &benchmark_authority.development;
                 let mut links = Vec::new();
@@ -646,18 +691,58 @@ pub(super) fn execute_initial_stage<'a>(
                     snapshot::require_workflow_qualification(store, snapshot_id, manifest_id)
                         .await?;
                 }
-                let existing = training_core::ports::TrainingStore::query_training_runs(
+                let check = match training_benchmark_gate::ensure_check(
+                    store,
+                    definition,
+                    snapshot_id,
+                    benchmark_authority,
+                )
+                .await?
+                {
+                    training_benchmark_gate::GateResult::Checked(check) => check,
+                    training_benchmark_gate::GateResult::DeterministicallyInvalid(reason) => {
+                        return Ok(StageExecution::failed(Vec::new(), usage, reason));
+                    }
+                };
+                let check_link = link(
+                    "iteration_training_benchmark_check",
+                    check.id,
+                    &check.fingerprint,
+                );
+                if !check.training_allowed() {
+                    return Ok(StageExecution::failed(
+                        vec![check_link],
+                        usage,
+                        format!(
+                            "iteration training blocked before backend startup by immutable benchmark-leakage check {}; inspect it with `benchmark training-check-show {}`",
+                            check.id, check.id
+                        ),
+                    ));
+                }
+                let input = training::prepare_workflow_input(snapshot_id, &check, store).await?;
+                let binding = input.binding().clone();
+                let candidates = training_core::ports::TrainingStore::query_training_runs(
                     store,
                     training_core::ports::TrainingRunQuery {
                         snapshot_id: Some(snapshot_id),
+                        input_authority_id: Some(check.id),
                         state: Some(training_core::domain::TrainingRunState::Completed),
-                        limit: 1,
+                        limit: 10_000,
                         offset: 0,
                     },
                 )
-                .await?
-                .into_iter()
-                .next();
+                .await?;
+                let mut eligible = Vec::new();
+                for run in candidates {
+                    if training::reusable_workflow_run(&run, snapshot_id, configured, &binding)? {
+                        eligible.push(run);
+                    }
+                }
+                ensure!(
+                    eligible.len() <= 1,
+                    "multiple completed iteration training runs claim the same immutable workflow input"
+                );
+                let existing = eligible.pop();
                 let completed = match existing {
                     Some(training_run) => training::CompletedTraining {
                         checkpoints: training_core::ports::TrainingStore::list_checkpoints(
@@ -667,7 +752,7 @@ pub(super) fn execute_initial_stage<'a>(
                         .await?,
                         run: training_run,
                     },
-                    None => training::run_workflow(snapshot_id, configured, store.clone()).await?,
+                    None => training::run_workflow(configured, input, store.clone()).await?,
                 };
                 let checkpoint = completed
                     .checkpoints
@@ -675,6 +760,7 @@ pub(super) fn execute_initial_stage<'a>(
                     .find(|value| value.is_final)
                     .context("iteration training has no final checkpoint")?;
                 vec![
+                    check_link,
                     link(
                         "iteration_training_run",
                         completed.run.id,
@@ -688,6 +774,14 @@ pub(super) fn execute_initial_stage<'a>(
                 ]
             }
             WorkflowStage::IterationEvaluation => {
+                require_stage_training_check(
+                    store,
+                    &history,
+                    "iteration_training_benchmark_check",
+                    "iteration_snapshot",
+                    benchmark_authority,
+                )
+                .await?;
                 let checkpoint_id = artifact_id(&history, "iteration_checkpoint")?;
                 let suite = &benchmark_authority.development;
                 let mut links = Vec::new();
@@ -879,6 +973,7 @@ pub(super) fn execute_initial_stage<'a>(
                 links
             }
             WorkflowStage::SealedEvaluation => {
+                require_latest_training_check(store, &history, benchmark_authority).await?;
                 let suite = benchmark_authority
                     .sealed
                     .as_ref()
@@ -971,6 +1066,7 @@ pub(super) fn execute_initial_stage<'a>(
                 links
             }
             WorkflowStage::Promotion => {
+                require_latest_training_check(store, &history, benchmark_authority).await?;
                 let existing = store.get_workflow_promotion(run.id).await?;
                 let promotion = match existing {
                     Some(value) => value,
@@ -1007,5 +1103,64 @@ impl StageExecution {
             state: StageAttemptState::Completed,
             reason: None,
         }
+    }
+
+    pub(super) fn failed(
+        artifacts: Vec<WorkflowArtifactLink>,
+        usage: WorkflowBudgetUsage,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            artifacts,
+            usage,
+            state: StageAttemptState::Failed,
+            reason: Some(reason.into()),
+        }
+    }
+}
+
+async fn require_stage_training_check(
+    store: &SqliteStore,
+    history: &[WorkflowStageAttempt],
+    check_kind: &str,
+    snapshot_kind: &str,
+    authority: &WorkflowBenchmarkAuthority,
+) -> anyhow::Result<()> {
+    let check = artifact_link(history, check_kind)?;
+    let snapshot_id = artifact_id(history, snapshot_kind)?;
+    training_benchmark_gate::require_linked_clean_check(
+        store,
+        check.artifact_id,
+        &check.artifact_fingerprint,
+        snapshot_id,
+        authority,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn require_latest_training_check(
+    store: &SqliteStore,
+    history: &[WorkflowStageAttempt],
+    authority: &WorkflowBenchmarkAuthority,
+) -> anyhow::Result<()> {
+    if artifact_link(history, "iteration_checkpoint").is_ok() {
+        require_stage_training_check(
+            store,
+            history,
+            "iteration_training_benchmark_check",
+            "iteration_snapshot",
+            authority,
+        )
+        .await
+    } else {
+        require_stage_training_check(
+            store,
+            history,
+            "training_benchmark_check",
+            "snapshot",
+            authority,
+        )
+        .await
     }
 }

@@ -4,11 +4,11 @@ use artifact_core::{ArtifactKind, ProvenanceStore};
 use chrono::Utc;
 use dataset_core::{
     domain::{
-        DatasetSnapshot, SnapshotMember, SnapshotSplit, SourceProvenance, SplitConfiguration,
-        SplitRatios,
+        DatasetSnapshot, SnapshotMember, SnapshotSplit, SourceProvenance, SourceRow,
+        SplitConfiguration, SplitRatios,
     },
     ports::SnapshotStore,
-    splitting::reproduce_snapshot_fingerprint,
+    splitting::{build_snapshot, reproduce_snapshot_fingerprint},
 };
 use generation_core::ports::DatasetStore;
 use project_config::{ProjectConfig, ProjectOverrides};
@@ -17,6 +17,12 @@ use project_preparation::{
     PreparationManifest, PreparationStore, SuiteManifest, WorkflowManifest, compile_project,
 };
 use synthetic_data_sqlite::SqliteStore;
+use training_core::{
+    domain::{
+        TrainingConfiguration, TrainingExample, TrainingInputBinding, TrainingRequest, TrainingRun,
+    },
+    ports::TrainingStore,
+};
 use uuid::Uuid;
 use workflow_core::{
     allocation::InitialAllocationPolicy,
@@ -26,7 +32,13 @@ use workflow_core::{
         ContaminationStatus, check_contamination,
     },
     governance::{CohortOrigin, CohortRole, CohortRoleDecision, DisclosureLevel, EvaluationCohort},
-    ports::{BenchmarkBundleQuery, BenchmarkBundleStore, ContaminationStore, GovernanceStore},
+    ports::{
+        BenchmarkBundleQuery, BenchmarkBundleStore, ContaminationStore, GovernanceStore,
+        TrainingBenchmarkCheckQuery, TrainingBenchmarkCheckStore,
+    },
+    training_benchmark::{
+        TrainingCohortEvidence, TrainingInputProtocol, build_training_benchmark_check,
+    },
     workflow::{IterationGovernance, WorkflowBudget, WorkflowPolicy},
 };
 
@@ -563,6 +575,340 @@ async fn benchmark_bundle_read_rejects_persisted_member_tampering_before_report_
             .to_string()
             .contains("snapshot fingerprint does not reproduce"),
         "unexpected error: {error}"
+    );
+}
+
+#[tokio::test]
+async fn training_benchmark_check_is_atomic_queryable_and_deeply_verified() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("training-benchmark.db");
+    let url = format!("sqlite://{}", path.to_string_lossy().replace('\\', "/"));
+    let store = SqliteStore::connect(&url).await.expect("database connects");
+    let (manifest, evidence) = fixture(&store).await;
+    let bundle = compile_project(&manifest, &evidence).expect("bundle");
+    store
+        .create_preparation(&bundle)
+        .await
+        .expect("preparation persists");
+
+    let dataset_id = bundle.dataset.id;
+    let now = Utc::now();
+    let rows = (0..10)
+        .map(|index| SourceRow {
+            id: Uuid::new_v4(),
+            dataset_id,
+            text: format!("new training example {index}"),
+            label: if index % 2 == 0 {
+                "billing".into()
+            } else {
+                "fraud".into()
+            },
+            dimensions: BTreeMap::from([(
+                "style".into(),
+                if index % 2 == 0 {
+                    "clean".into()
+                } else {
+                    "messy".into()
+                },
+            )]),
+            fields: BTreeMap::new(),
+            provenance: SourceProvenance::Generated {
+                generation_job_id: Uuid::new_v4(),
+                backend: "fake".into(),
+                model: "fake-v1".into(),
+                construction_plan_fingerprint: None,
+            },
+            created_at: now,
+        })
+        .collect::<Vec<_>>();
+    for row in &rows {
+        sqlx::query(
+            "INSERT INTO dataset_source_rows \
+             (id, dataset_id, source_kind, source_ref, cell_key, text, normalized_text, label, \
+              dimensions_json, fields_json, provenance_json, created_at) \
+             VALUES (?, ?, 'generated', ?, ?, ?, ?, ?, ?, '{}', ?, ?)",
+        )
+        .bind(row.id)
+        .bind(row.dataset_id)
+        .bind(row.id.to_string())
+        .bind(format!("{}/style={}", row.label, row.dimensions["style"]))
+        .bind(&row.text)
+        .bind(row.text.to_lowercase())
+        .bind(&row.label)
+        .bind(serde_json::to_string(&row.dimensions).expect("dimensions"))
+        .bind(serde_json::to_string(&row.provenance).expect("provenance"))
+        .bind(row.created_at)
+        .execute(store.pool())
+        .await
+        .expect("source row");
+    }
+    let (snapshot, members) = build_snapshot(
+        dataset_id,
+        "training snapshot",
+        None,
+        SplitConfiguration::new(SplitRatios::new(0.8, 0.2, 0.0).expect("ratios"), 7),
+        rows,
+    )
+    .expect("training snapshot");
+    store
+        .create_snapshot(&snapshot, &members)
+        .await
+        .expect("training snapshot persists");
+
+    let training = [SnapshotSplit::Train, SnapshotSplit::Validation]
+        .into_iter()
+        .filter(|split| members.iter().any(|member| member.split == *split))
+        .map(|split| {
+            let cohort = EvaluationCohort::new(
+                format!("training {split:?}"),
+                snapshot.id,
+                snapshot.fingerprint.clone(),
+                split,
+                CohortOrigin::InternalSnapshot,
+            )
+            .expect("training cohort");
+            let role = CohortRoleDecision::initial(&cohort, CohortRole::Training, "workflow")
+                .expect("training role");
+            TrainingCohortEvidence { cohort, role }
+        })
+        .collect::<Vec<_>>();
+    let mut inputs = training
+        .iter()
+        .map(|evidence| CohortContaminationInput {
+            cohort: evidence.cohort.clone(),
+            role: evidence.role.clone(),
+            members: members
+                .iter()
+                .filter(|member| member.split == evidence.cohort.split)
+                .map(|member| ContaminationMember::from_snapshot_member(member, None))
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    let benchmark_evidence = evidence
+        .cohorts
+        .values()
+        .next()
+        .expect("benchmark evidence");
+    let benchmark_cohort = bundle.cohorts.first().expect("benchmark cohort").clone();
+    let benchmark_role = bundle
+        .role_decisions
+        .first()
+        .expect("benchmark role")
+        .clone();
+    inputs.push(CohortContaminationInput {
+        cohort: benchmark_cohort,
+        role: benchmark_role,
+        members: benchmark_evidence
+            .members
+            .iter()
+            .map(|member| ContaminationMember::from_snapshot_member(member, None))
+            .collect(),
+    });
+    let report = check_contamination(inputs, None, ContaminationPolicy::default())
+        .expect("training contamination report");
+    assert_eq!(report.status, ContaminationStatus::Clean);
+    let benchmark_report = bundle
+        .contamination_reports
+        .iter()
+        .find(|report| report.id == bundle.benchmark_bundle.contamination_report_id)
+        .expect("benchmark report");
+    let check = build_training_benchmark_check(
+        &snapshot,
+        &members,
+        TrainingInputProtocol::TrainAndValidationV1,
+        training.clone(),
+        &bundle.benchmark_bundle,
+        benchmark_report,
+        &report,
+    )
+    .expect("check");
+    let extra_cohort = EvaluationCohort::new(
+        "unreferenced training cohort",
+        snapshot.id,
+        snapshot.fingerprint.clone(),
+        SnapshotSplit::Train,
+        CohortOrigin::InternalSnapshot,
+    )
+    .expect("extra cohort");
+    let extra_role = CohortRoleDecision::initial(
+        &extra_cohort,
+        CohortRole::Training,
+        "must not leak through composite persistence",
+    )
+    .expect("extra role");
+    let mut excessive = training.clone();
+    excessive.push(TrainingCohortEvidence {
+        cohort: extra_cohort.clone(),
+        role: extra_role,
+    });
+    assert!(
+        store
+            .create_training_benchmark_check(&excessive, &report, &check)
+            .await
+            .is_err(),
+        "unreferenced composite cohorts must be rejected"
+    );
+    assert!(
+        store
+            .get_cohort(extra_cohort.id)
+            .await
+            .expect("extra cohort lookup")
+            .is_none(),
+        "rejected composite persistence must roll back every cohort"
+    );
+    store
+        .create_training_benchmark_check(&training, &report, &check)
+        .await
+        .expect("atomic check persistence");
+    assert_eq!(
+        store
+            .get_executable_training_benchmark_check(check.id)
+            .await
+            .expect("deep read"),
+        Some(check.clone())
+    );
+    assert_eq!(
+        store
+            .query_training_benchmark_checks(TrainingBenchmarkCheckQuery {
+                training_snapshot_id: Some(snapshot.id),
+                benchmark_bundle_id: Some(bundle.benchmark_bundle.id),
+                status: Some(ContaminationStatus::Clean),
+                protocol: Some(TrainingInputProtocol::TrainAndValidationV1),
+                check_protocol_version: Some(
+                    workflow_core::training_benchmark::TRAINING_BENCHMARK_CHECK_PROTOCOL.into(),
+                ),
+                limit: 10,
+                offset: 0,
+            })
+            .await
+            .expect("query"),
+        vec![check.clone()]
+    );
+
+    let dataset = store
+        .get_dataset(snapshot.source_dataset_id)
+        .await
+        .expect("dataset read")
+        .expect("dataset exists");
+    let training_examples = members
+        .iter()
+        .filter(|member| member.split == SnapshotSplit::Train)
+        .map(|member| TrainingExample {
+            snapshot_member_id: member.id,
+            text: member.text.clone(),
+            label: member.label.clone(),
+        })
+        .collect();
+    let validation_examples = members
+        .iter()
+        .filter(|member| member.split == SnapshotSplit::Validation)
+        .map(|member| TrainingExample {
+            snapshot_member_id: member.id,
+            text: member.text.clone(),
+            label: member.label.clone(),
+        })
+        .collect();
+    let input_fingerprint = TrainingRequest::in_memory(
+        Uuid::nil(),
+        snapshot.id,
+        dataset.labels,
+        training_examples,
+        validation_examples,
+        TrainingConfiguration::default(),
+    )
+    .reproduce_input_fingerprint()
+    .expect("backend-facing input fingerprint");
+    let binding = TrainingInputBinding {
+        protocol: TrainingInputProtocol::TrainAndValidationV1
+            .stable_name()
+            .into(),
+        population_fingerprint: check.training_population_fingerprint.clone(),
+        member_count: check.training_member_count,
+        input_fingerprint,
+        authority_kind: "training_benchmark_check".into(),
+        authority_id: check.id,
+        authority_fingerprint: check.fingerprint.clone(),
+    };
+    let run = TrainingRun::queued(
+        snapshot.id,
+        "hashing-linear",
+        "hashing-linear-v1",
+        TrainingConfiguration::default(),
+    )
+    .expect("queued run")
+    .with_input_binding(binding.clone())
+    .expect("bound run");
+    store
+        .create_training_run(&run)
+        .await
+        .expect("clean authority permits run persistence");
+    assert_eq!(
+        store
+            .get_training_run(run.id)
+            .await
+            .expect("run read")
+            .expect("run exists")
+            .input_binding,
+        Some(binding.clone())
+    );
+    let mut wrong_binding = binding.clone();
+    wrong_binding.population_fingerprint = "sha256:wrong-population".into();
+    let wrong_run = TrainingRun::queued(
+        snapshot.id,
+        "hashing-linear",
+        "hashing-linear-v1",
+        TrainingConfiguration::default(),
+    )
+    .expect("queued run")
+    .with_input_binding(wrong_binding)
+    .expect("shaped binding");
+    assert!(
+        store.create_training_run(&wrong_run).await.is_err(),
+        "a copied claim that differs from its check must not persist"
+    );
+    assert!(
+        sqlx::query("UPDATE training_runs SET input_fingerprint = ? WHERE id = ?")
+            .bind("sha256:tampered-input")
+            .bind(run.id)
+            .execute(store.pool())
+            .await
+            .is_err(),
+        "training input authority must remain immutable"
+    );
+    assert!(
+        sqlx::query("UPDATE workflow_training_benchmark_checks SET created_at = ? WHERE id = ?",)
+            .bind(Utc::now())
+            .bind(check.id)
+            .execute(store.pool())
+            .await
+            .is_err(),
+        "training-benchmark check rows must be immutable even outside their fingerprint"
+    );
+    assert!(
+        sqlx::query("DELETE FROM workflow_training_benchmark_check_cohorts WHERE check_id = ?",)
+            .bind(check.id)
+            .execute(store.pool())
+            .await
+            .is_err(),
+        "training-benchmark cohort bindings must be append-only"
+    );
+
+    let member = members
+        .iter()
+        .find(|member| member.split == SnapshotSplit::Train)
+        .expect("train member");
+    sqlx::query(
+        "UPDATE dataset_snapshot_members SET text = 'tampered' \
+         WHERE snapshot_id = ? AND id = ?",
+    )
+    .bind(snapshot.id)
+    .bind(member.id)
+    .execute(store.pool())
+    .await
+    .expect("tamper");
+    assert!(
+        store.get_training_benchmark_check(check.id).await.is_err(),
+        "snapshot member tampering must invalidate the check"
     );
 }
 

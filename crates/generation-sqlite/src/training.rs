@@ -1,8 +1,9 @@
 use chrono::{DateTime, Utc};
-use sqlx::{FromRow, QueryBuilder, Sqlite};
+use sqlx::{FromRow, QueryBuilder, Sqlite, SqliteConnection};
 use training_core::{
     domain::{
-        EncoderArchitecture, RegisteredEncoder, TrainingCheckpoint, TrainingRun, TrainingRunState,
+        EncoderArchitecture, RegisteredEncoder, TrainingCheckpoint, TrainingExample,
+        TrainingInputBinding, TrainingRequest, TrainingRun, TrainingRunState,
     },
     ports::{
         BoxFuture, EncoderRegistry, EncoderRegistryError, TrainingRunQuery, TrainingStore,
@@ -120,16 +121,21 @@ impl TrainingStore for SqliteStore {
     ) -> BoxFuture<'_, Result<(), TrainingStoreError>> {
         let run = run.clone();
         Box::pin(async move {
+            run.validate_new().map_err(store_error)?;
+            let mut transaction = self.pool.begin().await.map_err(store_error)?;
+            validate_training_input_authority(&mut transaction, &run, true).await?;
             sqlx::query(
                 "INSERT INTO training_runs \
                  (id, snapshot_id, backend_name, model_format, state, configuration_json, \
                   base_model_id, parent_checkpoint_id, backend_configuration_fingerprint, \
-                  transformer_configuration_json, \
+                  transformer_configuration_json, input_protocol, input_population_fingerprint, \
+                  input_member_count, input_fingerprint, input_authority_kind, input_authority_id, \
+                  input_authority_fingerprint, \
                   completed_epochs, current_epoch, completed_batches, batches_in_epoch, \
                   processed_examples, latest_training_loss, latest_validation_loss, \
                   latest_learning_rate, elapsed_milliseconds, cancel_requested, error_message, \
                   created_at, updated_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(run.id)
             .bind(run.snapshot_id)
@@ -146,6 +152,35 @@ impl TrainingStore for SqliteStore {
                     .map(to_json)
                     .transpose()?,
             )
+            .bind(run.input_binding.as_ref().map(|value| &value.protocol))
+            .bind(
+                run.input_binding
+                    .as_ref()
+                    .map(|value| &value.population_fingerprint),
+            )
+            .bind(
+                run.input_binding
+                    .as_ref()
+                    .map(|value| i64::try_from(value.member_count))
+                    .transpose()
+                    .map_err(store_error)?,
+            )
+            .bind(
+                run.input_binding
+                    .as_ref()
+                    .map(|value| &value.input_fingerprint),
+            )
+            .bind(
+                run.input_binding
+                    .as_ref()
+                    .map(|value| &value.authority_kind),
+            )
+            .bind(run.input_binding.as_ref().map(|value| value.authority_id))
+            .bind(
+                run.input_binding
+                    .as_ref()
+                    .map(|value| &value.authority_fingerprint),
+            )
             .bind(i64::from(run.completed_epochs))
             .bind(i64::from(run.current_epoch))
             .bind(i64::from(run.completed_batches))
@@ -159,9 +194,10 @@ impl TrainingStore for SqliteStore {
             .bind(run.error_message)
             .bind(run.created_at)
             .bind(run.updated_at)
-            .execute(&self.pool)
+            .execute(&mut *transaction)
             .await
             .map_err(store_error)?;
+            transaction.commit().await.map_err(store_error)?;
             Ok(())
         })
     }
@@ -172,6 +208,26 @@ impl TrainingStore for SqliteStore {
     ) -> BoxFuture<'_, Result<(), TrainingStoreError>> {
         let run = run.clone();
         Box::pin(async move {
+            let mut transaction = self.pool.begin().await.map_err(store_error)?;
+            let previous = load_training_run_in_transaction(&mut transaction, run.id)
+                .await?
+                .ok_or_else(|| TrainingStoreError(format!("training run not found: {}", run.id)))?;
+            run.validate_update_from(&previous).map_err(store_error)?;
+            if run.state == TrainingRunState::Completed {
+                let final_epoch: Option<i64> = sqlx::query_scalar(
+                    "SELECT epoch FROM training_checkpoints \
+                     WHERE run_id = ? AND is_final = 1",
+                )
+                .bind(run.id)
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(store_error)?;
+                if final_epoch != Some(i64::from(run.configuration.epochs)) {
+                    return Err(TrainingStoreError(
+                        "completed training run has no exact final checkpoint".into(),
+                    ));
+                }
+            }
             let result = sqlx::query(
                 "UPDATE training_runs SET state = ?, completed_epochs = ?, current_epoch = ?, \
                  completed_batches = ?, batches_in_epoch = ?, processed_examples = ?, \
@@ -194,7 +250,7 @@ impl TrainingStore for SqliteStore {
             .bind(run.error_message)
             .bind(run.updated_at)
             .bind(run.id)
-            .execute(&self.pool)
+            .execute(&mut *transaction)
             .await
             .map_err(store_error)?;
             if result.rows_affected() != 1 {
@@ -203,6 +259,7 @@ impl TrainingStore for SqliteStore {
                     run.id
                 )));
             }
+            transaction.commit().await.map_err(store_error)?;
             Ok(())
         })
     }
@@ -215,7 +272,9 @@ impl TrainingStore for SqliteStore {
             sqlx::query_as::<_, TrainingRunRecord>(
                 "SELECT id, snapshot_id, backend_name, model_format, state, configuration_json, \
                  base_model_id, parent_checkpoint_id, backend_configuration_fingerprint, \
-                 transformer_configuration_json, \
+                 transformer_configuration_json, input_protocol, input_population_fingerprint, \
+                 input_member_count, input_fingerprint, input_authority_kind, input_authority_id, \
+                 input_authority_fingerprint, \
                  completed_epochs, current_epoch, completed_batches, batches_in_epoch, \
                  processed_examples, latest_training_loss, latest_validation_loss, \
                  latest_learning_rate, elapsed_milliseconds, \
@@ -236,7 +295,9 @@ impl TrainingStore for SqliteStore {
             sqlx::query_as::<_, TrainingRunRecord>(
                 "SELECT id, snapshot_id, backend_name, model_format, state, configuration_json, \
                  base_model_id, parent_checkpoint_id, backend_configuration_fingerprint, \
-                 transformer_configuration_json, \
+                 transformer_configuration_json, input_protocol, input_population_fingerprint, \
+                 input_member_count, input_fingerprint, input_authority_kind, input_authority_id, \
+                 input_authority_fingerprint, \
                  completed_epochs, current_epoch, completed_batches, batches_in_epoch, \
                  processed_examples, latest_training_loss, latest_validation_loss, \
                  latest_learning_rate, elapsed_milliseconds, \
@@ -260,7 +321,9 @@ impl TrainingStore for SqliteStore {
             let mut builder = QueryBuilder::<Sqlite>::new(
                 "SELECT id, snapshot_id, backend_name, model_format, state, configuration_json, \
                  base_model_id, parent_checkpoint_id, backend_configuration_fingerprint, \
-                 transformer_configuration_json, \
+                 transformer_configuration_json, input_protocol, input_population_fingerprint, \
+                 input_member_count, input_fingerprint, input_authority_kind, input_authority_id, \
+                 input_authority_fingerprint, \
                  completed_epochs, current_epoch, completed_batches, batches_in_epoch, \
                  processed_examples, latest_training_loss, latest_validation_loss, \
                  latest_learning_rate, elapsed_milliseconds, \
@@ -269,6 +332,13 @@ impl TrainingStore for SqliteStore {
             let mut has_condition = false;
             if let Some(snapshot_id) = query.snapshot_id {
                 builder.push(" WHERE snapshot_id = ").push_bind(snapshot_id);
+                has_condition = true;
+            }
+            if let Some(authority_id) = query.input_authority_id {
+                builder.push(if has_condition { " AND " } else { " WHERE " });
+                builder
+                    .push("input_authority_id = ")
+                    .push_bind(authority_id);
                 has_condition = true;
             }
             if let Some(state) = query.state {
@@ -314,6 +384,16 @@ impl TrainingStore for SqliteStore {
     ) -> BoxFuture<'_, Result<(), TrainingStoreError>> {
         let checkpoint = checkpoint.clone();
         Box::pin(async move {
+            let mut transaction = self.pool.begin().await.map_err(store_error)?;
+            let run = load_training_run_in_transaction(&mut transaction, checkpoint.run_id)
+                .await?
+                .ok_or_else(|| {
+                    TrainingStoreError(format!(
+                        "checkpoint training run not found: {}",
+                        checkpoint.run_id
+                    ))
+                })?;
+            checkpoint.validate_for_run(&run).map_err(store_error)?;
             sqlx::query(
                 "INSERT INTO training_checkpoints \
                  (id, run_id, epoch, artifact_path, artifact_checksum, model_format, \
@@ -331,9 +411,10 @@ impl TrainingStore for SqliteStore {
             .bind(checkpoint.validation_loss)
             .bind(checkpoint.is_final)
             .bind(checkpoint.created_at)
-            .execute(&self.pool)
+            .execute(&mut *transaction)
             .await
             .map_err(store_error)?;
+            transaction.commit().await.map_err(store_error)?;
             Ok(())
         })
     }
@@ -390,6 +471,13 @@ struct TrainingRunRecord {
     parent_checkpoint_id: Option<Uuid>,
     backend_configuration_fingerprint: Option<String>,
     transformer_configuration_json: Option<String>,
+    input_protocol: Option<String>,
+    input_population_fingerprint: Option<String>,
+    input_member_count: Option<i64>,
+    input_fingerprint: Option<String>,
+    input_authority_kind: Option<String>,
+    input_authority_id: Option<Uuid>,
+    input_authority_fingerprint: Option<String>,
     completed_epochs: i64,
     current_epoch: i64,
     completed_batches: i64,
@@ -405,9 +493,123 @@ struct TrainingRunRecord {
     updated_at: DateTime<Utc>,
 }
 
+async fn load_training_run_in_transaction(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    id: Uuid,
+) -> Result<Option<TrainingRun>, TrainingStoreError> {
+    sqlx::query_as::<_, TrainingRunRecord>(
+        "SELECT id, snapshot_id, backend_name, model_format, state, configuration_json, \
+         base_model_id, parent_checkpoint_id, backend_configuration_fingerprint, \
+         transformer_configuration_json, input_protocol, input_population_fingerprint, \
+         input_member_count, input_fingerprint, input_authority_kind, input_authority_id, \
+         input_authority_fingerprint, completed_epochs, current_epoch, completed_batches, \
+         batches_in_epoch, processed_examples, latest_training_loss, latest_validation_loss, \
+         latest_learning_rate, elapsed_milliseconds, cancel_requested, error_message, \
+         created_at, updated_at FROM training_runs WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(store_error)?
+    .map(TrainingRunRecord::into_domain)
+    .transpose()
+}
+
+pub(crate) async fn validate_training_input_authority(
+    connection: &mut SqliteConnection,
+    run: &TrainingRun,
+    require_current_roles: bool,
+) -> Result<(), TrainingStoreError> {
+    let Some(binding) = &run.input_binding else {
+        return Ok(());
+    };
+    binding.validate().map_err(store_error)?;
+    if binding.authority_kind != "training_benchmark_check" {
+        return Err(TrainingStoreError(format!(
+            "unsupported training input authority: {}",
+            binding.authority_kind
+        )));
+    }
+    let check = crate::training_benchmark::load_training_benchmark_check(
+        connection,
+        binding.authority_id,
+        require_current_roles,
+    )
+    .await
+    .map_err(store_error)?
+    .ok_or_else(|| TrainingStoreError("training input authority check not found".into()))?;
+    if !check.training_allowed()
+        || check.fingerprint != binding.authority_fingerprint
+        || check.training_snapshot_id != run.snapshot_id
+        || check.training_input_protocol.stable_name() != binding.protocol
+        || check.training_population_fingerprint != binding.population_fingerprint
+        || check.training_member_count != binding.member_count
+    {
+        return Err(TrainingStoreError(
+            "training run input binding differs from its clean authority".into(),
+        ));
+    }
+    let (snapshot, members) =
+        crate::load_verified_snapshot_with_members(connection, run.snapshot_id)
+            .await
+            .map_err(store_error)?
+            .ok_or_else(|| TrainingStoreError("training snapshot not found".into()))?;
+    let labels_json: String =
+        sqlx::query_scalar("SELECT labels_json FROM dataset_definitions WHERE id = ?")
+            .bind(snapshot.source_dataset_id)
+            .fetch_one(&mut *connection)
+            .await
+            .map_err(store_error)?;
+    let labels: Vec<String> = from_json(&labels_json)?;
+    let mut training = Vec::new();
+    let mut validation = Vec::new();
+    for member in members {
+        let example = TrainingExample {
+            snapshot_member_id: member.id,
+            text: member.text,
+            label: member.label,
+        };
+        match member.split {
+            dataset_core::domain::SnapshotSplit::Train => training.push(example),
+            dataset_core::domain::SnapshotSplit::Validation => validation.push(example),
+            dataset_core::domain::SnapshotSplit::Test => {}
+        }
+    }
+    let request = TrainingRequest::in_memory(
+        Uuid::nil(),
+        snapshot.id,
+        labels,
+        training,
+        validation,
+        run.configuration.clone(),
+    );
+    if request.reproduce_input_fingerprint().map_err(store_error)? != binding.input_fingerprint {
+        return Err(TrainingStoreError(
+            "training run backend-facing input fingerprint differs from its snapshot".into(),
+        ));
+    }
+    Ok(())
+}
+
+impl SqliteStore {
+    /// Reproduces a persisted run's complete opaque authority, including the
+    /// exact Train/Validation request digest, from immutable database facts.
+    pub async fn verify_training_run_input_authority(
+        &self,
+        run_id: Uuid,
+        require_current_roles: bool,
+    ) -> Result<(), TrainingStoreError> {
+        let run = TrainingStore::get_training_run(self, run_id)
+            .await?
+            .ok_or_else(|| TrainingStoreError(format!("training run not found: {run_id}")))?;
+        let mut connection = self.pool.acquire().await.map_err(store_error)?;
+        validate_training_input_authority(&mut connection, &run, require_current_roles).await
+    }
+}
+
 impl TrainingRunRecord {
     fn into_domain(self) -> Result<TrainingRun, TrainingStoreError> {
-        Ok(TrainingRun {
+        let value = TrainingRun {
             id: self.id,
             snapshot_id: self.snapshot_id,
             base_model_id: self.base_model_id,
@@ -418,6 +620,15 @@ impl TrainingRunRecord {
                 .as_deref()
                 .map(from_json)
                 .transpose()?,
+            input_binding: training_input_binding(
+                self.input_protocol,
+                self.input_population_fingerprint,
+                self.input_member_count,
+                self.input_fingerprint,
+                self.input_authority_kind,
+                self.input_authority_id,
+                self.input_authority_fingerprint,
+            )?,
             backend_name: self.backend_name,
             model_format: self.model_format,
             state: parse_run_state(&self.state)?,
@@ -435,7 +646,57 @@ impl TrainingRunRecord {
             error_message: self.error_message,
             created_at: self.created_at,
             updated_at: self.updated_at,
-        })
+        };
+        if value.input_binding.is_some() {
+            value.validate_persisted().map_err(store_error)?;
+        }
+        Ok(value)
+    }
+}
+
+fn training_input_binding(
+    protocol: Option<String>,
+    population_fingerprint: Option<String>,
+    member_count: Option<i64>,
+    input_fingerprint: Option<String>,
+    authority_kind: Option<String>,
+    authority_id: Option<Uuid>,
+    authority_fingerprint: Option<String>,
+) -> Result<Option<TrainingInputBinding>, TrainingStoreError> {
+    match (
+        protocol,
+        population_fingerprint,
+        member_count,
+        input_fingerprint,
+        authority_kind,
+        authority_id,
+        authority_fingerprint,
+    ) {
+        (None, None, None, None, None, None, None) => Ok(None),
+        (
+            Some(protocol),
+            Some(population_fingerprint),
+            Some(member_count),
+            Some(input_fingerprint),
+            Some(authority_kind),
+            Some(authority_id),
+            Some(authority_fingerprint),
+        ) => {
+            let value = TrainingInputBinding {
+                protocol,
+                population_fingerprint,
+                member_count: u64::try_from(member_count).map_err(store_error)?,
+                input_fingerprint,
+                authority_kind,
+                authority_id,
+                authority_fingerprint,
+            };
+            value.validate().map_err(store_error)?;
+            Ok(Some(value))
+        }
+        _ => Err(TrainingStoreError(
+            "training input authority binding is incomplete".into(),
+        )),
     }
 }
 

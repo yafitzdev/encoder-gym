@@ -64,7 +64,7 @@ mod facts;
 use facts::{
     analysis_facts_check, architect_facts_check, benchmark_bundle_facts_check,
     bootstrap_facts_check, evaluation_facts_check, optimization_facts_check, quality_facts_check,
-    research_facts_check, workflow_facts_check,
+    research_facts_check, training_benchmark_facts_check, workflow_facts_check,
 };
 
 #[derive(Debug, Serialize)]
@@ -231,6 +231,7 @@ async fn database_checks(store: &SqliteStore) -> Vec<DoctorCheck> {
     checks.push(Box::pin(optimization_facts_check(store)).await);
     checks.push(Box::pin(bootstrap_facts_check(store)).await);
     checks.push(Box::pin(benchmark_bundle_facts_check(store)).await);
+    checks.push(Box::pin(training_benchmark_facts_check(store)).await);
     checks.push(Box::pin(workflow_facts_check(store)).await);
     checks.push(Box::pin(semantic_facts_check(store)).await);
     checks.push(Box::pin(research_facts_check(store)).await);

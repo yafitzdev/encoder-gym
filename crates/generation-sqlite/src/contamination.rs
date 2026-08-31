@@ -90,6 +90,19 @@ impl ContaminationStore for SqliteStore {
         let value = value.clone();
         Box::pin(async move {
             validate_override(&value)?;
+            let training_authority: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM workflow_training_benchmark_checks \
+                 WHERE contamination_report_id = ?)",
+            )
+            .bind(value.report_id)
+            .fetch_one(self.pool())
+            .await
+            .map_err(store_error)?;
+            if training_authority {
+                return Err(WorkflowStoreError(
+                    "training-benchmark contamination reports cannot be overridden".into(),
+                ));
+            }
             let report = self
                 .get_contamination_report(value.report_id)
                 .await?
