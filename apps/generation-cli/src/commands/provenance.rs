@@ -78,6 +78,7 @@ const fn artifact_kind(kind: ArtifactKindArg) -> ArtifactKind {
         ArtifactKindArg::ContaminationReport => ArtifactKind::ContaminationReport,
         ArtifactKindArg::BenchmarkBundle => ArtifactKind::BenchmarkBundle,
         ArtifactKindArg::BenchmarkQualification => ArtifactKind::BenchmarkQualification,
+        ArtifactKindArg::BenchmarkQualificationReview => ArtifactKind::BenchmarkQualificationReview,
         ArtifactKindArg::TrainingBenchmarkCheck => ArtifactKind::TrainingBenchmarkCheck,
         ArtifactKindArg::WorkflowDefinition => ArtifactKind::WorkflowDefinition,
         ArtifactKindArg::WorkflowRun => ArtifactKind::WorkflowRun,
@@ -169,6 +170,10 @@ mod tests {
             (
                 ArtifactKindArg::BenchmarkQualification,
                 ArtifactKind::BenchmarkQualification,
+            ),
+            (
+                ArtifactKindArg::BenchmarkQualificationReview,
+                ArtifactKind::BenchmarkQualificationReview,
             ),
             (
                 ArtifactKindArg::TrainingBenchmarkCheck,

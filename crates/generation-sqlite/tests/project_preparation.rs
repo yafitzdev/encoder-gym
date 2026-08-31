@@ -28,8 +28,9 @@ use workflow_core::{
     allocation::InitialAllocationPolicy,
     benchmark::{AcceptanceContract, BenchmarkMetric, MetricRequirement, MetricTarget},
     benchmark_qualification::{
-        BenchmarkQualificationPolicy, BenchmarkReadiness, QualificationPopulation,
-        qualify_benchmark_bundle,
+        BenchmarkQualificationPolicy, BenchmarkQualificationReviewDecision,
+        BenchmarkQualificationReviewRequest, BenchmarkReadiness, QualificationPopulation,
+        qualify_benchmark_bundle, review_benchmark_qualification,
     },
     contamination::{
         CohortContaminationInput, ContaminationKind, ContaminationMember, ContaminationPolicy,
@@ -140,6 +141,43 @@ async fn benchmark_qualification_is_recomputed_from_snapshot_evidence() {
     assert_eq!(provenance.kind, ArtifactKind::BenchmarkQualification);
     assert_eq!(provenance.parents.len(), 1);
     assert_eq!(provenance.parents[0].kind, ArtifactKind::BenchmarkBundle);
+
+    let review = review_benchmark_qualification(
+        &qualification,
+        BenchmarkQualificationReviewRequest {
+            decision: BenchmarkQualificationReviewDecision::Reject,
+            reviewed_by: "test operator".into(),
+            rationale: "missing label support".into(),
+        },
+    )
+    .expect("review");
+    store
+        .create_benchmark_qualification_review(&review)
+        .await
+        .expect("review persists");
+    assert_eq!(
+        store
+            .get_benchmark_qualification_review(review.id)
+            .await
+            .expect("review read"),
+        Some(review.clone())
+    );
+    assert_eq!(
+        store
+            .get_benchmark_qualification_review_for_qualification(qualification.id)
+            .await
+            .expect("review by qualification"),
+        Some(review.clone())
+    );
+    let review_provenance = store
+        .trace_provenance(ArtifactKind::BenchmarkQualificationReview, review.id)
+        .await
+        .expect("review provenance")
+        .expect("review node");
+    assert_eq!(
+        review_provenance.parents[0].kind,
+        ArtifactKind::BenchmarkQualification
+    );
 
     sqlx::query("UPDATE dataset_snapshot_members SET label = 'fraud' WHERE id = ?")
         .bind(members[0].id)

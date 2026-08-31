@@ -12,8 +12,10 @@ use workflow_core::{
     },
     benchmark_bundle::BenchmarkBundle,
     benchmark_qualification::{
-        BENCHMARK_QUALIFICATION_PROTOCOL, BenchmarkQualificationPolicy, BenchmarkReadiness,
-        QualificationPopulation, qualify_benchmark_bundle,
+        BENCHMARK_QUALIFICATION_PROTOCOL, BenchmarkQualificationPolicy,
+        BenchmarkQualificationReviewDecision, BenchmarkQualificationReviewRequest,
+        BenchmarkReadiness, QualificationPopulation, qualify_benchmark_bundle,
+        review_benchmark_qualification,
     },
     governance::{EvidenceExposure, EvidenceExposureRequest, ExposurePurpose},
     ports::{
@@ -25,8 +27,8 @@ use workflow_core::{
 };
 
 use crate::cli::{
-    AcceptanceStateArg, BenchmarkCommand, BenchmarkReadinessArg, BenchmarkSuiteKindArg,
-    ContaminationStatusArg,
+    AcceptanceStateArg, BenchmarkCommand, BenchmarkQualificationReviewDecisionArg,
+    BenchmarkReadinessArg, BenchmarkSuiteKindArg, ContaminationStatusArg,
 };
 use crate::document::read as read_document;
 
@@ -370,6 +372,45 @@ pub async fn execute(command: BenchmarkCommand, store: &SqliteStore) -> anyhow::
                 .await?;
             crate::presentation::print_page(&values, values.len(), page)
         }
+        BenchmarkCommand::QualificationReview {
+            id,
+            decision,
+            reviewed_by,
+            rationale,
+        } => {
+            let qualification = store
+                .get_executable_benchmark_qualification(id)
+                .await?
+                .with_context(|| format!("executable benchmark qualification not found: {id}"))?;
+            let review = review_benchmark_qualification(
+                &qualification,
+                BenchmarkQualificationReviewRequest {
+                    decision: qualification_review_decision(decision),
+                    reviewed_by,
+                    rationale,
+                },
+            )?;
+            if let Some(existing) = store
+                .get_benchmark_qualification_review_for_qualification(id)
+                .await?
+            {
+                ensure!(
+                    existing.fingerprint == review.fingerprint,
+                    "qualification already has a different immutable review: {}",
+                    existing.id
+                );
+                return crate::presentation::print(&existing);
+            }
+            store.create_benchmark_qualification_review(&review).await?;
+            crate::presentation::print(&review)
+        }
+        BenchmarkCommand::QualificationReviewShow { id } => {
+            let review = store
+                .get_benchmark_qualification_review(id)
+                .await?
+                .with_context(|| format!("benchmark qualification review not found: {id}"))?;
+            crate::presentation::print(&review)
+        }
     }
 }
 
@@ -509,6 +550,19 @@ const fn benchmark_readiness(value: BenchmarkReadinessArg) -> BenchmarkReadiness
     match value {
         BenchmarkReadinessArg::Ready => BenchmarkReadiness::Ready,
         BenchmarkReadinessArg::Blocked => BenchmarkReadiness::Blocked,
+    }
+}
+
+const fn qualification_review_decision(
+    value: BenchmarkQualificationReviewDecisionArg,
+) -> BenchmarkQualificationReviewDecision {
+    match value {
+        BenchmarkQualificationReviewDecisionArg::Approve => {
+            BenchmarkQualificationReviewDecision::Approve
+        }
+        BenchmarkQualificationReviewDecisionArg::Reject => {
+            BenchmarkQualificationReviewDecision::Reject
+        }
     }
 }
 

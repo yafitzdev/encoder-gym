@@ -12,7 +12,8 @@ use crate::approval::WorkflowApprovalDecision;
 use crate::benchmark::{AcceptanceAssessment, AcceptanceState, BenchmarkSuite, BenchmarkSuiteKind};
 use crate::benchmark_bundle::BenchmarkBundle;
 use crate::benchmark_qualification::{
-    BENCHMARK_QUALIFICATION_PROTOCOL, BenchmarkQualification, BenchmarkReadiness,
+    BENCHMARK_QUALIFICATION_PROTOCOL, BenchmarkQualification, BenchmarkQualificationReview,
+    BenchmarkReadiness,
 };
 use crate::contamination::{ContaminationOverride, ContaminationReport, ContaminationStatus};
 use crate::execution::WorkflowChildExecution;
@@ -301,6 +302,21 @@ pub trait BenchmarkQualificationStore: Send + Sync {
         &self,
         query: BenchmarkQualificationQuery,
     ) -> BoxFuture<'_, Result<Vec<BenchmarkQualification>, WorkflowStoreError>>;
+
+    fn create_benchmark_qualification_review(
+        &self,
+        review: &BenchmarkQualificationReview,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    fn get_benchmark_qualification_review(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<BenchmarkQualificationReview>, WorkflowStoreError>>;
+
+    fn get_benchmark_qualification_review_for_qualification(
+        &self,
+        qualification_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<BenchmarkQualificationReview>, WorkflowStoreError>>;
 }
 
 #[derive(Debug, Clone)]

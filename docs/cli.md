@@ -283,7 +283,12 @@ Benchmark and acceptance commands are:
   or deeply recompute a qualification from current verified snapshots and
   executable bundle roles; and
 - `synth benchmark qualification-list` with optional
-  `--benchmark-bundle-id <ID>` and `--readiness ready|blocked` filters.
+  `--benchmark-bundle-id <ID>` and `--readiness ready|blocked` filters; and
+- `synth benchmark qualification-review <ID> --decision approve|reject
+  --reviewed-by NAME --rationale TEXT` plus `qualification-review-show` to
+  record and inspect the separate append-only human decision. Approval is
+  rejected unless deterministic readiness is `ready`; one decision closes the
+  review for that immutable qualification.
 
 Metric contracts require at least one effective decision bound and support
 overall metrics, per-label precision/recall/F1, canonical typed slice keys,

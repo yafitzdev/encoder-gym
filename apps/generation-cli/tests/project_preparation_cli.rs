@@ -152,6 +152,37 @@ fn manifest_previews_prepares_idempotently_and_yields_a_startable_workflow() {
     );
     assert_eq!(provenance["kind"], "benchmark_qualification");
     assert_eq!(provenance["parents"][0]["kind"], "benchmark_bundle");
+    let review = run_json(
+        &database_url,
+        [
+            "benchmark",
+            "qualification-review",
+            qualification_id,
+            "--decision",
+            "reject",
+            "--reviewed-by",
+            "project owner",
+            "--rationale",
+            "fixture intentionally lacks decision support",
+        ],
+    );
+    assert_eq!(review["decision"], "reject");
+    assert_eq!(review["qualification_id"], qualification_id);
+    let review_id = review["id"].as_str().expect("review ID");
+    assert_eq!(
+        run_json(
+            &database_url,
+            ["benchmark", "qualification-review-show", review_id],
+        )["fingerprint"],
+        review["fingerprint"]
+    );
+    assert_eq!(
+        run_json(
+            &database_url,
+            ["provenance", "benchmark-qualification-review", review_id,],
+        )["parents"][0]["kind"],
+        "benchmark_qualification"
+    );
     assert_eq!(
         run_json(&database_url, ["workflow", "list"]),
         serde_json::json!([]),

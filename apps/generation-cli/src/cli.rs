@@ -1753,6 +1753,20 @@ pub enum BenchmarkCommand {
         #[command(flatten)]
         page: PageArgs,
     },
+    /// Record the one explicit human decision for a qualification.
+    QualificationReview {
+        id: Uuid,
+        #[arg(long, value_enum)]
+        decision: BenchmarkQualificationReviewDecisionArg,
+        #[arg(long)]
+        reviewed_by: String,
+        #[arg(long)]
+        rationale: String,
+    },
+    /// Show one append-only qualification review.
+    QualificationReviewShow {
+        id: Uuid,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1773,6 +1787,12 @@ pub enum AcceptanceStateArg {
 pub enum BenchmarkReadinessArg {
     Ready,
     Blocked,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum BenchmarkQualificationReviewDecisionArg {
+    Approve,
+    Reject,
 }
 
 #[derive(Debug, Subcommand)]
@@ -2015,6 +2035,7 @@ pub enum ArtifactKindArg {
     ContaminationReport,
     BenchmarkBundle,
     BenchmarkQualification,
+    BenchmarkQualificationReview,
     TrainingBenchmarkCheck,
     WorkflowDefinition,
     WorkflowRun,

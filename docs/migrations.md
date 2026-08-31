@@ -154,6 +154,10 @@ applied automatically when the SQLite store connects.
   adapter deeply recomputes aggregate support, distribution, source,
   duplication, and uncertainty facts from verified snapshot members on every
   read. Foreign keys and update/delete triggers preserve append-only authority.
+- `0052_benchmark_qualification_reviews`: one append-only human `approve` or
+  `reject` decision per immutable qualification. A foreign key pins the exact
+  readiness artifact; uniqueness closes the review after its first decision,
+  and triggers reject mutation or deletion.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

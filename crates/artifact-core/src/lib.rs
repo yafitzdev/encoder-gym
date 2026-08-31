@@ -104,6 +104,7 @@ pub enum ArtifactKind {
     ContaminationReport,
     BenchmarkBundle,
     BenchmarkQualification,
+    BenchmarkQualificationReview,
     TrainingBenchmarkCheck,
     WorkflowDefinition,
     WorkflowRun,
@@ -172,6 +173,7 @@ impl ArtifactKind {
             Self::ContaminationReport => "contamination_report",
             Self::BenchmarkBundle => "benchmark_bundle",
             Self::BenchmarkQualification => "benchmark_qualification",
+            Self::BenchmarkQualificationReview => "benchmark_qualification_review",
             Self::TrainingBenchmarkCheck => "training_benchmark_check",
             Self::WorkflowDefinition => "workflow_definition",
             Self::WorkflowRun => "workflow_run",
@@ -284,6 +286,10 @@ mod tests {
             (
                 ArtifactKind::BenchmarkQualification,
                 "benchmark_qualification",
+            ),
+            (
+                ArtifactKind::BenchmarkQualificationReview,
+                "benchmark_qualification_review",
             ),
             (
                 ArtifactKind::TrainingBenchmarkCheck,

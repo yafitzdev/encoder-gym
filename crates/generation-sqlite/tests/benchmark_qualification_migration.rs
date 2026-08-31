@@ -4,7 +4,7 @@ use sqlx::{Connection, SqliteConnection, migrate::Migrator, sqlite::SqliteConnec
 use uuid::Uuid;
 
 #[tokio::test]
-async fn migration_0051_preserves_bundles_and_guards_immutable_qualifications() {
+async fn migrations_0051_and_0052_preserve_bundles_and_guard_qualification_history() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let database = directory.path().join("benchmark-qualification-upgrade.db");
     let options = SqliteConnectOptions::from_str(&format!(
@@ -131,6 +131,52 @@ async fn migration_0051_preserves_bundles_and_guards_immutable_qualifications() 
             .await
             .is_err(),
         "qualification artifacts must not be deleted"
+    );
+    let review_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO workflow_benchmark_qualification_reviews \
+         (id, qualification_id, decision, artifact_json, fingerprint, created_at) \
+         VALUES (?, ?, 'approve', '{}', ?, ?)",
+    )
+    .bind(review_id)
+    .bind(qualification_id)
+    .bind("sha256:review")
+    .bind(now)
+    .execute(&mut connection)
+    .await
+    .expect("qualification review");
+    assert!(
+        sqlx::query(
+            "INSERT INTO workflow_benchmark_qualification_reviews \
+             (id, qualification_id, decision, artifact_json, fingerprint, created_at) \
+             VALUES (?, ?, 'reject', '{}', ?, ?)"
+        )
+        .bind(Uuid::new_v4())
+        .bind(qualification_id)
+        .bind("sha256:second-review")
+        .bind(now)
+        .execute(&mut connection)
+        .await
+        .is_err(),
+        "one explicit decision must close a qualification review"
+    );
+    assert!(
+        sqlx::query(
+            "UPDATE workflow_benchmark_qualification_reviews SET decision = 'reject' WHERE id = ?"
+        )
+        .bind(review_id)
+        .execute(&mut connection)
+        .await
+        .is_err(),
+        "qualification reviews must be append-only"
+    );
+    assert!(
+        sqlx::query("DELETE FROM workflow_benchmark_qualification_reviews WHERE id = ?")
+            .bind(review_id)
+            .execute(&mut connection)
+            .await
+            .is_err(),
+        "qualification reviews must not be deleted"
     );
     assert!(
         sqlx::query(

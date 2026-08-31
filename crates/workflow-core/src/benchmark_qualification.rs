@@ -287,6 +287,112 @@ pub struct BenchmarkQualificationBinding {
     pub benchmark_bundle_fingerprint: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BenchmarkQualificationReviewDecision {
+    Approve,
+    Reject,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BenchmarkQualificationReviewRequest {
+    pub decision: BenchmarkQualificationReviewDecision,
+    pub reviewed_by: String,
+    pub rationale: String,
+}
+
+/// Separate append-only human decision. Computing readiness never creates one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BenchmarkQualificationReview {
+    pub id: Uuid,
+    pub qualification_id: Uuid,
+    pub qualification_fingerprint: String,
+    pub benchmark_bundle_id: Uuid,
+    pub benchmark_bundle_fingerprint: String,
+    pub decision: BenchmarkQualificationReviewDecision,
+    pub reviewed_by: String,
+    pub rationale: String,
+    pub created_at: DateTime<Utc>,
+    pub fingerprint: String,
+}
+
+impl BenchmarkQualificationReview {
+    pub fn reproduce_fingerprint(&self) -> Result<String, BenchmarkQualificationError> {
+        artifact_core::fingerprint(&(
+            self.qualification_id,
+            self.qualification_fingerprint.as_str(),
+            self.benchmark_bundle_id,
+            self.benchmark_bundle_fingerprint.as_str(),
+            self.decision,
+            self.reviewed_by.as_str(),
+            self.rationale.as_str(),
+        ))
+        .map_err(map_fingerprint)
+    }
+
+    pub fn validate_integrity(&self) -> Result<(), BenchmarkQualificationError> {
+        if self.id.is_nil()
+            || self.qualification_id.is_nil()
+            || self.benchmark_bundle_id.is_nil()
+            || !canonical_fingerprint(&self.qualification_fingerprint)
+            || !canonical_fingerprint(&self.benchmark_bundle_fingerprint)
+            || required_text(&self.reviewed_by).is_none()
+            || required_text(&self.rationale).is_none()
+            || self.reproduce_fingerprint()? != self.fingerprint
+        {
+            return Err(BenchmarkQualificationError::InvalidReview);
+        }
+        Ok(())
+    }
+
+    pub fn approved_binding(
+        &self,
+        qualification: &BenchmarkQualification,
+    ) -> Result<ApprovedBenchmarkQualificationBinding, BenchmarkQualificationError> {
+        validate_qualification_review(qualification, self)?;
+        if self.decision != BenchmarkQualificationReviewDecision::Approve
+            || qualification.readiness != BenchmarkReadiness::Ready
+        {
+            return Err(BenchmarkQualificationError::NotApproved);
+        }
+        Ok(ApprovedBenchmarkQualificationBinding {
+            qualification_id: qualification.id,
+            qualification_fingerprint: qualification.fingerprint.clone(),
+            review_id: self.id,
+            review_fingerprint: self.fingerprint.clone(),
+            benchmark_bundle_id: qualification.benchmark_bundle_id,
+            benchmark_bundle_fingerprint: qualification.benchmark_bundle_fingerprint.clone(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovedBenchmarkQualificationBinding {
+    pub qualification_id: Uuid,
+    pub qualification_fingerprint: String,
+    pub review_id: Uuid,
+    pub review_fingerprint: String,
+    pub benchmark_bundle_id: Uuid,
+    pub benchmark_bundle_fingerprint: String,
+}
+
+impl ApprovedBenchmarkQualificationBinding {
+    pub fn validate(
+        &self,
+        qualification: &BenchmarkQualification,
+        review: &BenchmarkQualificationReview,
+    ) -> Result<(), BenchmarkQualificationError> {
+        let expected = review.approved_binding(qualification)?;
+        if self != &expected {
+            return Err(BenchmarkQualificationError::BindingMismatch);
+        }
+        Ok(())
+    }
+}
+
 impl BenchmarkQualificationBinding {
     pub fn validate_qualification(
         &self,
@@ -328,8 +434,63 @@ pub enum BenchmarkQualificationError {
     FingerprintMismatch,
     #[error("benchmark qualification binding is not ready or does not match")]
     BindingMismatch,
+    #[error("benchmark qualification review is malformed")]
+    InvalidReview,
+    #[error("only a ready qualification may be approved")]
+    NotReadyForApproval,
+    #[error("benchmark qualification has not been approved")]
+    NotApproved,
     #[error("could not fingerprint benchmark qualification: {0}")]
     Fingerprint(String),
+}
+
+pub fn review_benchmark_qualification(
+    qualification: &BenchmarkQualification,
+    request: BenchmarkQualificationReviewRequest,
+) -> Result<BenchmarkQualificationReview, BenchmarkQualificationError> {
+    qualification.validate_integrity()?;
+    if request.decision == BenchmarkQualificationReviewDecision::Approve
+        && qualification.readiness != BenchmarkReadiness::Ready
+    {
+        return Err(BenchmarkQualificationError::NotReadyForApproval);
+    }
+    let reviewed_by = required_text(&request.reviewed_by)
+        .ok_or(BenchmarkQualificationError::InvalidReview)?
+        .to_owned();
+    let rationale = required_text(&request.rationale)
+        .ok_or(BenchmarkQualificationError::InvalidReview)?
+        .to_owned();
+    let mut review = BenchmarkQualificationReview {
+        id: Uuid::new_v4(),
+        qualification_id: qualification.id,
+        qualification_fingerprint: qualification.fingerprint.clone(),
+        benchmark_bundle_id: qualification.benchmark_bundle_id,
+        benchmark_bundle_fingerprint: qualification.benchmark_bundle_fingerprint.clone(),
+        decision: request.decision,
+        reviewed_by,
+        rationale,
+        created_at: Utc::now(),
+        fingerprint: String::new(),
+    };
+    review.fingerprint = review.reproduce_fingerprint()?;
+    review.validate_integrity()?;
+    Ok(review)
+}
+
+pub fn validate_qualification_review(
+    qualification: &BenchmarkQualification,
+    review: &BenchmarkQualificationReview,
+) -> Result<(), BenchmarkQualificationError> {
+    qualification.validate_integrity()?;
+    review.validate_integrity()?;
+    if review.qualification_id != qualification.id
+        || review.qualification_fingerprint != qualification.fingerprint
+        || review.benchmark_bundle_id != qualification.benchmark_bundle_id
+        || review.benchmark_bundle_fingerprint != qualification.benchmark_bundle_fingerprint
+    {
+        return Err(BenchmarkQualificationError::BindingMismatch);
+    }
+    Ok(())
 }
 
 /// Qualifies every cohort independently because the acceptance contract is
@@ -884,6 +1045,11 @@ fn canonical_fingerprint(value: &str) -> bool {
     })
 }
 
+fn required_text(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty() && trimmed == value).then_some(trimmed)
+}
+
 fn invalid_population(cohort_id: Uuid, reason: impl Into<String>) -> BenchmarkQualificationError {
     BenchmarkQualificationError::InvalidPopulation {
         cohort_id,
@@ -1088,6 +1254,71 @@ mod tests {
                 .issues
                 .iter()
                 .any(|issue| issue.code == "producer_concentration")
+        );
+    }
+
+    #[test]
+    fn approval_is_separate_and_only_ready_evidence_can_be_bound() {
+        let (bundle, suite, members) = fixture(60);
+        let ready = qualify_benchmark_bundle(
+            &bundle,
+            &suite,
+            None,
+            vec![QualificationPopulation {
+                cohort_id: suite.cohorts[0].cohort_id,
+                members: &members,
+            }],
+            BenchmarkQualificationPolicy::default(),
+        )
+        .unwrap();
+        let review = review_benchmark_qualification(
+            &ready,
+            BenchmarkQualificationReviewRequest {
+                decision: BenchmarkQualificationReviewDecision::Approve,
+                reviewed_by: "operator".into(),
+                rationale: "coverage and limitations reviewed".into(),
+            },
+        )
+        .unwrap();
+        let binding = review.approved_binding(&ready).unwrap();
+        binding.validate(&ready, &review).unwrap();
+
+        let (bundle, suite, members) = fixture(1);
+        let blocked = qualify_benchmark_bundle(
+            &bundle,
+            &suite,
+            None,
+            vec![QualificationPopulation {
+                cohort_id: suite.cohorts[0].cohort_id,
+                members: &members,
+            }],
+            BenchmarkQualificationPolicy::default(),
+        )
+        .unwrap();
+        assert_eq!(blocked.readiness, BenchmarkReadiness::Blocked);
+        assert_eq!(
+            review_benchmark_qualification(
+                &blocked,
+                BenchmarkQualificationReviewRequest {
+                    decision: BenchmarkQualificationReviewDecision::Approve,
+                    reviewed_by: "operator".into(),
+                    rationale: "should fail".into(),
+                },
+            ),
+            Err(BenchmarkQualificationError::NotReadyForApproval)
+        );
+        let rejected = review_benchmark_qualification(
+            &blocked,
+            BenchmarkQualificationReviewRequest {
+                decision: BenchmarkQualificationReviewDecision::Reject,
+                reviewed_by: "operator".into(),
+                rationale: "support is insufficient".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            rejected.approved_binding(&blocked),
+            Err(BenchmarkQualificationError::NotApproved)
         );
     }
 }

@@ -156,6 +156,9 @@ impl ProvenanceStore for SqliteStore {
                 ArtifactKind::ContaminationReport => self.contamination_report_node(id).await,
                 ArtifactKind::BenchmarkBundle => self.benchmark_bundle_node(id).await,
                 ArtifactKind::BenchmarkQualification => self.benchmark_qualification_node(id).await,
+                ArtifactKind::BenchmarkQualificationReview => {
+                    Box::pin(self.benchmark_qualification_review_node(id)).await
+                }
                 ArtifactKind::TrainingBenchmarkCheck => {
                     self.training_benchmark_check_node(id).await
                 }
@@ -912,6 +915,35 @@ impl SqliteStore {
             Some(value.fingerprint.clone()),
             &value,
             vec![bundle],
+        )?))
+    }
+
+    async fn benchmark_qualification_review_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(value) = self
+            .get_benchmark_qualification_review(id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let qualification = required_provenance_parent(
+            Box::pin(self.benchmark_qualification_node(value.qualification_id)).await?,
+            "benchmark qualification review qualification",
+        )?;
+        require_node_fingerprint(
+            &qualification,
+            &value.qualification_fingerprint,
+            "benchmark qualification review qualification",
+        )?;
+        Ok(Some(node(
+            ArtifactKind::BenchmarkQualificationReview,
+            id,
+            Some(value.fingerprint.clone()),
+            &value,
+            vec![qualification],
         )?))
     }
 

@@ -6,8 +6,9 @@ use uuid::Uuid;
 use workflow_core::{
     benchmark::{BenchmarkSuite, BenchmarkSuiteKind},
     benchmark_qualification::{
-        BenchmarkQualification, BenchmarkReadiness, QualificationPopulation,
-        qualify_benchmark_bundle,
+        BenchmarkQualification, BenchmarkQualificationReview, BenchmarkQualificationReviewDecision,
+        BenchmarkReadiness, QualificationPopulation, qualify_benchmark_bundle,
+        validate_qualification_review,
     },
     ports::{
         BenchmarkQualificationQuery, BenchmarkQualificationStore, BoxFuture, WorkflowStoreError,
@@ -117,6 +118,81 @@ impl BenchmarkQualificationStore for SqliteStore {
             Ok(qualifications)
         })
     }
+
+    fn create_benchmark_qualification_review(
+        &self,
+        review: &BenchmarkQualificationReview,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>> {
+        let review = review.clone();
+        Box::pin(async move {
+            let mut transaction = self.pool().begin().await.map_err(store_error)?;
+            let qualification = load_qualification(&mut transaction, review.qualification_id, true)
+                .await?
+                .ok_or_else(|| WorkflowStoreError("review qualification not found".into()))?;
+            validate_qualification_review(&qualification, &review).map_err(store_error)?;
+            sqlx::query(
+                "INSERT INTO workflow_benchmark_qualification_reviews \
+                 (id, qualification_id, decision, artifact_json, fingerprint, created_at) \
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(review.id)
+            .bind(review.qualification_id)
+            .bind(review_decision_name(review.decision))
+            .bind(to_json(&review)?)
+            .bind(&review.fingerprint)
+            .bind(review.created_at)
+            .execute(&mut *transaction)
+            .await
+            .map_err(store_error)?;
+            transaction.commit().await.map_err(store_error)?;
+            Ok(())
+        })
+    }
+
+    fn get_benchmark_qualification_review(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<BenchmarkQualificationReview>, WorkflowStoreError>> {
+        Box::pin(async move {
+            let mut connection = self.pool().acquire().await.map_err(store_error)?;
+            load_review_by(&mut connection, "id", id).await
+        })
+    }
+
+    fn get_benchmark_qualification_review_for_qualification(
+        &self,
+        qualification_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<BenchmarkQualificationReview>, WorkflowStoreError>> {
+        Box::pin(async move {
+            let mut connection = self.pool().acquire().await.map_err(store_error)?;
+            load_review_by(&mut connection, "qualification_id", qualification_id).await
+        })
+    }
+}
+
+async fn load_review_by(
+    connection: &mut SqliteConnection,
+    column: &'static str,
+    id: Uuid,
+) -> Result<Option<BenchmarkQualificationReview>, WorkflowStoreError> {
+    let query = format!(
+        "SELECT id, qualification_id, decision, artifact_json, fingerprint, created_at \
+         FROM workflow_benchmark_qualification_reviews WHERE {column} = ?"
+    );
+    let Some(row) = sqlx::query_as::<_, ReviewRow>(&query)
+        .bind(id)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(store_error)?
+    else {
+        return Ok(None);
+    };
+    let review = row.into_domain()?;
+    let qualification = load_qualification(connection, review.qualification_id, false)
+        .await?
+        .ok_or_else(|| WorkflowStoreError("review qualification not found".into()))?;
+    validate_qualification_review(&qualification, &review).map_err(store_error)?;
+    Ok(Some(review))
 }
 
 async fn load_qualification(
@@ -282,6 +358,35 @@ struct QualificationRow {
     created_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[derive(Debug, FromRow)]
+struct ReviewRow {
+    id: Uuid,
+    qualification_id: Uuid,
+    decision: String,
+    artifact_json: String,
+    fingerprint: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl ReviewRow {
+    fn into_domain(self) -> Result<BenchmarkQualificationReview, WorkflowStoreError> {
+        let value: BenchmarkQualificationReview = from_json(&self.artifact_json)?;
+        if value.id != self.id
+            || value.qualification_id != self.qualification_id
+            || review_decision_name(value.decision) != self.decision
+            || value.fingerprint != self.fingerprint
+            || value.created_at != self.created_at
+        {
+            return Err(WorkflowStoreError(
+                "benchmark qualification review normalized fields differ from immutable artifact"
+                    .into(),
+            ));
+        }
+        value.validate_integrity().map_err(store_error)?;
+        Ok(value)
+    }
+}
+
 impl QualificationRow {
     fn into_domain(self) -> Result<BenchmarkQualification, WorkflowStoreError> {
         let value: BenchmarkQualification = from_json(&self.artifact_json)?;
@@ -313,6 +418,13 @@ const fn readiness_name(value: BenchmarkReadiness) -> &'static str {
     match value {
         BenchmarkReadiness::Ready => "ready",
         BenchmarkReadiness::Blocked => "blocked",
+    }
+}
+
+const fn review_decision_name(value: BenchmarkQualificationReviewDecision) -> &'static str {
+    match value {
+        BenchmarkQualificationReviewDecision::Approve => "approve",
+        BenchmarkQualificationReviewDecision::Reject => "reject",
     }
 }
 
