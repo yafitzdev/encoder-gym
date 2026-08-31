@@ -6,7 +6,10 @@ use dataset_quality_core::{
         EvaluatorExecutionLocation, EvaluatorIdentity, EvaluatorIndependence,
         GeneratorEvaluatorRelationship, QualityIssueCode, QualityVerdict,
     },
-    policy::BasisPoints,
+    policy::{
+        AuditBudgets, AuditMode, BasisPoints, BorderlineReviewPolicy, EvaluatorEgressPolicy,
+        InvalidEvaluatorOutputPolicy, QualityPolicy, QualityThresholds,
+    },
 };
 use generation_core::{
     domain::{GeneratedRow, ValidationStatus},
@@ -68,6 +71,44 @@ fn contract() -> GenerationQualityContract {
         EvaluatorExecutionLocation::LocalProcess,
     )
     .unwrap();
+    let row_thresholds = RowQualityThresholds {
+        minimum_assigned_label_score: bp(7_000),
+        minimum_label_margin: bp(1_000),
+        minimum_dimension_score: bp(7_000),
+        minimum_difficulty_score: None,
+        minimum_authenticity_score: None,
+        minimum_strategy_score: None,
+        maximum_label_leakage_risk: bp(2_000),
+        maximum_shortcut_risk: bp(2_000),
+        minimum_evaluator_confidence: bp(7_000),
+    };
+    let quality_policy = QualityPolicy::new(
+        None,
+        QualityThresholds {
+            minimum_assigned_label_score: row_thresholds.minimum_assigned_label_score,
+            minimum_label_margin: row_thresholds.minimum_label_margin,
+            minimum_dimension_adherence_score: row_thresholds.minimum_dimension_score,
+            minimum_authenticity_score: row_thresholds.minimum_authenticity_score,
+            maximum_label_leakage_risk: row_thresholds.maximum_label_leakage_risk,
+            maximum_shortcut_risk: row_thresholds.maximum_shortcut_risk,
+            minimum_evaluator_confidence: row_thresholds.minimum_evaluator_confidence,
+            borderline_margin: bp(500),
+        },
+        InvalidEvaluatorOutputPolicy::Quarantine,
+        BorderlineReviewPolicy::None,
+        AuditBudgets {
+            maximum_rows_per_batch: 10,
+            maximum_evaluator_requests: 20,
+            maximum_attempts_per_request: 2,
+            maximum_input_tokens: 100_000,
+            maximum_output_tokens: 50_000,
+            maximum_total_tokens: 150_000,
+            maximum_cost_microusd: None,
+        },
+        EvaluatorEgressPolicy::LocalOnly,
+        AuditMode::FullPopulation,
+    )
+    .unwrap();
     GenerationQualityContract::create(
         Uuid::from_u128(1),
         ArtifactBinding::new(Uuid::from_u128(2), "dataset-fp").unwrap(),
@@ -83,17 +124,8 @@ fn contract() -> GenerationQualityContract {
         generator,
         evaluator,
         GeneratorEvaluatorRelationship::IndependentBackend,
-        RowQualityThresholds {
-            minimum_assigned_label_score: bp(7_000),
-            minimum_label_margin: bp(1_000),
-            minimum_dimension_score: bp(7_000),
-            minimum_difficulty_score: None,
-            minimum_authenticity_score: None,
-            minimum_strategy_score: None,
-            maximum_label_leakage_risk: bp(2_000),
-            maximum_shortcut_risk: bp(2_000),
-            minimum_evaluator_confidence: bp(7_000),
-        },
+        quality_policy,
+        row_thresholds,
         BatchQualityThresholds {
             minimum_qualified_rate: bp(7_500),
             maximum_borderline_rate: bp(2_000),
@@ -122,6 +154,9 @@ fn contract() -> GenerationQualityContract {
             maximum_quality_audits: 4,
             maximum_evaluator_requests: 20,
             maximum_evaluator_attempts: 30,
+            maximum_evaluator_input_tokens: 400_000,
+            maximum_evaluator_output_tokens: 200_000,
+            maximum_evaluator_total_tokens: 600_000,
             maximum_prompt_revisions: 2,
             maximum_revision_canaries: 2,
             maximum_pi_model_turns: 5,
@@ -567,6 +602,9 @@ fn every_finite_budget_and_external_intent_fails_closed() {
         quality_audits: 4,
         evaluator_requests: 20,
         evaluator_attempts: 30,
+        evaluator_input_tokens: 400_000,
+        evaluator_output_tokens: 200_000,
+        evaluator_total_tokens: 600_000,
         prompt_revisions: 2,
         revision_canaries: 2,
         pi_model_turns: 5,
@@ -585,6 +623,10 @@ fn every_finite_budget_and_external_intent_fails_closed() {
         },
         SupervisorUsage {
             generated_rows: 1,
+            ..Default::default()
+        },
+        SupervisorUsage {
+            evaluator_total_tokens: 1,
             ..Default::default()
         },
         SupervisorUsage {

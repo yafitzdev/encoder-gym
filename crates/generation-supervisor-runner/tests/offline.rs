@@ -13,7 +13,10 @@ use dataset_quality_core::{
         EvaluatorExecutionLocation, EvaluatorIdentity, EvaluatorIndependence,
         GeneratorEvaluatorRelationship,
     },
-    policy::BasisPoints,
+    policy::{
+        AuditBudgets, AuditMode, BasisPoints, BorderlineReviewPolicy, EvaluatorEgressPolicy,
+        InvalidEvaluatorOutputPolicy, QualityPolicy, QualityThresholds,
+    },
 };
 use generation_core::jobs::GenerationBackendIdentity;
 use generation_supervisor_core::{
@@ -49,6 +52,44 @@ fn now() -> DateTime<Utc> {
 }
 
 fn contract() -> GenerationQualityContract {
+    let row_thresholds = RowQualityThresholds {
+        minimum_assigned_label_score: bp(7_000),
+        minimum_label_margin: bp(1_000),
+        minimum_dimension_score: bp(7_000),
+        minimum_difficulty_score: None,
+        minimum_authenticity_score: None,
+        minimum_strategy_score: None,
+        maximum_label_leakage_risk: bp(2_000),
+        maximum_shortcut_risk: bp(2_000),
+        minimum_evaluator_confidence: bp(7_000),
+    };
+    let quality_policy = QualityPolicy::new(
+        None,
+        QualityThresholds {
+            minimum_assigned_label_score: row_thresholds.minimum_assigned_label_score,
+            minimum_label_margin: row_thresholds.minimum_label_margin,
+            minimum_dimension_adherence_score: row_thresholds.minimum_dimension_score,
+            minimum_authenticity_score: row_thresholds.minimum_authenticity_score,
+            maximum_label_leakage_risk: row_thresholds.maximum_label_leakage_risk,
+            maximum_shortcut_risk: row_thresholds.maximum_shortcut_risk,
+            minimum_evaluator_confidence: row_thresholds.minimum_evaluator_confidence,
+            borderline_margin: bp(500),
+        },
+        InvalidEvaluatorOutputPolicy::Quarantine,
+        BorderlineReviewPolicy::None,
+        AuditBudgets {
+            maximum_rows_per_batch: 5,
+            maximum_evaluator_requests: 20,
+            maximum_attempts_per_request: 2,
+            maximum_input_tokens: 100_000,
+            maximum_output_tokens: 50_000,
+            maximum_total_tokens: 150_000,
+            maximum_cost_microusd: None,
+        },
+        EvaluatorEgressPolicy::LocalOnly,
+        AuditMode::FullPopulation,
+    )
+    .unwrap();
     GenerationQualityContract::create(
         Uuid::from_u128(1),
         ArtifactBinding::new(Uuid::from_u128(2), "dataset-fp").unwrap(),
@@ -81,17 +122,8 @@ fn contract() -> GenerationQualityContract {
         )
         .unwrap(),
         GeneratorEvaluatorRelationship::IndependentBackend,
-        RowQualityThresholds {
-            minimum_assigned_label_score: bp(7_000),
-            minimum_label_margin: bp(1_000),
-            minimum_dimension_score: bp(7_000),
-            minimum_difficulty_score: None,
-            minimum_authenticity_score: None,
-            minimum_strategy_score: None,
-            maximum_label_leakage_risk: bp(2_000),
-            maximum_shortcut_risk: bp(2_000),
-            minimum_evaluator_confidence: bp(7_000),
-        },
+        quality_policy,
+        row_thresholds,
         BatchQualityThresholds {
             minimum_qualified_rate: bp(8_000),
             maximum_borderline_rate: bp(1_000),
@@ -120,6 +152,9 @@ fn contract() -> GenerationQualityContract {
             maximum_quality_audits: 5,
             maximum_evaluator_requests: 20,
             maximum_evaluator_attempts: 25,
+            maximum_evaluator_input_tokens: 500_000,
+            maximum_evaluator_output_tokens: 250_000,
+            maximum_evaluator_total_tokens: 750_000,
             maximum_prompt_revisions: 2,
             maximum_revision_canaries: 2,
             maximum_pi_model_turns: 4,

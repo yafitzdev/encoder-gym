@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
 use dataset_quality_core::{
     assessment::{EvaluatorIdentity, GeneratorEvaluatorRelationship},
-    policy::BasisPoints,
+    policy::{AuditMode, BasisPoints, BorderlineReviewPolicy, QualityPolicy},
 };
 use generation_core::coverage::CellCounts;
 use generation_core::jobs::GenerationBackendIdentity;
@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::{SupervisorError, fingerprint, required};
 
-pub const GENERATION_QUALITY_CONTRACT_SCHEMA_VERSION: u32 = 1;
+pub const GENERATION_QUALITY_CONTRACT_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -262,6 +262,9 @@ pub struct SupervisorBudgets {
     pub maximum_quality_audits: u32,
     pub maximum_evaluator_requests: u32,
     pub maximum_evaluator_attempts: u32,
+    pub maximum_evaluator_input_tokens: u64,
+    pub maximum_evaluator_output_tokens: u64,
+    pub maximum_evaluator_total_tokens: u64,
     pub maximum_prompt_revisions: u32,
     pub maximum_revision_canaries: u32,
     pub maximum_pi_model_turns: u32,
@@ -287,6 +290,9 @@ impl SupervisorBudgets {
         ];
         if positive_u32.contains(&0)
             || self.maximum_generated_rows == 0
+            || self.maximum_evaluator_input_tokens == 0
+            || self.maximum_evaluator_output_tokens == 0
+            || self.maximum_evaluator_total_tokens == 0
             || self.maximum_duration_seconds == 0
         {
             return Err(SupervisorError::Validation(
@@ -296,6 +302,15 @@ impl SupervisorBudgets {
         if self.maximum_evaluator_attempts < self.maximum_evaluator_requests {
             return Err(SupervisorError::Validation(
                 "evaluator attempt budget cannot be lower than request budget".into(),
+            ));
+        }
+        if self.maximum_evaluator_total_tokens
+            > self
+                .maximum_evaluator_input_tokens
+                .saturating_add(self.maximum_evaluator_output_tokens)
+        {
+            return Err(SupervisorError::Validation(
+                "evaluator total-token budget exceeds its input/output bounds".into(),
             ));
         }
         if self.maximum_generated_rows < u64::from(monitoring.initial_canary_rows_per_scope) {
@@ -408,6 +423,7 @@ pub struct GenerationQualityContract {
     pub generator: GeneratorIdentity,
     pub evaluator: EvaluatorIdentity,
     pub generator_evaluator_relationship: GeneratorEvaluatorRelationship,
+    pub quality_policy: QualityPolicy,
     pub row_thresholds: RowQualityThresholds,
     pub batch_thresholds: BatchQualityThresholds,
     pub monitoring: MonitoringPolicy,
@@ -432,6 +448,7 @@ impl GenerationQualityContract {
         generator: GeneratorIdentity,
         evaluator: EvaluatorIdentity,
         generator_evaluator_relationship: GeneratorEvaluatorRelationship,
+        quality_policy: QualityPolicy,
         row_thresholds: RowQualityThresholds,
         batch_thresholds: BatchQualityThresholds,
         monitoring: MonitoringPolicy,
@@ -453,6 +470,7 @@ impl GenerationQualityContract {
             generator,
             evaluator,
             generator_evaluator_relationship,
+            quality_policy,
             row_thresholds,
             batch_thresholds,
             monitoring,
@@ -512,6 +530,32 @@ impl GenerationQualityContract {
             .validate()
             .map_err(|error| SupervisorError::Integrity(error.to_string()))?;
         self.validate_relationship()?;
+        self.quality_policy
+            .verify_integrity()
+            .map_err(|error| SupervisorError::Validation(error.to_string()))?;
+        if self.quality_policy.audit_mode != AuditMode::FullPopulation
+            || self.quality_policy.borderline_review_policy != BorderlineReviewPolicy::None
+        {
+            return Err(SupervisorError::Validation(
+                "supervisor quality policy requires full-population primary assessment without hidden reviewer rounds"
+                    .into(),
+            ));
+        }
+        let policy = &self.quality_policy.thresholds;
+        if policy.minimum_assigned_label_score != self.row_thresholds.minimum_assigned_label_score
+            || policy.minimum_label_margin != self.row_thresholds.minimum_label_margin
+            || policy.minimum_dimension_adherence_score
+                != self.row_thresholds.minimum_dimension_score
+            || policy.minimum_authenticity_score != self.row_thresholds.minimum_authenticity_score
+            || policy.maximum_label_leakage_risk != self.row_thresholds.maximum_label_leakage_risk
+            || policy.maximum_shortcut_risk != self.row_thresholds.maximum_shortcut_risk
+            || policy.minimum_evaluator_confidence
+                != self.row_thresholds.minimum_evaluator_confidence
+        {
+            return Err(SupervisorError::Validation(
+                "quality policy thresholds differ from supervisor row thresholds".into(),
+            ));
+        }
         if self.row_thresholds.minimum_authenticity_score.is_some()
             && self.authenticity_context.is_none()
         {
@@ -591,6 +635,9 @@ impl GenerationQualityContract {
 mod tests {
     use chrono::{Duration, TimeZone};
     use dataset_quality_core::assessment::{EvaluatorExecutionLocation, EvaluatorIndependence};
+    use dataset_quality_core::policy::{
+        AuditBudgets, EvaluatorEgressPolicy, InvalidEvaluatorOutputPolicy, QualityThresholds,
+    };
 
     use super::*;
 
@@ -619,6 +666,44 @@ mod tests {
             EvaluatorExecutionLocation::ExternalService,
         )
         .unwrap();
+        let row_thresholds = RowQualityThresholds {
+            minimum_assigned_label_score: bp(7_500),
+            minimum_label_margin: bp(1_000),
+            minimum_dimension_score: bp(7_000),
+            minimum_difficulty_score: None,
+            minimum_authenticity_score: Some(bp(7_000)),
+            minimum_strategy_score: Some(bp(6_500)),
+            maximum_label_leakage_risk: bp(1_500),
+            maximum_shortcut_risk: bp(2_000),
+            minimum_evaluator_confidence: bp(7_000),
+        };
+        let quality_policy = QualityPolicy::new(
+            None,
+            QualityThresholds {
+                minimum_assigned_label_score: row_thresholds.minimum_assigned_label_score,
+                minimum_label_margin: row_thresholds.minimum_label_margin,
+                minimum_dimension_adherence_score: row_thresholds.minimum_dimension_score,
+                minimum_authenticity_score: row_thresholds.minimum_authenticity_score,
+                maximum_label_leakage_risk: row_thresholds.maximum_label_leakage_risk,
+                maximum_shortcut_risk: row_thresholds.maximum_shortcut_risk,
+                minimum_evaluator_confidence: row_thresholds.minimum_evaluator_confidence,
+                borderline_margin: bp(500),
+            },
+            InvalidEvaluatorOutputPolicy::Quarantine,
+            BorderlineReviewPolicy::None,
+            AuditBudgets {
+                maximum_rows_per_batch: 20,
+                maximum_evaluator_requests: 500,
+                maximum_attempts_per_request: 2,
+                maximum_input_tokens: 1_000_000,
+                maximum_output_tokens: 500_000,
+                maximum_total_tokens: 1_500_000,
+                maximum_cost_microusd: Some(250_000),
+            },
+            EvaluatorEgressPolicy::ExternalCandidateText,
+            AuditMode::FullPopulation,
+        )
+        .unwrap();
         GenerationQualityContract::create(
             Uuid::new_v4(),
             ArtifactBinding::new(Uuid::new_v4(), "dataset-fp").unwrap(),
@@ -634,17 +719,8 @@ mod tests {
             generator,
             evaluator,
             GeneratorEvaluatorRelationship::IndependentBackend,
-            RowQualityThresholds {
-                minimum_assigned_label_score: bp(7_500),
-                minimum_label_margin: bp(1_000),
-                minimum_dimension_score: bp(7_000),
-                minimum_difficulty_score: None,
-                minimum_authenticity_score: Some(bp(7_000)),
-                minimum_strategy_score: Some(bp(6_500)),
-                maximum_label_leakage_risk: bp(1_500),
-                maximum_shortcut_risk: bp(2_000),
-                minimum_evaluator_confidence: bp(7_000),
-            },
+            quality_policy,
+            row_thresholds,
             BatchQualityThresholds {
                 minimum_qualified_rate: bp(8_000),
                 maximum_borderline_rate: bp(1_500),
@@ -673,6 +749,9 @@ mod tests {
                 maximum_quality_audits: 20,
                 maximum_evaluator_requests: 500,
                 maximum_evaluator_attempts: 600,
+                maximum_evaluator_input_tokens: 20_000_000,
+                maximum_evaluator_output_tokens: 10_000_000,
+                maximum_evaluator_total_tokens: 30_000_000,
                 maximum_prompt_revisions: 3,
                 maximum_revision_canaries: 3,
                 maximum_pi_model_turns: 9,

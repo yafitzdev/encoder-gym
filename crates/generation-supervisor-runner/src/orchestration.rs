@@ -1474,6 +1474,9 @@ impl GenerationQualitySupervisorRunner {
             evaluator_attempts: attempts.try_into().map_err(|_| {
                 SupervisorLoopError::Validation("quality attempt count exceeds u32".into())
             })?,
+            evaluator_input_tokens: plan.policy.budgets.maximum_input_tokens,
+            evaluator_output_tokens: plan.policy.budgets.maximum_output_tokens,
+            evaluator_total_tokens: plan.policy.budgets.maximum_total_tokens,
             cost_microunits: plan.policy.budgets.maximum_cost_microusd.unwrap_or(0),
             ..SupervisorUsage::default()
         })?;
@@ -1731,18 +1734,9 @@ impl GenerationQualitySupervisorRunner {
                 "runtime evaluator does not match the immutable contract".into(),
             ));
         }
-        let thresholds = &self.configuration.quality_policy.thresholds;
-        let row = &contract.row_thresholds;
-        if thresholds.minimum_assigned_label_score != row.minimum_assigned_label_score
-            || thresholds.minimum_label_margin != row.minimum_label_margin
-            || thresholds.minimum_dimension_adherence_score != row.minimum_dimension_score
-            || thresholds.minimum_authenticity_score != row.minimum_authenticity_score
-            || thresholds.maximum_label_leakage_risk != row.maximum_label_leakage_risk
-            || thresholds.maximum_shortcut_risk != row.maximum_shortcut_risk
-            || thresholds.minimum_evaluator_confidence != row.minimum_evaluator_confidence
-        {
+        if self.configuration.quality_policy != contract.quality_policy {
             return Err(SupervisorLoopError::Validation(
-                "quality evaluator policy row thresholds must match the supervisor contract".into(),
+                "quality evaluator policy does not match the immutable supervisor contract".into(),
             ));
         }
         match (

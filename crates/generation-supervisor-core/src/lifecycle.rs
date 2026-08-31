@@ -351,6 +351,9 @@ pub struct SupervisorUsage {
     pub quality_audits: u32,
     pub evaluator_requests: u32,
     pub evaluator_attempts: u32,
+    pub evaluator_input_tokens: u64,
+    pub evaluator_output_tokens: u64,
+    pub evaluator_total_tokens: u64,
     pub prompt_revisions: u32,
     pub revision_canaries: u32,
     pub pi_model_turns: u32,
@@ -375,6 +378,9 @@ impl SupervisorUsage {
                     && self.quality_audits == 0
                     && self.evaluator_requests == 0
                     && self.evaluator_attempts == 0
+                    && self.evaluator_input_tokens == 0
+                    && self.evaluator_output_tokens == 0
+                    && self.evaluator_total_tokens == 0
                     && self.prompt_revisions == 0
                     && self.revision_canaries == 0
                     && self.pi_model_turns == 0
@@ -388,6 +394,9 @@ impl SupervisorUsage {
                     && self.quality_audits == 0
                     && self.evaluator_requests == 0
                     && self.evaluator_attempts == 0
+                    && self.evaluator_input_tokens == 0
+                    && self.evaluator_output_tokens == 0
+                    && self.evaluator_total_tokens == 0
                     && self.prompt_revisions == 0
                     && self.revision_canaries == 1
                     && self.pi_model_turns == 0
@@ -401,6 +410,13 @@ impl SupervisorUsage {
                     && self.quality_audits == 1
                     && self.evaluator_requests > 0
                     && self.evaluator_attempts >= self.evaluator_requests
+                    && self.evaluator_input_tokens > 0
+                    && self.evaluator_output_tokens > 0
+                    && self.evaluator_total_tokens > 0
+                    && self.evaluator_total_tokens
+                        <= self
+                            .evaluator_input_tokens
+                            .saturating_add(self.evaluator_output_tokens)
                     && self.prompt_revisions == 0
                     && self.revision_canaries == 0
                     && self.pi_model_turns == 0
@@ -414,6 +430,9 @@ impl SupervisorUsage {
                     && self.quality_audits == 0
                     && self.evaluator_requests == 0
                     && self.evaluator_attempts == 0
+                    && self.evaluator_input_tokens == 0
+                    && self.evaluator_output_tokens == 0
+                    && self.evaluator_total_tokens == 0
                     && self.prompt_revisions == 0
                     && self.revision_canaries == 0
                     && self.pi_model_turns == 1
@@ -425,6 +444,9 @@ impl SupervisorUsage {
                     && self.quality_audits == 0
                     && self.evaluator_requests == 0
                     && self.evaluator_attempts == 0
+                    && self.evaluator_input_tokens == 0
+                    && self.evaluator_output_tokens == 0
+                    && self.evaluator_total_tokens == 0
                     && self.prompt_revisions == 0
                     && self.revision_canaries == 0
                     && self.pi_tool_calls == 1
@@ -457,6 +479,9 @@ impl SupervisorUsage {
             quality_audits: add!(quality_audits),
             evaluator_requests: add!(evaluator_requests),
             evaluator_attempts: add!(evaluator_attempts),
+            evaluator_input_tokens: add!(evaluator_input_tokens),
+            evaluator_output_tokens: add!(evaluator_output_tokens),
+            evaluator_total_tokens: add!(evaluator_total_tokens),
             prompt_revisions: add!(prompt_revisions),
             revision_canaries: add!(revision_canaries),
             pi_model_turns: add!(pi_model_turns),
@@ -481,6 +506,9 @@ impl SupervisorUsage {
             || next.quality_audits > budgets.maximum_quality_audits
             || next.evaluator_requests > budgets.maximum_evaluator_requests
             || next.evaluator_attempts > budgets.maximum_evaluator_attempts
+            || next.evaluator_input_tokens > budgets.maximum_evaluator_input_tokens
+            || next.evaluator_output_tokens > budgets.maximum_evaluator_output_tokens
+            || next.evaluator_total_tokens > budgets.maximum_evaluator_total_tokens
             || next.prompt_revisions > budgets.maximum_prompt_revisions
             || next.revision_canaries > budgets.maximum_revision_canaries
             || next.pi_model_turns > budgets.maximum_pi_model_turns
