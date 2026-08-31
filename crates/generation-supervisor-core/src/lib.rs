@@ -4,10 +4,12 @@
 //! It turns immutable generation and qualification facts into reproducible,
 //! scoped decisions. External work belongs to an application runner.
 
+pub mod advisor;
 pub mod contract;
 pub mod decision;
 pub mod lifecycle;
 pub mod observation;
+pub mod ports;
 pub mod revision;
 pub mod strategy;
 

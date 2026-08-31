@@ -1254,6 +1254,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "generation-supervisor-runner"
+version = "0.1.0"
+dependencies = [
+ "agent-runtime-core",
+ "artifact-core",
+ "chrono",
+ "dataset-quality-core",
+ "generation-supervisor-core",
+ "serde",
+ "serde_json",
+ "synthetic-data-core",
+ "thiserror 2.0.20",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
