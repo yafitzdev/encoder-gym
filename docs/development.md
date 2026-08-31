@@ -57,6 +57,14 @@ and only then an optional bounded audit coordinator. V1 includes only directly
 assessed or explicitly overridden rows; sampling-based inference is a later
 policy rather than a hidden shortcut.
 
+Generation-quality supervision follows the same boundary-first sequence:
+authoritative specification, immutable contract and observation shapes, pure
+strategy allocation and scoped drift policy, deterministic fakes, protected
+revision/canary contracts, bounded Pi tools, durable segment orchestration,
+SQLite integrity/recovery/provenance, CLI acceptance, and documentation. The
+supervisor composes ordinary generation and quality contracts. It never mutates
+an active job, lets Pi decide quality, or exposes sealed evidence.
+
 Benchmark qualification follows the stewardship sequence: explicit statistical
 policy, pure aggregate evidence, immutable persistence with deep recomputation,
 CLI inspection, separate append-only approval, workflow/preparation gating,

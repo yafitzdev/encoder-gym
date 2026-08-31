@@ -38,6 +38,9 @@ dataset architect adapters / apps ─> dataset-architect-core
 dataset-architect-core ────> generation/allocation and governed evidence contracts
 quality evaluator adapters / apps ─> dataset-quality-core
 dataset-quality-core ─────> immutable source-row and semantic guidance contracts
+supervisor adapters / apps ─> generation-supervisor-core
+generation-supervisor-core ─> generation + quality + approved context contracts
+generation-supervisor-runner ─> generation-supervisor-core + agent-runtime-core
 ```
 
 `artifact-core` only canonicalizes fingerprint inputs and describes provenance
@@ -79,6 +82,20 @@ append-only row/manifest reviews, curation proposals, and approved manifests.
 It consumes normalized immutable source rows and optional semantic/authenticity
 guidance. It does not own source-row acceptance, generation, snapshot splitting,
 provider transport, SQLite, training, evaluation, or workflow transitions.
+
+`generation-supervisor-core` owns immutable generation-quality contracts,
+deterministic strategy assignments, normalized row/window observations, scoped
+quality and drift decisions, protected prompt-guidance revisions, append-only
+reviews, canary activation, finite lifecycle/budgets, and child-execution ports.
+It composes narrow artifacts from generation and dataset quality but owns
+neither implementation. It contains no Pi, SQLite, CLI, HTTP, or provider types.
+
+`generation-supervisor-runner` owns the bounded Pi diagnostic/tool loop. Its
+application-owned capability set exposes only persisted quality summaries and
+protected guidance preview/submission. The existing generic agent runtime and
+Pi process adapter remain replaceable infrastructure. A supervisor run links
+ordinary generation segments and quality evidence; it never mutates a job or
+copies generation/evaluator business logic.
 
 Dataset Management remains unchanged. The application verifies an approved
 manifest, passes only its included rows to the ordinary snapshot builder, and
@@ -216,6 +233,21 @@ complete candidate source set, validates exact blind label and dimension score
 shapes, derives verdicts from integer policy thresholds, and compiles reviewed
 evidence into a complete immutable selection. Unevaluated rows are excluded in
 V1. A quality evaluator cannot rewrite data or decide snapshot membership.
+
+### `generation-supervisor-core`
+
+Owns the optional generation-quality supervision contract: exact quality
+requirements, strategy assignment and coverage, deterministic immediate-
+weakness and longitudinal-drift decisions, immutable prompt-guidance revision
+and review, canary activation, finite run state, and persistence/child-executor
+ports.
+
+### `generation-supervisor-runner`
+
+Runs the bounded Pi diagnostic capability through `agent-runtime-core`,
+validates every tool request against persisted supervisor authority, and emits
+only normalized core revision or escalation artifacts. It contains no
+persistence or generation-backend implementation.
 
 ### `synthetic-data-sqlite`
 

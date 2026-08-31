@@ -98,6 +98,15 @@ owner of snapshot splitting, while an atomic application links the approved
 manifest to the resulting snapshot. See
 [Dataset Qualification and Curation](dataset-quality-spec.md).
 
+An optional generation-quality supervisor may compose finite Slice 1 jobs with
+immutable quality evidence before snapshot creation. It detects immediate weak
+generation and later quality drift against an explicit contract, pauses only
+the affected scope, and may invoke bounded Pi diagnosis to propose a protected
+prompt-guidance revision. Deterministic policy and independent canary evidence
+remain the activation authority. Existing unsupervised generation remains
+independently useful. See
+[Generation Quality Supervisor](generation-quality-supervisor-spec.md).
+
 ## Shared invariants
 
 - IDs are globally unique and timestamps use UTC.
@@ -140,6 +149,7 @@ manifest to the resulting snapshot. See
 - [Authenticity Research Agent](research-agent-spec.md)
 - [Dataset Architect](dataset-architect-spec.md)
 - [Dataset Qualification and Curation](dataset-quality-spec.md)
+- [Generation Quality Supervisor](generation-quality-supervisor-spec.md)
 - [Benchmark Stewardship](benchmark-stewardship-spec.md)
 
 Cross-slice composition is specified separately in
