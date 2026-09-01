@@ -9,6 +9,34 @@ authorization, and a passing canary.
 It does not train an encoder, modify labels or dimensions, expose sealed
 evidence, or let Pi decide whether quality passed.
 
+## Use it in the finite workflow
+
+The standalone contract commands below remain useful, but normal encoder
+development can select supervision directly in one strict preparation
+manifest. Start from
+[`examples/project-preparation-supervised.toml`](../examples/project-preparation-supervised.toml):
+
+```powershell
+synth project preview examples/project-preparation-supervised.toml
+synth project prepare examples/project-preparation-supervised.toml
+synth workflow start <DEFINITION_ID>
+```
+
+Preparation compiles understandable quality, authenticity/diversity, repair,
+monitoring, and finite-budget controls into the complete immutable supervisor
+blueprint. Generator and evaluator profiles remain separate, and their API-key
+environment-variable names contain no secret. A workflow generation or
+approved data-diff stage reserves the exact supervisor child before work and
+stops at each durable quality boundary. Follow the exact command in the status
+reason, then run `workflow resume <RUN_ID>`; resuming before evidence changes is
+a no-op.
+
+On completion, the workflow reuses the zero-I/O qualification finalizer and
+ordinary curation proposal. The operator must still approve the exact manifest
+with `quality manifest-review`; the normal qualified snapshot and training
+benchmark firewall remain mandatory. `[workflow.generation_supervision]` and
+the older `[workflow.quality_gate]` cannot be configured together.
+
 ## Prepare a contract
 
 Start with [`examples/supervisor/contract.json`](../examples/supervisor/contract.json)

@@ -193,6 +193,17 @@ is read-only. Generator and evaluator are selected independently as `fake` or
 `openai_compatible` in a strict contract document. See
 `generation-quality-supervisor.md` and `examples/supervisor/`.
 
+For the governed end-to-end workflow, use
+`examples/project-preparation-supervised.toml` instead of authoring a contract
+document. Its `[workflow.generation_supervision]` outcome controls and separate
+provider profiles are resolved during preparation. `workflow start|resume`
+then links and advances the exact supervisor run only to a durable boundary.
+The status reason prints the corresponding `supervisor issues`, `diagnose`,
+`revision-review`/`revision-authorize`, or `canary` command. Once complete, the
+workflow invokes the zero-provider-I/O finalizer and enters the existing
+explicit `quality manifest-review` and qualified snapshot stages. Supervision
+cannot be combined with the legacy `[workflow.quality_gate]`.
+
 The completed-run admission flow is deliberately explicit:
 
 ```powershell

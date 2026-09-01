@@ -57,6 +57,11 @@ The manifest owns:
   row/request/advisor/stage budgets.
 
 For existing benchmark artifacts, start from `examples/project-preparation.toml`.
+Use `examples/project-preparation-supervised.toml` when the finite workflow
+should generate through deterministic quality windows, bounded prompt repair,
+and directly-qualified curation. That example contains separate non-secret
+generator and evaluator profiles; external credentials are named by an
+environment variable and are never part of the manifest or preparation record.
 First create or import the
 benchmark dataset and an immutable snapshot, then replace the example snapshot
 UUID. Snapshot labels must match the project label order exactly, and the
@@ -118,3 +123,12 @@ synth workflow start <DEFINITION_ID>
 The generated definition uses the normal workflow contracts. Later code can
 replace this manifest compiler without changing any slice implementation or
 historical artifact.
+
+With `[workflow.generation_supervision]`, `workflow start` or `workflow resume`
+advances only to the next persisted supervisor boundary. If quality pauses,
+the returned status gives the exact `supervisor issues`, diagnosis,
+review/authorization, or canary command needed. A resume before that fact
+changes is an idempotent no-op. Completion still pauses for an explicit
+`quality manifest-review`; neither preparation nor the supervisor approves a
+training snapshot. Do not configure `[workflow.quality_gate]` in the same
+manifest.

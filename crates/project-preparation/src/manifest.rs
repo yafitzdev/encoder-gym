@@ -305,7 +305,7 @@ mod tests {
     use dataset_core::domain::SnapshotSplit;
     use uuid::Uuid;
 
-    use super::BootstrapManifest;
+    use super::{BootstrapManifest, PreparationManifest};
 
     #[test]
     fn bootstrap_manifest_is_strict_content_bound_and_resolves_without_uuid_plumbing() {
@@ -341,5 +341,20 @@ mod tests {
             "path = \"development.jsonl\"\nunknown_setting = true",
         );
         assert!(BootstrapManifest::parse_toml(&unknown).is_err());
+    }
+
+    #[test]
+    fn checked_in_supervised_preparation_example_is_strict_and_complete() {
+        let source = include_str!("../../../examples/project-preparation-supervised.toml");
+        let manifest = PreparationManifest::parse_toml(source).expect("supervised manifest");
+        let supervision = manifest
+            .workflow
+            .generation_supervision
+            .expect("generation supervision");
+        assert_ne!(
+            supervision.generator.model, supervision.evaluator.model,
+            "the example must visibly retain independent provider profiles"
+        );
+        assert!(manifest.workflow.quality_gate.is_none());
     }
 }

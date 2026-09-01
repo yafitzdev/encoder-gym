@@ -115,6 +115,16 @@ OpenAI-compatible) and separately fingerprinted. See
 [`docs/generation-quality-supervisor.md`](docs/generation-quality-supervisor.md)
 and [`examples/supervisor/`](examples/supervisor/).
 
+The supervisor can also own the generation stages of the finite encoder
+workflow. Copy
+[`examples/project-preparation-supervised.toml`](examples/project-preparation-supervised.toml),
+replace its benchmark snapshot placeholder, and use `project preview` then
+`project prepare`. Its outcome controls compile into immutable execution
+authority; the workflow links the exact supervisor run, pauses with the exact
+next CLI command, and enters the ordinary explicit curation, qualified
+snapshot, training-firewall, training, and evaluation path. The legacy
+`quality_gate` and `generation_supervision` modes are mutually exclusive.
+
 The fastest complete offline journey starts from the checked-in local benchmark
 files and requires no copied UUIDs:
 

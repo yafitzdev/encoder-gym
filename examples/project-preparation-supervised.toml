@@ -1,0 +1,134 @@
+# Complete offline example for a governed generation-supervisor workflow.
+# Replace the snapshot placeholder with an immutable benchmark snapshot ID.
+version = 1
+name = "support-encoder-supervised"
+
+[project]
+version = 1
+
+[project.dataset]
+name = "support-training-supervised"
+task = "Classify customer support requests"
+labels = ["billing", "fraud", "account", "technical"]
+
+[[project.dataset.dimensions]]
+name = "difficulty"
+values = ["easy", "medium", "hard"]
+
+[[project.dataset.dimensions]]
+name = "writing_style"
+values = ["clean", "messy"]
+
+[[project.dataset.dimensions]]
+name = "ambiguity"
+values = ["obvious", "ambiguous"]
+
+[project.generation]
+target_per_cell = 10
+batch_size = 20
+backend = "fake"
+model = "deterministic-v1"
+
+[benchmark_qualification]
+reviewed_by = "project owner"
+approval_rationale = "The benchmark meets the declared support and diversity policy for this workflow."
+
+[benchmark_qualification.policy]
+minimum_overall_support = 100
+minimum_label_support = 20
+confidence = "ninety_five"
+maximum_proportion_margin_of_error = 0.10
+maximum_normalized_duplicate_rate = 0.01
+minimum_distinct_producers = 1
+maximum_single_producer_share = 1.0
+maximum_label_imbalance_ratio = 10.0
+
+[development]
+name = "support-development"
+required_model_formats = []
+
+[[development.cohorts]]
+name = "development-test"
+snapshot_id = "00000000-0000-0000-0000-000000000000"
+split = "test"
+origin = "internal_snapshot"
+role = "development"
+disclosure = "row_content"
+adaptation_eligible = true
+
+[development.contract]
+
+[[development.contract.metric_requirements]]
+target = { kind = "overall" }
+metric = "macro_f1"
+minimum = 0.01
+minimum_support = 1
+
+[workflow]
+name = "support-encoder-supervised-workflow"
+total_rows = 1000
+reserved_rows = 100
+
+[workflow.allocation_policy]
+kind = "balanced"
+
+# These are outcome controls. Preparation deterministically compiles them into
+# the detailed immutable supervisor contract used by each exact generation plan.
+[workflow.generation_supervision]
+quality_level = "balanced"
+authenticity_importance = "off"
+diversity_importance = "normal"
+maximum_prompt_repairs = 2
+monitoring_rows_per_scope = 20
+
+[workflow.generation_supervision.limits]
+maximum_generated_rows = 1100
+maximum_evaluator_requests = 500
+maximum_evaluator_tokens = 8000000
+maximum_pi_tokens = 100000
+maximum_duration_seconds = 3600
+maximum_retries_per_external_call = 2
+
+[workflow.generation_supervision.repair_approval]
+mode = "manual"
+
+# Generator and evaluator are independent profiles. Credentials are never put
+# in this file. For an external profile, use backend = "openai-compatible",
+# set base_url/model/api_key_env, and export that environment variable at run time.
+[workflow.generation_supervision.generator]
+backend = "fake"
+model = "repairable-deterministic-v1"
+seed = 42
+batch_size = 20
+max_retries = 2
+max_attempt_multiplier = 3
+
+[workflow.generation_supervision.evaluator]
+backend = "fake"
+model = "blind-lexical-v1"
+protocol_version = "quality-evaluator-v1"
+temperature_thousandths = 0
+seed = 42
+timeout_millis = 120000
+maximum_output_tokens_per_request = 16384
+maximum_response_bytes = 2097152
+maximum_content_bytes = 1048576
+
+[workflow.governance]
+mode = "review_each_iteration"
+
+[workflow.budget]
+maximum_iterations = 2
+maximum_initial_rows = 1000
+maximum_cumulative_rows = 1100
+maximum_generation_attempts = 5000
+maximum_generation_requests = 500
+maximum_advisor_calls = 0
+maximum_stage_attempts = 3
+
+[workflow.policy]
+minimum_improvement = 0.01
+maximum_tolerated_regression = 0.01
+stop_on_inconclusive = true
+stop_on_invalid = true
+enable_advisor = false

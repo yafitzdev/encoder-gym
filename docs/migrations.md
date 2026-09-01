@@ -168,6 +168,16 @@ applied automatically when the SQLite store connects.
   pins on preparation summaries, linked to the exact workflow-definition
   authority. Legacy preparations remain readable; bound summaries are
   immutable and cannot be partially populated or detached from their workflow.
+- `0055_generation_quality_supervisor`: immutable contracts, supervisor runs,
+  prompt/strategy/quality evidence, bounded advisor and child facts, decisions,
+  authorization, canary, and append-only integrity fences.
+- `0056_supervisor_qualification_handoff`: directly-qualified handoffs and
+  immutable applications linking local replay evidence to ordinary curation
+  proposals.
+- `0057_workflow_supervisor_children`: adds supervisor runs as legal exact
+  generation-stage children. The same child may be linked by append-only
+  pause/resume attempts only within one workflow/stage/logical authority;
+  cross-authority reuse and mutation remain rejected.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild
