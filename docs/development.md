@@ -84,6 +84,14 @@ preparation binding, migration guards, and offline acceptance path are now
 implemented. Sealed population summaries must never disclose row content or
 adaptive diagnostics.
 
+Benchmark architecture follows qualification with the same inward-first trust
+boundary: specification, immutable safe brief and aggregate inputs, pure
+blueprint/freshness validation, deterministic fake runner, bounded Pi research
+tools, SQLite lifecycle/evidence persistence, append-only review and acquisition
+handoff, provenance/Doctor, then an offline CLI journey. The handoff must not
+create benchmark authority or bypass import, contamination, qualification, or
+approval.
+
 ## Component loop
 
 For each component:

@@ -35,6 +35,8 @@ workflow-core ──────────> resolved generation-supervision bl
 project-preparation ─────> project-config + workflow-core + slice artifact shapes
 research adapters / apps ─> research-core
 generation-core ──────────> research-core (resolved authenticity context only)
+benchmark architect adapters / apps ─> benchmark-architect-core
+benchmark-architect-core ──> benchmark/evaluation and aggregate research contracts
 dataset architect adapters / apps ─> dataset-architect-core
 dataset-architect-core ────> generation/allocation and governed evidence contracts
 quality evaluator adapters / apps ─> dataset-quality-core
@@ -76,6 +78,15 @@ coverage, deterministic-allocation, and governed diagnostic artifacts. It does
 not own generation-planning mathematics, prompt transport, persistence, Pi, or
 sealed evidence. An architect proposal is untrusted until the ordinary initial
 allocator reproduces it and an operator approves it.
+
+`benchmark-architect-core` owns immutable benchmark-design briefs, bounded run
+policy, research-evidence bindings, deterministic blueprint validation,
+append-only reviews, exposure-aware freshness requirements, and the approved
+acquisition handoff. It consumes only task semantics and aggregate benchmark,
+qualification, and exposure summaries. It does not own benchmark rows,
+snapshots, suite construction, contamination, qualification authority,
+evaluation, SQLite, Pi, or provider transport. Its handoff cannot become a
+workflow authority without the existing ordinary benchmark gates.
 
 `dataset-quality-core` owns immutable source-set audit plans, explicit quality
 policies, normalized evaluator requests and assessments, deterministic verdicts,
@@ -243,6 +254,15 @@ facts, compare deterministic allocation previews, estimate a generation budget,
 and submit one explicit proposal. The core rejects missing or duplicate cells,
 infeasible totals, unknown strategy selectors, stale coverage, and any sealed
 or retired diagnostic evidence before a normal generation plan can be created.
+
+### `benchmark-architect-core`
+
+Owns the provider-neutral Benchmark Architect boundary. Pi may research
+permitted sources, inspect only aggregate current-benchmark facts, preview one
+explicit blueprint through deterministic validators, and submit advice. The
+core rejects unsafe sealed access, invalid protocols/contracts, statistically
+unsupported cohorts, unbounded freshness, and unsupported evidence references.
+An approved proposal creates only an immutable acquisition handoff.
 
 ### `dataset-quality-core`
 

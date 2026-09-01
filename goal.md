@@ -1,85 +1,64 @@
-# Goal — Governed Smart-Generation Workflow
+# Goal — Bounded Benchmark Architect and Evaluation Steward
 
-Integrate the completed Generation Quality Supervisor into the primary finite
-encoder-development workflow as an optional first-class generation mode.
+Implement the Benchmark Architect defined in
+`docs/benchmark-architect-spec.md` as the next benchmark-stewardship milestone.
 
-The operator should configure outcomes, not author the supervisor's detailed
-contract by hand. One strict project/workflow manifest must be able to express:
+The system must turn immutable task semantics, deployment risks, operator
+objectives, aggregate current-benchmark facts, aggregate exposure history, and
+bounded research evidence into a deterministic, human-reviewable benchmark
+blueprint and immutable acquisition handoff.
 
-- quality level: `economical`, `balanced`, or `strict`;
-- authenticity importance and diversity importance;
-- the maximum number of prompt-repair attempts;
-- finite row, request, token, duration, retry, and optional cost limits;
-- manual review or an exact finite pre-authorization for prompt repairs; and
-- separate non-secret generator and evaluator profiles, including distinct
-  endpoints/models/API-key environment-variable names when desired.
+## Required capability
 
-Compile those controls deterministically into the complete immutable
-`GenerationQualityContract`. Runtime execution must consume only the resolved
-contract. Credentials remain environment-only.
+- Add a provider-neutral `benchmark-architect-core` with strict brief,
+  research-evidence, lifecycle, blueprint, validation, review, freshness, and
+  acquisition-handoff contracts.
+- Reuse the existing provider-neutral search/fetch boundary and the Pi JSONL
+  process, but expose a separate, versioned benchmark-architecture capability
+  set with narrow application-owned tools.
+- Give Pi no raw benchmark rows, predictions, member identities, source paths,
+  or sealed diagnostics. Fetched pages remain untrusted delimited evidence.
+- Require explicit, evidence-linked development and optional sealed cohort
+  designs, protocols, metrics, thresholds, support, coverage, source diversity,
+  risk coverage, and finite renewal policies.
+- Validate proposals deterministically against existing evaluation,
+  acceptance-contract, qualification, disclosure, and exposure invariants.
+- Persist all briefs, runs, tool calls, evidence, proposals, reviews, and
+  handoffs immutably in SQLite with migration coverage.
+- Provide complete CLI workflows for validate/start/status/watch/cancel/recover,
+  evidence/proposal inspection, review, and acquisition handoff.
+- Extend provenance and Doctor so missing, stale, reordered, or tampered
+  authority/evidence chains fail closed.
+- Add checked-in fake examples and an offline process E2E through the actual Pi
+  sidecar. Ordinary tests must make no network or paid model call.
+- Document how a handoff guides ordinary candidate acquisition and successor
+  benchmark preparation without creating a suite, bundle, qualification,
+  workflow, or approval itself.
 
-## Required journey
+## Freshness and holdout protection
 
-```text
-dataset architecture / initial allocation
-  -> supervised generation
-  -> deterministic quality windows and drift decisions
-  -> pause for bounded diagnosis, repair review, or canary when necessary
-  -> immutable directly-qualified handoff
-  -> ordinary curation proposal
-  -> explicit exact-manifest approval
-  -> ordinary immutable snapshot
-  -> training-to-benchmark contamination check
-  -> training, development evaluation, analysis, and bounded iteration
-```
+Freshness must be cohort-specific and exposure-aware. Development evidence has
+finite age, adaptive-exposure, and workflow-iteration limits. Sealed evidence
+remains aggregate-only, adaptation-ineligible, and normally single-use for
+acceptance. A stale or exposed cohort requires a successor acquisition handoff
+and a newly clean, qualified, approved bundle; an active workflow's immutable
+authority is never silently replaced.
 
-Apply the same supervised boundary to an approved iteration data diff. Do not
-copy generation, qualification, curation, snapshot, or training logic into the
-workflow layer.
+## Non-goals
 
-## Compatibility and authority
-
-- Supervision is optional. A definition that omits it retains the existing
-  unsupervised stage graph, fingerprints, and behavior.
-- The legacy `quality_gate` remains independently useful. Reject definitions
-  that configure it together with generation supervision because supervision
-  already produces full-population qualification evidence.
-- A workflow stage reserves and links the exact supervisor run before work.
-  Cancellation and recovery target that link.
-- A supervisor pause becomes `awaiting_user` with exact evidence and commands.
-  Resuming before the required diagnosis/review/canary action is an idempotent
-  no-op. Resuming after the boundary is cleared continues the same run.
-- Completion must call the existing zero-I/O qualification finalizer and then
-  use the existing Dataset Qualification curation review/manifest path.
-- Neither the supervisor nor the workflow may approve a curation manifest or
-  create an unqualified snapshot.
-- Workflow budgets and supervisor budgets must both be enforced and reconciled
-  from persisted usage.
-
-## Delivery
-
-Implement core contracts and preset compilation, strict manifest preparation,
-workflow lifecycle and child links, SQLite compatibility/integrity,
-provenance/Doctor, CLI status and recovery, checked-in examples, documentation,
-and an offline fake end-to-end test that reaches snapshot, training, and
-development evaluation through the supervised path.
-
-Do not add GUI, TUI, HTTP/API work, distributed execution, semantic dedup,
-reinforcement learning, bandits, or an unbounded agent loop.
-
-Follow `AGENTS.md`, `docs/platform-spec.md`,
-`docs/generation-quality-supervisor-spec.md`,
-`docs/workflow-governance-spec.md`, `docs/architecture.md`, and
-`docs/development.md`. After each coherent component, run the standard Rust
-quality gates and commit it.
+Do not add GUI/TUI/HTTP work, benchmark generation, automatic web-to-dataset
+copying, automatic labeling, automatic approval, hidden holdout inspection,
+threshold tuning against sealed results, distributed execution, multiple
+workers, semantic deduplication, encoder training changes, reinforcement
+learning, bandits, or an unbounded agent loop.
 
 ## Completion criterion
 
-This goal is complete when a fresh offline CLI project can be prepared from a
-small outcome-oriented manifest, start one governed workflow, execute initial
-and iterative generation through exact supervisor runs, pause and resume safely
-at repair boundaries, hand only directly qualified rows to explicit curation,
-create the qualified snapshot, pass the normal training firewall, train and
-evaluate, and reproduce the complete evidence chain through status, provenance,
-Doctor, and migration-upgrade tests. Legacy unsupervised workflows must remain
-green.
+A fresh offline CLI run can validate and persist a safe brief, execute a finite
+scripted Pi research session, record source-backed risk evidence, preview and
+submit a valid benchmark blueprint, reject unsafe or underpowered variants,
+record append-only human review, produce exactly one immutable acquisition
+handoff, inspect its cohort/freshness requirements, and reproduce the complete
+provenance chain through Doctor. Cancellation, interrupted recovery,
+idempotency, migration upgrade, tampering, sealed-data non-disclosure, and
+legacy workflows remain covered and green under all standard Rust and Pi gates.

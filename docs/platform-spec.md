@@ -164,6 +164,7 @@ pauses remain explicit workflow user boundaries. See
 - [Generation Quality Supervisor](generation-quality-supervisor-spec.md)
 - [Governed Workflow Generation Supervision](workflow-generation-supervision-spec.md)
 - [Benchmark Stewardship](benchmark-stewardship-spec.md)
+- [Benchmark Architect](benchmark-architect-spec.md)
 
 Cross-slice composition is specified separately in
 [Controlled Workflow and Evaluation Governance](workflow-governance-spec.md).

@@ -125,7 +125,9 @@ pub struct SourcePolicy {
 }
 
 impl SourcePolicy {
-    fn normalize(mut self) -> Result<Self, ResearchError> {
+    /// Produces the canonical source policy used by every bounded research
+    /// capability, independent of the capability's final artifact type.
+    pub fn normalize(mut self) -> Result<Self, ResearchError> {
         self.allowed_domains = normalize_domains(self.allowed_domains, "allowed_domains")?;
         self.blocked_domains = normalize_domains(self.blocked_domains, "blocked_domains")?;
         self.allowed_source_classes =

@@ -247,6 +247,13 @@ authority, waive qualification failures, mutate snapshots, or approve a
 contract. The exact blueprint becomes executable only after deterministic
 validation and explicit human review.
 
+The detailed trust boundary, immutable artifacts, freshness contract, and
+CLI-first acceptance are defined in
+[Benchmark Architect](benchmark-architect-spec.md). An approved architecture
+produces an acquisition handoff, not a benchmark bundle. Ordinary import,
+contamination checking, suite construction, deterministic qualification, and
+human approval remain mandatory.
+
 ## Non-goals
 
 This capability does not add graphical UI, HTTP endpoints, cloud execution,

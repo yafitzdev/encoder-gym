@@ -21,7 +21,7 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BenchmarkSuiteKind {
     Development,
@@ -199,7 +199,7 @@ impl BenchmarkSuite {
             ));
         }
         validate_labels(&self.labels)?;
-        if let Err(error) = validate_contract(&self.contract, &self.labels, self.kind) {
+        if let Err(error) = validate_acceptance_contract(&self.contract, &self.labels, self.kind) {
             if !(allow_vacuous_contract && error == BenchmarkError::VacuousContract) {
                 return Err(error);
             }
@@ -440,7 +440,7 @@ pub fn build_benchmark_suite(
     let name = required(request.name, "suite name")?;
     let task = required(request.task, "suite task")?;
     validate_labels(&request.labels)?;
-    validate_contract(&request.contract, &request.labels, request.kind)?;
+    validate_acceptance_contract(&request.contract, &request.labels, request.kind)?;
     if request.cohorts.is_empty() {
         return Err(BenchmarkError::NoCohorts);
     }
@@ -589,7 +589,7 @@ pub fn assess_benchmark(
         }
     }
     let mut reasons = Vec::new();
-    if let Err(error) = validate_contract(&suite.contract, &suite.labels, suite.kind) {
+    if let Err(error) = validate_acceptance_contract(&suite.contract, &suite.labels, suite.kind) {
         let (code, state) = if error == BenchmarkError::VacuousContract {
             ("vacuous_contract", AcceptanceReasonState::Inconclusive)
         } else {
@@ -1068,7 +1068,10 @@ fn validate_labels(labels: &[String]) -> Result<(), BenchmarkError> {
     Ok(())
 }
 
-fn validate_contract(
+/// Validates an acceptance contract without constructing cohort or
+/// contamination artifacts. Advisory components may use this pure boundary,
+/// while suite construction remains the only benchmark-authority path.
+pub fn validate_acceptance_contract(
     contract: &AcceptanceContract,
     labels: &[String],
     suite_kind: BenchmarkSuiteKind,
@@ -1579,7 +1582,7 @@ mod tests {
     fn contracts_must_contain_meaningful_decision_criteria() {
         let labels = vec!["billing".into(), "fraud".into()];
         assert_eq!(
-            validate_contract(
+            validate_acceptance_contract(
                 &AcceptanceContract {
                     metric_requirements: Vec::new(),
                     regression: None,
@@ -1601,7 +1604,7 @@ mod tests {
             regression: None,
         };
         assert!(matches!(
-            validate_contract(&zero_floor, &labels, BenchmarkSuiteKind::Development),
+            validate_acceptance_contract(&zero_floor, &labels, BenchmarkSuiteKind::Development),
             Err(BenchmarkError::MetricRequirement(_))
         ));
 
@@ -1618,7 +1621,11 @@ mod tests {
             regression: None,
         };
         assert!(matches!(
-            validate_contract(&sealed_label, &labels, BenchmarkSuiteKind::SealedAcceptance),
+            validate_acceptance_contract(
+                &sealed_label,
+                &labels,
+                BenchmarkSuiteKind::SealedAcceptance
+            ),
             Err(BenchmarkError::MetricRequirement(_))
         ));
     }
