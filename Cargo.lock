@@ -3264,6 +3264,8 @@ dependencies = [
  "analysis-core",
  "anyhow",
  "artifact-core",
+ "benchmark-architect-core",
+ "benchmark-architect-runner",
  "chrono",
  "clap",
  "csv",

@@ -5,6 +5,7 @@ mod architect;
 mod authenticity;
 mod backend;
 mod benchmark;
+mod benchmark_architect;
 mod campaign;
 mod config;
 mod contamination;
@@ -62,6 +63,9 @@ pub fn execute(
             Command::Semantic { command } => semantic::execute(command, &store).await,
             Command::Research { command } => research::execute(command, &store).await,
             Command::Architect { command } => architect::execute(command, &store).await,
+            Command::BenchmarkArchitect { command } => {
+                benchmark_architect::execute(command, &store).await
+            }
             Command::Quality { command } => quality::execute(command, &store).await,
             Command::Supervisor { command } => supervisor::execute(command, &store).await,
             Command::Snapshot { command } => snapshot::execute(command, &store).await,

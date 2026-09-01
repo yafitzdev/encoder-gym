@@ -44,6 +44,14 @@ const fn artifact_kind(kind: ArtifactKindArg) -> ArtifactKind {
             ArtifactKind::DatasetArchitectureApplication
         }
         ArtifactKindArg::GenerationStrategyContext => ArtifactKind::GenerationStrategyContext,
+        ArtifactKindArg::BenchmarkArchitectBrief => ArtifactKind::BenchmarkArchitectBrief,
+        ArtifactKindArg::BenchmarkArchitectRun => ArtifactKind::BenchmarkArchitectRun,
+        ArtifactKindArg::BenchmarkArchitectEvidence => ArtifactKind::BenchmarkArchitectEvidence,
+        ArtifactKindArg::BenchmarkArchitectureProposal => {
+            ArtifactKind::BenchmarkArchitectureProposal
+        }
+        ArtifactKindArg::BenchmarkArchitectureReview => ArtifactKind::BenchmarkArchitectureReview,
+        ArtifactKindArg::BenchmarkAcquisitionHandoff => ArtifactKind::BenchmarkAcquisitionHandoff,
         ArtifactKindArg::InitialAllocation => ArtifactKind::InitialAllocation,
         ArtifactKindArg::GenerationPlan => ArtifactKind::GenerationPlan,
         ArtifactKindArg::GenerationJob => ArtifactKind::GenerationJob,
@@ -179,6 +187,30 @@ mod tests {
     #[test]
     fn benchmark_cli_kinds_map_exactly() {
         let mappings = [
+            (
+                ArtifactKindArg::BenchmarkArchitectBrief,
+                ArtifactKind::BenchmarkArchitectBrief,
+            ),
+            (
+                ArtifactKindArg::BenchmarkArchitectRun,
+                ArtifactKind::BenchmarkArchitectRun,
+            ),
+            (
+                ArtifactKindArg::BenchmarkArchitectEvidence,
+                ArtifactKind::BenchmarkArchitectEvidence,
+            ),
+            (
+                ArtifactKindArg::BenchmarkArchitectureProposal,
+                ArtifactKind::BenchmarkArchitectureProposal,
+            ),
+            (
+                ArtifactKindArg::BenchmarkArchitectureReview,
+                ArtifactKind::BenchmarkArchitectureReview,
+            ),
+            (
+                ArtifactKindArg::BenchmarkAcquisitionHandoff,
+                ArtifactKind::BenchmarkAcquisitionHandoff,
+            ),
             (
                 ArtifactKindArg::BenchmarkSuite,
                 ArtifactKind::BenchmarkSuite,

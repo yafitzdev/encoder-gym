@@ -178,6 +178,12 @@ applied automatically when the SQLite store connects.
   generation-stage children. The same child may be linked by append-only
   pause/resume attempts only within one workflow/stage/logical authority;
   cross-authority reuse and mutation remain rejected.
+- `0058_benchmark_architect`: immutable row-free benchmark-design briefs,
+  bounded runs and tool calls, source evidence, deterministically validated
+  proposals, predecessor-fingerprinted human reviews, and exactly one approved
+  acquisition handoff per proposal. Database triggers make evidence,
+  proposals, reviews, and handoffs append-only; adapters replay complete
+  fingerprints and authority links on read.
 
 SQLite table rebuilds require special care: dependent foreign keys may be
 rewritten to a temporary table name during `ALTER TABLE ... RENAME`. Rebuild

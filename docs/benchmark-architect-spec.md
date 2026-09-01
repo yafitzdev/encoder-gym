@@ -167,3 +167,42 @@ No graphical UI, TUI, HTTP endpoint, benchmark generation, automatic
 acquisition, automatic approval, distributed worker, or open-ended agent loop
 is part of this capability.
 
+## Operator journey and ordinary preparation handoff
+
+The checked-in offline journey is:
+
+```text
+synth benchmark-architect brief-validate examples/benchmark-architect/support-benchmark-brief.json
+synth benchmark-architect start examples/benchmark-architect/support-benchmark-brief.json --script examples/benchmark-architect/support-scripted-turns.json --corpus examples/benchmark-architect/support-corpus.json
+synth benchmark-architect evidence <RUN_ID>
+synth benchmark-architect proposal <RUN_ID>
+synth benchmark-architect review <PROPOSAL_ID> --approve --reason "evidence and renewal policy reviewed"
+synth benchmark-architect handoff <PROPOSAL_ID>
+synth benchmark-architect conformance <HANDOFF_ID> --file acquired-cohort-facts.json
+```
+
+Acquisition remains an operator-owned activity. For each handoff cohort key,
+collect candidate rows through the existing import or dataset path, create an
+immutable snapshot, and produce only row-free aggregate candidate facts for
+the conformance command. A conformant result means the candidate meets the
+architect's sourcing contract; it does not make the candidate trustworthy.
+
+The ordinary stewardship path must still:
+
+1. define active cohort roles with the required disclosure and adaptation
+   eligibility;
+2. run strict cross-cohort and training-population contamination checks;
+3. create development and optional sealed suites with the handoff's exact
+   protocols and acceptance contracts;
+4. construct the immutable benchmark bundle;
+5. compute deterministic qualification from persisted snapshot members and
+   record a separate human qualification approval; and
+6. prepare a new workflow definition that pins that exact clean, qualified,
+   approved bundle.
+
+Age, adaptive exposure, acceptance exposure, retirement, and workflow
+iteration counters belong in the conformance facts. Once a limit is exceeded,
+the candidate is blocked and must be replaced through a successor acquisition
+handoff and a new ordinary bundle. Existing workflow definitions keep their
+original immutable authority; neither `handoff` nor `conformance` rewrites or
+hot-swaps it.

@@ -99,6 +99,30 @@ is structurally ineligible. Generation pins the context and makes no architect
 or Pi call. See `dataset-architect-spec.md` and the checked-in offline example in
 `examples/architect/`.
 
+Benchmark Architect commands are:
+
+- `synth benchmark-architect brief-validate <FILE>` to normalize and validate
+  task semantics, deployment risks, safe aggregate benchmark facts, research
+  policy, and hard budgets without an external call;
+- `synth benchmark-architect start <FILE> [--script <FILE> --corpus <FILE>]` to run
+  the finite row-free Pi capability;
+- `status|watch|evidence|proposal`, `cancel`, and `recover` to inspect or
+  control durable execution without replaying uncertain calls;
+- `review <PROPOSAL_ID> --approve|--reject|--request-revision --reason TEXT`
+  for an append-only human decision;
+- `handoff <PROPOSAL_ID>` and `handoff-show <ID>` to create or inspect exactly
+  one immutable, non-authorizing acquisition contract; and
+- `conformance <HANDOFF_ID> --file <ACQUISITION_FACTS>` to compare row-free
+  acquired-cohort summaries with required support, source diversity, slices,
+  age, workflow iterations, and exposure ceilings.
+
+The checked-in `examples/benchmark-architect/` scenario uses the actual Pi
+JSONL process with a deterministic local corpus. The agent sees no benchmark
+rows, predictions, member identities, paths, or sealed diagnostics. A
+conformant handoff still does not create a cohort, suite, contamination report,
+bundle, qualification, review, project, or workflow. See
+`benchmark-architect-spec.md`.
+
 Dataset-qualification commands are:
 
 - `synth quality policy-preview --preset fast|balanced|strict` to inspect the

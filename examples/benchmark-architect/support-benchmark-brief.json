@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "task": "Classify consumer support messages",
+  "labels": ["billing", "fraud"],
+  "label_semantics": [
+    {
+      "label": "billing",
+      "meaning": "Questions about legitimate charges, invoices, and payment processing",
+      "inclusions": ["duplicate legitimate charge", "invoice mismatch"],
+      "exclusions": ["unauthorized account activity"]
+    },
+    {
+      "label": "fraud",
+      "meaning": "Suspected unauthorized account or payment activity",
+      "inclusions": ["unknown charge", "account takeover"],
+      "exclusions": ["known merchant billing dispute"]
+    }
+  ],
+  "deployment": {
+    "summary": "First-line routing of English consumer support chats",
+    "users": ["consumer support customers"],
+    "channels": ["chat"],
+    "languages": ["English"],
+    "regions": ["global"],
+    "time_horizon": "next 12 months",
+    "constraints": ["Short and incomplete messages are common"]
+  },
+  "risks": [
+    {
+      "key": "synthetic_polish_bias",
+      "description": "A benchmark made from uniformly polished messages overstates production quality",
+      "consequence": "The encoder fails on terse, noisy, and context-poor support chats",
+      "likelihood": "high",
+      "severity": "high",
+      "weight": 100
+    }
+  ],
+  "objectives": [
+    {
+      "key": "authentic_boundary_quality",
+      "description": "Measure billing/fraud discrimination across authentic chat variation",
+      "weight": 100
+    }
+  ],
+  "candidate_sources": [],
+  "source_policy": {
+    "allowed_domains": ["example.com"],
+    "blocked_domains": [],
+    "allowed_source_classes": ["documentation"]
+  },
+  "budgets": {
+    "max_model_turns": 10,
+    "max_tool_calls": 20,
+    "max_searches": 3,
+    "max_fetched_pages": 3,
+    "max_fetched_bytes": 50000,
+    "max_blueprint_previews": 3,
+    "max_input_tokens": 100000,
+    "max_output_tokens": 20000,
+    "max_cost_microusd": 1000000,
+    "max_wall_clock_seconds": 30
+  },
+  "provider": {
+    "runtime": "pi",
+    "provider": "fake",
+    "model": "scripted"
+  }
+}

@@ -1,0 +1,289 @@
+[
+  {
+    "text": "1. Inspect the row-free brief.\n2. Research a permitted production-language source.\n3. Record bounded evidence.\n4. Preview and submit a renewable benchmark blueprint for human review.",
+    "toolCalls": [
+      { "name": "inspect_brief", "arguments": {} },
+      {
+        "name": "search_web",
+        "arguments": {
+          "query": "real support chat language",
+          "sourceClasses": ["documentation"],
+          "maximumResults": 3
+        }
+      }
+    ]
+  },
+  {
+    "text": "The permitted source addresses the deployment risk, so I will inspect it.",
+    "toolCalls": [
+      {
+        "name": "fetch_page",
+        "arguments": {
+          "url": "https://example.com/support-chat-guide",
+          "maximumBytes": 5000
+        }
+      }
+    ]
+  },
+  {
+    "toolCalls": [
+      {
+        "name": "record_evidence",
+        "arguments": {
+          "key": "chat_style",
+          "url": "https://example.com/support-chat-guide",
+          "title": "Support chat writing observations",
+          "query": "real support chat language",
+          "sourceClass": "documentation",
+          "contentHash": "sha256:df331d289ae9c9b23787f35205d66cbac24d9412d3cffc21f8265c15e5f7e3e8",
+          "excerpt": "Customers often omit greetings, use fragments such as \"charged twice??\", include typos, and leave account context implicit.",
+          "observation": "Authentic support chats include terse fragments, typos, and implicit context.",
+          "applicability": "Require authentic style coverage in development and independently sealed cohorts.",
+          "confidence": "high"
+        }
+      }
+    ]
+  },
+  {
+    "text": "I will preview explicit support, disclosure, decision, and renewal requirements.",
+    "toolCalls": [
+      {
+        "name": "preview_blueprint",
+        "arguments": {
+          "blueprint": {
+            "summary": "Use adaptive development evidence and independent single-use sealed evidence with authentic chat variation.",
+            "suites": [
+              {
+                "kind": "development",
+                "name": "support-development",
+                "purpose": "Guide bounded iteration on authentic billing/fraud boundaries",
+                "required_model_formats": [],
+                "cohorts": [
+                  {
+                    "key": "dev-authentic-boundary",
+                    "name": "development authentic boundary",
+                    "purpose": "Measure production-like noisy billing/fraud messages",
+                    "origin": "internal_snapshot",
+                    "role": "development",
+                    "disclosure": "aggregate",
+                    "adaptation_eligible": true,
+                    "protocol": {
+                      "split": "test",
+                      "batch_size": 32,
+                      "top_k": [1],
+                      "calibration_bins": 10,
+                      "minimum_slice_support": 20,
+                      "dimension_intersections": [],
+                      "bootstrap_samples": 1000,
+                      "statistical_seed": 42,
+                      "confidence_level": 0.95
+                    },
+                    "minimum_total_support": 400,
+                    "minimum_label_support": { "billing": 200, "fraud": 200 },
+                    "required_dimension_values": { "writing_style": ["messy"] },
+                    "required_slice_support": {},
+                    "required_source_classes": ["reviewed_real_sample"],
+                    "minimum_distinct_producers": 2,
+                    "freshness": {
+                      "maximum_age_days": 180,
+                      "maximum_workflow_iterations": 3,
+                      "maximum_adaptive_exposures": 10,
+                      "maximum_acceptance_exposures": 0
+                    },
+                    "rationale": "Development may expose aggregate evidence under a finite renewal limit."
+                  }
+                ],
+                "contract": {
+                  "metric_requirements": [
+                    {
+                      "target": { "kind": "overall" },
+                      "metric": "macro_f1",
+                      "minimum": 0.85,
+                      "minimum_support": 100
+                    }
+                  ],
+                  "regression": {
+                    "max_accuracy_drop": 0.02,
+                    "require_mcnemar_significance": false
+                  }
+                }
+              },
+              {
+                "kind": "sealed_acceptance",
+                "name": "support-sealed",
+                "purpose": "Make one final independent acceptance decision",
+                "required_model_formats": [],
+                "cohorts": [
+                  {
+                    "key": "sealed-authentic-boundary",
+                    "name": "sealed authentic boundary",
+                    "purpose": "Independently test noisy billing/fraud messages once",
+                    "origin": "internal_snapshot",
+                    "role": "sealed_acceptance",
+                    "disclosure": "aggregate",
+                    "adaptation_eligible": false,
+                    "protocol": {
+                      "split": "test",
+                      "batch_size": 32,
+                      "top_k": [1],
+                      "calibration_bins": 10,
+                      "minimum_slice_support": 20,
+                      "dimension_intersections": [],
+                      "bootstrap_samples": 1000,
+                      "statistical_seed": 42,
+                      "confidence_level": 0.95
+                    },
+                    "minimum_total_support": 400,
+                    "minimum_label_support": { "billing": 200, "fraud": 200 },
+                    "required_dimension_values": { "writing_style": ["messy"] },
+                    "required_slice_support": {},
+                    "required_source_classes": ["independent_reviewed_benchmark"],
+                    "minimum_distinct_producers": 2,
+                    "freshness": {
+                      "maximum_age_days": 180,
+                      "maximum_workflow_iterations": 1,
+                      "maximum_adaptive_exposures": 0,
+                      "maximum_acceptance_exposures": 1
+                    },
+                    "rationale": "Sealed evidence remains non-adaptive and single-use."
+                  }
+                ],
+                "contract": {
+                  "metric_requirements": [
+                    {
+                      "target": { "kind": "overall" },
+                      "metric": "macro_f1",
+                      "minimum": 0.85,
+                      "minimum_support": 100
+                    }
+                  ]
+                }
+              }
+            ],
+            "qualification_policy": {
+              "minimum_overall_support": 100,
+              "minimum_label_support": 20,
+              "confidence": "ninety_five",
+              "maximum_proportion_margin_of_error": 0.1,
+              "maximum_normalized_duplicate_rate": 0.01,
+              "minimum_distinct_producers": 2,
+              "maximum_single_producer_share": 0.8,
+              "maximum_label_imbalance_ratio": 2.0
+            },
+            "risk_coverage": [
+              {
+                "key": "authentic-style-risk",
+                "deployment_risk_key": "synthetic_polish_bias",
+                "cohort_keys": ["dev-authentic-boundary", "sealed-authentic-boundary"],
+                "rationale": "Both adaptive and final evidence must represent authentic chat variation.",
+                "supporting_evidence_ids": [],
+                "conflicting_evidence_ids": [],
+                "inference": false
+              }
+            ],
+            "tradeoffs": ["Authentic edge-case density may differ from production prevalence."],
+            "evidence_gaps": ["The exact production frequency of each writing pattern is unknown."]
+          },
+          "evidenceBindings": [
+            {
+              "requirementKey": "authentic-style-risk",
+              "supportingEvidenceKeys": ["chat_style"],
+              "conflictingEvidenceKeys": []
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "text": "The deterministic preview passed, so I will submit the same bounded blueprint for human review.",
+    "toolCalls": [
+      {
+        "name": "submit_blueprint",
+        "arguments": {
+          "blueprint": {
+            "summary": "Use adaptive development evidence and independent single-use sealed evidence with authentic chat variation.",
+            "suites": [
+              {
+                "kind": "development",
+                "name": "support-development",
+                "purpose": "Guide bounded iteration on authentic billing/fraud boundaries",
+                "required_model_formats": [],
+                "cohorts": [
+                  {
+                    "key": "dev-authentic-boundary",
+                    "name": "development authentic boundary",
+                    "purpose": "Measure production-like noisy billing/fraud messages",
+                    "origin": "internal_snapshot",
+                    "role": "development",
+                    "disclosure": "aggregate",
+                    "adaptation_eligible": true,
+                    "protocol": { "split": "test", "batch_size": 32, "top_k": [1], "calibration_bins": 10, "minimum_slice_support": 20, "dimension_intersections": [], "bootstrap_samples": 1000, "statistical_seed": 42, "confidence_level": 0.95 },
+                    "minimum_total_support": 400,
+                    "minimum_label_support": { "billing": 200, "fraud": 200 },
+                    "required_dimension_values": { "writing_style": ["messy"] },
+                    "required_slice_support": {},
+                    "required_source_classes": ["reviewed_real_sample"],
+                    "minimum_distinct_producers": 2,
+                    "freshness": { "maximum_age_days": 180, "maximum_workflow_iterations": 3, "maximum_adaptive_exposures": 10, "maximum_acceptance_exposures": 0 },
+                    "rationale": "Development may expose aggregate evidence under a finite renewal limit."
+                  }
+                ],
+                "contract": {
+                  "metric_requirements": [{ "target": { "kind": "overall" }, "metric": "macro_f1", "minimum": 0.85, "minimum_support": 100 }],
+                  "regression": { "max_accuracy_drop": 0.02, "require_mcnemar_significance": false }
+                }
+              },
+              {
+                "kind": "sealed_acceptance",
+                "name": "support-sealed",
+                "purpose": "Make one final independent acceptance decision",
+                "required_model_formats": [],
+                "cohorts": [
+                  {
+                    "key": "sealed-authentic-boundary",
+                    "name": "sealed authentic boundary",
+                    "purpose": "Independently test noisy billing/fraud messages once",
+                    "origin": "internal_snapshot",
+                    "role": "sealed_acceptance",
+                    "disclosure": "aggregate",
+                    "adaptation_eligible": false,
+                    "protocol": { "split": "test", "batch_size": 32, "top_k": [1], "calibration_bins": 10, "minimum_slice_support": 20, "dimension_intersections": [], "bootstrap_samples": 1000, "statistical_seed": 42, "confidence_level": 0.95 },
+                    "minimum_total_support": 400,
+                    "minimum_label_support": { "billing": 200, "fraud": 200 },
+                    "required_dimension_values": { "writing_style": ["messy"] },
+                    "required_slice_support": {},
+                    "required_source_classes": ["independent_reviewed_benchmark"],
+                    "minimum_distinct_producers": 2,
+                    "freshness": { "maximum_age_days": 180, "maximum_workflow_iterations": 1, "maximum_adaptive_exposures": 0, "maximum_acceptance_exposures": 1 },
+                    "rationale": "Sealed evidence remains non-adaptive and single-use."
+                  }
+                ],
+                "contract": {
+                  "metric_requirements": [{ "target": { "kind": "overall" }, "metric": "macro_f1", "minimum": 0.85, "minimum_support": 100 }]
+                }
+              }
+            ],
+            "qualification_policy": { "minimum_overall_support": 100, "minimum_label_support": 20, "confidence": "ninety_five", "maximum_proportion_margin_of_error": 0.1, "maximum_normalized_duplicate_rate": 0.01, "minimum_distinct_producers": 2, "maximum_single_producer_share": 0.8, "maximum_label_imbalance_ratio": 2.0 },
+            "risk_coverage": [{ "key": "authentic-style-risk", "deployment_risk_key": "synthetic_polish_bias", "cohort_keys": ["dev-authentic-boundary", "sealed-authentic-boundary"], "rationale": "Both adaptive and final evidence must represent authentic chat variation.", "supporting_evidence_ids": [], "conflicting_evidence_ids": [], "inference": false }],
+            "tradeoffs": ["Authentic edge-case density may differ from production prevalence."],
+            "evidence_gaps": ["The exact production frequency of each writing pattern is unknown."]
+          },
+          "evidenceBindings": [{ "requirementKey": "authentic-style-risk", "supportingEvidenceKeys": ["chat_style"], "conflictingEvidenceKeys": [] }]
+        }
+      }
+    ]
+  },
+  {
+    "text": "The evidence-backed blueprint is valid and ready for human review.",
+    "toolCalls": [
+      {
+        "name": "finish_benchmark_architecture",
+        "arguments": {
+          "reason": "proposal_submitted",
+          "summary": "Validated benchmark architecture submitted for human review."
+        }
+      }
+    ]
+  }
+]

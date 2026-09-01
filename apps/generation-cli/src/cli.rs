@@ -70,6 +70,11 @@ pub enum Command {
         #[command(subcommand)]
         command: ArchitectCommand,
     },
+    /// Design renewable evaluation evidence with a bounded, row-free Pi agent.
+    BenchmarkArchitect {
+        #[command(subcommand)]
+        command: BenchmarkArchitectCommand,
+    },
     /// Create and inspect immutable dataset snapshots.
     Snapshot {
         #[command(subcommand)]
@@ -228,6 +233,75 @@ pub struct ArchitectStartArgs {
         .args(["approve", "reject", "request_revision"])
 ))]
 pub struct ArchitectReviewArgs {
+    pub proposal_id: Uuid,
+    #[arg(long)]
+    pub approve: bool,
+    #[arg(long)]
+    pub reject: bool,
+    #[arg(long)]
+    pub request_revision: bool,
+    #[arg(long, default_value = "local-operator")]
+    pub reviewer: String,
+    #[arg(long)]
+    pub reason: String,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BenchmarkArchitectCommand {
+    /// Resolve and validate a row-free benchmark-design brief without persisting it.
+    BriefValidate { file: PathBuf },
+    /// Persist and execute one bounded Benchmark Architect run in the foreground.
+    Start(BenchmarkArchitectStartArgs),
+    /// Show the durable run, budget use, proposal, review, and handoff state.
+    Status { run_id: Uuid },
+    /// Poll durable status until the run stops.
+    Watch { run_id: Uuid },
+    /// List immutable evidence captured by a run.
+    Evidence { run_id: Uuid },
+    /// Show the immutable proposal produced by a run.
+    Proposal { run_id: Uuid },
+    /// Request cancellation before more model or tool work.
+    Cancel { run_id: Uuid },
+    /// Mark an interrupted run failed without replaying model or tool calls.
+    Recover { run_id: Uuid },
+    /// Append a human decision to an immutable proposal.
+    Review(BenchmarkArchitectReviewArgs),
+    /// Compile the latest exact approval into a non-authorizing acquisition handoff.
+    Handoff { proposal_id: Uuid },
+    /// Show one immutable acquisition handoff.
+    HandoffShow { id: Uuid },
+    /// Compare row-free acquired-cohort facts against an approved handoff.
+    Conformance {
+        handoff_id: Uuid,
+        #[arg(long)]
+        file: PathBuf,
+    },
+}
+
+#[derive(Debug, clap::Args)]
+pub struct BenchmarkArchitectStartArgs {
+    pub file: PathBuf,
+    /// Scripted Pi turns for a deterministic offline fake-provider run.
+    #[arg(long)]
+    pub script: Option<PathBuf>,
+    /// Deterministic source corpus for a fake-provider research run.
+    #[arg(long)]
+    pub corpus: Option<PathBuf>,
+    #[command(flatten)]
+    pub runtime: ResearchRuntimeArgs,
+    /// Environment variable containing the Brave Search API key for a real run.
+    #[arg(long, default_value = "BRAVE_SEARCH_API_KEY")]
+    pub search_api_key_env: String,
+}
+
+#[derive(Debug, clap::Args)]
+#[command(group(
+    ArgGroup::new("decision")
+        .required(true)
+        .multiple(false)
+        .args(["approve", "reject", "request_revision"])
+))]
+pub struct BenchmarkArchitectReviewArgs {
     pub proposal_id: Uuid,
     #[arg(long)]
     pub approve: bool,
@@ -2113,6 +2187,12 @@ pub enum ArtifactKindArg {
     DatasetArchitectureReview,
     DatasetArchitectureApplication,
     GenerationStrategyContext,
+    BenchmarkArchitectBrief,
+    BenchmarkArchitectRun,
+    BenchmarkArchitectEvidence,
+    BenchmarkArchitectureProposal,
+    BenchmarkArchitectureReview,
+    BenchmarkAcquisitionHandoff,
     InitialAllocation,
     GenerationPlan,
     GenerationJob,

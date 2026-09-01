@@ -62,10 +62,10 @@ use super::config;
 mod facts;
 
 use facts::{
-    analysis_facts_check, architect_facts_check, benchmark_bundle_facts_check,
-    bootstrap_facts_check, evaluation_facts_check, optimization_facts_check, quality_facts_check,
-    research_facts_check, supervisor_facts_check, training_benchmark_facts_check,
-    workflow_facts_check,
+    analysis_facts_check, architect_facts_check, benchmark_architect_facts_check,
+    benchmark_bundle_facts_check, bootstrap_facts_check, evaluation_facts_check,
+    optimization_facts_check, quality_facts_check, research_facts_check, supervisor_facts_check,
+    training_benchmark_facts_check, workflow_facts_check,
 };
 
 #[derive(Debug, Serialize)]
@@ -237,6 +237,7 @@ async fn database_checks(store: &SqliteStore) -> Vec<DoctorCheck> {
     checks.push(Box::pin(semantic_facts_check(store)).await);
     checks.push(Box::pin(research_facts_check(store)).await);
     checks.push(Box::pin(architect_facts_check(store)).await);
+    checks.push(Box::pin(benchmark_architect_facts_check(store)).await);
     checks.push(isolated_quality_facts_check(store).await);
     checks.push(Box::pin(supervisor_facts_check(store)).await);
     checks.push(Box::pin(generation_execution_facts_check(store)).await);

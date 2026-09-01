@@ -61,6 +61,15 @@ Nothing is applied until an operator approves it; stale coverage blocks the
 handoff, and generation consumes only the resulting immutable plan/context.
 See [`docs/dataset-architect-spec.md`](docs/dataset-architect-spec.md).
 
+Benchmark architecture is a separate row-free Pi workflow for deciding what
+evaluation evidence the encoder must face before any benchmark is assembled.
+It combines deployment risks with bounded research, validates support,
+threshold, disclosure, and renewal requirements deterministically, then
+requires human approval before producing a non-authorizing acquisition
+handoff. The complete contract and offline example are in
+[`docs/benchmark-architect-spec.md`](docs/benchmark-architect-spec.md) and
+[`examples/benchmark-architect/`](examples/benchmark-architect/).
+
 Before training, the optional dataset-quality gate can audit every accepted
 generated or imported row. Its evaluator is blind to the assigned targets and
 only supplies bounded evidence; deterministic policy and append-only operator

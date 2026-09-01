@@ -151,6 +151,37 @@ impl BenchmarkArchitectStore for SqliteStore {
             .map_err(sql_error)?;
             match existing {
                 None => {
+                    if call.state != BenchmarkArchitectToolCallState::Started {
+                        return Err(adapter_error(
+                            "a new benchmark architect tool call must begin in started state",
+                        ));
+                    }
+                    let run_json: Option<String> = sqlx::query_scalar(
+                        "SELECT run_json FROM benchmark_architect_runs WHERE id = ?",
+                    )
+                    .bind(call.run_id)
+                    .fetch_optional(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
+                    let run = run_json
+                        .ok_or_else(|| adapter_error("benchmark architect tool-call run not found"))
+                        .and_then(check_run)?;
+                    let previous_sequence: Option<i64> = sqlx::query_scalar(
+                        "SELECT MAX(sequence) FROM benchmark_architect_tool_calls WHERE run_id = ?",
+                    )
+                    .bind(call.run_id)
+                    .fetch_one(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
+                    let expected_sequence = previous_sequence.unwrap_or(0) + 1;
+                    if run.state != BenchmarkArchitectRunState::Running
+                        || run.cancel_requested
+                        || i64::from(call.sequence) != expected_sequence
+                    {
+                        return Err(adapter_error(
+                            "benchmark architect tool call requires a live run and contiguous sequence",
+                        ));
+                    }
                     sqlx::query(
                         "INSERT INTO benchmark_architect_tool_calls \
                          (id, run_id, sequence, kind, state, call_json, started_at, finished_at) \
@@ -509,10 +540,12 @@ impl BenchmarkArchitectStore for SqliteStore {
             handoff
                 .validate_integrity(&brief, &proposal, &approval, &evidence)
                 .map_err(domain_error)?;
-            sqlx::query(
+            let result = sqlx::query(
                 "INSERT INTO benchmark_acquisition_handoffs \
                  (id, proposal_id, approval_id, fingerprint, handoff_json, created_at) \
-                 VALUES (?, ?, ?, ?, ?, ?)",
+                 SELECT ?, ?, ?, ?, ?, ? WHERE \
+                 (SELECT id FROM benchmark_architecture_reviews WHERE proposal_id = ? \
+                  ORDER BY rowid DESC LIMIT 1) = ?",
             )
             .bind(handoff.id)
             .bind(handoff.proposal_id)
@@ -520,10 +553,15 @@ impl BenchmarkArchitectStore for SqliteStore {
             .bind(&handoff.fingerprint)
             .bind(encode(&handoff)?)
             .bind(handoff.created_at)
+            .bind(handoff.proposal_id)
+            .bind(handoff.approval_id)
             .execute(self.pool())
             .await
             .map_err(sql_error)?;
-            Ok(())
+            require_one(
+                result.rows_affected(),
+                "current approved benchmark acquisition handoff",
+            )
         })
     }
 

@@ -316,6 +316,30 @@ mod tests {
     #[test]
     fn benchmark_artifact_names_are_stable() {
         let cases = [
+            (
+                ArtifactKind::BenchmarkArchitectBrief,
+                "benchmark_architect_brief",
+            ),
+            (
+                ArtifactKind::BenchmarkArchitectRun,
+                "benchmark_architect_run",
+            ),
+            (
+                ArtifactKind::BenchmarkArchitectEvidence,
+                "benchmark_architect_evidence",
+            ),
+            (
+                ArtifactKind::BenchmarkArchitectureProposal,
+                "benchmark_architecture_proposal",
+            ),
+            (
+                ArtifactKind::BenchmarkArchitectureReview,
+                "benchmark_architecture_review",
+            ),
+            (
+                ArtifactKind::BenchmarkAcquisitionHandoff,
+                "benchmark_acquisition_handoff",
+            ),
             (ArtifactKind::BenchmarkSuite, "benchmark_suite"),
             (ArtifactKind::ContaminationReport, "contamination_report"),
             (ArtifactKind::BenchmarkBundle, "benchmark_bundle"),
