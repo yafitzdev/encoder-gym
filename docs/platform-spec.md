@@ -112,6 +112,13 @@ locally replaying persisted evidence. It cannot approve a manifest or create a
 snapshot; explicit Dataset Qualification review and normal Dataset Management
 snapshot construction remain required before training.
 
+The finite controlled workflow may select that supervisor as its optional
+generation mode. Outcome-oriented manifest controls compile into an immutable
+detailed contract only after the exact plan and starting coverage are known.
+Supervisor completion enters the ordinary curation/snapshot/training path;
+pauses remain explicit workflow user boundaries. See
+[Governed Workflow Generation Supervision](workflow-generation-supervision-spec.md).
+
 ## Shared invariants
 
 - IDs are globally unique and timestamps use UTC.
@@ -155,6 +162,7 @@ snapshot construction remain required before training.
 - [Dataset Architect](dataset-architect-spec.md)
 - [Dataset Qualification and Curation](dataset-quality-spec.md)
 - [Generation Quality Supervisor](generation-quality-supervisor-spec.md)
+- [Governed Workflow Generation Supervision](workflow-generation-supervision-spec.md)
 - [Benchmark Stewardship](benchmark-stewardship-spec.md)
 
 Cross-slice composition is specified separately in

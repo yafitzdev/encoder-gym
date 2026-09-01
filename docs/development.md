@@ -70,6 +70,12 @@ must cover rejection before completion, exact directly qualified membership,
 excluded weak/canary evidence, idempotent finalization, explicit approval,
 snapshot membership, deep Doctor checks, and end-to-end snapshot provenance.
 
+Governed workflow integration follows with a pure outcome-control compiler,
+optional workflow authority and legal paths, exact supervisor child links,
+pause/resume/cancellation/recovery, existing finalization and curation reuse,
+then an offline workflow process test. Definitions that omit supervision must
+remain behaviorally and fingerprint compatible.
+
 Benchmark qualification follows the stewardship sequence: explicit statistical
 policy, pure aggregate evidence, immutable persistence with deep recomputation,
 CLI inspection, separate append-only approval, workflow/preparation gating,

@@ -31,6 +31,7 @@ agentic cores / Pi process adapter ──> agent-runtime-core
 generation-core / workflow-core ──> semantic-catalog
 dataset-import ─────────> dataset-core + generation-core
 workflow-core ──────────> narrow artifact contracts from slice cores
+workflow-core ──────────> resolved generation-supervision blueprint
 project-preparation ─────> project-config + workflow-core + slice artifact shapes
 research adapters / apps ─> research-core
 generation-core ──────────> research-core (resolved authenticity context only)
@@ -96,6 +97,13 @@ protected guidance preview/submission. The existing generic agent runtime and
 Pi process adapter remain replaceable infrastructure. A supervisor run links
 ordinary generation segments and quality evidence; it never mutates a job or
 copies generation/evaluator business logic.
+
+`generation-supervisor-core` also compiles the small outcome-oriented controls
+used by governed workflows into a fully resolved provider-neutral blueprint.
+`workflow-core` pins that blueprint and selects legal stages; it does not own or
+reinterpret quality thresholds. The CLI resolves the exact plan/coverage-bound
+contract, reserves the supervisor run as a workflow child, and hands completion
+to the existing qualification finalizer and curation stages.
 
 After a run reaches complete directly qualified coverage, the supervisor runner
 may compile one immutable qualification handoff. The handoff selects exact
