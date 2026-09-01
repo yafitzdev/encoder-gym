@@ -4,7 +4,7 @@ use sqlx::{Connection, SqliteConnection, migrate::Migrator, sqlite::SqliteConnec
 use uuid::Uuid;
 
 #[tokio::test]
-async fn migration_0055_preserves_existing_data_and_adds_empty_supervisor_ledgers() {
+async fn migrations_0055_and_0056_preserve_existing_data_and_add_supervisor_ledgers() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let database = directory.path().join("generation-supervisor-upgrade.db");
     let options = SqliteConnectOptions::from_str(&format!(
@@ -73,6 +73,9 @@ async fn migration_0055_preserves_existing_data_and_adds_empty_supervisor_ledger
         "generation_supervisor_revision_reviews",
         "generation_supervisor_revision_authorizations",
         "generation_supervisor_revision_activations",
+        "generation_supervisor_qualification_handoffs",
+        "generation_supervisor_qualification_entries",
+        "generation_supervisor_qualification_applications",
     ] {
         let count = sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {table}"))
             .fetch_one(&mut connection)

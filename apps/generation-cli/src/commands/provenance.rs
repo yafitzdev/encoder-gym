@@ -47,6 +47,14 @@ const fn artifact_kind(kind: ArtifactKindArg) -> ArtifactKind {
         ArtifactKindArg::InitialAllocation => ArtifactKind::InitialAllocation,
         ArtifactKindArg::GenerationPlan => ArtifactKind::GenerationPlan,
         ArtifactKindArg::GenerationJob => ArtifactKind::GenerationJob,
+        ArtifactKindArg::GenerationQualityContract => ArtifactKind::GenerationQualityContract,
+        ArtifactKindArg::GenerationSupervisorRun => ArtifactKind::GenerationSupervisorRun,
+        ArtifactKindArg::SupervisorQualificationHandoff => {
+            ArtifactKind::SupervisorQualificationHandoff
+        }
+        ArtifactKindArg::SupervisorQualificationApplication => {
+            ArtifactKind::SupervisorQualificationApplication
+        }
         ArtifactKindArg::DatasetImport => ArtifactKind::DatasetImport,
         ArtifactKindArg::DatasetSourceRow => ArtifactKind::DatasetSourceRow,
         ArtifactKindArg::QualityAuditPlan => ArtifactKind::QualityAuditPlan,
@@ -97,6 +105,22 @@ mod tests {
     #[test]
     fn dataset_quality_cli_kinds_map_exactly() {
         let mappings = [
+            (
+                ArtifactKindArg::GenerationQualityContract,
+                ArtifactKind::GenerationQualityContract,
+            ),
+            (
+                ArtifactKindArg::GenerationSupervisorRun,
+                ArtifactKind::GenerationSupervisorRun,
+            ),
+            (
+                ArtifactKindArg::SupervisorQualificationHandoff,
+                ArtifactKind::SupervisorQualificationHandoff,
+            ),
+            (
+                ArtifactKindArg::SupervisorQualificationApplication,
+                ArtifactKind::SupervisorQualificationApplication,
+            ),
             (
                 ArtifactKindArg::DatasetSourceRow,
                 ArtifactKind::DatasetSourceRow,

@@ -308,6 +308,10 @@ pub enum SupervisorCommand {
     Canary(SupervisorExecutionArgs),
     /// Show exact target and observed coverage per approved generation strategy.
     StrategyCoverage { id: Uuid },
+    /// Freeze directly qualified rows and create an ordinary curation proposal.
+    Finalize { id: Uuid },
+    /// Show one immutable supervisor qualification handoff.
+    QualificationShow { id: Uuid },
     /// Trace one generated row through prompt, strategy, generation, and quality facts.
     TraceRow { row_id: Uuid },
     /// Deeply verify all persisted generation-supervisor provenance.
@@ -2112,6 +2116,10 @@ pub enum ArtifactKindArg {
     InitialAllocation,
     GenerationPlan,
     GenerationJob,
+    GenerationQualityContract,
+    GenerationSupervisorRun,
+    SupervisorQualificationHandoff,
+    SupervisorQualificationApplication,
     DatasetImport,
     DatasetSourceRow,
     QualityAuditPlan,

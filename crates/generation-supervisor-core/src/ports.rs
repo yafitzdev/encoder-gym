@@ -2,6 +2,9 @@
 
 use std::{future::Future, pin::Pin};
 
+use dataset_quality_core::{
+    assessment::EvaluatorGuidance, lifecycle::QualityAuditRun, population::AuditPlan,
+};
 use uuid::Uuid;
 
 use crate::{
@@ -11,6 +14,7 @@ use crate::{
     decision::DeterministicQualityDecision,
     lifecycle::{ChildOutcome, ChildReservation, SupervisorRun, SupervisorRunEvent},
     observation::{BatchQualityObservation, QualityEvidenceManifest, RowQualityObservation},
+    qualification::{SupervisorQualificationApplication, SupervisorQualificationHandoff},
     revision::{
         PromptGuidanceVersion, PromptRevisionActivation, PromptRevisionAuthorization,
         PromptRevisionProposal, PromptRevisionReview, SupervisorDiagnosis,
@@ -129,6 +133,8 @@ pub struct SupervisorIntegrityReport {
     pub advisor_sessions: u64,
     pub revision_proposals: u64,
     pub activations: u64,
+    pub qualification_handoffs: u64,
+    pub qualification_applications: u64,
     #[serde(default)]
     pub errors: Vec<String>,
 }
@@ -287,6 +293,46 @@ pub trait GenerationSupervisorStore: Send + Sync {
         &self,
         prompt_version_id: Uuid,
     ) -> BoxFuture<'_, Result<Option<PromptRevisionActivation>, SupervisorError>>;
+
+    /// Atomically reserves the immutable handoff and its local evidence-replay
+    /// audit. No provider I/O occurs before this boundary is durable.
+    fn create_qualification_handoff(
+        &self,
+        handoff: &SupervisorQualificationHandoff,
+        replay_plan: &AuditPlan,
+        replay_run: &QualityAuditRun,
+        replay_guidance: &EvaluatorGuidance,
+    ) -> BoxFuture<'_, Result<(), SupervisorError>>;
+
+    fn get_qualification_handoff(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<SupervisorQualificationHandoff>, SupervisorError>>;
+
+    fn qualification_handoff_for_run(
+        &self,
+        run_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<SupervisorQualificationHandoff>, SupervisorError>>;
+
+    fn save_qualification_application(
+        &self,
+        application: &SupervisorQualificationApplication,
+    ) -> BoxFuture<'_, Result<(), SupervisorError>>;
+
+    fn get_qualification_application(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<SupervisorQualificationApplication>, SupervisorError>>;
+
+    fn qualification_application_for_handoff(
+        &self,
+        handoff_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<SupervisorQualificationApplication>, SupervisorError>>;
+
+    fn qualification_application_for_proposal(
+        &self,
+        proposal_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<SupervisorQualificationApplication>, SupervisorError>>;
 
     fn trace_supervised_row(
         &self,

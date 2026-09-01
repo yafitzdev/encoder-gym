@@ -10,6 +10,7 @@ pub mod decision;
 pub mod lifecycle;
 pub mod observation;
 pub mod ports;
+pub mod qualification;
 pub mod revision;
 pub mod strategy;
 

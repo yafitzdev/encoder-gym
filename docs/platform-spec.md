@@ -106,6 +106,11 @@ prompt-guidance revision. Deterministic policy and independent canary evidence
 remain the activation authority. Existing unsupervised generation remains
 independently useful. See
 [Generation Quality Supervisor](generation-quality-supervisor-spec.md).
+On completion, an optional immutable qualification handoff can feed only the
+directly assessed qualified rows into the ordinary curation proposal flow by
+locally replaying persisted evidence. It cannot approve a manifest or create a
+snapshot; explicit Dataset Qualification review and normal Dataset Management
+snapshot construction remain required before training.
 
 ## Shared invariants
 

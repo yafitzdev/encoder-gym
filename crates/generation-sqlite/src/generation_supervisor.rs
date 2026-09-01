@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::Utc;
-use dataset_quality_core::ports::DatasetQualityStore;
+use dataset_quality_core::{
+    assessment::EvaluatorGuidance, lifecycle::QualityAuditRun, population::AuditPlan,
+    ports::DatasetQualityStore,
+};
 use generation_core::jobs::{GenerationAttempt, GenerationAttemptState};
 use generation_core::ports::{
     DatasetStore, GenerationExecutionStore, JobStore, PlanStore, RowStore,
@@ -24,6 +27,10 @@ use generation_supervisor_core::{
     ports::{
         BoxFuture, GenerationSupervisorStore, SupervisedRowTrace, SupervisorAdvisorStore,
         SupervisorIntegrityReport,
+    },
+    qualification::{
+        QualificationDisposition, SupervisorQualificationApplication,
+        SupervisorQualificationHandoff, SupervisorQualificationSelection,
     },
     revision::{
         PromptGuidanceVersion, PromptRevisionActivation, PromptRevisionAuthorization,
@@ -1773,6 +1780,232 @@ impl GenerationSupervisorStore for SqliteStore {
         })
     }
 
+    fn create_qualification_handoff(
+        &self,
+        handoff: &SupervisorQualificationHandoff,
+        replay_plan: &AuditPlan,
+        replay_run: &QualityAuditRun,
+        replay_guidance: &EvaluatorGuidance,
+    ) -> BoxFuture<'_, Result<(), SupervisorError>> {
+        let handoff = handoff.clone();
+        let replay_plan = replay_plan.clone();
+        let replay_run = replay_run.clone();
+        let replay_guidance = replay_guidance.clone();
+        Box::pin(async move {
+            handoff.verify_integrity()?;
+            crate::quality::validate_plan_run_creation(&replay_plan, &replay_run, &replay_guidance)
+                .map_err(quality_error)?;
+            verify_handoff_replay_bindings(&handoff, &replay_plan, &replay_run)?;
+            verify_handoff_authority(self, &handoff).await?;
+
+            if let Some(existing) =
+                <Self as GenerationSupervisorStore>::qualification_handoff_for_run(
+                    self,
+                    handoff.supervisor_run.id,
+                )
+                .await?
+            {
+                if existing == handoff {
+                    return Ok(());
+                }
+                return Err(integrity(
+                    "supervisor run already has a different qualification handoff",
+                ));
+            }
+
+            let mut tx = self.pool().begin().await.map_err(sql_error)?;
+            let connection = &mut *tx;
+            crate::quality::verify_plan_sources_in(connection, &replay_plan)
+                .await
+                .map_err(quality_error)?;
+            crate::quality::insert_plan_in(connection, &replay_plan)
+                .await
+                .map_err(quality_error)?;
+            crate::quality::insert_guidance_in(connection, &replay_plan, &replay_guidance)
+                .await
+                .map_err(quality_error)?;
+            crate::quality::insert_run_in(connection, &replay_run)
+                .await
+                .map_err(quality_error)?;
+            sqlx::query(
+                "INSERT INTO generation_supervisor_qualification_handoffs \
+                 (id, run_id, contract_id, dataset_id, plan_id, completion_event_id, \
+                  replay_audit_plan_id, replay_audit_run_id, selected_member_fingerprint, \
+                  complete_evidence_fingerprint, fingerprint, handoff_json, created_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(handoff.id)
+            .bind(handoff.supervisor_run.id)
+            .bind(handoff.quality_contract.id)
+            .bind(handoff.dataset.id)
+            .bind(handoff.generation_plan.id)
+            .bind(handoff.completion_event.id)
+            .bind(handoff.replay_audit_plan.id)
+            .bind(handoff.replay_audit_run.id)
+            .bind(&handoff.selected_member_fingerprint)
+            .bind(&handoff.complete_evidence_fingerprint)
+            .bind(&handoff.fingerprint)
+            .bind(encode(&handoff)?)
+            .bind(handoff.created_at)
+            .execute(&mut *connection)
+            .await
+            .map_err(sql_error)?;
+            for entry in &handoff.entries {
+                let (disposition, reason) = qualification_disposition(&entry.disposition);
+                sqlx::query(
+                    "INSERT INTO generation_supervisor_qualification_entries \
+                     (handoff_id, observation_id, source_row_id, disposition, exclusion_reason, \
+                      cell_key, fingerprint, entry_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(handoff.id)
+                .bind(entry.observation_id)
+                .bind(entry.source_row_id)
+                .bind(disposition)
+                .bind(reason)
+                .bind(&entry.cell_key)
+                .bind(&entry.fingerprint)
+                .bind(encode(entry)?)
+                .execute(&mut *connection)
+                .await
+                .map_err(sql_error)?;
+            }
+            tx.commit().await.map_err(sql_error)?;
+            Ok(())
+        })
+    }
+
+    fn get_qualification_handoff(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<SupervisorQualificationHandoff>, SupervisorError>> {
+        Box::pin(async move { load_qualification_handoff(self, id).await })
+    }
+
+    fn qualification_handoff_for_run(
+        &self,
+        run_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<SupervisorQualificationHandoff>, SupervisorError>> {
+        Box::pin(async move {
+            let id: Option<Uuid> = sqlx::query_scalar(
+                "SELECT id FROM generation_supervisor_qualification_handoffs WHERE run_id = ?",
+            )
+            .bind(run_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(sql_error)?;
+            match id {
+                Some(id) => load_qualification_handoff(self, id).await,
+                None => Ok(None),
+            }
+        })
+    }
+
+    fn save_qualification_application(
+        &self,
+        application: &SupervisorQualificationApplication,
+    ) -> BoxFuture<'_, Result<(), SupervisorError>> {
+        let application = application.clone();
+        Box::pin(async move {
+            let handoff = load_qualification_handoff(self, application.handoff.id)
+                .await?
+                .ok_or_else(|| integrity("qualification application handoff is missing"))?;
+            application.verify_integrity(&handoff)?;
+            let report = self
+                .get_report(application.quality_report.id)
+                .await
+                .map_err(quality_error)?
+                .ok_or_else(|| integrity("qualification replay report is missing"))?;
+            let proposal = self
+                .get_curation_proposal(application.curation_proposal.id)
+                .await
+                .map_err(quality_error)?
+                .ok_or_else(|| integrity("qualification curation proposal is missing"))?;
+            if report.fingerprint != application.quality_report.fingerprint
+                || report.run_id != application.replay_audit_run.id
+                || report.plan_id != application.replay_audit_plan.id
+                || proposal.fingerprint != application.curation_proposal.fingerprint
+                || proposal.report_id != report.id
+                || proposal.report_fingerprint != report.fingerprint
+                || proposal.counts.included_rows
+                    != u64::try_from(handoff.selected_source_row_ids().len()).unwrap_or(u64::MAX)
+                || proposal.counts.excluded_rows != 0
+                || proposal.counts.needs_review_rows != 0
+            {
+                return Err(integrity(
+                    "qualification application does not bind an all-qualified ordinary proposal",
+                ));
+            }
+            if let Some(existing) =
+                <Self as GenerationSupervisorStore>::qualification_application_for_handoff(
+                    self, handoff.id,
+                )
+                .await?
+            {
+                if existing == application {
+                    return Ok(());
+                }
+                return Err(integrity(
+                    "qualification handoff already has a different application",
+                ));
+            }
+            sqlx::query(
+                "INSERT INTO generation_supervisor_qualification_applications \
+                 (id, handoff_id, replay_audit_plan_id, replay_audit_run_id, quality_report_id, \
+                  curation_proposal_id, selected_member_fingerprint, fingerprint, \
+                  application_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(application.id)
+            .bind(application.handoff.id)
+            .bind(application.replay_audit_plan.id)
+            .bind(application.replay_audit_run.id)
+            .bind(application.quality_report.id)
+            .bind(application.curation_proposal.id)
+            .bind(&application.selected_member_fingerprint)
+            .bind(&application.fingerprint)
+            .bind(encode(&application)?)
+            .bind(application.created_at)
+            .execute(self.pool())
+            .await
+            .map_err(sql_error)?;
+            Ok(())
+        })
+    }
+
+    fn get_qualification_application(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<SupervisorQualificationApplication>, SupervisorError>> {
+        Box::pin(async move { load_qualification_application(self, id).await })
+    }
+
+    fn qualification_application_for_handoff(
+        &self,
+        handoff_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<SupervisorQualificationApplication>, SupervisorError>> {
+        Box::pin(async move {
+            load_qualification_application_by(
+                self,
+                "SELECT application_json FROM generation_supervisor_qualification_applications WHERE handoff_id = ?",
+                handoff_id,
+            )
+            .await
+        })
+    }
+
+    fn qualification_application_for_proposal(
+        &self,
+        proposal_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<SupervisorQualificationApplication>, SupervisorError>> {
+        Box::pin(async move {
+            load_qualification_application_by(
+                self,
+                "SELECT application_json FROM generation_supervisor_qualification_applications WHERE curation_proposal_id = ?",
+                proposal_id,
+            )
+            .await
+        })
+    }
+
     fn trace_supervised_row(
         &self,
         generated_row_id: Uuid,
@@ -1844,6 +2077,267 @@ impl GenerationSupervisorStore for SqliteStore {
         &self,
     ) -> BoxFuture<'_, Result<SupervisorIntegrityReport, SupervisorError>> {
         Box::pin(async move { verify_all(self).await })
+    }
+}
+
+async fn load_qualification_handoff(
+    store: &SqliteStore,
+    id: Uuid,
+) -> Result<Option<SupervisorQualificationHandoff>, SupervisorError> {
+    let Some(row) = sqlx::query(
+        "SELECT run_id, contract_id, dataset_id, plan_id, completion_event_id, \
+         replay_audit_plan_id, replay_audit_run_id, selected_member_fingerprint, \
+         complete_evidence_fingerprint, fingerprint, handoff_json \
+         FROM generation_supervisor_qualification_handoffs WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(store.pool())
+    .await
+    .map_err(sql_error)?
+    else {
+        return Ok(None);
+    };
+    let payload: String = row.try_get("handoff_json").map_err(sql_error)?;
+    let handoff: SupervisorQualificationHandoff = decode(&payload)?;
+    let entries = sqlx::query_scalar::<_, String>(
+        "SELECT entry_json FROM generation_supervisor_qualification_entries \
+         WHERE handoff_id = ? ORDER BY observation_id",
+    )
+    .bind(id)
+    .fetch_all(store.pool())
+    .await
+    .map_err(sql_error)?
+    .into_iter()
+    .map(|value| decode(&value))
+    .collect::<Result<Vec<_>, _>>()?;
+    handoff.verify_integrity()?;
+    if handoff.id != id
+        || handoff.entries != entries
+        || row.try_get::<Uuid, _>("run_id").map_err(sql_error)? != handoff.supervisor_run.id
+        || row.try_get::<Uuid, _>("contract_id").map_err(sql_error)? != handoff.quality_contract.id
+        || row.try_get::<Uuid, _>("dataset_id").map_err(sql_error)? != handoff.dataset.id
+        || row.try_get::<Uuid, _>("plan_id").map_err(sql_error)? != handoff.generation_plan.id
+        || row
+            .try_get::<Uuid, _>("completion_event_id")
+            .map_err(sql_error)?
+            != handoff.completion_event.id
+        || row
+            .try_get::<Uuid, _>("replay_audit_plan_id")
+            .map_err(sql_error)?
+            != handoff.replay_audit_plan.id
+        || row
+            .try_get::<Uuid, _>("replay_audit_run_id")
+            .map_err(sql_error)?
+            != handoff.replay_audit_run.id
+        || row
+            .try_get::<String, _>("selected_member_fingerprint")
+            .map_err(sql_error)?
+            != handoff.selected_member_fingerprint
+        || row
+            .try_get::<String, _>("complete_evidence_fingerprint")
+            .map_err(sql_error)?
+            != handoff.complete_evidence_fingerprint
+        || row.try_get::<String, _>("fingerprint").map_err(sql_error)? != handoff.fingerprint
+    {
+        return Err(integrity(
+            "qualification handoff normalized rows do not match its immutable payload",
+        ));
+    }
+    verify_handoff_authority(store, &handoff).await?;
+    let replay_plan = store
+        .get_audit_plan(handoff.replay_audit_plan.id)
+        .await
+        .map_err(quality_error)?
+        .ok_or_else(|| integrity("qualification replay audit plan is missing"))?;
+    let replay_run = store
+        .get_audit_run(handoff.replay_audit_run.id)
+        .await
+        .map_err(quality_error)?
+        .ok_or_else(|| integrity("qualification replay audit run is missing"))?;
+    verify_handoff_replay_bindings(&handoff, &replay_plan, &replay_run)?;
+    Ok(Some(handoff))
+}
+
+async fn verify_handoff_authority(
+    store: &SqliteStore,
+    handoff: &SupervisorQualificationHandoff,
+) -> Result<(), SupervisorError> {
+    let run = load_run(store, handoff.supervisor_run.id)
+        .await?
+        .ok_or_else(|| integrity("qualification supervisor run is missing"))?;
+    let contract = load_contract(store, handoff.quality_contract.id)
+        .await?
+        .ok_or_else(|| integrity("qualification quality contract is missing"))?;
+    let plan = store
+        .get_plan(handoff.generation_plan.id)
+        .await
+        .map_err(generation_error)?
+        .ok_or_else(|| integrity("qualification generation plan is missing"))?;
+    let events = <SqliteStore as GenerationSupervisorStore>::list_run_events(store, run.id).await?;
+    let completion = events
+        .last()
+        .ok_or_else(|| integrity("qualification run has no completion event"))?;
+    let observations =
+        <SqliteStore as GenerationSupervisorStore>::list_row_observations(store, run.id).await?;
+    let assignments =
+        <SqliteStore as GenerationSupervisorStore>::get_strategy_assignments(store, run.id).await?;
+    let prompts =
+        <SqliteStore as GenerationSupervisorStore>::list_prompt_versions(store, run.id).await?;
+    let mut activations = Vec::new();
+    for prompt in &prompts {
+        if let Some(activation) =
+            <SqliteStore as GenerationSupervisorStore>::get_revision_activation(store, prompt.id)
+                .await?
+        {
+            activations.push(activation);
+        }
+    }
+    let selection = SupervisorQualificationSelection::compile(
+        &contract,
+        &run,
+        &plan,
+        &events,
+        &observations,
+        assignments.as_ref(),
+        &prompts,
+        &activations,
+    )?;
+    if handoff.supervisor_run.fingerprint != run.fingerprint
+        || handoff.quality_contract.fingerprint != contract.fingerprint
+        || handoff.dataset != contract.dataset
+        || handoff.generation_plan != contract.plan
+        || handoff.completion_event.id != completion.id
+        || handoff.completion_event.fingerprint != completion.fingerprint
+        || handoff.entries != selection.entries
+        || handoff.coverage_by_cell != selection.coverage_by_cell
+        || handoff.complete_evidence_fingerprint != selection.complete_evidence_fingerprint
+        || handoff.selected_member_fingerprint != selection.selected_member_fingerprint
+    {
+        return Err(integrity(
+            "qualification handoff does not reproduce from completed supervisor evidence",
+        ));
+    }
+    Ok(())
+}
+
+fn verify_handoff_replay_bindings(
+    handoff: &SupervisorQualificationHandoff,
+    plan: &AuditPlan,
+    run: &QualityAuditRun,
+) -> Result<(), SupervisorError> {
+    let selected = handoff
+        .entries
+        .iter()
+        .filter(|entry| entry.disposition == QualificationDisposition::Selected)
+        .map(|entry| {
+            Ok((
+                entry
+                    .source_row_id
+                    .ok_or_else(|| integrity("selected qualification entry has no source row"))?,
+                entry.source_row_fingerprint.clone().ok_or_else(|| {
+                    integrity("selected qualification entry has no source-row fingerprint")
+                })?,
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>, SupervisorError>>()?;
+    let replay_selected = plan
+        .selected_items()
+        .map(|item| (item.source_row_id, item.source_row_fingerprint.clone()))
+        .collect::<BTreeMap<_, _>>();
+    if handoff.replay_audit_plan.id != plan.id
+        || handoff.replay_audit_plan.fingerprint != plan.fingerprint
+        || handoff.replay_audit_run.id != run.id
+        || handoff.replay_audit_run.fingerprint != run.specification_fingerprint
+        || run.plan_id != plan.id
+        || run.plan_fingerprint != plan.fingerprint
+        || selected != replay_selected
+        || artifact_core::fingerprint(
+            &selected
+                .iter()
+                .map(|(id, fingerprint)| (*id, fingerprint.clone()))
+                .collect::<Vec<_>>(),
+        )
+        .map_err(fingerprint_error)?
+            != handoff.selected_member_fingerprint
+    {
+        return Err(integrity(
+            "qualification replay audit does not contain the exact selected handoff rows",
+        ));
+    }
+    Ok(())
+}
+
+async fn load_qualification_application(
+    store: &SqliteStore,
+    id: Uuid,
+) -> Result<Option<SupervisorQualificationApplication>, SupervisorError> {
+    load_qualification_application_by(
+        store,
+        "SELECT application_json FROM generation_supervisor_qualification_applications WHERE id = ?",
+        id,
+    )
+    .await
+}
+
+async fn load_qualification_application_by(
+    store: &SqliteStore,
+    query: &str,
+    id: Uuid,
+) -> Result<Option<SupervisorQualificationApplication>, SupervisorError> {
+    let payload: Option<String> = sqlx::query_scalar(query)
+        .bind(id)
+        .fetch_optional(store.pool())
+        .await
+        .map_err(sql_error)?;
+    let Some(payload) = payload else {
+        return Ok(None);
+    };
+    let application: SupervisorQualificationApplication = decode(&payload)?;
+    let handoff = load_qualification_handoff(store, application.handoff.id)
+        .await?
+        .ok_or_else(|| integrity("qualification application handoff is missing"))?;
+    application.verify_integrity(&handoff)?;
+    let report = store
+        .get_report(application.quality_report.id)
+        .await
+        .map_err(quality_error)?
+        .ok_or_else(|| integrity("qualification application report is missing"))?;
+    let proposal = store
+        .get_curation_proposal(application.curation_proposal.id)
+        .await
+        .map_err(quality_error)?
+        .ok_or_else(|| integrity("qualification application proposal is missing"))?;
+    if report.fingerprint != application.quality_report.fingerprint
+        || proposal.fingerprint != application.curation_proposal.fingerprint
+        || proposal.report_id != report.id
+        || report.run_id != application.replay_audit_run.id
+        || report.plan_id != application.replay_audit_plan.id
+    {
+        return Err(integrity(
+            "qualification application normalized evidence is stale",
+        ));
+    }
+    Ok(Some(application))
+}
+
+fn qualification_disposition(
+    disposition: &QualificationDisposition,
+) -> (&'static str, Option<&'static str>) {
+    use generation_supervisor_core::qualification::QualificationExclusionReason as Reason;
+    match disposition {
+        QualificationDisposition::Selected => ("selected", None),
+        QualificationDisposition::Excluded(reason) => (
+            "excluded",
+            Some(match reason {
+                Reason::StructurallyRejected => "structurally_rejected",
+                Reason::Unassessed => "unassessed",
+                Reason::Borderline => "borderline",
+                Reason::Quarantined => "quarantined",
+                Reason::InactivePromptRevision => "inactive_prompt_revision",
+                Reason::DuplicateQualifiedAssignment => "duplicate_qualified_assignment",
+                Reason::SurplusQualifiedRow => "surplus_qualified_row",
+            }),
+        ),
     }
 }
 
@@ -2560,6 +3054,34 @@ async fn verify_all(store: &SqliteStore) -> Result<SupervisorIntegrityReport, Su
                 .push(format!("activation {prompt_id}: {error}"));
         }
     }
+    let handoff_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM generation_supervisor_qualification_handoffs ORDER BY created_at, id",
+    )
+    .fetch_all(store.pool())
+    .await
+    .map_err(sql_error)?;
+    report.qualification_handoffs = handoff_ids.len() as u64;
+    for id in handoff_ids {
+        if let Err(error) = load_qualification_handoff(store, id).await {
+            report
+                .errors
+                .push(format!("qualification handoff {id}: {error}"));
+        }
+    }
+    let application_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM generation_supervisor_qualification_applications ORDER BY created_at, id",
+    )
+    .fetch_all(store.pool())
+    .await
+    .map_err(sql_error)?;
+    report.qualification_applications = application_ids.len() as u64;
+    for id in application_ids {
+        if let Err(error) = load_qualification_application(store, id).await {
+            report
+                .errors
+                .push(format!("qualification application {id}: {error}"));
+        }
+    }
     Ok(report)
 }
 
@@ -2748,6 +3270,10 @@ fn require_one(rows: u64, context: &str) -> Result<(), SupervisorError> {
 
 fn generation_error(error: generation_core::ports::StoreError) -> SupervisorError {
     validation(error.to_string())
+}
+
+fn quality_error(error: dataset_quality_core::ports::QualityAdapterError) -> SupervisorError {
+    integrity(error.to_string())
 }
 
 fn fingerprint_error(error: artifact_core::FingerprintError) -> SupervisorError {

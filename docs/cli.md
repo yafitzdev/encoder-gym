@@ -180,12 +180,34 @@ Generation-quality supervisor commands are:
 - `supervisor diagnose|revision-show|revision-review|revision-authorize` for
   bounded Pi diagnosis and explicit or pre-authorized guidance changes;
 - `supervisor canary` for the independently assessed inactive candidate; and
+- `supervisor finalize <RUN_ID>` to freeze a completed run's exact directly
+  qualified rows and replay their persisted assessments into an ordinary
+  curation proposal without an LLM/provider call;
+- `supervisor qualification-show <HANDOFF_ID>` to inspect selected rows,
+  exclusion reasons, per-cell coverage, prompt/strategy/assessment bindings,
+  and replay audit identities; and
 - `supervisor trace-row|integrity` plus `synth doctor` for deep provenance.
 
 `run` stops at the next human, diagnosis, canary, or terminal boundary; `watch`
 is read-only. Generator and evaluator are selected independently as `fake` or
 `openai_compatible` in a strict contract document. See
 `generation-quality-supervisor.md` and `examples/supervisor/`.
+
+The completed-run admission flow is deliberately explicit:
+
+```powershell
+synth supervisor finalize <RUN_ID>
+synth supervisor qualification-show <HANDOFF_ID>
+synth quality manifest-review <PROPOSAL_ID> --approve --reviewer <NAME> --reason <REASON>
+synth snapshot create <DATASET_ID> --name <NAME> --quality-manifest <MANIFEST_ID>
+```
+
+Finalization fails unless every planned unit has directly assessed qualified
+coverage. Pre-repair weak rows, failed-canary rows, unassessed rows, and surplus
+qualified rows remain in the handoff as excluded evidence. Repeating `finalize`
+returns the same handoff, replay audit, report, and curation proposal. Provenance
+may be inspected with `synth provenance supervisor-qualification-handoff
+<HANDOFF_ID>` or `supervisor-qualification-application <APPLICATION_ID>`.
 
 Declarative project-preparation commands are:
 

@@ -2,6 +2,7 @@
 
 mod inputs;
 pub mod orchestration;
+pub mod qualification;
 mod tools;
 
 use std::{sync::Arc, time::Duration};

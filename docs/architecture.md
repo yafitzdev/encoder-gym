@@ -97,6 +97,16 @@ Pi process adapter remain replaceable infrastructure. A supervisor run links
 ordinary generation segments and quality evidence; it never mutates a job or
 copies generation/evaluator business logic.
 
+After a run reaches complete directly qualified coverage, the supervisor runner
+may compile one immutable qualification handoff. The handoff selects exact
+source-row fingerprints and retains every excluded observation and reason. A
+local replay adapter rebinds the selected persisted assessments into the normal
+Dataset Qualification audit/report/curation contracts with zero provider I/O.
+It does not approve membership. The existing append-only manifest review and
+ordinary snapshot builder remain the sole training-data admission boundary.
+Snapshot provenance links back through the qualification application, handoff,
+supervisor run/contract, prompt/strategy evidence, and original assessments.
+
 Dataset Management remains unchanged. The application verifies an approved
 manifest, passes only its included rows to the ordinary snapshot builder, and
 atomically persists a curation application beside the snapshot. Legacy

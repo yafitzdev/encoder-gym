@@ -38,6 +38,7 @@ use generation_core::{
     jobs::GenerationJob,
     ports::{DatasetStore, GenerationExecutionStore, JobStore, PlanStore},
 };
+use generation_supervisor_core::ports::GenerationSupervisorStore;
 use optimization_core::{
     campaigns::{CampaignArtifactKind, CampaignArtifactLink, CampaignOutcomeAssessment},
     ports::OptimizationStore,
@@ -111,6 +112,18 @@ impl ProvenanceStore for SqliteStore {
                 ArtifactKind::InitialAllocation => self.initial_allocation_node(id).await,
                 ArtifactKind::GenerationPlan => self.plan_node(id).await,
                 ArtifactKind::GenerationJob => self.job_node(id).await,
+                ArtifactKind::GenerationQualityContract => {
+                    Box::pin(self.generation_quality_contract_node(id)).await
+                }
+                ArtifactKind::GenerationSupervisorRun => {
+                    Box::pin(self.generation_supervisor_run_node(id)).await
+                }
+                ArtifactKind::SupervisorQualificationHandoff => {
+                    Box::pin(self.supervisor_qualification_handoff_node(id)).await
+                }
+                ArtifactKind::SupervisorQualificationApplication => {
+                    Box::pin(self.supervisor_qualification_application_node(id)).await
+                }
                 ArtifactKind::DatasetImport => self.import_node(id).await,
                 ArtifactKind::DatasetSourceRow => self.source_row_node(id, None).await,
                 ArtifactKind::QualityAuditPlan => self.quality_audit_plan_node(id).await,
@@ -1898,6 +1911,156 @@ impl SqliteStore {
         Ok(dataset_import)
     }
 
+    async fn generation_quality_contract_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(contract) = GenerationSupervisorStore::get_contract(self, id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let mut dataset = required_provenance_parent(
+            self.dataset_node(contract.dataset.id).await?,
+            "generation quality contract dataset",
+        )?;
+        dataset.fingerprint = Some(contract.dataset.fingerprint.clone());
+        let mut plan = required_provenance_parent(
+            self.plan_node(contract.plan.id).await?,
+            "generation quality contract plan",
+        )?;
+        plan.fingerprint = Some(contract.plan.fingerprint.clone());
+        Ok(Some(node(
+            ArtifactKind::GenerationQualityContract,
+            contract.id,
+            Some(contract.fingerprint.clone()),
+            &contract,
+            vec![dataset, plan],
+        )?))
+    }
+
+    async fn generation_supervisor_run_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(run) = GenerationSupervisorStore::get_supervisor_run(self, id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let contract = required_provenance_parent(
+            Box::pin(self.generation_quality_contract_node(run.contract_id)).await?,
+            "generation supervisor run contract",
+        )?;
+        require_node_fingerprint(
+            &contract,
+            &run.contract_fingerprint,
+            "generation supervisor run contract",
+        )?;
+        Ok(Some(node(
+            ArtifactKind::GenerationSupervisorRun,
+            run.id,
+            Some(run.fingerprint.clone()),
+            &run,
+            vec![contract],
+        )?))
+    }
+
+    async fn supervisor_qualification_handoff_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(handoff) = GenerationSupervisorStore::get_qualification_handoff(self, id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let run = required_provenance_parent(
+            Box::pin(self.generation_supervisor_run_node(handoff.supervisor_run.id)).await?,
+            "supervisor qualification handoff run",
+        )?;
+        require_node_fingerprint(
+            &run,
+            &handoff.supervisor_run.fingerprint,
+            "supervisor qualification handoff run",
+        )?;
+        let replay_run = required_provenance_parent(
+            Box::pin(self.quality_audit_run_node(handoff.replay_audit_run.id)).await?,
+            "supervisor qualification handoff replay audit",
+        )?;
+        require_node_fingerprint(
+            &replay_run,
+            &handoff.replay_audit_run.fingerprint,
+            "supervisor qualification handoff replay audit",
+        )?;
+        let mut parents = vec![run, replay_run];
+        for entry in &handoff.entries {
+            let Some(assessment_id) = entry.assessment_id else {
+                continue;
+            };
+            let expected = entry.assessment_fingerprint.as_deref().ok_or_else(|| {
+                store_error("supervisor qualification assessment fingerprint is missing")
+            })?;
+            let assessment = required_provenance_parent(
+                Box::pin(self.row_quality_assessment_node(assessment_id)).await?,
+                "supervisor qualification original assessment",
+            )?;
+            require_node_fingerprint(
+                &assessment,
+                expected,
+                "supervisor qualification original assessment",
+            )?;
+            parents.push(assessment);
+        }
+        Ok(Some(node(
+            ArtifactKind::SupervisorQualificationHandoff,
+            handoff.id,
+            Some(handoff.fingerprint.clone()),
+            &handoff,
+            parents,
+        )?))
+    }
+
+    async fn supervisor_qualification_application_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(application) = GenerationSupervisorStore::get_qualification_application(self, id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let handoff = required_provenance_parent(
+            Box::pin(self.supervisor_qualification_handoff_node(application.handoff.id)).await?,
+            "supervisor qualification application handoff",
+        )?;
+        require_node_fingerprint(
+            &handoff,
+            &application.handoff.fingerprint,
+            "supervisor qualification application handoff",
+        )?;
+        let proposal = required_provenance_parent(
+            Box::pin(self.curation_proposal_node(application.curation_proposal.id)).await?,
+            "supervisor qualification application curation proposal",
+        )?;
+        require_node_fingerprint(
+            &proposal,
+            &application.curation_proposal.fingerprint,
+            "supervisor qualification application curation proposal",
+        )?;
+        Ok(Some(node(
+            ArtifactKind::SupervisorQualificationApplication,
+            application.id,
+            Some(application.fingerprint.clone()),
+            &application,
+            vec![handoff, proposal],
+        )?))
+    }
+
     async fn quality_audit_plan_node(
         &self,
         id: Uuid,
@@ -2836,11 +2999,27 @@ impl SqliteStore {
             Box::pin(self.curation_proposal_node(proposal.id)).await?,
             "approved curation manifest proposal",
         )?;
-        let parents = vec![
+        let mut parents = vec![
             manifest_review_node(&approval, vec![], true),
             proposal_parent,
             quality_report_node(&report, vec![], true),
         ];
+        if let Some(application) =
+            GenerationSupervisorStore::qualification_application_for_proposal(self, proposal.id)
+                .await
+                .map_err(store_error)?
+        {
+            let application_parent = required_provenance_parent(
+                Box::pin(self.supervisor_qualification_application_node(application.id)).await?,
+                "approved curation manifest supervisor qualification application",
+            )?;
+            require_node_fingerprint(
+                &application_parent,
+                &application.fingerprint,
+                "approved curation manifest supervisor qualification application",
+            )?;
+            parents.push(application_parent);
+        }
         Ok(Some(approved_manifest_node(&manifest, parents, false)))
     }
 
@@ -3161,9 +3340,26 @@ impl SqliteStore {
             ],
             true,
         );
+        let mut parents = vec![snapshot_parent, manifest_parent, proposal_parent];
+        if let Some(qualification) =
+            GenerationSupervisorStore::qualification_application_for_proposal(self, proposal.id)
+                .await
+                .map_err(store_error)?
+        {
+            let qualification_parent = required_provenance_parent(
+                Box::pin(self.supervisor_qualification_application_node(qualification.id)).await?,
+                "curation application supervisor qualification application",
+            )?;
+            require_node_fingerprint(
+                &qualification_parent,
+                &qualification.fingerprint,
+                "curation application supervisor qualification application",
+            )?;
+            parents.push(qualification_parent);
+        }
         Ok(Some(curation_application_node_value(
             &application,
-            vec![snapshot_parent, manifest_parent, proposal_parent],
+            parents,
             false,
         )))
     }

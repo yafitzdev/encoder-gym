@@ -36,6 +36,7 @@ use generation_supervisor_core::{
 use generation_supervisor_runner::orchestration::{
     GenerationQualitySupervisorRunner, RevisionReviewInput, SupervisorExecutionConfiguration,
 };
+use generation_supervisor_runner::qualification::GenerationQualificationFinalizer;
 use research_agent_pi_process::PiProcessRuntime;
 use research_core::ports::ResearchStore;
 use semantic_catalog::SemanticCatalogStore;
@@ -123,6 +124,23 @@ struct StrategyCoverageEntry {
     coverage: generation_supervisor_core::strategy::StrategyCoverage,
 }
 
+#[derive(Debug, Serialize)]
+struct QualificationFinalizationSummary {
+    handoff_id: Uuid,
+    application_id: Uuid,
+    supervisor_run_id: Uuid,
+    selected_rows: usize,
+    excluded_observations: usize,
+    coverage_by_cell: std::collections::BTreeMap<
+        String,
+        generation_supervisor_core::qualification::SupervisorQualificationCoverage,
+    >,
+    replay_audit_run_id: Uuid,
+    quality_report_id: Uuid,
+    curation_proposal_id: Uuid,
+    next_command: String,
+}
+
 pub async fn execute(command: SupervisorCommand, store: &SqliteStore) -> anyhow::Result<()> {
     match command {
         SupervisorCommand::ContractPreview { file } => {
@@ -161,6 +179,14 @@ pub async fn execute(command: SupervisorCommand, store: &SqliteStore) -> anyhow:
         }
         SupervisorCommand::Canary(args) => canary(store, args).await,
         SupervisorCommand::StrategyCoverage { id } => strategy_coverage(store, id).await,
+        SupervisorCommand::Finalize { id } => finalize(store, id).await,
+        SupervisorCommand::QualificationShow { id } => {
+            let handoff = store
+                .get_qualification_handoff(id)
+                .await?
+                .with_context(|| format!("supervisor qualification handoff not found: {id}"))?;
+            presentation::print(&handoff)
+        }
         SupervisorCommand::TraceRow { row_id } => {
             let trace = store
                 .trace_supervised_row(row_id)
@@ -177,6 +203,34 @@ pub async fn execute(command: SupervisorCommand, store: &SqliteStore) -> anyhow:
             presentation::print(&report)
         }
     }
+}
+
+async fn finalize(store: &SqliteStore, run_id: Uuid) -> anyhow::Result<()> {
+    let shared = Arc::new(store.clone());
+    let finalizer = GenerationQualificationFinalizer::new(
+        shared.clone(),
+        shared.clone(),
+        shared.clone(),
+        shared,
+    );
+    let outcome = finalizer.finalize(run_id).await?;
+    let selected_rows = outcome.handoff.selected_source_row_ids().len();
+    let excluded_observations = outcome.handoff.entries.len().saturating_sub(selected_rows);
+    presentation::print(&QualificationFinalizationSummary {
+        handoff_id: outcome.handoff.id,
+        application_id: outcome.application.id,
+        supervisor_run_id: run_id,
+        selected_rows,
+        excluded_observations,
+        coverage_by_cell: outcome.handoff.coverage_by_cell,
+        replay_audit_run_id: outcome.application.replay_audit_run.id,
+        quality_report_id: outcome.report.id,
+        curation_proposal_id: outcome.proposal.id,
+        next_command: format!(
+            "synth quality manifest-review {} --approve --reviewer <name> --reason <reason>",
+            outcome.proposal.id
+        ),
+    })
 }
 
 async fn start(store: &SqliteStore, args: SupervisorStartArgs) -> anyhow::Result<()> {

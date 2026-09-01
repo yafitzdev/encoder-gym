@@ -32,11 +32,21 @@ dataset + plan + accepted coverage
   -> independently assessed canary segment
        pass -> activate the revision for remaining absolute coverage
        fail -> reject, retry within budget, or escalate
+  -> completed directly qualified coverage
+  -> immutable qualification handoff + local evidence replay
+  -> ordinary curation proposal
+  -> explicit manifest approval
+  -> ordinary immutable dataset snapshot
 ```
 
 The supervisor does not own generation planning, provider transport, source-row
 acceptance, semantic definitions, quality scoring, dataset snapshots, training,
 evaluation, or optimization. It links their normal immutable contracts.
+Completion does not approve training data. Finalization freezes the exact
+directly assessed qualified rows and replays their already-persisted assessments
+through the ordinary Dataset Qualification contracts without provider I/O.
+Dataset Qualification still owns the curation proposal and explicit approval;
+Dataset Management still owns snapshot construction.
 
 ## Terminology
 
@@ -275,6 +285,20 @@ the contract. Invalid, weak, quarantined, and failed-canary rows remain immutabl
 evidence and do not count toward qualified supervisor coverage. Nothing is
 silently deleted, relabeled, or rewritten.
 
+Pre-existing structurally accepted dataset coverage is contract context, not
+supervisor-qualified coverage. A completed run must have one directly assessed,
+qualified selected row for every planned unit (or every exact strategy
+assignment). Finalization rejects partial coverage, a non-terminal run, stale
+prompt activation, duplicate assignment selection, changed source rows, or
+assessment evidence that no longer reproduces.
+
+The immutable qualification handoff records every observation and exclusion
+reason, exact selected source-row identities/fingerprints, per-cell target and
+remaining counts, prompt versions, optional strategy assignments, assessment
+bindings, the terminal event, and replay audit bindings. Weak, unassessed,
+borderline, quarantined, inactive-revision, duplicate, and surplus rows remain
+visible evidence but cannot enter the handoff's selected population.
+
 ## Post-training evidence boundary
 
 A later remediation phase may supply approved abstract development-error
@@ -290,19 +314,24 @@ prompt revisions, and canary decisions.
 SQLite persists contracts, runs, finite usage, segment/child links, strategy
 assignments and coverage, row/window observations, decisions, Pi calls/tool
 calls, diagnoses, revision proposals/reviews/versions, canary evidence and
-activation, escalation, cancellation, and recovery facts.
+activation, escalation, cancellation, recovery facts, qualification handoffs,
+and their applications to ordinary quality reports and curation proposals.
 
 Every accepted supervised row traces through:
 
 ```text
 row -> generation attempt/job -> prompt version -> optional strategy assignment
     -> quality assessment/window -> supervisor decision/run -> quality contract
+    -> qualification handoff -> local evidence-replay audit/report
+    -> curation proposal -> explicit approved manifest -> snapshot
 ```
 
 Doctor deeply verifies fingerprints, append-only chains, exact child ownership,
 counter reconciliation, strategy conservation, prompt protection, approval,
 canary activation, qualified coverage, and sealed-evidence exclusion. Tampering
-fails closed.
+fails closed. The four supervisor contract/run/handoff/application artifact
+kinds are directly traceable, and a qualified snapshot trace includes the
+supervisor handoff whenever its approved proposal came from finalization.
 
 ## CLI contract
 
@@ -314,10 +343,17 @@ synth supervisor start|run|status|watch|cancel|recover ...
 synth supervisor issues|strategy-coverage ...
 synth supervisor diagnose|revision-show|revision-review|revision-authorize ...
 synth supervisor canary ...
+synth supervisor finalize <RUN_ID>
+synth supervisor qualification-show <HANDOFF_ID>
 synth supervisor trace-row <ROW_ID>
 synth supervisor integrity
 synth doctor
 ```
+
+`finalize` is idempotent. It performs no provider call, returns the ordinary
+curation proposal ID, and tells the operator to run `quality manifest-review`.
+After approval, `snapshot create --quality-manifest` remains the only admission
+path into an immutable training snapshot.
 
 Human output explains why a scope paused, what evidence changed, what the
 revision may alter, and why a canary passed or failed. JSON output remains one
@@ -332,7 +368,9 @@ failures, scoped pausing, minimum support, strategy count conservation,
 generator/evaluator relationship, protected prompt fields, immutable revision
 history, failed and successful canaries, remaining absolute coverage,
 cancellation/recovery, every finite budget, sealed-evidence rejection,
-migration/Doctor/provenance integrity, and a fresh-database CLI process flow.
+migration/Doctor/provenance integrity, premature-finalization rejection,
+idempotent finalization, exact selected-row snapshot membership, and a
+fresh-database CLI process flow.
 
 No ordinary test uses network access, credentials, paid calls, a model download,
 GPU, or an external Pi provider.
@@ -354,4 +392,7 @@ revision, validate it with an independently assessed canary, resume only the
 remaining absolute coverage under a new immutable prompt version, inspect
 per-cell/per-strategy quality, recover safely after interruption, and trace each
 qualified row through the complete strategy, prompt, generation, and quality
-chain.
+chain. The same user can then finalize the completed run without external I/O,
+inspect every selected and excluded observation, explicitly approve the normal
+curation proposal, create a snapshot containing exactly the selected qualified
+rows, and trace that snapshot back to the supervisor contract and evidence.

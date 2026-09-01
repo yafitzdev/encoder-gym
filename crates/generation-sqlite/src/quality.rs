@@ -1486,7 +1486,7 @@ async fn load_source_rows_in(
     Ok(rows)
 }
 
-fn validate_plan_run_creation(
+pub(crate) fn validate_plan_run_creation(
     plan: &AuditPlan,
     run: &QualityAuditRun,
     guidance: &EvaluatorGuidance,
@@ -1509,7 +1509,7 @@ fn validate_plan_run_creation(
     Ok(())
 }
 
-async fn verify_plan_sources_in(
+pub(crate) async fn verify_plan_sources_in(
     connection: &mut SqliteConnection,
     plan: &AuditPlan,
 ) -> Result<(), QualityAdapterError> {
@@ -1539,7 +1539,7 @@ async fn verify_plan_sources_in(
     Ok(())
 }
 
-async fn insert_plan_in(
+pub(crate) async fn insert_plan_in(
     connection: &mut SqliteConnection,
     plan: &AuditPlan,
 ) -> Result<(), QualityAdapterError> {
@@ -1582,7 +1582,7 @@ async fn insert_plan_in(
     Ok(())
 }
 
-async fn insert_guidance_in(
+pub(crate) async fn insert_guidance_in(
     connection: &mut SqliteConnection,
     plan: &AuditPlan,
     guidance: &EvaluatorGuidance,
@@ -1908,7 +1908,7 @@ fn validate_run_transition(
     Ok(())
 }
 
-async fn insert_run_in(
+pub(crate) async fn insert_run_in(
     connection: &mut SqliteConnection,
     run: &QualityAuditRun,
 ) -> Result<(), QualityAdapterError> {

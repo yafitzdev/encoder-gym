@@ -49,7 +49,7 @@ use generation_supervisor_core::{
     },
     observation::{
         AssessmentEvidence, BatchQualityObservation, ContractRowVerdict, QualityScope,
-        QualityWindowKind, RowQualityObservation, StructuralOutcome,
+        QualityWindowKind, RowQualityObservation,
     },
     ports::{GenerationSupervisorStore, SupervisorAdvisorStore, SupervisorIntegrityReport},
     revision::{
@@ -274,15 +274,7 @@ impl GenerationQualitySupervisorRunner {
                 )
             })
             .transpose()?;
-        validate_monitoring_support(
-            &contract,
-            &plan,
-            &self
-                .generation_store
-                .dataset_cell_counts(dataset.id)
-                .await?,
-            assignments.as_ref(),
-        )?;
+        validate_monitoring_support(&contract, &plan, assignments.as_ref())?;
         self.supervisor_store
             .create_run(&run, &initial_prompt, assignments.as_ref())
             .await?;
@@ -636,17 +628,8 @@ impl GenerationQualitySupervisorRunner {
             .persist_windows_and_decisions(&contract, &run, &prompt, &observations, false)
             .await?;
 
-        let refreshed_coverage = self
-            .generation_store
-            .dataset_cell_counts(dataset.id)
-            .await?;
         let all_observations = self.supervisor_store.list_row_observations(run.id).await?;
-        let effective = effective_coverage(
-            &contract,
-            &master_plan,
-            &refreshed_coverage,
-            &all_observations,
-        );
+        let effective = effective_coverage(&contract, &master_plan, &all_observations);
         let plan_complete = master_plan.cells.iter().all(|planned| {
             effective.get(&planned.cell.key()).copied().unwrap_or(0) >= planned.target_count
         });
@@ -2053,21 +2036,17 @@ fn observation_scope(
 fn validate_monitoring_support(
     contract: &GenerationQualityContract,
     plan: &GenerationPlan,
-    coverage: &BTreeMap<String, generation_core::coverage::CellCounts>,
     assignments: Option<&StrategyAssignmentSet>,
 ) -> Result<(), SupervisorLoopError> {
     let minimum = contract.monitoring.minimum_evidence_rows_per_scope;
     match contract.monitoring.scope {
         MonitoringScope::Cell => {
             for planned in &plan.cells {
-                let accepted = coverage
-                    .get(&planned.cell.key())
-                    .map_or(0, |counts| counts.accepted);
-                let remaining = planned.target_count.saturating_sub(accepted);
-                if remaining > 0 && remaining < minimum {
+                if planned.target_count < minimum {
                     return Err(SupervisorLoopError::Validation(format!(
-                        "cell {} has only {remaining} remaining rows but quality monitoring requires {minimum}",
-                        planned.cell.key()
+                        "cell {} has target {} but quality monitoring requires at least {minimum} directly assessed rows",
+                        planned.cell.key(),
+                        planned.target_count
                     )));
                 }
             }
@@ -2081,12 +2060,7 @@ fn validate_monitoring_support(
             let mut remaining =
                 BTreeMap::<generation_supervisor_core::strategy::StrategyScope, u32>::new();
             for assignment in &assignments.assignments {
-                let accepted = coverage
-                    .get(&assignment.cell_key)
-                    .map_or(0, |counts| counts.accepted);
-                if assignment.row_sequence >= accepted {
-                    *remaining.entry(assignment.scope()).or_default() += 1;
-                }
+                *remaining.entry(assignment.scope()).or_default() += 1;
             }
             for (scope, count) in remaining {
                 if count > 0 && count < minimum {
@@ -2108,7 +2082,7 @@ fn segment_plan(
     observations: &[RowQualityObservation],
     rows_per_cell: u32,
 ) -> Result<GenerationPlan, SupervisorLoopError> {
-    let effective = effective_coverage(contract, master, coverage, observations);
+    let effective = effective_coverage(contract, master, observations);
     let cells = master
         .cells
         .iter()
@@ -2149,22 +2123,12 @@ fn build_schedule(
     for planned in &segment.cells {
         let cell_key = planned.cell.key();
         let accepted = coverage.get(&cell_key).map_or(0, |counts| counts.accepted);
-        let supervised_accepted = observations
-            .iter()
-            .filter(|row| {
-                row.cell_key == cell_key && row.structural_outcome == StructuralOutcome::Accepted
-            })
-            .count()
-            .try_into()
-            .unwrap_or(u32::MAX);
-        let starting = accepted.saturating_sub(supervised_accepted);
         let pending = assignments
             .map(|set| {
                 set.assignments
                     .iter()
                     .filter(|assignment| {
                         assignment.cell_key == cell_key
-                            && assignment.row_sequence >= starting
                             && !qualified_assignments.contains(&assignment.fingerprint)
                     })
                     .collect::<Vec<_>>()
@@ -2242,23 +2206,11 @@ fn build_canary_inputs(
         let required = usize::try_from(contract.monitoring.revision_canary_rows_per_scope)
             .unwrap_or(usize::MAX);
         if let Some(assignments) = assignments {
-            let raw_accepted = coverage.get(cell_key).map_or(0, |counts| counts.accepted);
-            let supervised_accepted = observations
-                .iter()
-                .filter(|row| {
-                    row.cell_key == cell_key
-                        && row.structural_outcome == StructuralOutcome::Accepted
-                })
-                .count()
-                .try_into()
-                .unwrap_or(u32::MAX);
-            let starting = raw_accepted.saturating_sub(supervised_accepted);
             let candidates = assignments
                 .assignments
                 .iter()
                 .filter(|assignment| {
                     assignment.cell_key == cell_key
-                        && assignment.row_sequence >= starting
                         && !qualified_assignments.contains(&assignment.fingerprint)
                         && !selected_fingerprints.contains(&assignment.fingerprint)
                         && match scope {
@@ -2344,7 +2296,6 @@ fn build_canary_inputs(
 fn effective_coverage(
     contract: &GenerationQualityContract,
     master: &GenerationPlan,
-    coverage: &BTreeMap<String, generation_core::coverage::CellCounts>,
     observations: &[RowQualityObservation],
 ) -> BTreeMap<String, u32> {
     master
@@ -2352,17 +2303,6 @@ fn effective_coverage(
         .iter()
         .map(|planned| {
             let cell_key = planned.cell.key();
-            let raw_accepted = coverage.get(&cell_key).map_or(0, |counts| counts.accepted);
-            let supervised_accepted = observations
-                .iter()
-                .filter(|row| {
-                    row.cell_key == cell_key
-                        && row.structural_outcome == StructuralOutcome::Accepted
-                })
-                .count()
-                .try_into()
-                .unwrap_or(u32::MAX);
-            let starting_accepted = raw_accepted.saturating_sub(supervised_accepted);
             let qualified_rows = observations.iter().filter(|row| {
                 row.cell_key == cell_key
                     && row.contract_verdict(contract) == ContractRowVerdict::Qualified
@@ -2377,7 +2317,7 @@ fn effective_coverage(
             }
             .try_into()
             .unwrap_or(u32::MAX);
-            (cell_key, starting_accepted.saturating_add(qualified))
+            (cell_key, qualified)
         })
         .collect()
 }

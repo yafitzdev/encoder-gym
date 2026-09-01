@@ -73,6 +73,10 @@ pub enum ArtifactKind {
     InitialAllocation,
     GenerationPlan,
     GenerationJob,
+    GenerationQualityContract,
+    GenerationSupervisorRun,
+    SupervisorQualificationHandoff,
+    SupervisorQualificationApplication,
     DatasetImport,
     DatasetSourceRow,
     QualityAuditPlan,
@@ -142,6 +146,10 @@ impl ArtifactKind {
             Self::InitialAllocation => "initial_allocation",
             Self::GenerationPlan => "generation_plan",
             Self::GenerationJob => "generation_job",
+            Self::GenerationQualityContract => "generation_quality_contract",
+            Self::GenerationSupervisorRun => "generation_supervisor_run",
+            Self::SupervisorQualificationHandoff => "supervisor_qualification_handoff",
+            Self::SupervisorQualificationApplication => "supervisor_qualification_application",
             Self::DatasetImport => "dataset_import",
             Self::DatasetSourceRow => "dataset_source_row",
             Self::QualityAuditPlan => "quality_audit_plan",
@@ -246,6 +254,22 @@ mod tests {
     #[test]
     fn dataset_quality_artifact_names_are_stable() {
         let cases = [
+            (
+                ArtifactKind::GenerationQualityContract,
+                "generation_quality_contract",
+            ),
+            (
+                ArtifactKind::GenerationSupervisorRun,
+                "generation_supervisor_run",
+            ),
+            (
+                ArtifactKind::SupervisorQualificationHandoff,
+                "supervisor_qualification_handoff",
+            ),
+            (
+                ArtifactKind::SupervisorQualificationApplication,
+                "supervisor_qualification_application",
+            ),
             (ArtifactKind::DatasetSourceRow, "dataset_source_row"),
             (ArtifactKind::QualityAuditPlan, "quality_audit_plan"),
             (

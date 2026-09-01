@@ -64,6 +64,11 @@ revision/canary contracts, bounded Pi tools, durable segment orchestration,
 SQLite integrity/recovery/provenance, CLI acceptance, and documentation. The
 supervisor composes ordinary generation and quality contracts. It never mutates
 an active job, lets Pi decide quality, or exposes sealed evidence.
+Completed supervision then uses an immutable qualification handoff and a
+zero-I/O evidence replay into the ordinary quality curation path. Verification
+must cover rejection before completion, exact directly qualified membership,
+excluded weak/canary evidence, idempotent finalization, explicit approval,
+snapshot membership, deep Doctor checks, and end-to-end snapshot provenance.
 
 Benchmark qualification follows the stewardship sequence: explicit statistical
 policy, pure aggregate evidence, immutable persistence with deep recomputation,

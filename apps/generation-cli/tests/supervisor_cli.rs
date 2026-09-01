@@ -138,6 +138,12 @@ fn offline_supervisor_pauses_repairs_canaries_completes_and_traces() {
         );
     }
     assert_eq!(paused["decisions"][0]["state"], "pause_for_diagnosis");
+    let premature_finalization = run(&database_url, ["supervisor", "finalize", &run_id]);
+    assert!(!premature_finalization.status.success());
+    assert!(
+        String::from_utf8_lossy(&premature_finalization.stderr)
+            .contains("requires an intact completed supervisor run")
+    );
     let issues = run_json(&database_url, ["supervisor", "issues", &run_id]);
     assert_eq!(issues["windows"].as_array().unwrap().len(), 1);
     assert!(
@@ -198,12 +204,109 @@ fn offline_supervisor_pauses_repairs_canaries_completes_and_traces() {
     let completed = run_json(&database_url, ["supervisor", "run", &run_id]);
     assert_eq!(completed["status"]["state"], "completed");
 
+    let finalized = run_json(&database_url, ["supervisor", "finalize", &run_id]);
+    assert_eq!(finalized["selected_rows"], 1, "{finalized:#}");
+    assert_eq!(finalized["excluded_observations"], 1, "{finalized:#}");
+    assert_eq!(
+        finalized["coverage_by_cell"]
+            .as_object()
+            .unwrap()
+            .values()
+            .next()
+            .unwrap()["remaining"],
+        0
+    );
+    let repeated_finalization = run_json(&database_url, ["supervisor", "finalize", &run_id]);
+    assert_eq!(repeated_finalization["handoff_id"], finalized["handoff_id"]);
+    assert_eq!(
+        repeated_finalization["curation_proposal_id"],
+        finalized["curation_proposal_id"]
+    );
+    let handoff = run_json(
+        &database_url,
+        [
+            "supervisor",
+            "qualification-show",
+            text(&finalized, "handoff_id"),
+        ],
+    );
+    assert_eq!(handoff["supervisor_run"]["id"], run_id);
+    let handoff_entries = handoff["entries"].as_array().unwrap();
+    assert_eq!(handoff_entries.len(), 2);
+    assert_eq!(
+        handoff_entries
+            .iter()
+            .filter(|entry| entry["disposition"]["disposition"] == "selected")
+            .count(),
+        1
+    );
+    let approved = run_json(
+        &database_url,
+        [
+            "quality",
+            "manifest-review",
+            text(&finalized, "curation_proposal_id"),
+            "--approve",
+            "--reviewer",
+            "acceptance-test",
+            "--reason",
+            "Only directly qualified supervisor rows may enter training",
+        ],
+    );
+    assert_eq!(
+        approved["manifest"]["selected_member_count"], 1,
+        "{approved:#}"
+    );
+    let snapshot = run_json(
+        &database_url,
+        [
+            "snapshot",
+            "create",
+            text(&dataset, "id"),
+            "--name",
+            "supervisor-qualified",
+            "--quality-manifest",
+            approved["manifest"]["id"].as_str().unwrap(),
+        ],
+    );
+    let members = run_json(
+        &database_url,
+        [
+            "snapshot",
+            "members",
+            snapshot["snapshot"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(members.as_array().unwrap().len(), 1, "{members:#}");
+    let snapshot_trace = run_json(
+        &database_url,
+        [
+            "provenance",
+            "snapshot",
+            snapshot["snapshot"]["id"].as_str().unwrap(),
+        ],
+    );
+    let artifact_kinds = provenance_kinds(&snapshot_trace);
+    for expected in [
+        "supervisor_qualification_application",
+        "supervisor_qualification_handoff",
+        "generation_supervisor_run",
+        "generation_quality_contract",
+        "row_quality_assessment",
+    ] {
+        assert!(
+            artifact_kinds.iter().any(|kind| kind == expected),
+            "{snapshot_trace:#}"
+        );
+    }
+
     let canary_job_id = text(&canary, "generation_job_id").to_owned();
     let rows = run_json(
         &database_url,
         ["rows", "--job-id", &canary_job_id, "--status", "accepted"],
     );
     let row_id = rows[0]["id"].as_str().unwrap();
+    assert_eq!(members[0]["source_row_id"], row_id);
     let trace = run_json(&database_url, ["supervisor", "trace-row", row_id]);
     assert_eq!(trace["prompt_version"]["sequence"], 1);
     assert_eq!(trace["decisions"][0]["state"], "revision_passed");
@@ -341,4 +444,20 @@ fn text<'a>(value: &'a Value, pointer: &str) -> &'a str {
 
 fn path(value: &Path) -> String {
     value.to_string_lossy().into_owned()
+}
+
+fn provenance_kinds(value: &Value) -> Vec<String> {
+    fn collect(value: &Value, kinds: &mut Vec<String>) {
+        if let Some(kind) = value.get("kind").and_then(Value::as_str) {
+            kinds.push(kind.to_owned());
+        }
+        if let Some(parents) = value.get("parents").and_then(Value::as_array) {
+            for parent in parents {
+                collect(parent, kinds);
+            }
+        }
+    }
+    let mut kinds = Vec::new();
+    collect(value, &mut kinds);
+    kinds
 }
