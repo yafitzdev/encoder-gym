@@ -4,6 +4,7 @@ use analysis_core::ports::AnalysisStore;
 use artifact_core::{
     ArtifactKind, BoxFuture, ProvenanceNode, ProvenanceStore, ProvenanceStoreError,
 };
+use benchmark_architect_core::ports::BenchmarkArchitectStore;
 use dataset_architect_core::{
     brief::ResolvedArchitectBrief,
     lifecycle::ArchitectRun,
@@ -108,6 +109,24 @@ impl ProvenanceStore for SqliteStore {
                 }
                 ArtifactKind::GenerationStrategyContext => {
                     Box::pin(self.generation_strategy_node(id)).await
+                }
+                ArtifactKind::BenchmarkArchitectBrief => {
+                    Box::pin(self.benchmark_architect_brief_node(id)).await
+                }
+                ArtifactKind::BenchmarkArchitectRun => {
+                    Box::pin(self.benchmark_architect_run_node(id)).await
+                }
+                ArtifactKind::BenchmarkArchitectEvidence => {
+                    Box::pin(self.benchmark_architect_evidence_node(id)).await
+                }
+                ArtifactKind::BenchmarkArchitectureProposal => {
+                    Box::pin(self.benchmark_architecture_proposal_node(id)).await
+                }
+                ArtifactKind::BenchmarkArchitectureReview => {
+                    Box::pin(self.benchmark_architecture_review_node(id)).await
+                }
+                ArtifactKind::BenchmarkAcquisitionHandoff => {
+                    Box::pin(self.benchmark_acquisition_handoff_node(id)).await
                 }
                 ArtifactKind::InitialAllocation => self.initial_allocation_node(id).await,
                 ArtifactKind::GenerationPlan => self.plan_node(id).await,
@@ -364,6 +383,170 @@ impl SqliteStore {
         )?))
     }
 
+    async fn benchmark_architect_brief_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(brief) = BenchmarkArchitectStore::get_brief(self, id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let mut parents = Vec::new();
+        if let Some(existing) = &brief.existing_benchmark {
+            if let Some(bundle) = self.benchmark_bundle_node(existing.bundle_id).await? {
+                parents.push(bundle);
+            }
+            if let Some(qualification) = self
+                .benchmark_qualification_node(existing.qualification_id)
+                .await?
+            {
+                parents.push(qualification);
+            }
+        }
+        Ok(Some(node(
+            ArtifactKind::BenchmarkArchitectBrief,
+            id,
+            Some(brief.fingerprint.clone()),
+            &brief,
+            parents,
+        )?))
+    }
+
+    async fn benchmark_architect_run_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(run) = BenchmarkArchitectStore::get_run(self, id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let parents = Box::pin(self.benchmark_architect_brief_node(run.brief_id))
+            .await?
+            .into_iter()
+            .collect();
+        Ok(Some(node(
+            ArtifactKind::BenchmarkArchitectRun,
+            id,
+            Some(run.specification_fingerprint.clone()),
+            &run,
+            parents,
+        )?))
+    }
+
+    async fn benchmark_architect_evidence_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(evidence) = BenchmarkArchitectStore::get_evidence(self, id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let parents = Box::pin(self.benchmark_architect_run_node(evidence.run_id))
+            .await?
+            .into_iter()
+            .collect();
+        Ok(Some(node(
+            ArtifactKind::BenchmarkArchitectEvidence,
+            id,
+            Some(evidence.fingerprint.clone()),
+            &evidence,
+            parents,
+        )?))
+    }
+
+    async fn benchmark_architecture_proposal_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(proposal) = BenchmarkArchitectStore::get_proposal(self, id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let mut parents = Box::pin(self.benchmark_architect_run_node(proposal.run_id))
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        for evidence_id in proposal.evidence_fingerprints.keys() {
+            if let Some(evidence) =
+                Box::pin(self.benchmark_architect_evidence_node(*evidence_id)).await?
+            {
+                parents.push(evidence);
+            }
+        }
+        Ok(Some(node(
+            ArtifactKind::BenchmarkArchitectureProposal,
+            id,
+            Some(proposal.fingerprint.clone()),
+            &proposal,
+            parents,
+        )?))
+    }
+
+    async fn benchmark_architecture_review_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(review) = BenchmarkArchitectStore::get_review(self, id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let mut parents = Box::pin(self.benchmark_architecture_proposal_node(review.proposal_id))
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(predecessor_id) = review.predecessor_id
+            && let Some(predecessor) =
+                Box::pin(self.benchmark_architecture_review_node(predecessor_id)).await?
+        {
+            parents.push(predecessor);
+        }
+        Ok(Some(node(
+            ArtifactKind::BenchmarkArchitectureReview,
+            id,
+            Some(review.fingerprint.clone()),
+            &review,
+            parents,
+        )?))
+    }
+
+    async fn benchmark_acquisition_handoff_node(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
+        let Some(handoff) = BenchmarkArchitectStore::get_handoff_by_id(self, id)
+            .await
+            .map_err(store_error)?
+        else {
+            return Ok(None);
+        };
+        let mut parents = Box::pin(self.benchmark_architecture_proposal_node(handoff.proposal_id))
+            .await?
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(approval) =
+            Box::pin(self.benchmark_architecture_review_node(handoff.approval_id)).await?
+        {
+            parents.push(approval);
+        }
+        Ok(Some(node(
+            ArtifactKind::BenchmarkAcquisitionHandoff,
+            id,
+            Some(handoff.fingerprint.clone()),
+            &handoff,
+            parents,
+        )?))
+    }
+
     async fn semantic_profile_node(
         &self,
         id: Uuid,
@@ -456,7 +639,10 @@ impl SqliteStore {
         &self,
         id: Uuid,
     ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
-        let Some(brief) = self.get_brief(id).await.map_err(store_error)? else {
+        let Some(brief) = ResearchStore::get_brief(self, id)
+            .await
+            .map_err(store_error)?
+        else {
             return Ok(None);
         };
         let parents = self
@@ -477,7 +663,10 @@ impl SqliteStore {
         &self,
         id: Uuid,
     ) -> Result<Option<ProvenanceNode>, ProvenanceStoreError> {
-        let Some(run) = self.get_run(id).await.map_err(store_error)? else {
+        let Some(run) = ResearchStore::get_run(self, id)
+            .await
+            .map_err(store_error)?
+        else {
             return Ok(None);
         };
         let parents = self

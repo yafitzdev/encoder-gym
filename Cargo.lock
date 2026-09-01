@@ -260,6 +260,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "benchmark-architect-runner"
+version = "0.1.0"
+dependencies = [
+ "artifact-core",
+ "benchmark-architect-core",
+ "evaluation-core",
+ "research-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "uuid",
+ "workflow-core",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3359,6 +3375,7 @@ version = "0.1.0"
 dependencies = [
  "analysis-core",
  "artifact-core",
+ "benchmark-architect-core",
  "chrono",
  "dataset-architect-core",
  "dataset-core",

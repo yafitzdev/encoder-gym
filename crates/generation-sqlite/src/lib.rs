@@ -5,6 +5,7 @@ mod analysis;
 mod approval;
 mod architect;
 mod benchmark;
+mod benchmark_architect;
 mod benchmark_bundle;
 mod benchmark_qualification;
 mod contamination;

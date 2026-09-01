@@ -195,6 +195,74 @@ test("the Dataset Architect iterates through only its application-owned tools", 
   ]);
 });
 
+test("the Benchmark Architect exposes only row-free research and blueprint tools", async () => {
+  const calls: string[] = [];
+  const input = request();
+  input.capabilitySet = "benchmark_architect_v1";
+  input.maxModelTurns = 1;
+  input.scriptedTurns = [
+    {
+      toolCalls: [
+        { name: "inspect_brief", arguments: {} },
+        { name: "inspect_existing_benchmark", arguments: {} },
+        { name: "inspect_exposure_history", arguments: {} },
+        {
+          name: "search_web",
+          arguments: {
+            query: "real support classification failures",
+            sourceClasses: [],
+            maximumResults: 3,
+          },
+        },
+        { name: "fetch_page", arguments: { url: "https://example.com/study", maximumBytes: 1000 } },
+        {
+          name: "record_evidence",
+          arguments: {
+            key: "risk-study",
+            url: "https://example.com/study",
+            title: "Study",
+            query: "real support classification failures",
+            sourceClass: "study",
+            contentHash: "sha256:page",
+            excerpt: "Observed failure",
+            observation: "Boundary language overlaps.",
+            applicability: "Create a boundary cohort.",
+            confidence: "medium",
+          },
+        },
+        { name: "inspect_evidence", arguments: {} },
+        { name: "preview_blueprint", arguments: { blueprint: {}, evidenceBindings: [] } },
+        { name: "submit_blueprint", arguments: { blueprint: {}, evidenceBindings: [] } },
+        {
+          name: "finish_benchmark_architecture",
+          arguments: { reason: "proposal_submitted", summary: "Submitted." },
+        },
+      ],
+    },
+  ];
+  const agent = new PiResearchAgent({
+    async execute(call) {
+      calls.push(call.name);
+      return { content: { accepted: true } };
+    },
+  });
+
+  await agent.run(input);
+
+  assert.deepEqual(calls, [
+    "inspect_brief",
+    "inspect_existing_benchmark",
+    "inspect_exposure_history",
+    "search_web",
+    "fetch_page",
+    "record_evidence",
+    "inspect_evidence",
+    "preview_blueprint",
+    "submit_blueprint",
+    "finish_benchmark_architecture",
+  ]);
+});
+
 test("the generation supervisor exposes exactly its seven bounded tools", async () => {
   const calls: string[] = [];
   const input = request();

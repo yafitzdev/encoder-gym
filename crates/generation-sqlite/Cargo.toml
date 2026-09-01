@@ -9,6 +9,7 @@ publish = false
 chrono.workspace = true
 analysis-core.workspace = true
 artifact-core.workspace = true
+benchmark-architect-core.workspace = true
 dataset-core.workspace = true
 dataset-architect-core.workspace = true
 dataset-quality-core.workspace = true

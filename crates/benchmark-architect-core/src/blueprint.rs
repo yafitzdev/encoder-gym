@@ -296,6 +296,7 @@ pub struct BenchmarkArchitectureReview {
     pub proposal_id: Uuid,
     pub proposal_fingerprint: String,
     pub predecessor_id: Option<Uuid>,
+    pub predecessor_fingerprint: Option<String>,
     pub decision: BenchmarkArchitectureReviewDecision,
     pub reviewer: String,
     pub rationale: String,
@@ -312,7 +313,11 @@ impl BenchmarkArchitectureReview {
         rationale: String,
     ) -> Result<Self, BenchmarkArchitectError> {
         if proposal.reproduce_fingerprint()? != proposal.fingerprint
-            || predecessor.is_some_and(|value| value.proposal_id != proposal.id)
+            || predecessor.is_some_and(|value| {
+                value.proposal_id != proposal.id
+                    || value.reproduce_fingerprint().ok().as_deref()
+                        != Some(value.fingerprint.as_str())
+            })
         {
             return Err(BenchmarkArchitectError::Integrity(
                 "review inputs do not reproduce or belong together".into(),
@@ -323,6 +328,7 @@ impl BenchmarkArchitectureReview {
             proposal_id: proposal.id,
             proposal_fingerprint: proposal.fingerprint.clone(),
             predecessor_id: predecessor.map(|value| value.id),
+            predecessor_fingerprint: predecessor.map(|value| value.fingerprint.clone()),
             decision,
             reviewer: required(reviewer, "review.reviewer")?,
             rationale: required(rationale, "review.rationale")?,
@@ -408,6 +414,45 @@ impl BenchmarkAcquisitionHandoff {
         let mut value = self.clone();
         value.fingerprint.clear();
         fingerprint(&value)
+    }
+
+    pub fn validate_integrity(
+        &self,
+        brief: &ResolvedBenchmarkArchitectBrief,
+        proposal: &BenchmarkArchitectureProposal,
+        approval: &BenchmarkArchitectureReview,
+        evidence: &[ResearchEvidence],
+    ) -> Result<(), BenchmarkArchitectError> {
+        proposal.validate_integrity(brief, evidence)?;
+        if self.reproduce_fingerprint()? != self.fingerprint
+            || approval.reproduce_fingerprint()? != approval.fingerprint
+            || approval.proposal_id != proposal.id
+            || approval.proposal_fingerprint != proposal.fingerprint
+            || approval.decision != BenchmarkArchitectureReviewDecision::Approve
+            || self.proposal_id != proposal.id
+            || self.proposal_fingerprint != proposal.fingerprint
+            || self.approval_id != approval.id
+            || self.approval_fingerprint != approval.fingerprint
+            || self.task != brief.task
+            || self.labels != brief.labels
+            || self.requirements != proposal.acquisition_requirements
+            || self.qualification_policy != proposal.qualification_policy
+            || self.suite_contracts
+                != proposal
+                    .suites
+                    .iter()
+                    .map(|suite| (suite.kind, suite.contract.clone()))
+                    .collect()
+            || self.risk_coverage != proposal.risk_coverage
+            || self.unresolved_evidence_gaps != proposal.evidence_gaps
+            || self.authority_notice
+                != "This handoff does not authorize benchmark use. Import, strict contamination checks, deterministic qualification, and independent approval remain required."
+        {
+            return Err(BenchmarkArchitectError::Integrity(
+                "acquisition handoff does not reproduce from its approved proposal".into(),
+            ));
+        }
+        Ok(())
     }
 }
 

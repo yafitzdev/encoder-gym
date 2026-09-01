@@ -62,6 +62,11 @@ pub trait BenchmarkArchitectStore: Send + Sync {
         run_id: Uuid,
     ) -> BoxFuture<'_, Result<Vec<ResearchEvidence>, BenchmarkArchitectAdapterError>>;
 
+    fn get_evidence(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<ResearchEvidence>, BenchmarkArchitectAdapterError>>;
+
     /// Atomically publishes the proposal and terminal run projection.
     fn save_proposal_and_run(
         &self,
@@ -89,6 +94,11 @@ pub trait BenchmarkArchitectStore: Send + Sync {
         proposal_id: Uuid,
     ) -> BoxFuture<'_, Result<Option<BenchmarkArchitectureReview>, BenchmarkArchitectAdapterError>>;
 
+    fn get_review(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<BenchmarkArchitectureReview>, BenchmarkArchitectAdapterError>>;
+
     fn save_handoff(
         &self,
         handoff: &BenchmarkAcquisitionHandoff,
@@ -97,5 +107,10 @@ pub trait BenchmarkArchitectStore: Send + Sync {
     fn get_handoff(
         &self,
         proposal_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<BenchmarkAcquisitionHandoff>, BenchmarkArchitectAdapterError>>;
+
+    fn get_handoff_by_id(
+        &self,
+        id: Uuid,
     ) -> BoxFuture<'_, Result<Option<BenchmarkAcquisitionHandoff>, BenchmarkArchitectAdapterError>>;
 }

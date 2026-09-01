@@ -8,6 +8,7 @@ members = [
     "crates/advisor-openai-compatible",
     "crates/artifact-core",
     "crates/benchmark-architect-core",
+    "crates/benchmark-architect-runner",
     "crates/dataset-core",
     "crates/dataset-import",
     "crates/dataset-quality-core",
@@ -91,6 +92,7 @@ evaluation-core = { package = "evaluation-core", path = "crates/evaluation-core"
 analysis-core = { package = "analysis-core", path = "crates/analysis-core" }
 artifact-core = { package = "artifact-core", path = "crates/artifact-core" }
 benchmark-architect-core = { package = "benchmark-architect-core", path = "crates/benchmark-architect-core" }
+benchmark-architect-runner = { package = "benchmark-architect-runner", path = "crates/benchmark-architect-runner" }
 optimization-core = { package = "optimization-core", path = "crates/optimization-core" }
 project-config = { package = "project-config", path = "crates/project-config" }
 project-preparation = { package = "project-preparation", path = "crates/project-preparation" }

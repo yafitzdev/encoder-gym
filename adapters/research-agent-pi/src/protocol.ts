@@ -25,6 +25,21 @@ export const ARCHITECT_TOOL_NAMES = [
 
 export type ArchitectToolName = (typeof ARCHITECT_TOOL_NAMES)[number];
 
+export const BENCHMARK_ARCHITECT_TOOL_NAMES = [
+  "inspect_brief",
+  "inspect_existing_benchmark",
+  "inspect_exposure_history",
+  "search_web",
+  "fetch_page",
+  "record_evidence",
+  "inspect_evidence",
+  "preview_blueprint",
+  "submit_blueprint",
+  "finish_benchmark_architecture",
+] as const;
+
+export type BenchmarkArchitectToolName = (typeof BENCHMARK_ARCHITECT_TOOL_NAMES)[number];
+
 export const SUPERVISOR_TOOL_NAMES = [
   "inspect_quality_contract",
   "inspect_quality_window",
@@ -36,7 +51,11 @@ export const SUPERVISOR_TOOL_NAMES = [
 ] as const;
 
 export type SupervisorToolName = (typeof SUPERVISOR_TOOL_NAMES)[number];
-export type AgentToolName = ResearchToolName | ArchitectToolName | SupervisorToolName;
+export type AgentToolName =
+  | ResearchToolName
+  | ArchitectToolName
+  | BenchmarkArchitectToolName
+  | SupervisorToolName;
 
 export interface ToolExecutionRequest {
   runId: string;
@@ -70,6 +89,7 @@ export interface PiRunRequest {
   capabilitySet:
     | "authenticity_research_v1"
     | "dataset_architect_v1"
+    | "benchmark_architect_v1"
     | "generation_quality_supervisor_v1";
   runId: string;
   runSpecificationFingerprint: string;
