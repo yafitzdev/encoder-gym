@@ -260,9 +260,43 @@ impl GenerationSupervisionRequest {
         {
             thresholds.minimum_authenticity_score = Some(bp(value.get().saturating_add(500))?);
         }
+        // A generated segment is capped by the generator batch size. Compile
+        // the corresponding maximum requests per audit, then split the
+        // operator's global token and cost ceilings across the global request
+        // count. Reserving several audits can therefore never multiply the
+        // authority supplied by the operator.
+        let evaluator_requests_per_audit = generator
+            .batch_size
+            .div_ceil(self.monitoring_rows_per_scope)
+            .max(1);
+        if evaluator_requests_per_audit > self.limits.maximum_evaluator_requests {
+            return Err(SupervisorError::Validation(
+                "the evaluator request ceiling cannot cover one maximum-size generation audit"
+                    .into(),
+            ));
+        }
+        let evaluator_tokens_per_audit = self
+            .limits
+            .maximum_evaluator_tokens
+            .checked_div(u64::from(self.limits.maximum_evaluator_requests))
+            .filter(|value| *value > 0)
+            .ok_or_else(|| {
+                SupervisorError::Validation(
+                    "maximum evaluator tokens must cover every authorized evaluator request".into(),
+                )
+            })?;
+        let evaluator_tokens_per_audit = evaluator_tokens_per_audit
+            .checked_mul(u64::from(evaluator_requests_per_audit))
+            .ok_or_else(|| {
+                SupervisorError::Validation("per-audit evaluator token ceiling overflowed".into())
+            })?;
+        let evaluator_cost_per_audit = self.limits.maximum_cost_microunits.map(|maximum| {
+            maximum / u64::from(self.limits.maximum_evaluator_requests)
+                * u64::from(evaluator_requests_per_audit)
+        });
         let audit_budgets = AuditBudgets {
             maximum_rows_per_batch: self.monitoring_rows_per_scope,
-            maximum_evaluator_requests: self.limits.maximum_evaluator_requests,
+            maximum_evaluator_requests: evaluator_requests_per_audit,
             maximum_attempts_per_request: self
                 .limits
                 .maximum_retries_per_external_call
@@ -270,10 +304,10 @@ impl GenerationSupervisionRequest {
                 .ok_or_else(|| {
                     SupervisorError::Validation("evaluator retry ceiling overflowed".into())
                 })?,
-            maximum_input_tokens: self.limits.maximum_evaluator_tokens,
-            maximum_output_tokens: self.limits.maximum_evaluator_tokens,
-            maximum_total_tokens: self.limits.maximum_evaluator_tokens,
-            maximum_cost_microusd: self.limits.maximum_cost_microunits,
+            maximum_input_tokens: evaluator_tokens_per_audit,
+            maximum_output_tokens: evaluator_tokens_per_audit,
+            maximum_total_tokens: evaluator_tokens_per_audit,
+            maximum_cost_microusd: evaluator_cost_per_audit,
         };
         let quality_policy = QualityPolicy::new(
             Some(preset),
@@ -460,6 +494,11 @@ fn validate_request(request: &GenerationSupervisionRequest) -> Result<(), Superv
                 .into(),
         ));
     }
+    if request.generator.max_retries > limits.maximum_retries_per_external_call {
+        return Err(SupervisorError::Validation(
+            "generator retry policy exceeds the supervision retry ceiling".into(),
+        ));
+    }
     if let RepairApprovalRequest::Preauthorized {
         maximum_affected_scopes,
         valid_for_seconds,
@@ -536,6 +575,11 @@ fn resolve_evaluator(
         FAKE_EVALUATOR_MODEL,
         "evaluator",
     )?;
+    if backend == FAKE_EVALUATOR_BACKEND && request.seed < 0 {
+        return Err(SupervisorError::Validation(
+            "fake evaluator seed must be non-negative".into(),
+        ));
+    }
     let protocol_version = request
         .protocol_version
         .unwrap_or_else(|| DEFAULT_EVALUATOR_PROTOCOL.to_owned());

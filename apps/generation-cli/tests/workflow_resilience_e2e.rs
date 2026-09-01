@@ -13,7 +13,14 @@ use std::{
 };
 
 use dataset_quality_core::policy::{EvaluatorEgressPolicy, QualityPreset};
-use serde_json::Value;
+use generation_supervisor_core::{
+    ports::GenerationSupervisorStore,
+    preset::{
+        EvaluatorProfileRequest, GenerationSupervisionRequest, GeneratorProfileRequest,
+        QualityImportance, RepairApprovalRequest, SupervisionLimits, SupervisionQualityLevel,
+    },
+};
+use serde_json::{Value, json};
 use synthetic_data_sqlite::SqliteStore;
 use workflow_core::{
     execution::WorkflowChildKind,
@@ -25,6 +32,398 @@ use support::{
     run, run_json,
     workflow_fixture::{GenerationMode, WorkflowFixture},
 };
+
+#[test]
+fn governed_supervision_pauses_repairs_and_reaches_qualified_training() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let sidecar = root.join("adapters/research-agent-pi/dist/main.js");
+    if !sidecar.is_file() {
+        eprintln!(
+            "skipping governed supervisor workflow because {} is not built",
+            sidecar.display()
+        );
+        return;
+    }
+    let fixture = WorkflowFixture::new(GenerationMode::Fake);
+    let manifest_path = fixture.write_variant("supervised-workflow.toml", |manifest| {
+        manifest.workflow.generation_supervision = Some(test_supervision_request());
+        manifest.workflow.budget.maximum_cumulative_rows = 256;
+        manifest.workflow.budget.maximum_generation_attempts = 512;
+        manifest.workflow.budget.maximum_generation_requests = 512;
+        manifest.development.contract.metric_requirements[0].minimum = Some(1.0);
+    });
+    let prepared = run_json(
+        fixture.database_url(),
+        [
+            "project",
+            "prepare",
+            manifest_path.to_str().expect("UTF-8 manifest path"),
+        ],
+    );
+    let definition_id = string_at(&prepared, "/preparation/workflow_definition_id");
+    let paused = run_json(
+        fixture.database_url(),
+        ["workflow", "start", &definition_id],
+    );
+    let workflow_run_id = string_at(&paused, "/run/id");
+    if paused["run"]["state"] != "awaiting_user" {
+        let supervisor_run_id = latest_artifact_id(&paused, "generation_supervisor_run");
+        let issues = run_json(
+            fixture.database_url(),
+            ["supervisor", "issues", &supervisor_run_id],
+        );
+        panic!("supervised workflow did not pause:\n{paused:#}\nissues:\n{issues:#}");
+    }
+    assert_eq!(paused["latest_attempt"]["stage"], "generation");
+    if paused["latest_attempt"]["state"] != "awaiting_user" {
+        panic!("supervised generation attempt failed:\n{paused:#}");
+    }
+    assert_eq!(
+        child_execution_count(&paused, "generation_supervisor_run"),
+        1
+    );
+    let supervisor_run_id = latest_artifact_id(&paused, "generation_supervisor_run");
+
+    let repeated = run_json(
+        fixture.database_url(),
+        ["workflow", "resume", &workflow_run_id],
+    );
+    assert_eq!(repeated["attempt_count"], paused["attempt_count"]);
+    assert_eq!(
+        repeated["latest_attempt"]["id"],
+        paused["latest_attempt"]["id"]
+    );
+
+    repair_supervisor(fixture.database_url(), &sidecar, &supervisor_run_id);
+
+    let curation_pause = run_json(
+        fixture.database_url(),
+        ["workflow", "resume", &workflow_run_id],
+    );
+    assert_eq!(curation_pause["run"]["state"], "awaiting_user");
+    assert_eq!(
+        curation_pause["latest_attempt"]["stage"], "curation_review",
+        "{curation_pause:#}"
+    );
+    assert_eq!(
+        artifact_count(&curation_pause, "supervisor_qualification_handoff"),
+        1
+    );
+    let initial_handoff_id =
+        latest_artifact_id(&curation_pause, "supervisor_qualification_handoff");
+    assert_eq!(artifact_count(&curation_pause, "quality_report"), 1);
+    let proposal_id = latest_artifact_id(&curation_pause, "curation_proposal");
+    let approved = run_json(
+        fixture.database_url(),
+        [
+            "quality",
+            "manifest-review",
+            &proposal_id,
+            "--approve",
+            "--reviewer",
+            "workflow-test",
+            "--reason",
+            "admit only the directly qualified supervisor handoff",
+        ],
+    );
+    let manifest_id = string_at(&approved, "/manifest/id");
+    let trained = run_json(
+        fixture.database_url(),
+        ["workflow", "resume", &workflow_run_id],
+    );
+    assert!(
+        matches!(
+            trained["run"]["state"].as_str(),
+            Some("awaiting_approval" | "development_complete")
+        ),
+        "{trained:#}"
+    );
+    assert_eq!(artifact_count(&trained, "quality_manifest"), 1);
+    assert_eq!(artifact_count(&trained, "snapshot"), 1);
+    assert_eq!(artifact_count(&trained, "training_run"), 1);
+    assert_eq!(artifact_count(&trained, "evaluation_run"), 1);
+    let snapshot_id = latest_artifact_id(&trained, "snapshot");
+    let snapshot = run_json(fixture.database_url(), ["snapshot", "show", &snapshot_id]);
+    assert_eq!(snapshot["qualified"], true);
+    assert_eq!(snapshot["manifest_id"], manifest_id);
+    let handoff_trace = run_json(
+        fixture.database_url(),
+        [
+            "provenance",
+            "supervisor-qualification-handoff",
+            &initial_handoff_id,
+        ],
+    );
+    assert_eq!(handoff_trace["kind"], "supervisor_qualification_handoff");
+    let handoff_trace = serde_json::to_string(&handoff_trace).expect("handoff provenance JSON");
+    assert!(handoff_trace.contains("generation_supervisor_run"));
+    assert!(handoff_trace.contains("generation_quality_contract"));
+    assert_eq!(
+        run_json(fixture.database_url(), ["doctor"])["healthy"],
+        true
+    );
+
+    assert_eq!(
+        trained["run"]["state"], "awaiting_approval",
+        "supervised acceptance must produce an iteration proposal: {trained:#}"
+    );
+    {
+        let iteration_pause = run_json(
+            fixture.database_url(),
+            [
+                "workflow",
+                "approve",
+                &workflow_run_id,
+                "--note",
+                "exercise the bounded supervised data-diff path",
+            ],
+        );
+        assert_eq!(iteration_pause["run"]["state"], "awaiting_user");
+        assert_eq!(
+            iteration_pause["latest_attempt"]["stage"], "dataset_diff_generation",
+            "{iteration_pause:#}"
+        );
+        assert_eq!(
+            iteration_pause["latest_attempt"]["state"], "awaiting_user",
+            "{iteration_pause:#}"
+        );
+        let iteration_supervisor_run_id =
+            latest_artifact_id(&iteration_pause, "generation_supervisor_run");
+        assert_ne!(iteration_supervisor_run_id, supervisor_run_id);
+
+        let unchanged = run_json(
+            fixture.database_url(),
+            ["workflow", "resume", &workflow_run_id],
+        );
+        assert_eq!(unchanged["attempt_count"], iteration_pause["attempt_count"]);
+        repair_supervisor(
+            fixture.database_url(),
+            &sidecar,
+            &iteration_supervisor_run_id,
+        );
+
+        let iteration_curation = run_json(
+            fixture.database_url(),
+            ["workflow", "resume", &workflow_run_id],
+        );
+        assert_eq!(iteration_curation["run"]["state"], "awaiting_user");
+        assert_eq!(
+            iteration_curation["latest_attempt"]["stage"], "iteration_curation_review",
+            "{iteration_curation:#}"
+        );
+        assert_eq!(
+            artifact_count(&iteration_curation, "supervisor_qualification_handoff"),
+            2
+        );
+        let proposal_id = latest_artifact_id(&iteration_curation, "iteration_curation_proposal");
+        let approved = run_json(
+            fixture.database_url(),
+            [
+                "quality",
+                "manifest-review",
+                &proposal_id,
+                "--approve",
+                "--reviewer",
+                "workflow-test",
+                "--reason",
+                "admit the directly qualified iteration diff",
+            ],
+        );
+        let iteration_manifest_id = string_at(&approved, "/manifest/id");
+        let iterated = run_json(
+            fixture.database_url(),
+            ["workflow", "resume", &workflow_run_id],
+        );
+        assert!(
+            matches!(
+                iterated["run"]["state"].as_str(),
+                Some("development_complete" | "awaiting_approval")
+            ),
+            "{iterated:#}"
+        );
+        assert_eq!(artifact_count(&iterated, "iteration_snapshot"), 1);
+        assert_eq!(artifact_count(&iterated, "iteration_training_run"), 1);
+        assert_eq!(artifact_count(&iterated, "iteration_evaluation_run"), 1);
+        let iteration_snapshot_id = latest_artifact_id(&iterated, "iteration_snapshot");
+        let iteration_snapshot = run_json(
+            fixture.database_url(),
+            ["snapshot", "show", &iteration_snapshot_id],
+        );
+        assert_eq!(iteration_snapshot["qualified"], true);
+        assert_eq!(iteration_snapshot["manifest_id"], iteration_manifest_id);
+        let supervisor_children = iterated["child_executions"]
+            .as_array()
+            .expect("workflow child executions")
+            .iter()
+            .filter(|child| child["child_kind"] == "generation_supervisor_run")
+            .collect::<Vec<_>>();
+        assert_eq!(supervisor_children.len(), 4, "{iterated:#}");
+        assert_eq!(
+            supervisor_children
+                .iter()
+                .map(|child| child["child_execution_id"]
+                    .as_str()
+                    .expect("supervisor child ID"))
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            2,
+            "each supervised stage must link one stable child across its pause and completion attempts"
+        );
+        let provenance = run_json(
+            fixture.database_url(),
+            ["provenance", "workflow-run", &workflow_run_id],
+        );
+        let provenance = serde_json::to_string(&provenance).expect("workflow provenance JSON");
+        for kind in [
+            "generation_quality_contract",
+            "generation_supervisor_run",
+            "supervisor_qualification_handoff",
+            "supervisor_qualification_application",
+        ] {
+            assert!(
+                provenance.contains(kind),
+                "supervised workflow provenance omitted {kind}: {provenance}"
+            );
+        }
+        assert_eq!(
+            run_json(fixture.database_url(), ["doctor"])["healthy"],
+            true
+        );
+    }
+}
+
+#[test]
+fn governed_supervision_cancellation_targets_the_exact_linked_run() {
+    let fixture = WorkflowFixture::new(GenerationMode::Fake);
+    let manifest_path = fixture.write_variant("supervised-cancellation.toml", |manifest| {
+        manifest.workflow.generation_supervision = Some(test_supervision_request());
+        manifest.workflow.budget.maximum_cumulative_rows = 256;
+        manifest.workflow.budget.maximum_generation_attempts = 512;
+        manifest.workflow.budget.maximum_generation_requests = 512;
+    });
+    let prepared = run_json(
+        fixture.database_url(),
+        [
+            "project",
+            "prepare",
+            manifest_path.to_str().expect("UTF-8 manifest path"),
+        ],
+    );
+    let definition_id = string_at(&prepared, "/preparation/workflow_definition_id");
+    let paused = run_json(
+        fixture.database_url(),
+        ["workflow", "start", &definition_id],
+    );
+    assert_eq!(paused["run"]["state"], "awaiting_user", "{paused:#}");
+    let workflow_run_id = string_at(&paused, "/run/id");
+    let supervisor_run_id = latest_artifact_id(&paused, "generation_supervisor_run");
+
+    let requested = run_json(
+        fixture.database_url(),
+        ["workflow", "cancel", &workflow_run_id],
+    );
+    assert_eq!(requested["cancel_requested"], true);
+    let supervisor = run_json(
+        fixture.database_url(),
+        ["supervisor", "status", &supervisor_run_id],
+    );
+    assert_eq!(supervisor["run"]["id"], supervisor_run_id);
+    let cancellation_requested = tokio::runtime::Runtime::new()
+        .expect("runtime")
+        .block_on(async {
+            SqliteStore::connect(fixture.database_url())
+                .await
+                .expect("database connects")
+                .supervisor_cancel_requested(
+                    uuid::Uuid::parse_str(&supervisor_run_id).expect("supervisor UUID"),
+                )
+                .await
+                .expect("cancellation lookup")
+        });
+    assert_eq!(cancellation_requested, Some(true));
+
+    let cancelled = run_json(
+        fixture.database_url(),
+        ["workflow", "resume", &workflow_run_id],
+    );
+    assert_eq!(cancelled["run"]["state"], "cancelled");
+    assert_eq!(cancelled["latest_attempt"]["state"], "cancelled");
+    assert_eq!(
+        child_execution_count(&cancelled, "generation_supervisor_run"),
+        1
+    );
+    assert_eq!(
+        run_json(fixture.database_url(), ["doctor"])["healthy"],
+        true
+    );
+}
+
+fn test_supervision_request() -> GenerationSupervisionRequest {
+    GenerationSupervisionRequest {
+        quality_level: SupervisionQualityLevel::Balanced,
+        authenticity_importance: QualityImportance::Off,
+        diversity_importance: QualityImportance::Normal,
+        maximum_prompt_repairs: 2,
+        monitoring_rows_per_scope: 1,
+        limits: SupervisionLimits {
+            maximum_generated_rows: 128,
+            maximum_evaluator_requests: 64,
+            maximum_evaluator_tokens: 1_000_000,
+            maximum_pi_tokens: 100_000,
+            maximum_duration_seconds: 600,
+            maximum_retries_per_external_call: 2,
+            maximum_cost_microunits: None,
+        },
+        repair_approval: RepairApprovalRequest::Manual,
+        generator: GeneratorProfileRequest {
+            batch_size: 8,
+            max_retries: 0,
+            max_attempt_multiplier: 2,
+            ..GeneratorProfileRequest::default()
+        },
+        evaluator: EvaluatorProfileRequest::default(),
+    }
+}
+
+fn repair_supervisor(database_url: &str, sidecar: &std::path::Path, supervisor_run_id: &str) {
+    let temporary = tempfile::tempdir().expect("diagnosis directory");
+    let script = temporary.path().join("diagnosis.json");
+    std::fs::write(
+        &script,
+        serde_json::to_vec_pretty(&supervisor_diagnosis_script()).unwrap(),
+    )
+    .unwrap();
+    let diagnosed = run_json(
+        database_url,
+        [
+            "supervisor",
+            "diagnose",
+            supervisor_run_id,
+            "--script",
+            script.to_str().expect("UTF-8 script path"),
+            "--pi-sidecar",
+            sidecar.to_str().expect("UTF-8 sidecar path"),
+        ],
+    );
+    let session_id = string_at(&diagnosed, "/session/id");
+    let reviewed = run_json(
+        database_url,
+        [
+            "supervisor",
+            "revision-review",
+            supervisor_run_id,
+            &session_id,
+            "--approve",
+            "--reviewer",
+            "workflow-test",
+            "--reason",
+            "approve a bounded guidance-only repair",
+        ],
+    );
+    assert_eq!(reviewed["status"]["state"], "canary");
+    let canary = run_json(database_url, ["supervisor", "canary", supervisor_run_id]);
+    assert_eq!(canary["status"]["state"], "running", "{canary:#}");
+}
 
 #[test]
 fn quality_gated_workflow_pauses_for_the_exact_latest_manifest_and_trains_qualified_data() {
@@ -946,6 +1345,32 @@ fn string_at(value: &Value, pointer: &str) -> String {
         .and_then(Value::as_str)
         .unwrap_or_else(|| panic!("missing string at {pointer}: {value}"))
         .to_owned()
+}
+
+fn supervisor_diagnosis_script() -> Value {
+    json!([{
+        "text": "Inspect the bounded evidence, preview one narrow repair, submit it, and finish.",
+        "toolCalls": [
+            {"name": "inspect_quality_contract", "arguments": {}},
+            {"name": "inspect_quality_window", "arguments": {}},
+            {"name": "inspect_failure_breakdown", "arguments": {}},
+            {"name": "inspect_current_prompt_guidance", "arguments": {}},
+            {"name": "preview_prompt_revision", "arguments": {
+                "replacement_guidance": ["Vary phrasing and add concrete situational detail without naming the label."],
+                "expected_improvements": [{"metric": "qualified_rate", "minimum_delta_basis_points": 1500}]
+            }},
+            {"name": "submit_prompt_revision", "arguments": {
+                "cause": "repetition_mode_collapse",
+                "summary": "The current guidance permits shortcut-heavy synthetic templates.",
+                "replacement_guidance": ["Vary phrasing and add concrete situational detail without naming the label."],
+                "expected_improvements": [{"metric": "qualified_rate", "minimum_delta_basis_points": 1500}]
+            }},
+            {"name": "finish_supervision", "arguments": {
+                "outcome": "revision_submitted",
+                "summary": "A bounded guidance-only repair is ready for operator review."
+            }}
+        ]
+    }])
 }
 
 struct AlwaysFailingServer {

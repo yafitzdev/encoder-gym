@@ -30,6 +30,12 @@ pub(super) fn execute_initial_stage<'a>(
             }
             WorkflowStage::Generation => {
                 let plan_id = artifact_id(&history, "generation_plan")?;
+                if definition.generation_supervision.is_some() {
+                    return super::generation_supervision::execute(
+                        store, definition, run, attempt, configured, &history, plan_id,
+                    )
+                    .await;
+                }
                 let allocation_id = artifact_id(&history, "initial_allocation")?;
                 let allocation = store
                     .get_initial_allocation(allocation_id)
@@ -131,11 +137,11 @@ pub(super) fn execute_initial_stage<'a>(
                 ]
             }
             WorkflowStage::Snapshot => {
-                let manifest_id = definition
-                    .quality_gate
-                    .as_ref()
-                    .map(|_| artifact_id(&history, "quality_manifest"))
-                    .transpose()?;
+                let manifest_id = (definition.quality_gate.is_some()
+                    || definition.generation_supervision.is_some())
+                .then_some(())
+                .map(|_| artifact_id(&history, "quality_manifest"))
+                .transpose()?;
                 let result = snapshot::create_workflow(
                     definition.dataset_id,
                     run.id,
@@ -161,7 +167,8 @@ pub(super) fn execute_initial_stage<'a>(
             }
             WorkflowStage::Training => {
                 let snapshot_id = artifact_id(&history, "snapshot")?;
-                if definition.quality_gate.is_some() {
+                if definition.quality_gate.is_some() || definition.generation_supervision.is_some()
+                {
                     let manifest_id = artifact_id(&history, "quality_manifest")?;
                     snapshot::require_workflow_qualification(store, snapshot_id, manifest_id)
                         .await?;
@@ -619,6 +626,7 @@ pub(super) fn execute_initial_stage<'a>(
                     store,
                     decision.proposal_id,
                     decision.proposal_review_id,
+                    definition.dataset_id,
                 )
                 .await?;
                 vec![
@@ -642,6 +650,12 @@ pub(super) fn execute_initial_stage<'a>(
             }
             WorkflowStage::DatasetDiffGeneration => {
                 let plan_id = artifact_id(&history, "iteration_generation_plan")?;
+                if definition.generation_supervision.is_some() {
+                    return super::generation_supervision::execute(
+                        store, definition, run, attempt, configured, &history, plan_id,
+                    )
+                    .await;
+                }
                 let existing = store
                     .list_jobs(JobQuery {
                         plan_id: Some(plan_id),
@@ -685,11 +699,11 @@ pub(super) fn execute_initial_stage<'a>(
                 )]
             }
             WorkflowStage::IterationSnapshot => {
-                let manifest_id = definition
-                    .quality_gate
-                    .as_ref()
-                    .map(|_| artifact_id(&history, "iteration_quality_manifest"))
-                    .transpose()?;
+                let manifest_id = (definition.quality_gate.is_some()
+                    || definition.generation_supervision.is_some())
+                .then_some(())
+                .map(|_| artifact_id(&history, "iteration_quality_manifest"))
+                .transpose()?;
                 let result = snapshot::create_workflow(
                     definition.dataset_id,
                     run.id,
@@ -722,7 +736,8 @@ pub(super) fn execute_initial_stage<'a>(
                     "unsupported workflow iteration training policy"
                 );
                 let snapshot_id = artifact_id(&history, "iteration_snapshot")?;
-                if definition.quality_gate.is_some() {
+                if definition.quality_gate.is_some() || definition.generation_supervision.is_some()
+                {
                     let manifest_id = artifact_id(&history, "iteration_quality_manifest")?;
                     snapshot::require_workflow_qualification(store, snapshot_id, manifest_id)
                         .await?;

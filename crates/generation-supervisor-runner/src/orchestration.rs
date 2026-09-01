@@ -215,6 +215,20 @@ impl GenerationQualitySupervisorRunner {
         initial_guidance: Vec<String>,
         strategy_seed: u64,
     ) -> Result<SupervisorStatus, SupervisorLoopError> {
+        self.start_with_identity(Uuid::new_v4(), contract_id, initial_guidance, strategy_seed)
+            .await
+    }
+
+    /// Creates an immutable queued run with a caller-reserved identity. This
+    /// is the application-orchestration boundary used when a parent workflow
+    /// must durably link the exact child before any child work can begin.
+    pub async fn start_with_identity(
+        &self,
+        run_id: Uuid,
+        contract_id: Uuid,
+        initial_guidance: Vec<String>,
+        strategy_seed: u64,
+    ) -> Result<SupervisorStatus, SupervisorLoopError> {
         let contract = self.load_contract(contract_id).await?;
         let dataset = self.load_dataset(contract.dataset.id).await?;
         let plan = self.load_plan(contract.plan.id).await?;
@@ -232,7 +246,6 @@ impl GenerationQualitySupervisorRunner {
             ));
         }
 
-        let run_id = Uuid::new_v4();
         let base_prompt = self.base_prompt_identity()?;
         let protected_fields_fingerprint = fingerprint(&(
             &contract.dataset,
@@ -2042,7 +2055,7 @@ fn validate_monitoring_support(
     match contract.monitoring.scope {
         MonitoringScope::Cell => {
             for planned in &plan.cells {
-                if planned.target_count < minimum {
+                if planned.target_count > 0 && planned.target_count < minimum {
                     return Err(SupervisorLoopError::Validation(format!(
                         "cell {} has target {} but quality monitoring requires at least {minimum} directly assessed rows",
                         planned.cell.key(),

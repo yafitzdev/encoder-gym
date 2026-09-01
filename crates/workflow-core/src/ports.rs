@@ -16,7 +16,7 @@ use crate::benchmark_qualification::{
     BenchmarkReadiness,
 };
 use crate::contamination::{ContaminationOverride, ContaminationReport, ContaminationStatus};
-use crate::execution::WorkflowChildExecution;
+use crate::execution::{WorkflowChildExecution, WorkflowChildKind};
 use crate::governance::{CohortRoleDecision, EvaluationCohort, EvidenceExposure, ExposurePurpose};
 use crate::promotion::ModelPromotion;
 use crate::stop::StopDecision;
@@ -490,6 +490,15 @@ pub trait WorkflowRunStore: Send + Sync {
         &self,
         attempt_id: Uuid,
     ) -> BoxFuture<'_, Result<Vec<WorkflowChildExecution>, WorkflowStoreError>>;
+
+    /// Resolves the exact parent authority for an externally addressed child.
+    /// This lets a child-specific CLI reconstruct its workflow-pinned runtime
+    /// without scanning or exposing persistence implementation details.
+    fn get_workflow_child_execution(
+        &self,
+        child_kind: WorkflowChildKind,
+        child_execution_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<WorkflowChildExecution>, WorkflowStoreError>>;
 
     fn save_workflow_run(
         &self,

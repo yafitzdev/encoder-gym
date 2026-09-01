@@ -15,7 +15,7 @@ use workflow_core::workflow::{
     WorkflowQualityAuthenticity, WorkflowRun, WorkflowStage, WorkflowStageAttempt,
 };
 
-use super::{artifact_id, artifact_link, link};
+use super::{artifact_id, artifact_link, link, stable_artifact_uuid};
 use crate::{
     cli::QualityAuthenticityArg,
     commands::quality::{self, VerifiedManifestEvidence},
@@ -298,26 +298,6 @@ fn audit_plan_id(
         "iteration": run.iteration,
         "stage": stage,
     }))
-}
-
-fn stable_artifact_uuid(value: &impl serde::Serialize) -> anyhow::Result<Uuid> {
-    let fingerprint = artifact_core::fingerprint(value)?;
-    let hex = fingerprint
-        .strip_prefix("sha256:")
-        .context("artifact fingerprint has no sha256 prefix")?;
-    ensure!(hex.len() >= 32, "artifact fingerprint is too short");
-    let mut bytes = [0_u8; 16];
-    for (index, byte) in bytes.iter_mut().enumerate() {
-        let start = index * 2;
-        *byte = u8::from_str_radix(&hex[start..start + 2], 16)
-            .context("artifact fingerprint is not hexadecimal")?;
-    }
-    // RFC 9562 version 8 is reserved for application-defined deterministic
-    // UUIDs. Preserve the RFC variant bits while deriving the payload from the
-    // canonical artifact fingerprint.
-    bytes[6] = (bytes[6] & 0x0f) | 0x80;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    Ok(Uuid::from_bytes(bytes))
 }
 
 fn quality_run(

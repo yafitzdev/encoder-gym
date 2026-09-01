@@ -1465,13 +1465,17 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
             path(&export_path),
         ],
     );
-    assert_eq!(exported["row_count"], 22);
+    // The approved optimization evidence comes from the independent
+    // development dataset, while its four-row diff is translated onto this
+    // workflow's training dataset. Export therefore contains the original 22
+    // accepted rows plus the correctly targeted diff.
+    assert_eq!(exported["row_count"], 26);
     assert_eq!(
         std::fs::read_to_string(&export_path)
             .expect("read export")
             .lines()
             .count(),
-        22
+        26
     );
 
     let listed = run_json(

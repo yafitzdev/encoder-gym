@@ -858,7 +858,10 @@ mod tests {
     use uuid::Uuid;
 
     use crate::{
-        application::{ApprovedApplicationError, approved_proposal_to_plan},
+        application::{
+            ApprovedApplicationError, approved_proposal_to_compatible_plan,
+            approved_proposal_to_plan,
+        },
         evidence::OptimizationEvidence,
         protocol::OptimizationProtocol,
         reviews::{ProposalReviewRecord, ProposalReviewState},
@@ -1033,6 +1036,55 @@ mod tests {
                 .expect("approved plan");
         assert_eq!(approved_plan.cells.len(), 1);
         assert_eq!(application.approval_review_id, Some(partial.id));
+        let target_dataset = DatasetDefinition::new(
+            "workflow training data",
+            "classify",
+            dataset.labels.clone(),
+            dataset.dimensions.clone(),
+        )
+        .expect("compatible target dataset");
+        let target_current = 41;
+        let target_accepted = BTreeMap::from([(
+            constrained.normalized_recommendations[0].cell.key(),
+            target_current,
+        )]);
+        let (translated_plan, translated_application) = approved_proposal_to_compatible_plan(
+            &constrained,
+            &partial,
+            &dataset,
+            &accepted,
+            &target_dataset,
+            &target_accepted,
+        )
+        .expect("schema-compatible plan");
+        assert_eq!(translated_plan.dataset_id, target_dataset.id);
+        assert_eq!(translated_plan.cells.len(), 1);
+        assert_eq!(
+            translated_plan.cells[0].target_count,
+            target_current + constrained.normalized_recommendations[0].additional_count
+        );
+        assert_ne!(
+            translated_application.verified_coverage_fingerprint,
+            application.verified_coverage_fingerprint
+        );
+        let incompatible_target = DatasetDefinition::new(
+            "incompatible workflow data",
+            "classify",
+            vec!["other".into()],
+            dataset.dimensions.clone(),
+        )
+        .expect("incompatible target dataset");
+        assert!(matches!(
+            approved_proposal_to_compatible_plan(
+                &constrained,
+                &partial,
+                &dataset,
+                &accepted,
+                &incompatible_target,
+                &BTreeMap::new(),
+            ),
+            Err(ApprovedApplicationError::TargetSchema)
+        ));
         let mut changed_coverage = accepted.clone();
         *changed_coverage
             .entry(constrained.normalized_recommendations[0].cell.key())

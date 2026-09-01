@@ -4621,6 +4621,12 @@ fn require_node_fingerprint(
 
 fn workflow_artifact_kind(value: &str) -> Option<ArtifactKind> {
     match value {
+        "generation_quality_contract" => Some(ArtifactKind::GenerationQualityContract),
+        "generation_supervisor_run" => Some(ArtifactKind::GenerationSupervisorRun),
+        "supervisor_qualification_handoff" => Some(ArtifactKind::SupervisorQualificationHandoff),
+        "supervisor_qualification_application" => {
+            Some(ArtifactKind::SupervisorQualificationApplication)
+        }
         "generation_plan" | "iteration_generation_plan" => Some(ArtifactKind::GenerationPlan),
         "initial_allocation" => Some(ArtifactKind::InitialAllocation),
         "generation_job" | "dataset_diff_generation_job" => Some(ArtifactKind::GenerationJob),
@@ -4629,7 +4635,9 @@ fn workflow_artifact_kind(value: &str) -> Option<ArtifactKind> {
         }
         "quality_audit_run" | "iteration_quality_audit_run" => Some(ArtifactKind::QualityAuditRun),
         "quality_report" | "iteration_quality_report" => Some(ArtifactKind::DatasetQualityReport),
-        "curation_proposal" | "iteration_curation_proposal" => Some(ArtifactKind::CurationProposal),
+        "curation_proposal" | "iteration_curation_proposal" | "supervisor_curation_proposal" => {
+            Some(ArtifactKind::CurationProposal)
+        }
         "curation_manifest_review" => Some(ArtifactKind::CurationManifestReview),
         "quality_manifest" | "iteration_quality_manifest" => {
             Some(ArtifactKind::ApprovedCurationManifest)

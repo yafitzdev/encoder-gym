@@ -258,8 +258,14 @@ impl GenerationSupervisorAdvisorRunner {
                 }
                 AgentMessage::Failed { message } => {
                     self.interrupt_uncertain_calls(session.id).await?;
-                    session.fail(message, Utc::now())?;
-                    self.store.save_session(&session).await?;
+                    // A terminating host tool can make the durable session
+                    // terminal before Pi emits its final transport message.
+                    // That trailing message must not overwrite a valid
+                    // proposal or escalation with a transport-level failure.
+                    if !session.state.is_terminal() {
+                        session.fail(message, Utc::now())?;
+                        self.store.save_session(&session).await?;
+                    }
                     break;
                 }
             }

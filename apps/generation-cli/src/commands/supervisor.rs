@@ -36,7 +36,9 @@ use generation_supervisor_core::{
 use generation_supervisor_runner::orchestration::{
     GenerationQualitySupervisorRunner, RevisionReviewInput, SupervisorExecutionConfiguration,
 };
-use generation_supervisor_runner::qualification::GenerationQualificationFinalizer;
+use generation_supervisor_runner::qualification::{
+    GenerationQualificationFinalizer, QualificationFinalizationOutcome,
+};
 use research_agent_pi_process::PiProcessRuntime;
 use research_core::ports::ResearchStore;
 use semantic_catalog::SemanticCatalogStore;
@@ -141,6 +143,18 @@ struct QualificationFinalizationSummary {
     next_command: String,
 }
 
+/// Provider-neutral runtime material assembled by a presentation boundary.
+/// Standalone supervisor commands and governed workflows both pass through
+/// the same context verification and runner construction below.
+pub(crate) struct SupervisorRuntimeComponents {
+    pub(crate) backend: Arc<dyn GenerationBackend>,
+    pub(crate) generator_identity: GenerationBackendIdentity,
+    pub(crate) generation_parameters: GenerationParameters,
+    pub(crate) generation_policy: JobRunnerPolicy,
+    pub(crate) construction_plan: RowConstructionPlan,
+    pub(crate) evaluator: Arc<dyn QualityEvaluator>,
+}
+
 pub async fn execute(command: SupervisorCommand, store: &SqliteStore) -> anyhow::Result<()> {
     match command {
         SupervisorCommand::ContractPreview { file } => {
@@ -206,14 +220,7 @@ pub async fn execute(command: SupervisorCommand, store: &SqliteStore) -> anyhow:
 }
 
 async fn finalize(store: &SqliteStore, run_id: Uuid) -> anyhow::Result<()> {
-    let shared = Arc::new(store.clone());
-    let finalizer = GenerationQualificationFinalizer::new(
-        shared.clone(),
-        shared.clone(),
-        shared.clone(),
-        shared,
-    );
-    let outcome = finalizer.finalize(run_id).await?;
+    let outcome = finalize_run(store, run_id).await?;
     let selected_rows = outcome.handoff.selected_source_row_ids().len();
     let excluded_observations = outcome.handoff.entries.len().saturating_sub(selected_rows);
     presentation::print(&QualificationFinalizationSummary {
@@ -231,6 +238,37 @@ async fn finalize(store: &SqliteStore, run_id: Uuid) -> anyhow::Result<()> {
             outcome.proposal.id
         ),
     })
+}
+
+/// Runs the structurally deep verification/finalization future on the same
+/// bounded large-stack execution boundary used by generation and canaries.
+/// This remains provider-I/O free; the separate thread only supplies stack
+/// capacity for deeply nested immutable evidence validation.
+pub(crate) async fn finalize_run(
+    store: &SqliteStore,
+    run_id: Uuid,
+) -> anyhow::Result<QualificationFinalizationOutcome> {
+    let store = store.clone();
+    let runtime = tokio::runtime::Handle::current();
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("generation-supervisor-finalizer".into())
+        .stack_size(SUPERVISOR_STACK_BYTES)
+        .spawn(move || {
+            let shared = Arc::new(store);
+            let finalizer = GenerationQualificationFinalizer::new(
+                shared.clone(),
+                shared.clone(),
+                shared.clone(),
+                shared,
+            );
+            let result = runtime.block_on(finalizer.finalize(run_id));
+            let _ = sender.send(result);
+        })
+        .context("could not start generation supervisor finalization thread")?;
+    Ok(receiver
+        .await
+        .context("generation supervisor finalization thread exited unexpectedly")??)
 }
 
 async fn start(store: &SqliteStore, args: SupervisorStartArgs) -> anyhow::Result<()> {
@@ -542,6 +580,11 @@ async fn runner_for_run(
     generation_api_key_env: Option<&str>,
     evaluator_api_key_env: Option<&str>,
 ) -> anyhow::Result<GenerationQualitySupervisorRunner> {
+    if let Some(runner) =
+        super::workflow::generation_supervision::runner_for_governed_run(store, run_id).await?
+    {
+        return Ok(runner);
+    }
     let run = require_run(store, run_id).await?;
     let contract = require_contract(store, run.contract_id).await?;
     build_runner(
@@ -601,12 +644,6 @@ async fn build_runner(
         }
         other => anyhow::bail!("unsupported supervisor generation backend: {other}"),
     };
-    ensure!(
-        identity == contract.generator.backend
-            && runtime_configuration_fingerprint(&identity, &parameters, &policy, &construction)?
-                == contract.generator.configuration_fingerprint,
-        "current generation backend configuration differs from the immutable contract"
-    );
     let evaluator: Arc<dyn QualityEvaluator> = match contract.evaluator.backend.as_str() {
         dataset_quality_fake::FAKE_QUALITY_BACKEND => Arc::new(FakeQualityEvaluator::default()),
         "openai-compatible" => {
@@ -618,8 +655,38 @@ async fn build_runner(
         }
         other => anyhow::bail!("unsupported supervisor quality evaluator: {other}"),
     };
+    assemble_runner(
+        store,
+        contract,
+        SupervisorRuntimeComponents {
+            backend,
+            generator_identity: identity,
+            generation_parameters: parameters,
+            generation_policy: policy,
+            construction_plan: construction,
+            evaluator,
+        },
+    )
+    .await
+}
+
+pub(crate) async fn assemble_runner(
+    store: &SqliteStore,
+    contract: &GenerationQualityContract,
+    components: SupervisorRuntimeComponents,
+) -> anyhow::Result<GenerationQualitySupervisorRunner> {
     ensure!(
-        evaluator.identity() == contract.evaluator,
+        components.generator_identity == contract.generator.backend
+            && runtime_configuration_fingerprint(
+                &components.generator_identity,
+                &components.generation_parameters,
+                &components.generation_policy,
+                &components.construction_plan,
+            )? == contract.generator.configuration_fingerprint,
+        "current generation backend configuration differs from the immutable contract"
+    );
+    ensure!(
+        components.evaluator.identity() == contract.evaluator,
         "configured quality evaluator differs from the immutable contract"
     );
     let semantic = super::semantic::resolve_dataset_semantics(store, contract.dataset.id).await?;
@@ -671,18 +738,18 @@ async fn build_runner(
         semantic_store,
         research_store,
         strategy_store,
-        backend,
-        vec![evaluator],
+        components.backend,
+        vec![components.evaluator],
         SupervisorExecutionConfiguration {
-            generation_parameters: parameters,
-            generation_policy: policy,
+            generation_parameters: components.generation_parameters,
+            generation_policy: components.generation_policy,
             quality_policy: contract.quality_policy.clone(),
             evaluator_guidance: EvaluatorGuidance {
                 semantic: semantic_guidance,
                 authenticity: authenticity_guidance,
             },
             text_length: None,
-            construction_plan: construction,
+            construction_plan: components.construction_plan,
             semantic_context: Some(semantic),
             authenticity_context: authenticity,
             authenticity_source_excerpts: excerpts,
@@ -738,7 +805,7 @@ fn supervisor_job_policy() -> JobRunnerPolicy {
     }
 }
 
-fn runtime_configuration_fingerprint(
+pub(crate) fn runtime_configuration_fingerprint(
     identity: &GenerationBackendIdentity,
     parameters: &GenerationParameters,
     policy: &JobRunnerPolicy,
@@ -752,7 +819,7 @@ fn runtime_configuration_fingerprint(
     ))?)
 }
 
-fn relationship(
+pub(crate) fn relationship(
     generator: &GenerationBackendIdentity,
     evaluator: &dataset_quality_core::assessment::EvaluatorIdentity,
 ) -> GeneratorEvaluatorRelationship {

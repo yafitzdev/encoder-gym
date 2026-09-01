@@ -6,7 +6,7 @@ use dataset_core::ports::SnapshotStore;
 use evaluation_core::ports::EvaluationStore;
 use generation_core::ports::{DatasetStore, PlanStore, RowStore};
 use optimization_core::{
-    application::approved_proposal_to_plan,
+    application::{approved_proposal_to_compatible_plan, approved_proposal_to_plan},
     domain::{OptimizationProposal, ProposalApplication},
     evidence::OptimizationEvidence,
     planning::{
@@ -493,6 +493,7 @@ pub(crate) async fn apply_workflow(
     store: &SqliteStore,
     proposal_id: uuid::Uuid,
     approval_id: uuid::Uuid,
+    target_dataset_id: uuid::Uuid,
 ) -> anyhow::Result<(generation_core::domain::GenerationPlan, ProposalApplication)> {
     let proposal = require_proposal(store, proposal_id).await?;
     if let Some(application) = store.get_proposal_application(proposal_id).await? {
@@ -500,15 +501,35 @@ pub(crate) async fn apply_workflow(
             .get_plan(application.generation_plan_id)
             .await?
             .context("applied workflow optimization plan is missing")?;
+        anyhow::ensure!(
+            plan.dataset_id == target_dataset_id,
+            "applied workflow optimization plan belongs to a different generation target"
+        );
         return Ok((plan, application));
     }
     let approval = require_review(store, proposal_id, approval_id).await?;
-    let dataset = store
+    let evidence_dataset = store
         .get_dataset(proposal.dataset_id)
         .await?
         .with_context(|| format!("dataset not found: {}", proposal.dataset_id))?;
-    let accepted = accepted_coverage(store, dataset.id).await?;
-    let (plan, application) = approved_proposal_to_plan(&proposal, &approval, &dataset, &accepted)?;
+    let target_dataset = store
+        .get_dataset(target_dataset_id)
+        .await?
+        .with_context(|| format!("workflow generation target not found: {target_dataset_id}"))?;
+    let evidence_accepted = accepted_coverage(store, evidence_dataset.id).await?;
+    let target_accepted = accepted_coverage(store, target_dataset.id).await?;
+    let (plan, application) = if evidence_dataset.id == target_dataset.id {
+        approved_proposal_to_plan(&proposal, &approval, &evidence_dataset, &evidence_accepted)?
+    } else {
+        approved_proposal_to_compatible_plan(
+            &proposal,
+            &approval,
+            &evidence_dataset,
+            &evidence_accepted,
+            &target_dataset,
+            &target_accepted,
+        )?
+    };
     let application = store.apply_proposal_plan(&plan, &application).await?;
     Ok((plan, application))
 }

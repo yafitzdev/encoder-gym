@@ -357,6 +357,44 @@ impl WorkflowRunStore for SqliteStore {
         })
     }
 
+    fn get_workflow_child_execution(
+        &self,
+        child_kind: workflow_core::execution::WorkflowChildKind,
+        child_execution_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<WorkflowChildExecution>, WorkflowStoreError>> {
+        Box::pin(async move {
+            let row = sqlx::query_as::<_, ChildExecutionRow>(
+                "SELECT id, workflow_run_id, workflow_stage_attempt_id, stage, ordinal, child_kind, \
+                 logical_key, child_execution_id, artifact_json, fingerprint, created_at \
+                 FROM workflow_child_executions WHERE child_kind = ? AND child_execution_id = ? \
+                 ORDER BY created_at, id LIMIT 1",
+            )
+            .bind(enum_string(&child_kind)?)
+            .bind(child_execution_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(store_error)?;
+            let Some(execution) = row.map(ChildExecutionRow::into_domain).transpose()? else {
+                return Ok(None);
+            };
+            let attempt = sqlx::query_as::<_, AttemptRow>(
+                "SELECT id, workflow_run_id, sequence, iteration, stage, attempt, state, \
+                 predecessor_id, predecessor_fingerprint, retryable, artifact_json, fingerprint, \
+                 started_at, finished_at FROM workflow_stage_attempts WHERE id = ?",
+            )
+            .bind(execution.workflow_stage_attempt_id)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(store_error)?
+            .ok_or_else(|| WorkflowStoreError("workflow child parent attempt not found".into()))?
+            .into_domain()?;
+            execution
+                .validate_for_attempt(&attempt)
+                .map_err(store_error)?;
+            Ok(Some(execution))
+        })
+    }
+
     fn save_workflow_run(
         &self,
         run: &WorkflowRun,

@@ -70,12 +70,15 @@ use crate::document::read as read_document;
 
 mod artifacts;
 pub(crate) mod child_execution;
+pub(crate) mod generation_supervision;
 mod quality_gate;
 mod queries;
 mod stage_execution;
 mod training_benchmark_gate;
 
-use artifacts::{artifact_id, artifact_ids, artifact_ids_for_stage, artifact_link, link};
+use artifacts::{
+    artifact_id, artifact_ids, artifact_ids_for_stage, artifact_link, link, stable_artifact_uuid,
+};
 use queries::{print_status, require_definition, require_run, resolve_pending_workflow_recovery};
 use stage_execution::{StageExecution, execute_initial_stage};
 
@@ -813,6 +816,7 @@ async fn drive_pipeline_inner(
                 attempt.stage,
                 definition.policy.enable_advisor,
                 definition.quality_gate.is_some(),
+                definition.generation_supervision.is_some(),
             ) else {
                 return Ok(run);
             };
@@ -837,6 +841,29 @@ async fn drive_pipeline_inner(
                 WorkflowStage::ProposalApplication,
                 Some(&attempt),
                 1,
+            )?;
+            store
+                .commit_workflow_attempt(&run, &started, attempt.id)
+                .await?;
+            attempt = started;
+            continue;
+        }
+        if attempt.state == StageAttemptState::AwaitingUser
+            && matches!(
+                attempt.stage,
+                WorkflowStage::Generation | WorkflowStage::DatasetDiffGeneration
+            )
+            && definition.generation_supervision.is_some()
+        {
+            if !generation_supervision::boundary_changed(store, &attempt).await? {
+                return Ok(run);
+            }
+            let started = WorkflowStageAttempt::start(
+                &definition,
+                &mut run,
+                attempt.stage,
+                Some(&attempt),
+                attempt.attempt,
             )?;
             store
                 .commit_workflow_attempt(&run, &started, attempt.id)
@@ -1167,24 +1194,41 @@ fn validate_preauthorization(
     usage: &WorkflowBudgetUsage,
     approved_rows: u64,
 ) -> anyhow::Result<()> {
-    let generation_backend = match configured.generation.backend {
-        project_config::GenerationBackendKind::Fake => "fake",
-        project_config::GenerationBackendKind::OpenaiCompatible => "openai-compatible",
-    };
+    let (generation_backend, generation_model, generation_batch_size) =
+        definition.generation_supervision.as_ref().map_or_else(
+            || {
+                let backend = match configured.generation.backend {
+                    project_config::GenerationBackendKind::Fake => "fake",
+                    project_config::GenerationBackendKind::OpenaiCompatible => "openai-compatible",
+                };
+                (
+                    backend,
+                    configured.generation.model.as_str(),
+                    configured.generation.batch_size,
+                )
+            },
+            |authority| {
+                (
+                    authority.generator.backend.as_str(),
+                    authority.generator.model.as_str(),
+                    authority.generator.batch_size,
+                )
+            },
+        );
     let training_backend = match configured.training.backend {
         project_config::TrainingBackendKind::HashingLinear => "hashing-linear",
         project_config::TrainingBackendKind::BertCpu => "bert-cpu",
     };
     ensure!(
         generation_backend == envelope.permitted_generation_backend
-            && configured.generation.model == envelope.permitted_generation_model
+            && generation_model == envelope.permitted_generation_model
             && training_backend == envelope.permitted_training_backend,
         "configured provider or training backend is outside the preauthorization envelope"
     );
     let initial_rows =
         definition.initial_allocation.total_rows - definition.initial_allocation.reserved_rows;
     let estimated_generation_requests =
-        approved_rows.div_ceil(u64::from(configured.generation.batch_size.max(1)));
+        approved_rows.div_ceil(u64::from(generation_batch_size.max(1)));
     ensure!(
         usage
             .accepted_rows
@@ -1643,9 +1687,11 @@ const fn initial_successor(
     stage: WorkflowStage,
     advisor: bool,
     quality_gate: bool,
+    generation_supervision: bool,
 ) -> Option<WorkflowStage> {
     match stage {
         WorkflowStage::InitialAllocation => Some(WorkflowStage::Generation),
+        WorkflowStage::Generation if generation_supervision => Some(WorkflowStage::CurationReview),
         WorkflowStage::Generation if quality_gate => Some(WorkflowStage::QualityAudit),
         WorkflowStage::Generation => Some(WorkflowStage::Snapshot),
         WorkflowStage::QualityAudit => Some(WorkflowStage::CurationReview),
@@ -1660,6 +1706,9 @@ const fn initial_successor(
         WorkflowStage::OptimizationProposal => Some(WorkflowStage::Approval),
         WorkflowStage::Approval => Some(WorkflowStage::ProposalApplication),
         WorkflowStage::ProposalApplication => Some(WorkflowStage::DatasetDiffGeneration),
+        WorkflowStage::DatasetDiffGeneration if generation_supervision => {
+            Some(WorkflowStage::IterationCurationReview)
+        }
         WorkflowStage::DatasetDiffGeneration if quality_gate => {
             Some(WorkflowStage::IterationQualityAudit)
         }
