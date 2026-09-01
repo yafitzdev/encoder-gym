@@ -1,4 +1,5 @@
 use super::super::*;
+use generation_supervisor_core::ports::GenerationSupervisorStore;
 
 pub(in crate::commands::doctor) async fn bootstrap_facts_check(store: &SqliteStore) -> DoctorCheck {
     let bootstraps = match store.list_bootstraps(10_000, 0).await {
@@ -440,6 +441,11 @@ pub(in crate::commands::doctor) async fn workflow_facts_check(store: &SqliteStor
                         let exists: anyhow::Result<bool> = match child.child_kind {
                             WorkflowChildKind::GenerationJob => store
                                 .get_job(child.child_execution_id)
+                                .await
+                                .map(|value| value.is_some())
+                                .map_err(Into::into),
+                            WorkflowChildKind::GenerationSupervisorRun => store
+                                .get_supervisor_run(child.child_execution_id)
                                 .await
                                 .map(|value| value.is_some())
                                 .map_err(Into::into),

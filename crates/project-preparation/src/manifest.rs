@@ -280,6 +280,9 @@ pub struct WorkflowManifest {
     pub training_iteration_policy: Option<TrainingIterationPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quality_gate: Option<workflow_core::workflow::WorkflowQualityGateRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_supervision:
+        Option<generation_supervisor_core::preset::GenerationSupervisionRequest>,
     pub governance: IterationGovernance,
     pub budget: WorkflowBudget,
     pub policy: WorkflowPolicy,

@@ -12,6 +12,7 @@ dataset-core.workspace = true
 dataset-quality-core.workspace = true
 evaluation-core.workspace = true
 generation-core.workspace = true
+generation-supervisor-core.workspace = true
 optimization-core.workspace = true
 semantic-catalog.workspace = true
 serde.workspace = true

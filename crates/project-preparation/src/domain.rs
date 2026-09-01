@@ -125,6 +125,9 @@ pub struct PreparationPreview {
     pub generation_backend: String,
     pub generation_model: String,
     pub training_backend: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_supervision:
+        Option<generation_supervisor_core::preset::ResolvedGenerationSupervision>,
     pub requested_total_rows: u32,
     pub initial_target_rows: u32,
     pub reserved_rows: u32,

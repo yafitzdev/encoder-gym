@@ -11,6 +11,7 @@ chrono.workspace = true
 dataset-core.workspace = true
 evaluation-core.workspace = true
 generation-core.workspace = true
+generation-supervisor-core.workspace = true
 optimization-core.workspace = true
 project-config.workspace = true
 serde.workspace = true

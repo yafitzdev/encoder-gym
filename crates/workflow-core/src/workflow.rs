@@ -15,6 +15,9 @@ use analysis_core::protocol::AnalysisProtocol;
 use dataset_quality_core::policy::{
     AuditMode, EvaluatorEgressPolicy, QualityPolicy, QualityPolicyPresetControls, QualityPreset,
 };
+use generation_supervisor_core::preset::{
+    GenerationSupervisionRequest, ResolvedGenerationSupervision,
+};
 use optimization_core::protocol::OptimizationProtocol;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -45,6 +48,10 @@ pub struct WorkflowDefinitionRequest {
     /// the legacy generation -> snapshot path unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quality_gate: Option<WorkflowQualityGateRequest>,
+    /// Optional smart-generation mode. The request contains concise operator
+    /// outcomes; the persisted definition pins its fully resolved blueprint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_supervision: Option<GenerationSupervisionRequest>,
     pub governance: IterationGovernance,
     pub budget: WorkflowBudget,
     pub policy: WorkflowPolicy,
@@ -227,6 +234,8 @@ pub struct WorkflowDefinition {
     pub training_iteration_policy: Option<TrainingIterationPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quality_gate: Option<WorkflowQualityGate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_supervision: Option<ResolvedGenerationSupervision>,
     pub governance: IterationGovernance,
     pub budget: WorkflowBudget,
     pub policy: WorkflowPolicy,
@@ -284,6 +293,11 @@ impl WorkflowDefinition {
             .quality_gate
             .map(WorkflowQualityGate::resolve)
             .transpose()?;
+        let generation_supervision = request
+            .generation_supervision
+            .map(GenerationSupervisionRequest::compile)
+            .transpose()
+            .map_err(|_| WorkflowError::InvalidGenerationSupervision)?;
         let mut value = Self {
             id: Uuid::new_v4(),
             name: required(request.name, "workflow name")?,
@@ -312,6 +326,7 @@ impl WorkflowDefinition {
                     .unwrap_or(TrainingIterationPolicy::Fresh),
             ),
             quality_gate,
+            generation_supervision,
             governance: request.governance,
             budget: request.budget,
             policy: request.policy,
@@ -657,6 +672,8 @@ pub enum WorkflowError {
     InvalidAdvisorConfiguration,
     #[error("workflow quality-gate configuration is invalid")]
     InvalidQualityGate,
+    #[error("workflow generation-supervision configuration is invalid")]
+    InvalidGenerationSupervision,
     #[error("sealed suite id and fingerprint must either both be present or both absent")]
     SealedSuitePair,
     #[error("workflow definition requires a benchmark bundle binding")]
@@ -702,6 +719,9 @@ pub enum WorkflowError {
 }
 
 fn validate_request(request: &WorkflowDefinitionRequest) -> Result<(), WorkflowError> {
+    if request.quality_gate.is_some() && request.generation_supervision.is_some() {
+        return Err(WorkflowError::InvalidGenerationSupervision);
+    }
     if request.sealed_suite_id.is_some() != request.sealed_suite_fingerprint.is_some() {
         return Err(WorkflowError::SealedSuitePair);
     }
@@ -729,6 +749,17 @@ fn validate_request(request: &WorkflowDefinitionRequest) -> Result<(), WorkflowE
         || request.initial_allocation.reserved_rows > request.initial_allocation.total_rows
     {
         return Err(WorkflowError::InvalidBudget);
+    }
+    if let Some(supervision) = &request.generation_supervision {
+        let resolved = supervision
+            .clone()
+            .compile()
+            .map_err(|_| WorkflowError::InvalidGenerationSupervision)?;
+        if resolved.budgets.maximum_generated_rows < request.initial_allocation.total_rows
+            || resolved.budgets.maximum_generated_rows > budget.maximum_generation_attempts
+        {
+            return Err(WorkflowError::InvalidGenerationSupervision);
+        }
     }
     if !request.policy.minimum_improvement.is_finite()
         || request.policy.minimum_improvement < 0.0
@@ -781,6 +812,19 @@ fn validate_request(request: &WorkflowDefinitionRequest) -> Result<(), WorkflowE
 fn validate_definition(value: &WorkflowDefinition) -> Result<(), WorkflowError> {
     if let Some(gate) = &value.quality_gate {
         gate.validate()?;
+    }
+    if value.quality_gate.is_some() && value.generation_supervision.is_some() {
+        return Err(WorkflowError::InvalidGenerationSupervision);
+    }
+    if let Some(supervision) = &value.generation_supervision {
+        supervision
+            .validate()
+            .map_err(|_| WorkflowError::InvalidGenerationSupervision)?;
+        if supervision.budgets.maximum_generated_rows < value.initial_allocation.total_rows
+            || supervision.budgets.maximum_generated_rows > value.budget.maximum_generation_attempts
+        {
+            return Err(WorkflowError::InvalidGenerationSupervision);
+        }
     }
     if value.reproduce_fingerprint()? != value.fingerprint {
         return Err(WorkflowError::DefinitionFingerprint);
@@ -924,6 +968,7 @@ fn validate_stage_start(
                     value.stage,
                     definition.policy.enable_advisor,
                     definition.quality_gate.is_some(),
+                    definition.generation_supervision.is_some(),
                 )
                 .contains(&stage)
         }) || previous.is_some_and(|value| {
@@ -947,8 +992,21 @@ fn validate_stage_start(
                     ) | (
                         Some(WorkflowStage::IterationCurationReview),
                         WorkflowStage::IterationCurationReview
-                    )
-                ))
+                    ) | (Some(WorkflowStage::Generation), WorkflowStage::Generation)
+                        | (
+                            Some(WorkflowStage::DatasetDiffGeneration),
+                            WorkflowStage::DatasetDiffGeneration
+                        )
+                )
+                && (definition.generation_supervision.is_some()
+                    || !matches!(
+                        (previous_stage, stage),
+                        (Some(WorkflowStage::Generation), WorkflowStage::Generation)
+                            | (
+                                Some(WorkflowStage::DatasetDiffGeneration),
+                                WorkflowStage::DatasetDiffGeneration
+                            )
+                    )))
     };
     if !allowed {
         return Err(WorkflowError::IllegalStage {
@@ -964,10 +1022,12 @@ fn legal_successors(
     stage: WorkflowStage,
     advisor: bool,
     quality_gate: bool,
+    generation_supervision: bool,
 ) -> &'static [WorkflowStage] {
     use WorkflowStage::*;
     match stage {
         InitialAllocation => &[Generation],
+        Generation if generation_supervision => &[CurationReview],
         Generation if quality_gate => &[QualityAudit],
         Generation => &[Snapshot],
         QualityAudit => &[CurationReview],
@@ -983,6 +1043,7 @@ fn legal_successors(
         OptimizationProposal => &[Approval],
         Approval => &[ProposalApplication],
         ProposalApplication => &[DatasetDiffGeneration],
+        DatasetDiffGeneration if generation_supervision => &[IterationCurationReview],
         DatasetDiffGeneration if quality_gate => &[IterationQualityAudit],
         DatasetDiffGeneration => &[IterationSnapshot],
         IterationQualityAudit => &[IterationCurationReview],
@@ -1110,6 +1171,16 @@ fn definition_fingerprint(value: &WorkflowDefinition) -> Result<String, Workflow
                     .map_err(|error| WorkflowError::Fingerprint(error.to_string()))?,
             );
     }
+    if value.generation_supervision.is_some() {
+        document
+            .as_object_mut()
+            .expect("definition document object")
+            .insert(
+                "generation_supervision".into(),
+                serde_json::to_value(&value.generation_supervision)
+                    .map_err(|error| WorkflowError::Fingerprint(error.to_string()))?,
+            );
+    }
     if value.benchmark_bundle.is_some() {
         document
             .as_object_mut()
@@ -1157,6 +1228,11 @@ fn required(value: String, field: &'static str) -> Result<String, WorkflowError>
 
 #[cfg(test)]
 mod tests {
+    use generation_supervisor_core::preset::{
+        EvaluatorProfileRequest, GeneratorProfileRequest, QualityImportance, RepairApprovalRequest,
+        SupervisionLimits, SupervisionQualityLevel,
+    };
+
     use super::*;
 
     fn benchmark_bundle_binding(
@@ -1225,6 +1301,7 @@ mod tests {
             }),
             training_iteration_policy: Some(TrainingIterationPolicy::Fresh),
             quality_gate: None,
+            generation_supervision: None,
             governance: IterationGovernance::ReviewEachIteration,
             budget: WorkflowBudget {
                 maximum_iterations: 2,
@@ -1481,11 +1558,40 @@ mod tests {
                 evaluator_backend: "deterministic-fake".into(),
                 evaluator_protocol_version: "quality-evaluator-v1".into(),
             }),
+            generation_supervision: None,
             governance: definition.governance,
             budget: definition.budget,
             policy: definition.policy,
         })
         .expect("gated definition")
+    }
+
+    fn supervision_request() -> GenerationSupervisionRequest {
+        GenerationSupervisionRequest {
+            quality_level: SupervisionQualityLevel::Balanced,
+            authenticity_importance: QualityImportance::Off,
+            diversity_importance: QualityImportance::High,
+            maximum_prompt_repairs: 2,
+            monitoring_rows_per_scope: 20,
+            limits: SupervisionLimits {
+                maximum_generated_rows: 500,
+                maximum_evaluator_requests: 500,
+                maximum_evaluator_tokens: 1_000_000,
+                maximum_pi_tokens: 100_000,
+                maximum_duration_seconds: 3_600,
+                maximum_retries_per_external_call: 2,
+                maximum_cost_microunits: None,
+            },
+            repair_approval: RepairApprovalRequest::Manual,
+            generator: GeneratorProfileRequest::default(),
+            evaluator: EvaluatorProfileRequest::default(),
+        }
+    }
+
+    fn supervised_definition() -> WorkflowDefinition {
+        let mut request = definition_request();
+        request.generation_supervision = Some(supervision_request());
+        WorkflowDefinition::new(request).expect("supervised definition")
     }
 
     #[test]
@@ -1608,6 +1714,7 @@ mod tests {
                     evaluator_backend: gate.evaluator_backend,
                     evaluator_protocol_version: gate.evaluator_protocol_version,
                 }),
+            generation_supervision: None,
             governance: definition.governance,
             budget: definition.budget,
             policy: definition.policy,
@@ -1684,19 +1791,19 @@ mod tests {
         assert!(gate.policy.verify_integrity().is_ok());
 
         assert_eq!(
-            legal_successors(WorkflowStage::Generation, true, false),
+            legal_successors(WorkflowStage::Generation, true, false, false),
             &[WorkflowStage::Snapshot]
         );
         assert_eq!(
-            legal_successors(WorkflowStage::Generation, true, true),
+            legal_successors(WorkflowStage::Generation, true, true, false),
             &[WorkflowStage::QualityAudit]
         );
         assert_eq!(
-            legal_successors(WorkflowStage::DatasetDiffGeneration, true, false),
+            legal_successors(WorkflowStage::DatasetDiffGeneration, true, false, false),
             &[WorkflowStage::IterationSnapshot]
         );
         assert_eq!(
-            legal_successors(WorkflowStage::DatasetDiffGeneration, true, true),
+            legal_successors(WorkflowStage::DatasetDiffGeneration, true, true, false),
             &[WorkflowStage::IterationQualityAudit]
         );
         assert!(
@@ -1733,11 +1840,55 @@ mod tests {
                 evaluator_backend: "openai-compatible".into(),
                 evaluator_protocol_version: "quality-evaluator-v1".into(),
             }),
+            generation_supervision: None,
             governance: definition.governance,
             budget: definition.budget,
             policy: definition.policy,
         });
         assert_eq!(unsupported, Err(WorkflowError::InvalidQualityGate));
+    }
+
+    #[test]
+    fn optional_supervision_resolves_outcomes_and_enters_existing_curation_paths() {
+        let legacy = definition();
+        let supervised = supervised_definition();
+        let authority = supervised
+            .generation_supervision
+            .as_ref()
+            .expect("resolved supervision");
+        authority.validate().expect("valid authority");
+        assert_eq!(authority.quality_level, SupervisionQualityLevel::Balanced);
+        assert_eq!(
+            legal_successors(WorkflowStage::Generation, false, false, true),
+            &[WorkflowStage::CurationReview]
+        );
+        assert_eq!(
+            legal_successors(WorkflowStage::DatasetDiffGeneration, false, false, true,),
+            &[WorkflowStage::IterationCurationReview]
+        );
+        assert!(
+            !serde_json::to_value(&legacy)
+                .expect("legacy definition JSON")
+                .as_object()
+                .expect("definition object")
+                .contains_key("generation_supervision")
+        );
+        assert_ne!(legacy.fingerprint, supervised.fingerprint);
+
+        let mut conflict = definition_request();
+        conflict.generation_supervision = Some(supervision_request());
+        conflict.quality_gate = Some(WorkflowQualityGateRequest {
+            preset: QualityPreset::Fast,
+            egress_policy: EvaluatorEgressPolicy::LocalOnly,
+            authenticity: WorkflowQualityAuthenticity::Off,
+            maximum_cost_microusd: None,
+            evaluator_backend: WORKFLOW_QUALITY_EVALUATOR_BACKEND.into(),
+            evaluator_protocol_version: "quality-evaluator-v1".into(),
+        });
+        assert_eq!(
+            WorkflowDefinition::new(conflict),
+            Err(WorkflowError::InvalidGenerationSupervision)
+        );
     }
 
     #[test]

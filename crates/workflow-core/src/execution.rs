@@ -14,6 +14,7 @@ use crate::workflow::{StageAttemptState, WorkflowStage, WorkflowStageAttempt};
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowChildKind {
     GenerationJob,
+    GenerationSupervisorRun,
     QualityAuditRun,
     TrainingRun,
     EvaluationRun,
@@ -23,6 +24,7 @@ impl WorkflowChildKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::GenerationJob => "generation_job",
+            Self::GenerationSupervisorRun => "generation_supervisor_run",
             Self::QualityAuditRun => "quality_audit_run",
             Self::TrainingRun => "training_run",
             Self::EvaluationRun => "evaluation_run",
@@ -149,6 +151,9 @@ const fn kind_is_allowed(stage: WorkflowStage, kind: WorkflowChildKind) -> bool 
             WorkflowStage::Generation | WorkflowStage::DatasetDiffGeneration,
             WorkflowChildKind::GenerationJob
         ) | (
+            WorkflowStage::Generation | WorkflowStage::DatasetDiffGeneration,
+            WorkflowChildKind::GenerationSupervisorRun
+        ) | (
             WorkflowStage::QualityAudit | WorkflowStage::IterationQualityAudit,
             WorkflowChildKind::QualityAuditRun
         ) | (
@@ -226,6 +231,32 @@ mod tests {
                 1,
                 WorkflowChildKind::GenerationJob,
                 "primary",
+                Uuid::new_v4(),
+            ),
+            Err(WorkflowExecutionError::KindNotAllowed { .. })
+        ));
+    }
+
+    #[test]
+    fn supervisor_run_is_an_exact_generation_stage_child() {
+        let attempt = running_attempt(WorkflowStage::Generation);
+        let link = WorkflowChildExecution::new(
+            &attempt,
+            1,
+            WorkflowChildKind::GenerationSupervisorRun,
+            "supervision",
+            Uuid::new_v4(),
+        )
+        .expect("supervisor child");
+        link.validate_for_attempt(&attempt).expect("valid link");
+
+        let training = running_attempt(WorkflowStage::Training);
+        assert!(matches!(
+            WorkflowChildExecution::new(
+                &training,
+                1,
+                WorkflowChildKind::GenerationSupervisorRun,
+                "supervision",
                 Uuid::new_v4(),
             ),
             Err(WorkflowExecutionError::KindNotAllowed { .. })

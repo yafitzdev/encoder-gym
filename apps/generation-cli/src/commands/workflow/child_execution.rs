@@ -2,6 +2,10 @@ use anyhow::{Context, ensure};
 use dataset_quality_core::{lifecycle::QualityAuditRunState, ports::DatasetQualityStore};
 use evaluation_core::ports::EvaluationStore;
 use generation_core::{jobs::JobState, ports::JobStore};
+use generation_supervisor_core::{
+    lifecycle::{SupervisorRunEvent, SupervisorRunState},
+    ports::GenerationSupervisorStore,
+};
 use recovery_core::{RecoveryState, RecoveryStore, WorkflowKind};
 use synthetic_data_sqlite::SqliteStore;
 use training_core::{domain::TrainingRunState, ports::TrainingStore};
@@ -127,6 +131,9 @@ async fn request_child_cancellation(
         WorkflowChildKind::GenerationJob => Ok(store
             .request_job_cancellation(child.child_execution_id)
             .await?),
+        WorkflowChildKind::GenerationSupervisorRun => Ok(store
+            .request_supervisor_cancellation(child.child_execution_id)
+            .await?),
         WorkflowChildKind::TrainingRun => Ok(store
             .request_training_cancellation(child.child_execution_id)
             .await?),
@@ -164,6 +171,17 @@ async fn child_identity_is_reusable(
                     JobState::Queued | JobState::Running | JobState::Completed
                 )
             })),
+        WorkflowChildKind::GenerationSupervisorRun => {
+            let Some(run) = store.get_supervisor_run(child.child_execution_id).await? else {
+                return Ok(true);
+            };
+            let state =
+                SupervisorRunEvent::verify_chain(run.id, &store.list_run_events(run.id).await?)?;
+            Ok(!matches!(
+                state,
+                SupervisorRunState::Failed | SupervisorRunState::Cancelled
+            ))
+        }
         WorkflowChildKind::TrainingRun => Ok(store
             .get_training_run(child.child_execution_id)
             .await?
@@ -203,6 +221,7 @@ async fn child_identity_is_reusable(
 const fn recovery_kind(kind: WorkflowChildKind) -> Option<WorkflowKind> {
     match kind {
         WorkflowChildKind::GenerationJob => Some(WorkflowKind::Generation),
+        WorkflowChildKind::GenerationSupervisorRun => None,
         WorkflowChildKind::TrainingRun => Some(WorkflowKind::Training),
         WorkflowChildKind::EvaluationRun => Some(WorkflowKind::Evaluation),
         WorkflowChildKind::QualityAuditRun => None,

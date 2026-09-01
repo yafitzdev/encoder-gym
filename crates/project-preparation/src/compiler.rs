@@ -82,6 +82,13 @@ pub fn preview_project(
         generation_backend: generation_backend_name(context.resolved.generation.backend).into(),
         generation_model: context.resolved.generation.model.clone(),
         training_backend: training_backend_name(context.resolved.training.backend).into(),
+        generation_supervision: manifest
+            .workflow
+            .generation_supervision
+            .clone()
+            .map(generation_supervisor_core::preset::GenerationSupervisionRequest::compile)
+            .transpose()
+            .map_err(domain)?,
         requested_total_rows: context.allocation.requested_total_rows,
         initial_target_rows: context.allocation.initial_target_rows,
         reserved_rows: context.allocation.reserved_rows,
@@ -114,6 +121,7 @@ pub fn preview_project(
             manifest.workflow.advisor.is_some(),
             manifest.sealed.is_some(),
             manifest.workflow.quality_gate.is_some(),
+            manifest.workflow.generation_supervision.is_some(),
         ),
         governance_mode: match manifest.workflow.governance {
             IterationGovernance::ReviewEachIteration => "review_each_iteration",
@@ -199,6 +207,7 @@ pub fn compile_project(
             advisor: manifest.workflow.advisor.clone(),
             training_iteration_policy: manifest.workflow.training_iteration_policy,
             quality_gate: manifest.workflow.quality_gate.clone(),
+            generation_supervision: manifest.workflow.generation_supervision.clone(),
             governance: manifest.workflow.governance.clone(),
             budget: manifest.workflow.budget.clone(),
             policy: manifest.workflow.policy.clone(),
@@ -770,11 +779,17 @@ fn workflow_stages(
     has_advisor: bool,
     has_sealed_suite: bool,
     has_quality_gate: bool,
+    has_generation_supervision: bool,
 ) -> Vec<WorkflowStage> {
     let mut stages = vec![WorkflowStage::InitialAllocation, WorkflowStage::Generation];
     if has_quality_gate {
         stages.extend([
             WorkflowStage::QualityAudit,
+            WorkflowStage::CurationReview,
+            WorkflowStage::CurationApproval,
+        ]);
+    } else if has_generation_supervision {
+        stages.extend([
             WorkflowStage::CurationReview,
             WorkflowStage::CurationApproval,
         ]);
@@ -798,6 +813,11 @@ fn workflow_stages(
     if has_quality_gate {
         stages.extend([
             WorkflowStage::IterationQualityAudit,
+            WorkflowStage::IterationCurationReview,
+            WorkflowStage::IterationCurationApproval,
+        ]);
+    } else if has_generation_supervision {
+        stages.extend([
             WorkflowStage::IterationCurationReview,
             WorkflowStage::IterationCurationApproval,
         ]);
@@ -844,6 +864,10 @@ mod tests {
         SplitRatios,
     };
     use dataset_quality_core::policy::{EvaluatorEgressPolicy, QualityPreset};
+    use generation_supervisor_core::preset::{
+        EvaluatorProfileRequest, GenerationSupervisionRequest, GeneratorProfileRequest,
+        QualityImportance, RepairApprovalRequest, SupervisionLimits, SupervisionQualityLevel,
+    };
     use project_config::{ProjectConfig, ProjectOverrides};
     use uuid::Uuid;
     use workflow_core::{
@@ -1028,6 +1052,63 @@ batch_size = 20
         assert_eq!(gate.policy.preset, Some(QualityPreset::Fast));
         assert_eq!(gate.evaluator_backend, "deterministic-fake");
         assert!(gate.policy.verify_integrity().is_ok());
+    }
+
+    #[test]
+    fn outcome_oriented_supervision_is_resolved_and_reuses_curation_stages() {
+        let (mut manifest, evidence) = fixture();
+        manifest.workflow.generation_supervision = Some(GenerationSupervisionRequest {
+            quality_level: SupervisionQualityLevel::Balanced,
+            authenticity_importance: QualityImportance::Off,
+            diversity_importance: QualityImportance::High,
+            maximum_prompt_repairs: 2,
+            monitoring_rows_per_scope: 20,
+            limits: SupervisionLimits {
+                maximum_generated_rows: 500,
+                maximum_evaluator_requests: 500,
+                maximum_evaluator_tokens: 1_000_000,
+                maximum_pi_tokens: 100_000,
+                maximum_duration_seconds: 3_600,
+                maximum_retries_per_external_call: 2,
+                maximum_cost_microunits: None,
+            },
+            repair_approval: RepairApprovalRequest::Manual,
+            generator: GeneratorProfileRequest::default(),
+            evaluator: EvaluatorProfileRequest::default(),
+        });
+
+        let preview = preview_project(&manifest, &evidence).expect("supervised preview");
+        assert!(preview.stages.windows(4).any(|stages| {
+            stages
+                == [
+                    WorkflowStage::Generation,
+                    WorkflowStage::CurationReview,
+                    WorkflowStage::CurationApproval,
+                    WorkflowStage::Snapshot,
+                ]
+        }));
+        assert!(preview.stages.windows(4).any(|stages| {
+            stages
+                == [
+                    WorkflowStage::DatasetDiffGeneration,
+                    WorkflowStage::IterationCurationReview,
+                    WorkflowStage::IterationCurationApproval,
+                    WorkflowStage::IterationSnapshot,
+                ]
+        }));
+        assert!(!preview.stages.contains(&WorkflowStage::QualityAudit));
+
+        let bundle = compile_project(&manifest, &evidence).expect("supervised compile");
+        let resolved = bundle
+            .workflow_definition
+            .generation_supervision
+            .expect("resolved supervision");
+        resolved.validate().expect("valid resolved supervision");
+        assert_eq!(resolved.quality_level, SupervisionQualityLevel::Balanced);
+        assert_ne!(
+            resolved.generator.fingerprint,
+            resolved.evaluator.fingerprint
+        );
     }
 
     #[test]
@@ -1250,6 +1331,7 @@ batch_size = 20
                 advisor: None,
                 training_iteration_policy: None,
                 quality_gate: None,
+                generation_supervision: None,
                 governance: IterationGovernance::ReviewEachIteration,
                 budget: WorkflowBudget {
                     maximum_iterations: 2,
