@@ -127,6 +127,11 @@ port beside the existing experiment and campaign journals. Stable source and
 derivation fingerprints are idempotency keys; the adapter deeply verifies the
 exact persisted development report, project, campaign, run, normalized
 observation bindings, and deterministic diagnosis on every diagnosis read.
+The Nomos adapter implements the separate development-observation backend port:
+it verifies historical manifest-pinned inputs and exact model trees, executes a
+version-pinned native observer, and returns only complete text-free normalized
+observations in a content-addressed development artifact. Sealed suites are
+unrepresentable in the request and rejected again by the native adapter.
 
 `dataset-quality-core` owns immutable source-set audit plans, explicit quality
 policies, normalized evaluator requests and assessments, deterministic verdicts,

@@ -4,6 +4,7 @@
 //! observation sets and deterministic comparative diagnosis. It cannot represent sealed rows,
 //! invoke a model, inspect native files, persist SQL, or start a repair action.
 
+pub mod collection;
 pub mod diagnosis;
 pub mod observation;
 pub mod ports;

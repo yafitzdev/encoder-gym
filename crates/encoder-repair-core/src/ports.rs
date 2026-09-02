@@ -3,13 +3,33 @@ use std::{future::Future, pin::Pin};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::collection::{CollectedDevelopmentObservations, DevelopmentObservationRequest};
 use crate::{diagnosis::ComparativeDiagnosis, observation::DevelopmentObservationSet};
+use encoder_experiment_core::domain::{BackendIdentity, ExternalProjectSnapshot};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[error("encoder repair evidence store failed: {0}")]
 pub struct RepairEvidenceStoreError(pub String);
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[error("development observation backend failed: {0}")]
+pub struct DevelopmentObservationBackendError(pub String);
+
+/// Replaceable native adapter for complete, text-free development observations.
+///
+/// The request type can represent `Development` evidence only. Native dataset rows and model
+/// execution remain behind this port; the normalized result contains no row text or native label.
+pub trait DevelopmentObservationBackend: Send + Sync {
+    fn observer_identity(&self) -> BackendIdentity;
+
+    fn collect_development_observations(
+        &self,
+        project: ExternalProjectSnapshot,
+        request: DevelopmentObservationRequest,
+    ) -> BoxFuture<'_, Result<CollectedDevelopmentObservations, DevelopmentObservationBackendError>>;
+}
 
 /// Append-only persistence for provider-neutral production-repair evidence.
 ///

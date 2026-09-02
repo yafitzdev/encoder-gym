@@ -20,6 +20,14 @@ use encoder_experiment_core::{
         AdapterInspection, BoxFuture, EncoderTaskAdapterError, EncoderTaskBackend, TrainOutput,
     },
 };
+use encoder_repair_core::{
+    collection::{CollectedDevelopmentObservations, DevelopmentObservationRequest},
+    observation::DevelopmentObservation,
+    ports::{
+        BoxFuture as RepairBoxFuture, DevelopmentObservationBackend,
+        DevelopmentObservationBackendError,
+    },
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -36,6 +44,17 @@ const RETRIEVAL_EVALUATOR_VERSION: &str = "nomos-dense-router-evaluation-v1";
 const AGENT_EVALUATOR_VERSION: &str = "nomos-real-agent-sessions-v1";
 const EXPERIMENT_MANIFEST_NAME: &str = "encoder-gym-experiment.json";
 const TREE_HASH_ALGORITHM: &str = "sha256-ordinal-path-size-content-sha256-v1";
+const DEVELOPMENT_OBSERVER_NAME: &str = "nomos-development-observer";
+const DEVELOPMENT_OBSERVER_PROTOCOL: &str = "nomos-development-observations-v1";
+const DEVELOPMENT_OBSERVER_SCHEMA_VERSION: u32 = 1;
+const DENSE_TEXT_VERSION: &str = "dense-text.v3";
+const DEVELOPMENT_OBSERVER_SOURCES: [&str; 5] = [
+    "tools/collect_encoder_gym_development_observations.py",
+    "tools/evaluate_dense_router.py",
+    "fitz_tool/dense_router.py",
+    "fitz_tool/embedding_backend.py",
+    "fitz_tool/onnx_encoder.py",
+];
 
 #[derive(Debug, Clone)]
 pub struct NomosBackend {
@@ -43,6 +62,7 @@ pub struct NomosBackend {
     python: PathBuf,
     manifest: NomosExperimentManifest,
     identity: BackendIdentity,
+    observer_identity: BackendIdentity,
 }
 
 impl NomosBackend {
@@ -78,11 +98,37 @@ impl NomosBackend {
             configuration_fingerprint,
         )
         .map_err(adapter_error)?;
+        let observer_source_revision = git_output_at(&root, ["rev-parse", "HEAD"])?;
+        let mut observer_sources = BTreeMap::new();
+        for relative in DEVELOPMENT_OBSERVER_SOURCES {
+            let path = root.join(relative);
+            if !path.is_file() {
+                return Err(adapter_error(format!(
+                    "Nomos development observer source is missing: {relative}"
+                )));
+            }
+            observer_sources.insert(relative, prefixed(&sha256_file(&path)?));
+        }
+        let observer_configuration_fingerprint = artifact_core::fingerprint(&json!({
+            "observer": DEVELOPMENT_OBSERVER_NAME,
+            "protocol": DEVELOPMENT_OBSERVER_PROTOCOL,
+            "source_revision": observer_source_revision,
+            "sources": observer_sources,
+            "text_version": DENSE_TEXT_VERSION,
+        }))
+        .map_err(adapter_error)?;
+        let observer_identity = BackendIdentity::new(
+            DEVELOPMENT_OBSERVER_NAME,
+            DEVELOPMENT_OBSERVER_PROTOCOL,
+            observer_configuration_fingerprint,
+        )
+        .map_err(adapter_error)?;
         Ok(Self {
             root,
             python: python.into(),
             manifest,
             identity,
+            observer_identity,
         })
     }
 
@@ -559,20 +605,7 @@ impl NomosBackend {
         &self,
         arguments: [&str; N],
     ) -> Result<String, EncoderTaskAdapterError> {
-        let output = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&self.root)
-            .args(arguments)
-            .output()
-            .map_err(|error| {
-                adapter_error(format!("could not inspect isolated Git state: {error}"))
-            })?;
-        if !output.status.success() {
-            return Err(adapter_error("could not inspect isolated Nomos Git state"));
-        }
-        String::from_utf8(output.stdout)
-            .map(|value| value.trim().to_owned())
-            .map_err(|_| adapter_error("Git inspection returned non-UTF-8 output"))
+        git_output_at(&self.root, arguments)
     }
 
     fn resolve_existing(&self, relative: &str) -> Result<PathBuf, EncoderTaskAdapterError> {
@@ -763,6 +796,116 @@ impl NomosBackend {
             ));
         }
         Ok(path)
+    }
+}
+
+impl DevelopmentObservationBackend for NomosBackend {
+    fn observer_identity(&self) -> BackendIdentity {
+        self.observer_identity.clone()
+    }
+
+    fn collect_development_observations(
+        &self,
+        project: ExternalProjectSnapshot,
+        request: DevelopmentObservationRequest,
+    ) -> RepairBoxFuture<
+        '_,
+        Result<CollectedDevelopmentObservations, DevelopmentObservationBackendError>,
+    > {
+        Box::pin(async move {
+            request
+                .validate_for_project(&project)
+                .map_err(observation_error)?;
+            self.inspect(project.clone())
+                .await
+                .map_err(observation_error)?;
+            let configuration = Self::task_configuration(&project).map_err(observation_error)?;
+            configuration.validate().map_err(observation_error)?;
+            let suite = configuration
+                .suites
+                .get(&request.suite_key)
+                .ok_or_else(|| {
+                    observation_error(format!(
+                        "unknown Nomos development suite {}",
+                        request.suite_key
+                    ))
+                })?;
+            if suite.role != EvidenceRole::Development
+                || suite.fingerprint != request.suite_fingerprint
+            {
+                return Err(observation_error(
+                    "Nomos observation request does not bind an exact development suite",
+                ));
+            }
+            let source_artifact = project
+                .inputs
+                .iter()
+                .find(|artifact| artifact.key == suite.path)
+                .ok_or_else(|| {
+                    observation_error(
+                        "Nomos development suite has no pinned source artifact identity",
+                    )
+                })?;
+            if source_artifact.role != EvidenceRole::Development {
+                return Err(observation_error(
+                    "Nomos development suite resolved to non-development evidence",
+                ));
+            }
+            let model_path = self.model_path(&request.model).map_err(observation_error)?;
+            let model_relative =
+                workspace_relative(&self.root, &model_path).map_err(observation_error)?;
+            let output =
+                development_observation_output(&self.root, &request).map_err(observation_error)?;
+            let output_relative =
+                workspace_relative(&self.root, &output).map_err(observation_error)?;
+            let mut arguments = vec![
+                "-m".into(),
+                "tools.collect_encoder_gym_development_observations".into(),
+                "--manifest".into(),
+                EXPERIMENT_MANIFEST_NAME.into(),
+                "--model".into(),
+                model_relative,
+                "--suite-key".into(),
+                request.suite_key.clone(),
+                "--request-fingerprint".into(),
+                request.fingerprint.clone(),
+                "--device".into(),
+                "cpu".into(),
+                "--output".into(),
+                output_relative.clone(),
+            ];
+            for dimension in &request.slice_dimensions {
+                arguments.push("--dimension".into());
+                arguments.push(dimension.clone());
+            }
+            if !output.exists() {
+                self.run_bounded(&arguments, request.maximum_seconds)
+                    .await
+                    .map_err(observation_error)?;
+            }
+            let raw = fs::read(&output).map_err(observation_error)?;
+            let native: NativeDevelopmentObservationFile =
+                serde_json::from_slice(&raw).map_err(observation_error)?;
+            native
+                .validate(&request, source_artifact)
+                .map_err(observation_error)?;
+            let artifact = ExternalArtifactIdentity::new(
+                output_relative,
+                EvidenceRole::Development,
+                raw.len() as u64,
+                prefixed(&sha256_file(&output).map_err(observation_error)?),
+            )
+            .map_err(observation_error)?;
+            CollectedDevelopmentObservations::create(
+                &request,
+                self.observer_identity.clone(),
+                artifact,
+                native.source_row_count,
+                native.metric_eligible_row_count,
+                native.observations,
+            )
+            .map_err(observation_error)
+        })
     }
 }
 
@@ -1637,6 +1780,60 @@ struct TaskConfiguration {
     benchmark_authority: Option<PinnedFileConfiguration>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeDevelopmentObservationFile {
+    schema_version: u32,
+    protocol: String,
+    request_fingerprint: String,
+    suite_key: String,
+    dataset_fingerprint: String,
+    text_version: String,
+    slice_dimensions: Vec<String>,
+    source_row_count: u64,
+    metric_eligible_row_count: u64,
+    observations: Vec<DevelopmentObservation>,
+}
+
+impl NativeDevelopmentObservationFile {
+    fn validate(
+        &self,
+        request: &DevelopmentObservationRequest,
+        source_artifact: &ExternalArtifactIdentity,
+    ) -> Result<(), EncoderTaskAdapterError> {
+        if self.schema_version != DEVELOPMENT_OBSERVER_SCHEMA_VERSION
+            || self.protocol != DEVELOPMENT_OBSERVER_PROTOCOL
+            || self.request_fingerprint != request.fingerprint
+            || self.suite_key != request.suite_key
+            || self.dataset_fingerprint != source_artifact.fingerprint
+            || self.text_version != DENSE_TEXT_VERSION
+            || self.slice_dimensions != request.slice_dimensions
+            || self.source_row_count == 0
+            || self.metric_eligible_row_count != request.metric_support
+            || self.metric_eligible_row_count > self.source_row_count
+            || self.observations.len() as u64 != self.source_row_count
+        {
+            return Err(adapter_error(
+                "Nomos native observations do not match the exact development request",
+            ));
+        }
+        for observation in &self.observations {
+            observation.validate().map_err(adapter_error)?;
+            if observation
+                .slices
+                .keys()
+                .map(String::as_str)
+                .ne(request.slice_dimensions.iter().map(String::as_str))
+            {
+                return Err(adapter_error(
+                    "Nomos native observation slices do not match the requested dimensions",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 impl TaskConfiguration {
     fn validate(&self) -> Result<(), EncoderTaskAdapterError> {
         if self.adapter_protocol != ADAPTER_PROTOCOL_VERSION
@@ -2339,6 +2536,54 @@ fn workspace_relative(root: &Path, path: &Path) -> Result<String, EncoderTaskAda
         .map_err(adapter_error)
 }
 
+fn development_observation_output(
+    root: &Path,
+    request: &DevelopmentObservationRequest,
+) -> Result<PathBuf, EncoderTaskAdapterError> {
+    let model_digest = request
+        .model
+        .fingerprint
+        .strip_prefix("sha256:")
+        .filter(|value| raw_sha256(value))
+        .ok_or_else(|| adapter_error("Nomos observation model fingerprint is not canonical"))?;
+    let suite_digest = request
+        .suite_fingerprint
+        .strip_prefix("sha256:")
+        .filter(|value| raw_sha256(value))
+        .ok_or_else(|| adapter_error("Nomos observation suite fingerprint is not canonical"))?;
+    let request_digest = request
+        .fingerprint
+        .strip_prefix("sha256:")
+        .filter(|value| raw_sha256(value))
+        .ok_or_else(|| adapter_error("Nomos observation request fingerprint is not canonical"))?;
+    Ok(root
+        .join("runs")
+        .join("encoder-gym-repair")
+        .join("observations")
+        .join("by-content")
+        .join(model_digest)
+        .join(suite_digest)
+        .join(format!("{request_digest}.json")))
+}
+
+fn git_output_at<const N: usize>(
+    root: &Path,
+    arguments: [&str; N],
+) -> Result<String, EncoderTaskAdapterError> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(arguments)
+        .output()
+        .map_err(|error| adapter_error(format!("could not inspect isolated Git state: {error}")))?;
+    if !output.status.success() {
+        return Err(adapter_error("could not inspect isolated Nomos Git state"));
+    }
+    String::from_utf8(output.stdout)
+        .map(|value| value.trim().to_owned())
+        .map_err(|_| adapter_error("Git inspection returned non-UTF-8 output"))
+}
+
 fn evaluation_model_root(
     root: &Path,
     model: &ModelArtifactIdentity,
@@ -2496,6 +2741,10 @@ fn bounded_text(bytes: &[u8], maximum: usize) -> String {
 
 fn adapter_error(error: impl std::fmt::Display) -> EncoderTaskAdapterError {
     EncoderTaskAdapterError(error.to_string())
+}
+
+fn observation_error(error: impl std::fmt::Display) -> DevelopmentObservationBackendError {
+    DevelopmentObservationBackendError(error.to_string())
 }
 
 #[cfg(test)]
@@ -2755,6 +3004,97 @@ mod tests {
             )
             .unwrap()
         );
+    }
+
+    #[test]
+    fn native_development_observations_require_exact_request_and_dimensions() {
+        let request = DevelopmentObservationRequest {
+            schema_version: 1,
+            project_snapshot_id: Uuid::new_v4(),
+            project_snapshot_fingerprint: prefixed(&"1".repeat(64)),
+            evaluation_report_id: Uuid::new_v4(),
+            evaluation_report_fingerprint: prefixed(&"2".repeat(64)),
+            evidence_role: EvidenceRole::Development,
+            model: ModelArtifactIdentity::new(
+                "model",
+                "sentence-transformers",
+                1,
+                prefixed(&"3".repeat(64)),
+            )
+            .unwrap(),
+            suite_key: "generic".into(),
+            suite_fingerprint: prefixed(&"4".repeat(64)),
+            metric_support: 1,
+            slice_dimensions: vec!["workflow".into()],
+            maximum_seconds: 60,
+            fingerprint: prefixed(&"5".repeat(64)),
+        };
+        let source = ExternalArtifactIdentity::new(
+            "generic.jsonl",
+            EvidenceRole::Development,
+            1,
+            prefixed(&"6".repeat(64)),
+        )
+        .unwrap();
+        let observation = DevelopmentObservation::create(
+            prefixed(&"7".repeat(64)),
+            prefixed(&"8".repeat(64)),
+            BTreeMap::from([("workflow".into(), "lookup".into())]),
+            false,
+            Some(1),
+            1.0,
+            Some(0.1),
+            Some(prefixed(&"9".repeat(64))),
+        )
+        .unwrap();
+        let mut native = NativeDevelopmentObservationFile {
+            schema_version: DEVELOPMENT_OBSERVER_SCHEMA_VERSION,
+            protocol: DEVELOPMENT_OBSERVER_PROTOCOL.into(),
+            request_fingerprint: request.fingerprint.clone(),
+            suite_key: request.suite_key.clone(),
+            dataset_fingerprint: source.fingerprint.clone(),
+            text_version: DENSE_TEXT_VERSION.into(),
+            slice_dimensions: request.slice_dimensions.clone(),
+            source_row_count: 1,
+            metric_eligible_row_count: 1,
+            observations: vec![observation],
+        };
+        native.validate(&request, &source).unwrap();
+
+        native.slice_dimensions = vec!["question".into()];
+        assert!(native.validate(&request, &source).is_err());
+    }
+
+    #[test]
+    fn development_observation_paths_are_content_addressed() {
+        let request = DevelopmentObservationRequest {
+            schema_version: 1,
+            project_snapshot_id: Uuid::new_v4(),
+            project_snapshot_fingerprint: prefixed(&"1".repeat(64)),
+            evaluation_report_id: Uuid::new_v4(),
+            evaluation_report_fingerprint: prefixed(&"2".repeat(64)),
+            evidence_role: EvidenceRole::Development,
+            model: ModelArtifactIdentity::new(
+                "model",
+                "sentence-transformers",
+                1,
+                prefixed(&"3".repeat(64)),
+            )
+            .unwrap(),
+            suite_key: "generic".into(),
+            suite_fingerprint: prefixed(&"4".repeat(64)),
+            metric_support: 1,
+            slice_dimensions: vec!["workflow".into()],
+            maximum_seconds: 60,
+            fingerprint: prefixed(&"5".repeat(64)),
+        };
+        let path = development_observation_output(Path::new("workspace"), &request).unwrap();
+        assert!(path.ends_with(Path::new(&format!(
+            "runs/encoder-gym-repair/observations/by-content/{}/{}/{}.json",
+            "3".repeat(64),
+            "4".repeat(64),
+            "5".repeat(64)
+        ))));
     }
 
     #[test]

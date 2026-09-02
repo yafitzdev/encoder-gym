@@ -949,6 +949,7 @@ dependencies = [
  "artifact-core",
  "chrono",
  "encoder-experiment-core",
+ "encoder-repair-core",
  "serde",
  "serde_json",
  "sha2",
