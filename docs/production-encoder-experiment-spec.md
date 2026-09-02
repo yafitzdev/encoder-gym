@@ -210,6 +210,14 @@ row-free audit, and current project revision. Operators use
 and `delta-select`; approved selection remains a prerequisite for constructing
 the combined training snapshot.
 
+The combined snapshot is a logical immutable manifest rather than a copied
+aggregate dataset. It binds the exact two base inputs, their row-free membership
+identities, the exact approved zero-exclusion delta, selection membership,
+baseline model, current execution project, counts, and approval chain. Use
+`production-repair training-snapshot-build`, `training-snapshot-show`, and
+`training-snapshot-doctor`. The build and doctor paths replay the native delta
+and verify its content-addressed bytes before accepting the snapshot.
+
 ## First completed production loop
 
 The first complete protocol ran on 2026-09-02 with project

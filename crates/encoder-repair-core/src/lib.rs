@@ -10,6 +10,7 @@ pub mod observation;
 pub mod ports;
 pub mod proposal;
 pub mod quality;
+pub mod training;
 
 use thiserror::Error;
 

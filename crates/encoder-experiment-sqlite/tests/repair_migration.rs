@@ -55,6 +55,7 @@ async fn repair_migration_preserves_campaign_history_and_adds_append_only_eviden
         "encoder_native_delta_reports",
         "encoder_native_delta_reviews",
         "encoder_native_delta_selections",
+        "encoder_native_repair_training_snapshots",
     ] {
         let exists: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",

@@ -24,7 +24,7 @@ use encoder_experiment_sqlite::SqliteExperimentStore;
 use encoder_repair_core::{
     diagnosis::{CandidateSuiteOutcome, ComparativeDiagnosis},
     observation::{DevelopmentObservation, DevelopmentObservationSet},
-    ports::{NativeRepairQualityStore, RepairEvidenceStore},
+    ports::{NativeRepairQualityStore, NativeRepairTrainingStore, RepairEvidenceStore},
     proposal::{
         CandidateMechanism, NativeRepairQualityPolicy, RepairAction, RepairActionKind,
         RepairBenchmarkBinding, RepairBudget, RepairCandidateHypothesis, RepairContext,
@@ -36,6 +36,7 @@ use encoder_repair_core::{
         NativeDeltaReview, NativeDeltaReviewDecision, NativeRepairAuditReference,
         NativeRepairRowEvidence,
     },
+    training::NativeRepairTrainingSnapshot,
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -1061,6 +1062,62 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
         .unwrap();
     assert_eq!(selection.id, idempotent_selection.id);
     assert_eq!(selection.entries.len(), 12);
+    let training_snapshot = NativeRepairTrainingSnapshot::create(
+        &fixture.project,
+        &proposal,
+        &candidate_set,
+        &report,
+        &delta_review,
+        None,
+        &selection,
+        time(18),
+    )
+    .unwrap();
+    let training_snapshot = fixture
+        .store
+        .create_native_repair_training_snapshot(training_snapshot)
+        .await
+        .unwrap();
+    let duplicate_training_snapshot = NativeRepairTrainingSnapshot::create(
+        &fixture.project,
+        &proposal,
+        &candidate_set,
+        &report,
+        &delta_review,
+        None,
+        &selection,
+        time(18),
+    )
+    .unwrap();
+    let idempotent_training_snapshot = fixture
+        .store
+        .create_native_repair_training_snapshot(duplicate_training_snapshot)
+        .await
+        .unwrap();
+    assert_eq!(training_snapshot.id, idempotent_training_snapshot.id);
+    assert_eq!(training_snapshot.base_rows, 1);
+    assert_eq!(training_snapshot.delta_rows, 12);
+    assert_eq!(training_snapshot.total_rows, 13);
+    assert_eq!(
+        fixture
+            .store
+            .get_native_repair_training_snapshot(training_snapshot.id)
+            .await
+            .unwrap()
+            .unwrap(),
+        training_snapshot
+    );
+    assert!(
+        sqlx::query(
+            "UPDATE encoder_native_repair_training_snapshots SET fingerprint = ? WHERE id = ?",
+        )
+        .bind(digest('0'))
+        .bind(training_snapshot.id)
+        .execute(fixture.store.pool())
+        .await
+        .is_err(),
+        "combined training snapshots must be immutable"
+    );
     let late_review = NativeDeltaReview::create(
         &proposal,
         &candidate_set,

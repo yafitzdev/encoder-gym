@@ -12,6 +12,7 @@ use crate::{
         ApprovedNativeDeltaSelection, NativeDeltaCandidateSet, NativeDeltaQualityReport,
         NativeDeltaReview,
     },
+    training::NativeRepairTrainingSnapshot,
 };
 use encoder_experiment_core::domain::{BackendIdentity, ExternalProjectSnapshot};
 
@@ -197,4 +198,22 @@ pub trait NativeRepairQualityStore: Send + Sync {
         &self,
         proposal_id: Uuid,
     ) -> BoxFuture<'_, Result<Option<ApprovedNativeDeltaSelection>, RepairEvidenceStoreError>>;
+}
+
+/// Append-only persistence for immutable base-plus-approved-delta training manifests.
+pub trait NativeRepairTrainingStore: Send + Sync {
+    fn create_native_repair_training_snapshot(
+        &self,
+        snapshot: NativeRepairTrainingSnapshot,
+    ) -> BoxFuture<'_, Result<NativeRepairTrainingSnapshot, RepairEvidenceStoreError>>;
+
+    fn get_native_repair_training_snapshot(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<NativeRepairTrainingSnapshot>, RepairEvidenceStoreError>>;
+
+    fn get_native_repair_training_snapshot_for_selection(
+        &self,
+        selection_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<NativeRepairTrainingSnapshot>, RepairEvidenceStoreError>>;
 }

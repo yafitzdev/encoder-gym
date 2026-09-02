@@ -182,6 +182,18 @@ population, and normalized row evidence before persistence. `delta-build`,
 `delta-show`, `delta-doctor`, `delta-review`, and `delta-select` expose this
 boundary without adding native payload to the CLI or database.
 
+The next provider-neutral artifact is an immutable logical repair-training
+snapshot. It does not concatenate or duplicate large native files. Instead it
+binds the exact execution project and baseline, every audited base-training
+artifact and identity-set fingerprint, the zero-exclusion approved delta and
+its exact selected membership, row counts, and the complete approval lineage.
+The core currently fails closed on a partially selected native artifact because
+the Nomos trainer consumes whole JSONL inputs. SQLite stores this manifest
+append-only and deeply replays all of its dependencies. `training-snapshot-build`,
+`training-snapshot-show`, and `training-snapshot-doctor` are the thin CLI
+boundary; build and doctor also require the native content-addressed delta to
+reproduce from the current isolated project.
+
 `dataset-quality-core` owns immutable source-set audit plans, explicit quality
 policies, normalized evaluator requests and assessments, deterministic verdicts,
 append-only row/manifest reviews, curation proposals, and approved manifests.

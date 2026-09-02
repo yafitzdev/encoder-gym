@@ -16,7 +16,7 @@ use encoder_repair_core::{
     observation::DevelopmentObservationSet,
     ports::{
         DevelopmentObservationBackend, NativeRepairDeltaBackend, NativeRepairQualityStore,
-        RepairEvidenceStore,
+        NativeRepairTrainingStore, RepairEvidenceStore,
     },
     proposal::{
         NativeRepairQualityPolicy, RepairAction, RepairBenchmarkBinding, RepairBudget,
@@ -27,6 +27,7 @@ use encoder_repair_core::{
         ApprovedNativeDeltaSelection, NativeDeltaCandidateSet, NativeDeltaQualityReport,
         NativeDeltaReview, NativeDeltaReviewDecision,
     },
+    training::NativeRepairTrainingSnapshot,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -42,6 +43,7 @@ use crate::{
         ProductionRepairDeltaReviewArgs, ProductionRepairDeltaReviewDecisionArg,
         ProductionRepairDiagnoseArgs, ProductionRepairIdArgs, ProductionRepairProposalIdArgs,
         ProductionRepairProposeArgs, ProductionRepairReviewArgs, ProductionRepairReviewDecisionArg,
+        ProductionRepairSelectionIdArgs, ProductionRepairTrainingSnapshotIdArgs,
     },
     commands::experiment::ensure_database_belongs_to_workspace,
     document, presentation,
@@ -105,6 +107,15 @@ pub async fn execute(command: ProductionRepairCommand, database_url: &str) -> an
         ProductionRepairCommand::DeltaDoctor(args) => delta_doctor(&store, &backend, args).await,
         ProductionRepairCommand::DeltaReview(args) => delta_review(&store, &backend, args).await,
         ProductionRepairCommand::DeltaSelect(args) => delta_select(&store, &backend, args).await,
+        ProductionRepairCommand::TrainingSnapshotBuild(args) => {
+            training_snapshot_build(&store, &backend, args).await
+        }
+        ProductionRepairCommand::TrainingSnapshotShow(args) => {
+            training_snapshot_show(&store, args).await
+        }
+        ProductionRepairCommand::TrainingSnapshotDoctor(args) => {
+            training_snapshot_doctor(&store, &backend, args).await
+        }
     }
 }
 
@@ -512,6 +523,181 @@ async fn delta_select(
     )?;
     let selection = store.create_native_delta_selection(selection).await?;
     presentation::print(&selection)
+}
+
+struct ApprovedDeltaContext {
+    project: encoder_experiment_core::domain::ExternalProjectSnapshot,
+    proposal: RepairProposal,
+    candidate_set: NativeDeltaCandidateSet,
+    report: NativeDeltaQualityReport,
+    approval: NativeDeltaReview,
+    approval_predecessor: Option<NativeDeltaReview>,
+    selection: ApprovedNativeDeltaSelection,
+}
+
+async fn load_approved_delta_context(
+    store: &SqliteExperimentStore,
+    backend: &NomosBackend,
+    selection_id: Uuid,
+    require_native_replay: bool,
+) -> anyhow::Result<ApprovedDeltaContext> {
+    let selection = store
+        .get_native_delta_selection(selection_id)
+        .await?
+        .with_context(|| format!("native repair delta selection {selection_id} does not exist"))?;
+    let proposal = load_verified_proposal(store, backend, selection.proposal.id, true).await?;
+    let project = store
+        .get_project(proposal.context.execution_project.id)
+        .await?
+        .context("repair execution project does not exist")?;
+    proposal.context.execution_project.verify(&project)?;
+    let candidate_set = store
+        .get_native_delta_candidate_set(selection.candidate_set.id)
+        .await?
+        .context("native repair delta candidate set does not exist")?;
+    let report = store
+        .get_native_delta_report(selection.report.id)
+        .await?
+        .context("native repair delta report does not exist")?;
+    let reviews = store.list_native_delta_reviews(report.id).await?;
+    let approval_index = reviews
+        .iter()
+        .position(|value| value.id == selection.approval.id)
+        .context("native repair delta selection approval does not exist")?;
+    if approval_index + 1 != reviews.len() {
+        anyhow::bail!("native repair delta selection does not bind the frozen latest review");
+    }
+    let approval = reviews[approval_index].clone();
+    let approval_predecessor = approval_index
+        .checked_sub(1)
+        .and_then(|index| reviews.get(index))
+        .cloned();
+    selection.validate_against(
+        &proposal,
+        &candidate_set,
+        &report,
+        &approval,
+        approval_predecessor.as_ref(),
+    )?;
+    if require_native_replay {
+        let rebuilt = build_delta_candidate(store, backend, &proposal).await?;
+        if rebuilt.evidence_fingerprint != candidate_set.evidence_fingerprint
+            || rebuilt.delta_artifact != candidate_set.delta_artifact
+        {
+            anyhow::bail!("native repair delta no longer reproduces its selected evidence");
+        }
+    }
+    Ok(ApprovedDeltaContext {
+        project,
+        proposal,
+        candidate_set,
+        report,
+        approval,
+        approval_predecessor,
+        selection,
+    })
+}
+
+async fn training_snapshot_build(
+    store: &SqliteExperimentStore,
+    backend: &NomosBackend,
+    args: ProductionRepairSelectionIdArgs,
+) -> anyhow::Result<()> {
+    let context = load_approved_delta_context(store, backend, args.selection_id, true).await?;
+    if let Some(existing) = store
+        .get_native_repair_training_snapshot_for_selection(args.selection_id)
+        .await?
+    {
+        existing.validate_against(
+            &context.project,
+            &context.proposal,
+            &context.candidate_set,
+            &context.report,
+            &context.approval,
+            context.approval_predecessor.as_ref(),
+            &context.selection,
+        )?;
+        return print_training_snapshot_summary(&existing, true);
+    }
+    let snapshot = NativeRepairTrainingSnapshot::create(
+        &context.project,
+        &context.proposal,
+        &context.candidate_set,
+        &context.report,
+        &context.approval,
+        context.approval_predecessor.as_ref(),
+        &context.selection,
+        Utc::now(),
+    )?;
+    let snapshot = store
+        .create_native_repair_training_snapshot(snapshot)
+        .await?;
+    print_training_snapshot_summary(&snapshot, true)
+}
+
+async fn training_snapshot_show(
+    store: &SqliteExperimentStore,
+    args: ProductionRepairTrainingSnapshotIdArgs,
+) -> anyhow::Result<()> {
+    let snapshot = store
+        .get_native_repair_training_snapshot(args.training_snapshot_id)
+        .await?
+        .with_context(|| {
+            format!(
+                "native repair training snapshot {} does not exist",
+                args.training_snapshot_id
+            )
+        })?;
+    presentation::print(&snapshot)
+}
+
+async fn training_snapshot_doctor(
+    store: &SqliteExperimentStore,
+    backend: &NomosBackend,
+    args: ProductionRepairTrainingSnapshotIdArgs,
+) -> anyhow::Result<()> {
+    let snapshot = store
+        .get_native_repair_training_snapshot(args.training_snapshot_id)
+        .await?
+        .with_context(|| {
+            format!(
+                "native repair training snapshot {} does not exist",
+                args.training_snapshot_id
+            )
+        })?;
+    let context = load_approved_delta_context(store, backend, snapshot.selection.id, true).await?;
+    snapshot.validate_against(
+        &context.project,
+        &context.proposal,
+        &context.candidate_set,
+        &context.report,
+        &context.approval,
+        context.approval_predecessor.as_ref(),
+        &context.selection,
+    )?;
+    print_training_snapshot_summary(&snapshot, true)
+}
+
+fn print_training_snapshot_summary(
+    snapshot: &NativeRepairTrainingSnapshot,
+    verified: bool,
+) -> anyhow::Result<()> {
+    presentation::print(&serde_json::json!({
+        "verified": verified,
+        "training_snapshot_id": snapshot.id,
+        "training_snapshot_fingerprint": snapshot.fingerprint,
+        "specification_fingerprint": snapshot.specification_fingerprint,
+        "combined_membership_fingerprint": snapshot.combined_membership_fingerprint,
+        "proposal_id": snapshot.proposal.id,
+        "selection_id": snapshot.selection.id,
+        "execution_project_id": snapshot.execution_project.id,
+        "baseline_model_fingerprint": snapshot.baseline_model_fingerprint,
+        "input_count": snapshot.inputs.len(),
+        "inputs": snapshot.inputs,
+        "base_rows": snapshot.base_rows,
+        "delta_rows": snapshot.delta_rows,
+        "total_rows": snapshot.total_rows,
+    }))
 }
 
 fn print_delta_summary(
@@ -1001,5 +1187,8 @@ fn backend_args(command: &ProductionRepairCommand) -> &NomosWorkspaceArgs {
         }
         ProductionRepairCommand::DeltaReview(args) => &args.backend,
         ProductionRepairCommand::DeltaSelect(args) => &args.backend,
+        ProductionRepairCommand::TrainingSnapshotBuild(args) => &args.backend,
+        ProductionRepairCommand::TrainingSnapshotShow(args)
+        | ProductionRepairCommand::TrainingSnapshotDoctor(args) => &args.backend,
     }
 }

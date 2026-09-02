@@ -392,6 +392,12 @@ pub enum ProductionRepairCommand {
     DeltaReview(ProductionRepairDeltaReviewArgs),
     /// Freeze the latest exact approved delta as the proposal's immutable selection.
     DeltaSelect(ProductionRepairDeltaReportIdArgs),
+    /// Build one immutable logical base-plus-approved-delta training snapshot.
+    TrainingSnapshotBuild(ProductionRepairSelectionIdArgs),
+    /// Show one deeply verified combined repair training snapshot.
+    TrainingSnapshotShow(ProductionRepairTrainingSnapshotIdArgs),
+    /// Verify the snapshot, current project, and reproduced native delta artifact.
+    TrainingSnapshotDoctor(ProductionRepairTrainingSnapshotIdArgs),
 }
 
 #[derive(Debug, Clone, clap::Args)]
@@ -454,6 +460,20 @@ pub struct ProductionRepairDeltaIdArgs {
 #[derive(Debug, Clone, clap::Args)]
 pub struct ProductionRepairDeltaReportIdArgs {
     pub report_id: Uuid,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionRepairSelectionIdArgs {
+    pub selection_id: Uuid,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionRepairTrainingSnapshotIdArgs {
+    pub training_snapshot_id: Uuid,
     #[command(flatten)]
     pub backend: NomosWorkspaceArgs,
 }

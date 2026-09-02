@@ -49,7 +49,7 @@ impl ProjectBinding {
         Ok(())
     }
 
-    fn validate(&self) -> Result<(), EncoderRepairError> {
+    pub(crate) fn validate(&self) -> Result<(), EncoderRepairError> {
         if self.id.is_nil()
             || !canonical_sha256(&self.fingerprint)
             || self.source_revision.is_empty()

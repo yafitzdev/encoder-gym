@@ -4,6 +4,7 @@ mod benchmark_generation;
 mod campaign;
 mod native_delta;
 mod repair;
+mod training_snapshot;
 
 use std::{str::FromStr, time::Duration};
 
