@@ -1,0 +1,20 @@
+[package]
+name = "encoder-campaign-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+artifact-core.workspace = true
+chrono.workspace = true
+encoder-experiment-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+workflow-core.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

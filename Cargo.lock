@@ -917,6 +917,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "encoder-campaign-core"
+version = "0.1.0"
+dependencies = [
+ "artifact-core",
+ "chrono",
+ "encoder-experiment-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "uuid",
+ "workflow-core",
+]
+
+[[package]]
 name = "encoder-experiment-core"
 version = "0.1.0"
 dependencies = [
