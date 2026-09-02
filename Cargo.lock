@@ -975,12 +975,14 @@ name = "encoder-experiment-sqlite"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "encoder-campaign-core",
  "encoder-experiment-core",
  "serde_json",
  "sqlx",
  "tempfile",
  "tokio",
  "uuid",
+ "workflow-core",
 ]
 
 [[package]]

@@ -1,5 +1,8 @@
 //! Dedicated SQLite persistence for production encoder experiment journals.
 
+mod benchmark_generation;
+mod campaign;
+
 use std::{str::FromStr, time::Duration};
 
 use encoder_experiment_core::{
@@ -333,6 +336,6 @@ fn decode_project(artifact: String) -> Result<ExternalProjectSnapshot, Experimen
     Ok(project)
 }
 
-fn store_error(error: impl std::fmt::Display) -> ExperimentStoreError {
+pub(crate) fn store_error(error: impl std::fmt::Display) -> ExperimentStoreError {
     ExperimentStoreError(error.to_string())
 }

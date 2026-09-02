@@ -6,7 +6,7 @@
 //! `encoder-experiment-core`. This crate only binds their immutable artifacts
 //! into a recoverable long-range campaign.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, future::Future, pin::Pin};
 
 use chrono::{DateTime, Utc};
 use encoder_experiment_core::{
@@ -1012,6 +1012,35 @@ pub enum CampaignError {
     Fingerprint(String),
     #[error("{0} must be non-empty and canonical")]
     InvalidText(&'static str),
+}
+
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[error("production campaign persistence failed: {0}")]
+pub struct CampaignStoreError(pub String);
+
+pub trait CampaignStore: Send + Sync {
+    fn create_campaign(
+        &self,
+        campaign: &ProductionCampaign,
+        first_event: &CampaignEvent,
+    ) -> BoxFuture<'_, Result<(), CampaignStoreError>>;
+
+    fn get_campaign(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<ProductionCampaign>, CampaignStoreError>>;
+
+    fn append_campaign_event(
+        &self,
+        event: &CampaignEvent,
+    ) -> BoxFuture<'_, Result<(), CampaignStoreError>>;
+
+    fn list_campaign_events(
+        &self,
+        campaign_id: Uuid,
+    ) -> BoxFuture<'_, Result<Vec<CampaignEvent>, CampaignStoreError>>;
 }
 
 fn canonical_text(value: impl Into<String>, field: &'static str) -> Result<String, CampaignError> {

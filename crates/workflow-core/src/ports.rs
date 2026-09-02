@@ -11,6 +11,7 @@ use crate::allocation::InitialAllocationRecord;
 use crate::approval::WorkflowApprovalDecision;
 use crate::benchmark::{AcceptanceAssessment, AcceptanceState, BenchmarkSuite, BenchmarkSuiteKind};
 use crate::benchmark_bundle::BenchmarkBundle;
+use crate::benchmark_generation::{BenchmarkGeneration, BenchmarkGenerationEvent};
 use crate::benchmark_qualification::{
     BENCHMARK_QUALIFICATION_PROTOCOL, BenchmarkQualification, BenchmarkQualificationReview,
     BenchmarkReadiness,
@@ -256,6 +257,39 @@ pub trait BenchmarkBundleStore: Send + Sync {
         &self,
         query: BenchmarkBundleQuery,
     ) -> BoxFuture<'_, Result<Vec<BenchmarkBundle>, WorkflowStoreError>>;
+}
+
+/// Persistence boundary for immutable benchmark generations and their
+/// compare-and-append lifecycle journals.
+pub trait BenchmarkGenerationStore: Send + Sync {
+    fn create_benchmark_generation(
+        &self,
+        generation: &BenchmarkGeneration,
+        first_event: &BenchmarkGenerationEvent,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    fn get_benchmark_generation(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<BenchmarkGeneration>, WorkflowStoreError>>;
+
+    fn append_benchmark_generation_event(
+        &self,
+        event: &BenchmarkGenerationEvent,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
+
+    fn list_benchmark_generation_events(
+        &self,
+        generation_id: Uuid,
+    ) -> BoxFuture<'_, Result<Vec<BenchmarkGenerationEvent>, WorkflowStoreError>>;
+
+    /// Atomically activates a ready successor and supersedes its exhausted
+    /// predecessor. Both events must already be validated by the core.
+    fn activate_successor_generation(
+        &self,
+        predecessor_superseded: &BenchmarkGenerationEvent,
+        successor_activated: &BenchmarkGenerationEvent,
+    ) -> BoxFuture<'_, Result<(), WorkflowStoreError>>;
 }
 
 #[derive(Debug, Clone)]
