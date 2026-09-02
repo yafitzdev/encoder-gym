@@ -13,12 +13,18 @@ async fn verifies_the_real_isolated_nomos_snapshot() {
 
     assert_eq!(project.backend, backend.identity());
     assert_eq!(inspection.source_fingerprint, project.source_fingerprint);
-    assert_eq!(inspection.verified_artifact_keys.len(), 7);
+    assert_eq!(inspection.verified_artifact_keys.len(), 8);
     assert!(
         inspection
             .verified_artifact_keys
             .iter()
             .any(|key| key.contains("fullreplay_mnrl_v1"))
+    );
+    assert!(
+        inspection
+            .verified_artifact_keys
+            .iter()
+            .any(|key| key.contains("fullreplay_triplet_v1"))
     );
     assert!(
         inspection

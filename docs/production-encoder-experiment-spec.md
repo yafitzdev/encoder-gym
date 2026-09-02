@@ -128,11 +128,26 @@ one normalized report:
    oracle-visibility, prompt-token, and description-reduction metrics.
 
 The local ONNX chat model, evaluator configuration, suite pairing, session
-count, and top-k policy are immutable project dependencies. Development and
-promotion agent suites have distinct composite fingerprints. Raw reports and
-traces remain below the isolated experiment root. If a report exists without
-its trace, the adapter fails closed instead of treating it as recoverable
-evidence.
+count, and top-k policy are immutable project dependencies. Each suite records
+separate retrieval and agent-component fingerprints plus a composite report
+fingerprint. Raw evidence is content-addressed by model and component identity,
+so changing only the agent policy reuses an unchanged retrieval report while a
+model, dataset, evaluator-contract, chat-model, or agent-policy change creates a
+different evidence path. Raw reports and traces remain below the isolated
+experiment root. If an agent report exists without its trace, the adapter fails
+closed instead of treating it as recoverable evidence.
+
+The first four interpolation probes improved retrieval while exposing one
+different third-ranked tool, which caused one additional wrong execution in the
+development agent suite. A direct policy canary found that top-two visibility
+was worse, while top-one with the existing two-attempt recovery completed all
+16 development sessions and improved execution accuracy over top-three. The
+baseline and the 2.5% triplet interpolation candidate produced identical
+top-one agent outcomes. The next bounded protocol therefore declares top-one
+plus recovery as its production inference policy. All downstream outcome gates
+remain strict no-regression comparisons, including oracle visibility; the
+policy change is applied symmetrically to baseline and candidates before the
+new protocol is frozen.
 
 The production protocol uses development agent outcomes as regression gates in
 addition to retrieval gains. The promotion agent suite remains sealed and can

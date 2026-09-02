@@ -80,7 +80,7 @@
     {
       "key": "agent_visible_oracle_hit_rate",
       "role": "development",
-      "condition": { "kind": "at_least", "value": 1.0 }
+      "condition": { "kind": "maximum_regression", "value": 0.0 }
     },
     {
       "key": "agent_invalid_call_rate",
@@ -145,7 +145,7 @@
     {
       "key": "agent_visible_oracle_hit_rate",
       "role": "sealed_acceptance",
-      "condition": { "kind": "at_least", "value": 1.0 }
+      "condition": { "kind": "maximum_regression", "value": 0.0 }
     },
     {
       "key": "agent_invalid_call_rate",
@@ -163,16 +163,16 @@
       "maximum_training_seconds": 300,
       "parameters": {
         "strategy": "linear_interpolation",
-        "reference_model": "balanced_fullreplay_mnrl_v1",
-        "specialist_weight": 0.1
+        "reference_model": "balanced_fullreplay_triplet_v1",
+        "specialist_weight": 0.025
       }
     },
     {
       "maximum_training_seconds": 300,
       "parameters": {
         "strategy": "linear_interpolation",
-        "reference_model": "balanced_fullreplay_mnrl_v1",
-        "specialist_weight": 0.25
+        "reference_model": "balanced_fullreplay_triplet_v1",
+        "specialist_weight": 0.05
       }
     }
   ]

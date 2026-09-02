@@ -26,7 +26,9 @@ use sha2::{Digest, Sha256};
 use tokio::process::Command;
 
 const ADAPTER_NAME: &str = "nomos";
-const ADAPTER_PROTOCOL_VERSION: &str = "nomos-ranking-v2";
+const ADAPTER_PROTOCOL_VERSION: &str = "nomos-ranking-v3";
+const RETRIEVAL_EVALUATOR_VERSION: &str = "nomos-dense-router-evaluation-v1";
+const AGENT_EVALUATOR_VERSION: &str = "nomos-real-agent-sessions-v1";
 const EXPERIMENT_MANIFEST_NAME: &str = "encoder-gym-experiment.json";
 const TREE_HASH_ALGORITHM: &str = "sha256-ordinal-path-size-content-sha256-v1";
 
@@ -166,11 +168,16 @@ impl NomosBackend {
         let sealed = self
             .manifest
             .dataset_for(NativeEvidenceRole::SealedHoldout)?;
-        let development_suite_fingerprint = artifact_core::fingerprint(&json!({
-            "retrieval_dataset": {
+        let development_retrieval_fingerprint = artifact_core::fingerprint(&json!({
+            "evaluator": RETRIEVAL_EVALUATOR_VERSION,
+            "dataset": {
                 "path": development.path,
                 "fingerprint": prefixed(&development.sha256),
             },
+        }))
+        .map_err(adapter_error)?;
+        let development_agent_fingerprint = artifact_core::fingerprint(&json!({
+            "evaluator": AGENT_EVALUATOR_VERSION,
             "agent_evaluation": {
                 "chat_model_fingerprint": prefixed(&chat_model_digest),
                 "selector_strategy": self.manifest.agent_evaluation.selector_strategy,
@@ -181,11 +188,21 @@ impl NomosBackend {
             },
         }))
         .map_err(adapter_error)?;
-        let sealed_suite_fingerprint = artifact_core::fingerprint(&json!({
-            "retrieval_dataset": {
+        let development_suite_fingerprint = artifact_core::fingerprint(&json!({
+            "retrieval_fingerprint": development_retrieval_fingerprint,
+            "agent_fingerprint": development_agent_fingerprint,
+        }))
+        .map_err(adapter_error)?;
+        let sealed_retrieval_fingerprint = artifact_core::fingerprint(&json!({
+            "evaluator": RETRIEVAL_EVALUATOR_VERSION,
+            "dataset": {
                 "path": sealed.path,
                 "fingerprint": prefixed(&sealed.sha256),
             },
+        }))
+        .map_err(adapter_error)?;
+        let sealed_agent_fingerprint = artifact_core::fingerprint(&json!({
+            "evaluator": AGENT_EVALUATOR_VERSION,
             "agent_evaluation": {
                 "chat_model_fingerprint": prefixed(&chat_model_digest),
                 "selector_strategy": self.manifest.agent_evaluation.selector_strategy,
@@ -194,6 +211,11 @@ impl NomosBackend {
                 "max_attempts": self.manifest.agent_evaluation.max_attempts,
                 "suite": self.manifest.agent_evaluation.sealed,
             },
+        }))
+        .map_err(adapter_error)?;
+        let sealed_suite_fingerprint = artifact_core::fingerprint(&json!({
+            "retrieval_fingerprint": sealed_retrieval_fingerprint,
+            "agent_fingerprint": sealed_agent_fingerprint,
         }))
         .map_err(adapter_error)?;
         ExternalProjectSnapshot::create(
@@ -245,11 +267,15 @@ impl NomosBackend {
                         "path": development.path,
                         "role": "development",
                         "fingerprint": development_suite_fingerprint,
+                        "retrieval_fingerprint": development_retrieval_fingerprint,
+                        "agent_fingerprint": development_agent_fingerprint,
                     },
                     "sealed": {
                         "path": sealed.path,
                         "role": "sealed_acceptance",
                         "fingerprint": sealed_suite_fingerprint,
+                        "retrieval_fingerprint": sealed_retrieval_fingerprint,
+                        "agent_fingerprint": sealed_agent_fingerprint,
                     }
                 }
             }),
@@ -543,12 +569,10 @@ impl EncoderTaskBackend for NomosBackend {
                 .ok_or_else(|| adapter_error(format!("unknown Nomos suite {suite_key}")))?;
             let input = self.resolve_existing(&suite.path)?;
             let model_path = self.model_path(&model)?;
-            let evaluation_root = self
-                .root
-                .join("runs")
-                .join("encoder-gym-evaluations")
-                .join(model.id.to_string());
-            let retrieval_output = evaluation_root.join(format!("{suite_key}.retrieval.json"));
+            let model_root = evaluation_model_root(&self.root, &model)?;
+            let retrieval_root =
+                evaluation_component_root(&model_root, "retrieval", &suite.retrieval_fingerprint)?;
+            let retrieval_output = retrieval_root.join(format!("{suite_key}.json"));
             let retrieval_output_relative = retrieval_output
                 .strip_prefix(&self.root)
                 .map_err(adapter_error)?
@@ -629,8 +653,10 @@ impl EncoderTaskBackend for NomosBackend {
                     .map_err(adapter_error)?
                     .to_string_lossy()
                     .replace('\\', "/");
-                let agent_output = evaluation_root.join(format!("{suite_key}.agent.json"));
-                let agent_trace = evaluation_root.join(format!("{suite_key}.agent-trace.jsonl"));
+                let agent_root =
+                    evaluation_component_root(&model_root, "agent", &suite.agent_fingerprint)?;
+                let agent_output = agent_root.join(format!("{suite_key}.json"));
+                let agent_trace = agent_root.join(format!("{suite_key}.trace.jsonl"));
                 let agent_output_relative = workspace_relative(&self.root, &agent_output)?;
                 let agent_trace_relative = workspace_relative(&self.root, &agent_trace)?;
                 let agent_arguments = vec![
@@ -1020,14 +1046,16 @@ impl TaskConfiguration {
                 return Err(adapter_error("Nomos evaluation suite key is not canonical"));
             }
             validate_relative(&suite.path)?;
-            if !suite
-                .fingerprint
-                .strip_prefix("sha256:")
-                .is_some_and(raw_sha256)
-            {
-                return Err(adapter_error(
-                    "Nomos evaluation suite fingerprint is not canonical",
-                ));
+            for fingerprint in [
+                &suite.fingerprint,
+                &suite.retrieval_fingerprint,
+                &suite.agent_fingerprint,
+            ] {
+                if !fingerprint.strip_prefix("sha256:").is_some_and(raw_sha256) {
+                    return Err(adapter_error(
+                        "Nomos evaluation suite fingerprint is not canonical",
+                    ));
+                }
             }
         }
         Ok(())
@@ -1137,6 +1165,8 @@ struct SuiteConfiguration {
     path: String,
     role: EvidenceRole,
     fingerprint: String,
+    retrieval_fingerprint: String,
+    agent_fingerprint: String,
 }
 
 #[derive(Debug)]
@@ -1662,6 +1692,37 @@ fn workspace_relative(root: &Path, path: &Path) -> Result<String, EncoderTaskAda
         .map_err(adapter_error)
 }
 
+fn evaluation_model_root(
+    root: &Path,
+    model: &ModelArtifactIdentity,
+) -> Result<PathBuf, EncoderTaskAdapterError> {
+    let model_digest = model
+        .fingerprint
+        .strip_prefix("sha256:")
+        .filter(|value| raw_sha256(value))
+        .ok_or_else(|| adapter_error("Nomos model fingerprint is not canonical"))?;
+    Ok(root
+        .join("runs")
+        .join("encoder-gym-evaluations")
+        .join("by-content")
+        .join(model_digest))
+}
+
+fn evaluation_component_root(
+    model_root: &Path,
+    component: &str,
+    fingerprint: &str,
+) -> Result<PathBuf, EncoderTaskAdapterError> {
+    if !["retrieval", "agent"].contains(&component) {
+        return Err(adapter_error("unknown Nomos evaluation component"));
+    }
+    let component_digest = fingerprint
+        .strip_prefix("sha256:")
+        .filter(|value| raw_sha256(value))
+        .ok_or_else(|| adapter_error("Nomos component fingerprint is not canonical"))?;
+    Ok(model_root.join(component).join(component_digest))
+}
+
 fn verify_file(
     path: &Path,
     bytes: u64,
@@ -1850,6 +1911,50 @@ mod tests {
         assert!(validate_relative("data/generated/train.jsonl").is_ok());
         assert!(validate_relative("../fitz-tool/data.jsonl").is_err());
         assert!(validate_relative("C:\\Users\\source.jsonl").is_err());
+    }
+
+    #[test]
+    fn evaluation_paths_are_content_addressed_not_uuid_addressed() {
+        let suite = SuiteConfiguration {
+            path: "data/dev.jsonl".into(),
+            role: EvidenceRole::Development,
+            fingerprint: prefixed(&"b".repeat(64)),
+            retrieval_fingerprint: prefixed(&"c".repeat(64)),
+            agent_fingerprint: prefixed(&"d".repeat(64)),
+        };
+        let first = ModelArtifactIdentity::new(
+            "artifacts/first",
+            "sentence-transformers",
+            10,
+            prefixed(&"a".repeat(64)),
+        )
+        .unwrap();
+        let second = ModelArtifactIdentity::new(
+            "artifacts/second",
+            "sentence-transformers",
+            10,
+            prefixed(&"a".repeat(64)),
+        )
+        .unwrap();
+        assert_ne!(first.id, second.id);
+        assert_eq!(
+            evaluation_model_root(Path::new("workspace"), &first).unwrap(),
+            evaluation_model_root(Path::new("workspace"), &second).unwrap()
+        );
+        assert_eq!(
+            evaluation_component_root(
+                &evaluation_model_root(Path::new("workspace"), &first).unwrap(),
+                "retrieval",
+                &suite.retrieval_fingerprint,
+            )
+            .unwrap(),
+            evaluation_component_root(
+                &evaluation_model_root(Path::new("workspace"), &second).unwrap(),
+                "retrieval",
+                &suite.retrieval_fingerprint,
+            )
+            .unwrap()
+        );
     }
 
     #[test]
