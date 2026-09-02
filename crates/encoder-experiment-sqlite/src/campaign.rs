@@ -5,6 +5,7 @@ use encoder_campaign_core::{
 use encoder_experiment_core::ports::ExperimentStore;
 use sqlx::{Row, Sqlite, Transaction};
 use uuid::Uuid;
+use workflow_core::benchmark_generation::BenchmarkGenerationEvent;
 
 use crate::SqliteExperimentStore;
 
@@ -120,6 +121,46 @@ impl CampaignStore for SqliteExperimentStore {
                     Ok(event)
                 })
                 .collect()
+        })
+    }
+
+    fn append_iteration_finalization(
+        &self,
+        generation_terminal_event: &BenchmarkGenerationEvent,
+        campaign_finalized_event: &CampaignEvent,
+    ) -> BoxFuture<'_, Result<(), CampaignStoreError>> {
+        let generation_terminal_event = generation_terminal_event.clone();
+        let campaign_finalized_event = campaign_finalized_event.clone();
+        Box::pin(async move {
+            crate::benchmark_generation::validate_candidate_journal(
+                self,
+                &generation_terminal_event,
+            )
+            .await
+            .map_err(store_error)?;
+            campaign_finalized_event
+                .validate_integrity()
+                .map_err(store_error)?;
+            let campaign = self
+                .get_campaign(campaign_finalized_event.campaign_id)
+                .await?
+                .ok_or_else(|| CampaignStoreError("production campaign does not exist".into()))?;
+            let mut events = self
+                .list_campaign_events(campaign_finalized_event.campaign_id)
+                .await?;
+            events.push(campaign_finalized_event.clone());
+            replay_campaign(&campaign, &events).map_err(store_error)?;
+
+            let mut transaction = self.pool().begin().await.map_err(store_error)?;
+            crate::benchmark_generation::append_in_transaction(
+                &mut transaction,
+                &generation_terminal_event,
+            )
+            .await
+            .map_err(store_error)?;
+            append_in_transaction(&mut transaction, &campaign_finalized_event).await?;
+            transaction.commit().await.map_err(store_error)?;
+            Ok(())
         })
     }
 }

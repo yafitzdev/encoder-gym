@@ -23,6 +23,7 @@ use workflow_core::benchmark_generation::{
 
 pub const CAMPAIGN_SCHEMA_VERSION: u32 = 1;
 pub const CAMPAIGN_EVENT_SCHEMA_VERSION: u32 = 1;
+pub const SEALED_ASSESSMENT_EXPOSURE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -259,6 +260,178 @@ pub struct ProductionCampaign {
     pub fingerprint: String,
 }
 
+/// Row-free, immutable proof that one explicitly authorized candidate consumed
+/// one generation's sealed suite. The report and assessment stay owned by the
+/// experiment journal; this artifact only binds their exact fingerprints into
+/// campaign provenance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SealedAssessmentExposure {
+    pub schema_version: u32,
+    pub id: Uuid,
+    pub campaign_id: Uuid,
+    pub campaign_fingerprint: String,
+    pub generation_id: Uuid,
+    pub generation_fingerprint: String,
+    pub iteration: u32,
+    pub experiment_run_id: Uuid,
+    pub experiment_protocol_id: Uuid,
+    pub experiment_protocol_fingerprint: String,
+    pub candidate_id: Uuid,
+    pub sealed_suite_id: Uuid,
+    pub sealed_suite_fingerprint: String,
+    pub report_id: Uuid,
+    pub report_fingerprint: String,
+    pub assessment_id: Uuid,
+    pub assessment_fingerprint: String,
+    pub authorized_by: String,
+    pub created_at: DateTime<Utc>,
+    pub fingerprint: String,
+}
+
+impl SealedAssessmentExposure {
+    pub fn from_completed_experiment(
+        campaign: &ProductionCampaign,
+        view: &CampaignView,
+        experiment: &ExperimentView,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, CampaignError> {
+        let binding = view
+            .current_generation
+            .as_ref()
+            .ok_or(CampaignError::GenerationIneligible)?;
+        let report = experiment
+            .sealed_report
+            .as_ref()
+            .ok_or(CampaignError::ExperimentMismatch)?;
+        let assessment = experiment
+            .sealed_assessment
+            .as_ref()
+            .ok_or(CampaignError::ExperimentMismatch)?;
+        let candidate_id = experiment
+            .selected_candidate_id
+            .ok_or(CampaignError::ExperimentMismatch)?;
+        if campaign.id != view.campaign_id
+            || view.state != CampaignState::SealedAuthorized
+            || Some(experiment.run_id) != view.run_id
+            || experiment.state != ExperimentRunState::Completed
+            || experiment.final_decision.is_none()
+            || report.suite_key != binding.sealed_suite_key
+            || report.suite_fingerprint != binding.sealed_suite_fingerprint
+            || report.model.fingerprint
+                != experiment
+                    .candidates
+                    .get(&candidate_id)
+                    .and_then(|candidate| candidate.train_output.as_ref())
+                    .map(|output| output.model.fingerprint.as_str())
+                    .ok_or(CampaignError::ExperimentMismatch)?
+        {
+            return Err(CampaignError::ExperimentMismatch);
+        }
+        let mut value = Self {
+            schema_version: SEALED_ASSESSMENT_EXPOSURE_SCHEMA_VERSION,
+            id: Uuid::new_v4(),
+            campaign_id: campaign.id,
+            campaign_fingerprint: campaign.fingerprint.clone(),
+            generation_id: binding.generation_id,
+            generation_fingerprint: binding.generation_fingerprint.clone(),
+            iteration: view.current_iteration,
+            experiment_run_id: experiment.run_id,
+            experiment_protocol_id: experiment.protocol_id,
+            experiment_protocol_fingerprint: view
+                .protocol_fingerprint
+                .clone()
+                .ok_or(CampaignError::ExperimentMismatch)?,
+            candidate_id,
+            sealed_suite_id: binding.sealed_suite_id,
+            sealed_suite_fingerprint: binding.sealed_suite_fingerprint.clone(),
+            report_id: report.id,
+            report_fingerprint: report.fingerprint.clone(),
+            assessment_id: assessment.id,
+            assessment_fingerprint: assessment.fingerprint.clone(),
+            authorized_by: canonical_text(
+                experiment
+                    .sealed_authorized_by
+                    .clone()
+                    .ok_or(CampaignError::ExperimentMismatch)?,
+                "sealed authorizer",
+            )?,
+            created_at,
+            fingerprint: String::new(),
+        };
+        value.validate_fields()?;
+        value.fingerprint = value.reproduce_fingerprint()?;
+        Ok(value)
+    }
+
+    pub fn validate_integrity(&self) -> Result<(), CampaignError> {
+        self.validate_fields()?;
+        if self.reproduce_fingerprint()? != self.fingerprint {
+            return Err(CampaignError::Integrity(
+                "sealed assessment exposure fingerprint changed".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn reproduce_fingerprint(&self) -> Result<String, CampaignError> {
+        fingerprint(&serde_json::json!({
+            "schema_version": self.schema_version,
+            "id": self.id,
+            "campaign_id": self.campaign_id,
+            "campaign_fingerprint": self.campaign_fingerprint,
+            "generation_id": self.generation_id,
+            "generation_fingerprint": self.generation_fingerprint,
+            "iteration": self.iteration,
+            "experiment_run_id": self.experiment_run_id,
+            "experiment_protocol_id": self.experiment_protocol_id,
+            "experiment_protocol_fingerprint": self.experiment_protocol_fingerprint,
+            "candidate_id": self.candidate_id,
+            "sealed_suite_id": self.sealed_suite_id,
+            "sealed_suite_fingerprint": self.sealed_suite_fingerprint,
+            "report_id": self.report_id,
+            "report_fingerprint": self.report_fingerprint,
+            "assessment_id": self.assessment_id,
+            "assessment_fingerprint": self.assessment_fingerprint,
+            "authorized_by": self.authorized_by,
+            "created_at": self.created_at,
+        }))
+    }
+
+    fn validate_fields(&self) -> Result<(), CampaignError> {
+        if self.schema_version != SEALED_ASSESSMENT_EXPOSURE_SCHEMA_VERSION
+            || [
+                self.id,
+                self.campaign_id,
+                self.generation_id,
+                self.experiment_run_id,
+                self.experiment_protocol_id,
+                self.candidate_id,
+                self.sealed_suite_id,
+                self.report_id,
+                self.assessment_id,
+            ]
+            .contains(&Uuid::nil())
+            || [
+                self.campaign_fingerprint.as_str(),
+                self.generation_fingerprint.as_str(),
+                self.experiment_protocol_fingerprint.as_str(),
+                self.sealed_suite_fingerprint.as_str(),
+                self.report_fingerprint.as_str(),
+                self.assessment_fingerprint.as_str(),
+            ]
+            .iter()
+            .any(|value| !canonical_fingerprint(value))
+            || self.iteration == 0
+            || canonical_text(self.authorized_by.clone(), "sealed authorizer").is_err()
+            || !self.fingerprint.is_empty() && !canonical_fingerprint(&self.fingerprint)
+        {
+            return Err(CampaignError::ExperimentMismatch);
+        }
+        Ok(())
+    }
+}
+
 impl ProductionCampaign {
     pub fn create(
         name: impl Into<String>,
@@ -368,8 +541,7 @@ pub enum CampaignEventKind {
         run_id: Uuid,
         decision: FinalDecision,
         experiment_head_fingerprint: String,
-        sealed_exposure_id: Option<Uuid>,
-        sealed_exposure_fingerprint: Option<String>,
+        sealed_exposure: Option<Box<SealedAssessmentExposure>>,
         generation_terminal_event_id: Uuid,
         generation_terminal_event_fingerprint: String,
     },
@@ -667,7 +839,7 @@ pub fn finalize_iteration_event(
     view: &CampaignView,
     experiment: &ExperimentView,
     generation_terminal_event: &BenchmarkGenerationEvent,
-    sealed_exposure: Option<(Uuid, String)>,
+    sealed_exposure: Option<SealedAssessmentExposure>,
     created_at: DateTime<Utc>,
 ) -> Result<CampaignEvent, CampaignError> {
     generation_terminal_event
@@ -677,11 +849,6 @@ pub fn finalize_iteration_event(
         .current_generation
         .as_ref()
         .ok_or(CampaignError::GenerationIneligible)?;
-    let terminal_kind = matches!(
-        generation_terminal_event.event,
-        BenchmarkGenerationEventKind::IterationConsumed { .. }
-            | BenchmarkGenerationEventKind::Exhausted { .. }
-    );
     let selected = experiment.selected_candidate_id.is_some();
     if !matches!(
         view.state,
@@ -693,16 +860,41 @@ pub fn finalize_iteration_event(
         || selected != sealed_exposure.is_some()
         || generation_terminal_event.generation_id != binding.generation_id
         || generation_terminal_event.generation_fingerprint != binding.generation_fingerprint
-        || !terminal_kind
     {
         return Err(CampaignError::ExperimentMismatch);
     }
-    let (sealed_exposure_id, sealed_exposure_fingerprint) = sealed_exposure.unzip();
-    if sealed_exposure_id.is_some_and(|id| id.is_nil())
-        || sealed_exposure_fingerprint
-            .as_deref()
-            .is_some_and(|value| !canonical_fingerprint(value))
-    {
+    if let Some(exposure) = &sealed_exposure {
+        exposure.validate_integrity()?;
+        if exposure.campaign_id != campaign.id
+            || exposure.generation_id != binding.generation_id
+            || exposure.iteration != view.current_iteration
+            || exposure.experiment_run_id != experiment.run_id
+            || Some(exposure.candidate_id) != experiment.selected_candidate_id
+        {
+            return Err(CampaignError::ExperimentMismatch);
+        }
+    }
+    let terminal_matches = match &generation_terminal_event.event {
+        BenchmarkGenerationEventKind::IterationConsumed {
+            experiment_run_id,
+            experiment_protocol_fingerprint,
+            sealed_exposure_id,
+            sealed_exposure_fingerprint,
+            final_decision_fingerprint,
+        } => {
+            let exposure = sealed_exposure.as_ref();
+            selected
+                && *experiment_run_id == experiment.run_id
+                && Some(experiment_protocol_fingerprint) == view.protocol_fingerprint.as_ref()
+                && exposure.map(|value| value.id) == Some(*sealed_exposure_id)
+                && exposure.map(|value| value.fingerprint.as_str())
+                    == Some(sealed_exposure_fingerprint.as_str())
+                && final_decision_fingerprint == &experiment.last_event_fingerprint
+        }
+        BenchmarkGenerationEventKind::Exhausted { .. } => !selected,
+        _ => false,
+    };
+    if !terminal_matches {
         return Err(CampaignError::ExperimentMismatch);
     }
     view.next_event(
@@ -714,8 +906,7 @@ pub fn finalize_iteration_event(
                 .final_decision
                 .expect("completed experiment owns a decision"),
             experiment_head_fingerprint: experiment.last_event_fingerprint.clone(),
-            sealed_exposure_id,
-            sealed_exposure_fingerprint,
+            sealed_exposure: sealed_exposure.map(Box::new),
             generation_terminal_event_id: generation_terminal_event.id,
             generation_terminal_event_fingerprint: generation_terminal_event.fingerprint.clone(),
         },
@@ -924,8 +1115,7 @@ fn apply_event(
             iteration,
             run_id,
             experiment_head_fingerprint,
-            sealed_exposure_id,
-            sealed_exposure_fingerprint,
+            sealed_exposure,
             generation_terminal_event_id,
             generation_terminal_event_fingerprint,
             ..
@@ -937,12 +1127,10 @@ fn apply_event(
             ) || *iteration != view.current_iteration
                 || Some(*run_id) != view.run_id
                 || !canonical_fingerprint(experiment_head_fingerprint)
-                || sealed_exposure_id.is_some() != sealed_exposure_fingerprint.is_some()
-                || selected != sealed_exposure_id.is_some()
-                || sealed_exposure_id.is_some_and(|id| id.is_nil())
-                || sealed_exposure_fingerprint
-                    .as_deref()
-                    .is_some_and(|value| !canonical_fingerprint(value))
+                || selected != sealed_exposure.is_some()
+                || sealed_exposure
+                    .as_ref()
+                    .is_some_and(|value| value.validate_integrity().is_err())
                 || generation_terminal_event_id.is_nil()
                 || !canonical_fingerprint(generation_terminal_event_fingerprint)
             {
@@ -1041,6 +1229,16 @@ pub trait CampaignStore: Send + Sync {
         &self,
         campaign_id: Uuid,
     ) -> BoxFuture<'_, Result<Vec<CampaignEvent>, CampaignStoreError>>;
+
+    /// Atomically consumes or exhausts the active benchmark generation and
+    /// appends the matching campaign finalization. This closes the recovery
+    /// gap where sealed evidence could be consumed without a durable campaign
+    /// decision link.
+    fn append_iteration_finalization(
+        &self,
+        generation_terminal_event: &BenchmarkGenerationEvent,
+        campaign_finalized_event: &CampaignEvent,
+    ) -> BoxFuture<'_, Result<(), CampaignStoreError>>;
 }
 
 fn canonical_text(value: impl Into<String>, field: &'static str) -> Result<String, CampaignError> {
@@ -1260,7 +1458,12 @@ mod tests {
         }
     }
 
-    fn terminal_generation_event(binding: &CampaignBenchmarkBinding) -> BenchmarkGenerationEvent {
+    fn terminal_generation_event(
+        binding: &CampaignBenchmarkBinding,
+        protocol: &ExperimentProtocol,
+        run_id: Uuid,
+        exposure: &SealedAssessmentExposure,
+    ) -> BenchmarkGenerationEvent {
         let mut event = BenchmarkGenerationEvent {
             schema_version: BENCHMARK_GENERATION_EVENT_SCHEMA_VERSION,
             id: Uuid::new_v4(),
@@ -1269,17 +1472,50 @@ mod tests {
             sequence: 4,
             previous_event_fingerprint: Some(digest('b')),
             event: BenchmarkGenerationEventKind::IterationConsumed {
-                experiment_run_id: Uuid::new_v4(),
-                experiment_protocol_fingerprint: digest('c'),
-                sealed_exposure_id: Uuid::new_v4(),
-                sealed_exposure_fingerprint: digest('d'),
-                final_decision_fingerprint: digest('e'),
+                experiment_run_id: run_id,
+                experiment_protocol_fingerprint: protocol.fingerprint.clone(),
+                sealed_exposure_id: exposure.id,
+                sealed_exposure_fingerprint: exposure.fingerprint.clone(),
+                final_decision_fingerprint: digest('a'),
             },
             created_at: time(9),
             fingerprint: String::new(),
         };
         event.fingerprint = event.reproduce_fingerprint().unwrap();
         event
+    }
+
+    fn sealed_exposure(
+        campaign: &ProductionCampaign,
+        binding: &CampaignBenchmarkBinding,
+        protocol: &ExperimentProtocol,
+        run_id: Uuid,
+        candidate_id: Uuid,
+    ) -> SealedAssessmentExposure {
+        let mut exposure = SealedAssessmentExposure {
+            schema_version: SEALED_ASSESSMENT_EXPOSURE_SCHEMA_VERSION,
+            id: Uuid::new_v4(),
+            campaign_id: campaign.id,
+            campaign_fingerprint: campaign.fingerprint.clone(),
+            generation_id: binding.generation_id,
+            generation_fingerprint: binding.generation_fingerprint.clone(),
+            iteration: 1,
+            experiment_run_id: run_id,
+            experiment_protocol_id: protocol.id,
+            experiment_protocol_fingerprint: protocol.fingerprint.clone(),
+            candidate_id,
+            sealed_suite_id: binding.sealed_suite_id,
+            sealed_suite_fingerprint: binding.sealed_suite_fingerprint.clone(),
+            report_id: Uuid::new_v4(),
+            report_fingerprint: digest('1'),
+            assessment_id: Uuid::new_v4(),
+            assessment_fingerprint: digest('2'),
+            authorized_by: "operator".into(),
+            created_at: time(9),
+            fingerprint: String::new(),
+        };
+        exposure.fingerprint = exposure.reproduce_fingerprint().unwrap();
+        exposure
     }
 
     #[test]
@@ -1333,14 +1569,15 @@ mod tests {
             Some(FinalDecision::RetainBaseline),
             9,
         );
-        let terminal = terminal_generation_event(&binding);
+        let exposure = sealed_exposure(&campaign, &binding, &protocol, run_id, candidate_id);
+        let terminal = terminal_generation_event(&binding, &protocol, run_id, &exposure);
         events.push(
             finalize_iteration_event(
                 &campaign,
                 &view,
                 &completed,
                 &terminal,
-                Some((Uuid::new_v4(), digest('f'))),
+                Some(exposure),
                 time(9),
             )
             .unwrap(),

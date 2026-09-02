@@ -110,6 +110,16 @@ pub enum Command {
         #[command(subcommand)]
         command: ExperimentCommand,
     },
+    /// Govern renewable, one-use benchmark generations for production experiments.
+    BenchmarkGeneration {
+        #[command(subcommand)]
+        command: Box<BenchmarkGenerationCommand>,
+    },
+    /// Operate a finite, renewable production optimization campaign.
+    ProductionCampaign {
+        #[command(subcommand)]
+        command: Box<ProductionCampaignCommand>,
+    },
     /// Aggregate and inspect persisted classification errors.
     Analysis {
         #[command(subcommand)]
@@ -214,6 +224,151 @@ pub enum ExperimentCommand {
     AuthorizeSealed(ExperimentAuthorizeArgs),
     /// Execute the one authorized candidate sealed report and finalize acceptance.
     RunSealed(ExperimentRunArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BenchmarkGenerationCommand {
+    /// Import one integrity-checked generation authority artifact in draft state.
+    Import(BenchmarkGenerationFileArgs),
+    /// Show the immutable authority and deeply replayed lifecycle state.
+    Show(BenchmarkGenerationIdArgs),
+    /// Confirm a fresh draft generation is ready for activation.
+    MarkReady(BenchmarkGenerationActorArgs),
+    /// Activate the first generation, which must not declare a predecessor.
+    ActivateInitial(BenchmarkGenerationActorArgs),
+    /// Atomically supersede an exhausted predecessor and activate its ready successor.
+    ActivateSuccessor(BenchmarkGenerationSuccessorArgs),
+    /// Retire a ready or active generation without consuming sealed evidence.
+    Exhaust(BenchmarkGenerationExhaustArgs),
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct BenchmarkGenerationFileArgs {
+    /// Strict JSON BenchmarkGeneration artifact.
+    pub file: PathBuf,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct BenchmarkGenerationIdArgs {
+    pub generation_id: Uuid,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct BenchmarkGenerationActorArgs {
+    pub generation_id: Uuid,
+    #[arg(long, default_value = "local-operator")]
+    pub actor: String,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct BenchmarkGenerationSuccessorArgs {
+    pub predecessor_generation_id: Uuid,
+    pub successor_generation_id: Uuid,
+    #[arg(long, default_value = "local-operator")]
+    pub actor: String,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct BenchmarkGenerationExhaustArgs {
+    pub generation_id: Uuid,
+    #[arg(long)]
+    pub reason: String,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProductionCampaignCommand {
+    /// Create an append-only campaign from a strict finite-budget input file.
+    Create(ProductionCampaignCreateArgs),
+    /// Show the deeply replayed campaign and linked experiment/generation facts.
+    Show(ProductionCampaignIdArgs),
+    /// Explain the exact next action or blocking approval boundary.
+    Readiness(ProductionCampaignIdArgs),
+    /// Bind one currently active, unused benchmark generation.
+    BindGeneration(ProductionCampaignBindArgs),
+    /// Prepare the next finite experiment protocol from strict JSON.
+    Prepare(ProductionCampaignPrepareArgs),
+    /// Start the exact prepared protocol as a recoverable run.
+    Start(ProductionCampaignIdArgs),
+    /// Resume deterministic authorized work and stop at the next authority boundary.
+    Advance(ProductionCampaignIdArgs),
+    /// Explicitly authorize the sole selected candidate to consume sealed evidence.
+    AuthorizeSealed(ProductionCampaignAuthorizeArgs),
+    /// Link the immutable successor-acquisition handoff required for renewal.
+    LinkRenewalHandoff(ProductionCampaignHandoffArgs),
+    /// End a campaign that has reached a renewal boundary.
+    Complete(ProductionCampaignCompleteArgs),
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionCampaignCreateArgs {
+    pub project_id: Uuid,
+    /// Strict JSON containing the campaign name and finite aggregate budget.
+    pub file: PathBuf,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionCampaignIdArgs {
+    pub campaign_id: Uuid,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionCampaignBindArgs {
+    pub campaign_id: Uuid,
+    pub generation_id: Uuid,
+    #[arg(long)]
+    pub sealed_suite_key: String,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionCampaignPrepareArgs {
+    pub campaign_id: Uuid,
+    /// The ordinary strict experiment-protocol input; no campaign-specific copy exists.
+    pub file: PathBuf,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionCampaignAuthorizeArgs {
+    pub campaign_id: Uuid,
+    #[arg(long, default_value = "local-operator")]
+    pub authorized_by: String,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionCampaignHandoffArgs {
+    pub campaign_id: Uuid,
+    pub handoff_id: Uuid,
+    pub handoff_fingerprint: String,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionCampaignCompleteArgs {
+    pub campaign_id: Uuid,
+    #[arg(long)]
+    pub reason: String,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
 }
 
 #[derive(Debug, Clone, clap::Args)]

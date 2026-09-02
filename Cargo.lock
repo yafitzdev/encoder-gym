@@ -3347,6 +3347,7 @@ dependencies = [
  "dataset-quality-openai-compatible",
  "dataset-quality-runner",
  "dotenvy",
+ "encoder-campaign-core",
  "encoder-experiment-core",
  "encoder-experiment-nomos",
  "encoder-experiment-runner",

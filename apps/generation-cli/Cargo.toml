@@ -31,6 +31,7 @@ dataset-quality-openai-compatible.workspace = true
 dataset-quality-runner.workspace = true
 evaluation-core.workspace = true
 encoder-experiment-core.workspace = true
+encoder-campaign-core.workspace = true
 encoder-experiment-nomos.workspace = true
 encoder-experiment-runner.workspace = true
 encoder-experiment-sqlite.workspace = true

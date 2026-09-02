@@ -21,6 +21,7 @@ mod ingestion;
 mod inspect;
 mod optimization;
 mod plan;
+pub(crate) mod production_campaign;
 mod project_bootstrap;
 mod project_preparation;
 mod provenance;
@@ -75,6 +76,11 @@ pub fn execute(
             Command::Evaluation { command } => evaluation::execute(command, store).await,
             Command::Experiment { .. } => {
                 unreachable!("experiment commands are dispatched before the synthetic-data store")
+            }
+            Command::BenchmarkGeneration { .. } | Command::ProductionCampaign { .. } => {
+                unreachable!(
+                    "production campaign commands are dispatched before the synthetic-data store"
+                )
             }
             Command::Plan { command } => plan::execute(command, &store).await,
             Command::Backend { command } => backend::execute(command, &store).await,

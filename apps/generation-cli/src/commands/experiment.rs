@@ -22,7 +22,7 @@ use crate::{
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ProtocolInput {
+pub(crate) struct ProtocolInput {
     budget: OptimizationBudget,
     maximum_evaluation_seconds: u64,
     #[serde(default)]
@@ -38,7 +38,7 @@ struct ProtocolInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CandidateInput {
+pub(crate) struct CandidateInput {
     maximum_training_seconds: u64,
     parameters: BTreeMap<String, ParameterValue>,
 }
@@ -108,11 +108,21 @@ async fn prepare(
     runner: &ExperimentRunner<'_, SqliteExperimentStore, NomosBackend>,
     store: &SqliteExperimentStore,
 ) -> anyhow::Result<()> {
-    let input = read_protocol_input(&args.file)?;
+    let protocol = prepare_protocol_from_file(args.project_id, &args.file, runner, store).await?;
+    print_prepared_protocol(&protocol)
+}
+
+pub(crate) async fn prepare_protocol_from_file(
+    project_id: uuid::Uuid,
+    file: &Path,
+    runner: &ExperimentRunner<'_, SqliteExperimentStore, NomosBackend>,
+    store: &SqliteExperimentStore,
+) -> anyhow::Result<encoder_experiment_core::protocol::ExperimentProtocol> {
+    let input = read_protocol_input(file)?;
     let project = store
-        .get_project(args.project_id)
+        .get_project(project_id)
         .await?
-        .with_context(|| format!("experiment project {} does not exist", args.project_id))?;
+        .with_context(|| format!("experiment project {project_id} does not exist"))?;
     let contract =
         MetricContract::create(input.metric_definitions, input.primary_metric, input.gates)?;
     let candidates = input
@@ -128,37 +138,38 @@ async fn prepare(
             )?)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let protocol = match (input.development_suite_key, input.development_suite_keys) {
-        (Some(suite_key), suite_keys) if suite_keys.is_empty() => {
-            runner
-                .prepare_protocol(
-                    project.id,
-                    contract,
-                    input.budget,
-                    input.maximum_evaluation_seconds,
-                    suite_key,
-                    input.sealed_suite_key,
-                    candidates,
-                )
-                .await?
-        }
-        (None, suite_keys) if !suite_keys.is_empty() => {
-            runner
-                .prepare_multi_protocol(
-                    project.id,
-                    contract,
-                    input.budget,
-                    input.maximum_evaluation_seconds,
-                    suite_keys,
-                    input.sealed_suite_key,
-                    candidates,
-                )
-                .await?
-        }
+    match (input.development_suite_key, input.development_suite_keys) {
+        (Some(suite_key), suite_keys) if suite_keys.is_empty() => Ok(runner
+            .prepare_protocol(
+                project.id,
+                contract,
+                input.budget,
+                input.maximum_evaluation_seconds,
+                suite_key,
+                input.sealed_suite_key,
+                candidates,
+            )
+            .await?),
+        (None, suite_keys) if !suite_keys.is_empty() => Ok(runner
+            .prepare_multi_protocol(
+                project.id,
+                contract,
+                input.budget,
+                input.maximum_evaluation_seconds,
+                suite_keys,
+                input.sealed_suite_key,
+                candidates,
+            )
+            .await?),
         _ => anyhow::bail!(
             "protocol must define exactly one of development_suite_key or development_suite_keys"
         ),
-    };
+    }
+}
+
+fn print_prepared_protocol(
+    protocol: &encoder_experiment_core::protocol::ExperimentProtocol,
+) -> anyhow::Result<()> {
     let baseline_development_metrics = protocol
         .baseline_development_reports()
         .into_iter()
@@ -201,7 +212,7 @@ async fn load_verified_view(
     Ok(replay_experiment(&project, &protocol, &events)?)
 }
 
-fn read_protocol_input(path: &Path) -> anyhow::Result<ProtocolInput> {
+pub(crate) fn read_protocol_input(path: &Path) -> anyhow::Result<ProtocolInput> {
     let metadata = path
         .metadata()
         .with_context(|| format!("could not inspect protocol input {}", path.display()))?;
@@ -225,7 +236,7 @@ fn backend_args(command: &ExperimentCommand) -> &NomosWorkspaceArgs {
     }
 }
 
-fn ensure_database_belongs_to_workspace(
+pub(crate) fn ensure_database_belongs_to_workspace(
     database_url: &str,
     workspace: &Path,
 ) -> anyhow::Result<()> {

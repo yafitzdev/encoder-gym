@@ -142,7 +142,7 @@ impl BenchmarkGenerationStore for SqliteExperimentStore {
     }
 }
 
-async fn validate_candidate_journal(
+pub(crate) async fn validate_candidate_journal(
     store: &SqliteExperimentStore,
     event: &BenchmarkGenerationEvent,
 ) -> Result<(), WorkflowStoreError> {
@@ -159,7 +159,7 @@ async fn validate_candidate_journal(
     Ok(())
 }
 
-async fn append_in_transaction(
+pub(crate) async fn append_in_transaction(
     transaction: &mut Transaction<'_, Sqlite>,
     event: &BenchmarkGenerationEvent,
 ) -> Result<(), WorkflowStoreError> {

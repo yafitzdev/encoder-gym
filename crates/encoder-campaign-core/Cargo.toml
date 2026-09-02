@@ -9,12 +9,10 @@ artifact-core.workspace = true
 chrono.workspace = true
 encoder-experiment-core.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 workflow-core.workspace = true
-
-[dev-dependencies]
-serde_json.workspace = true
 
 [lints]
 workspace = true

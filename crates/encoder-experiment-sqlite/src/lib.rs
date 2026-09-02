@@ -50,6 +50,21 @@ impl SqliteExperimentStore {
         &self.pool
     }
 
+    /// Recovery lookup used by campaign orchestration after a process exits
+    /// between durable experiment-run creation and campaign journal linking.
+    pub async fn run_ids_for_protocol(
+        &self,
+        protocol_id: Uuid,
+    ) -> Result<Vec<Uuid>, ExperimentStoreError> {
+        sqlx::query_scalar(
+            "SELECT id FROM encoder_experiment_runs WHERE protocol_id = ? ORDER BY created_at, id",
+        )
+        .bind(protocol_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store_error)
+    }
+
     async fn protocol_project(
         &self,
         protocol: &ExperimentProtocol,

@@ -11,8 +11,24 @@ use recovery_core::RecoveryStore;
 use synthetic_data_sqlite::SqliteStore;
 use tracing_subscriber::EnvFilter;
 
+fn main() -> anyhow::Result<()> {
+    // Windows gives the process main thread a comparatively small stack. Clap's
+    // feature-oriented command tree and deeply verified provenance traversal
+    // are both finite but intentionally broad, so run the application on one
+    // explicitly sized local thread. Async worker behavior is unchanged.
+    match std::thread::Builder::new()
+        .name("synth-main".into())
+        .stack_size(16 * 1_048_576)
+        .spawn(run)?
+        .join()
+    {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn run() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     init_tracing();
     let cli = Cli::parse();
@@ -23,6 +39,20 @@ async fn main() -> anyhow::Result<()> {
             // Keep the experiment handler's aggregate future off the small Windows
             // main-thread stack, just like the ordinary command dispatcher below.
             return Box::pin(commands::experiment::execute(command, &database_url)).await;
+        }
+        Command::BenchmarkGeneration { command } => {
+            return Box::pin(commands::production_campaign::execute_generation(
+                *command,
+                &database_url,
+            ))
+            .await;
+        }
+        Command::ProductionCampaign { command } => {
+            return Box::pin(commands::production_campaign::execute_campaign(
+                *command,
+                &database_url,
+            ))
+            .await;
         }
         command => command,
     };
