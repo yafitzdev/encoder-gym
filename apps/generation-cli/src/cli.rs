@@ -398,6 +398,8 @@ pub enum ProductionRepairCommand {
     TrainingSnapshotShow(ProductionRepairTrainingSnapshotIdArgs),
     /// Verify the snapshot, current project, and reproduced native delta artifact.
     TrainingSnapshotDoctor(ProductionRepairTrainingSnapshotIdArgs),
+    /// Prepare one bounded multi-suite experiment from the exact repair snapshot.
+    TrainingExperimentPrepare(ProductionRepairTrainingSnapshotIdArgs),
 }
 
 #[derive(Debug, Clone, clap::Args)]

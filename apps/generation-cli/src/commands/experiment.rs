@@ -167,7 +167,7 @@ pub(crate) async fn prepare_protocol_from_file(
     }
 }
 
-fn print_prepared_protocol(
+pub(crate) fn print_prepared_protocol(
     protocol: &encoder_experiment_core::protocol::ExperimentProtocol,
 ) -> anyhow::Result<()> {
     let baseline_development_metrics = protocol

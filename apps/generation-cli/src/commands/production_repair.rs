@@ -4,6 +4,7 @@ use anyhow::Context;
 use chrono::Utc;
 use encoder_campaign_core::{CampaignEventKind, CampaignStore, replay_campaign};
 use encoder_experiment_core::{
+    domain::OptimizationBudget,
     metrics::EvaluationReport,
     ports::{EncoderTaskBackend, ExperimentStore},
 };
@@ -115,6 +116,9 @@ pub async fn execute(command: ProductionRepairCommand, database_url: &str) -> an
         }
         ProductionRepairCommand::TrainingSnapshotDoctor(args) => {
             training_snapshot_doctor(&store, &backend, args).await
+        }
+        ProductionRepairCommand::TrainingExperimentPrepare(args) => {
+            training_experiment_prepare(&store, &backend, args).await
         }
     }
 }
@@ -678,6 +682,90 @@ async fn training_snapshot_doctor(
     print_training_snapshot_summary(&snapshot, true)
 }
 
+async fn training_experiment_prepare(
+    store: &SqliteExperimentStore,
+    backend: &NomosBackend,
+    args: ProductionRepairTrainingSnapshotIdArgs,
+) -> anyhow::Result<()> {
+    let snapshot = store
+        .get_native_repair_training_snapshot(args.training_snapshot_id)
+        .await?
+        .with_context(|| {
+            format!(
+                "native repair training snapshot {} does not exist",
+                args.training_snapshot_id
+            )
+        })?;
+    let context = load_approved_delta_context(store, backend, snapshot.selection.id, true).await?;
+    snapshot.validate_against(
+        &context.project,
+        &context.proposal,
+        &context.candidate_set,
+        &context.report,
+        &context.approval,
+        context.approval_predecessor.as_ref(),
+        &context.selection,
+    )?;
+
+    let runner = ExperimentRunner::new(store, backend);
+    let source_view = runner
+        .status(context.proposal.context.source_experiment_run_id)
+        .await?;
+    let source_protocol = store
+        .get_protocol(source_view.protocol_id)
+        .await?
+        .context("repair source experiment protocol does not exist")?;
+    let source_project = store
+        .get_project(source_protocol.project_snapshot_id)
+        .await?
+        .context("repair source experiment project does not exist")?;
+    source_protocol.validate_integrity(&source_project)?;
+    context
+        .proposal
+        .context
+        .source_project
+        .verify(&source_project)?;
+
+    let expected_development = &context
+        .proposal
+        .context
+        .benchmark
+        .development_suite_fingerprints;
+    let observed_development = source_protocol
+        .baseline_development_reports()
+        .into_iter()
+        .map(|report| (report.suite_key.clone(), report.suite_fingerprint.clone()))
+        .collect::<BTreeMap<_, _>>();
+    if &observed_development != expected_development
+        || source_protocol.baseline_sealed_report.suite_fingerprint
+            != context.proposal.context.benchmark.sealed_suite_fingerprint
+    {
+        anyhow::bail!(
+            "repair source protocol does not bind the proposal's exact development and sealed suites"
+        );
+    }
+
+    let candidates = snapshot.compile_training_candidates(&context.project, &context.proposal)?;
+    let budget = OptimizationBudget {
+        maximum_candidates: context.proposal.budget.maximum_candidates,
+        maximum_training_seconds: context.proposal.budget.maximum_training_seconds,
+        maximum_development_evaluations: context.proposal.budget.maximum_development_evaluations,
+        maximum_sealed_evaluations: context.proposal.budget.maximum_sealed_uses,
+    };
+    let protocol = runner
+        .prepare_multi_protocol(
+            context.project.id,
+            source_protocol.metric_contract,
+            budget,
+            context.proposal.budget.maximum_evaluation_seconds,
+            expected_development.keys().cloned().collect(),
+            source_protocol.sealed_suite_key,
+            candidates,
+        )
+        .await?;
+    crate::commands::experiment::print_prepared_protocol(&protocol)
+}
+
 fn print_training_snapshot_summary(
     snapshot: &NativeRepairTrainingSnapshot,
     verified: bool,
@@ -1189,6 +1277,7 @@ fn backend_args(command: &ProductionRepairCommand) -> &NomosWorkspaceArgs {
         ProductionRepairCommand::DeltaSelect(args) => &args.backend,
         ProductionRepairCommand::TrainingSnapshotBuild(args) => &args.backend,
         ProductionRepairCommand::TrainingSnapshotShow(args)
-        | ProductionRepairCommand::TrainingSnapshotDoctor(args) => &args.backend,
+        | ProductionRepairCommand::TrainingSnapshotDoctor(args)
+        | ProductionRepairCommand::TrainingExperimentPrepare(args) => &args.backend,
     }
 }
