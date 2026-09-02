@@ -382,6 +382,16 @@ pub enum ProductionRepairCommand {
     Review(ProductionRepairReviewArgs),
     /// Idempotently reserve application of an exactly approved repair proposal.
     Apply(ProductionRepairProposalIdArgs),
+    /// Materialize, audit, persist, and quality-score the approved native delta.
+    DeltaBuild(ProductionRepairProposalIdArgs),
+    /// Show one native candidate set, quality report, reviews, and selection.
+    DeltaShow(ProductionRepairDeltaIdArgs),
+    /// Re-run native artifact verification and deeply replay persisted quality evidence.
+    DeltaDoctor(ProductionRepairDeltaIdArgs),
+    /// Append an immutable operator review to one native delta report.
+    DeltaReview(ProductionRepairDeltaReviewArgs),
+    /// Freeze the latest exact approved delta as the proposal's immutable selection.
+    DeltaSelect(ProductionRepairDeltaReportIdArgs),
 }
 
 #[derive(Debug, Clone, clap::Args)]
@@ -430,6 +440,40 @@ pub struct ProductionRepairProposeArgs {
 #[derive(Debug, Clone, clap::Args)]
 pub struct ProductionRepairProposalIdArgs {
     pub proposal_id: Uuid,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionRepairDeltaIdArgs {
+    pub candidate_set_id: Uuid,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionRepairDeltaReportIdArgs {
+    pub report_id: Uuid,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ProductionRepairDeltaReviewDecisionArg {
+    Approve,
+    Reject,
+    RequestRevision,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionRepairDeltaReviewArgs {
+    pub report_id: Uuid,
+    #[arg(long, value_enum)]
+    pub decision: ProductionRepairDeltaReviewDecisionArg,
+    #[arg(long)]
+    pub reviewer: String,
+    #[arg(long)]
+    pub reason: String,
     #[command(flatten)]
     pub backend: NomosWorkspaceArgs,
 }

@@ -1,5 +1,7 @@
 //! Compiled adapter for the isolated Nomos retrieval-ranking production pilot.
 
+mod repair_delta;
+
 use std::{
     collections::BTreeMap,
     fs,
@@ -55,6 +57,16 @@ const DEVELOPMENT_OBSERVER_SOURCES: [&str; 5] = [
     "fitz_tool/embedding_backend.py",
     "fitz_tool/onnx_encoder.py",
 ];
+const REPAIR_DELTA_ADAPTER_NAME: &str = "nomos-native-repair-delta";
+const REPAIR_DELTA_ADAPTER_PROTOCOL: &str = "nomos-native-repair-delta-v1";
+const REPAIR_DELTA_SOURCES: [&str; 6] = [
+    "tools/generate_encoder_gym_repair_delta_v1.py",
+    "fitz_tool/encoder_gym_repair_delta_v1.py",
+    "fitz_tool/dense_router.py",
+    "fitz_tool/generic_contracts.py",
+    "fitz_tool/router_v2.py",
+    "fitz_tool/scaling_matrix_v1.py",
+];
 
 #[derive(Debug, Clone)]
 pub struct NomosBackend {
@@ -63,6 +75,7 @@ pub struct NomosBackend {
     manifest: NomosExperimentManifest,
     identity: BackendIdentity,
     observer_identity: BackendIdentity,
+    repair_delta_identity: BackendIdentity,
 }
 
 impl NomosBackend {
@@ -123,12 +136,36 @@ impl NomosBackend {
             observer_configuration_fingerprint,
         )
         .map_err(adapter_error)?;
+        let mut repair_delta_sources = BTreeMap::new();
+        for relative in REPAIR_DELTA_SOURCES {
+            let path = root.join(relative);
+            if !path.is_file() {
+                return Err(adapter_error(format!(
+                    "Nomos repair-delta adapter source is missing: {relative}"
+                )));
+            }
+            repair_delta_sources.insert(relative, prefixed(&sha256_file(&path)?));
+        }
+        let repair_delta_configuration_fingerprint = artifact_core::fingerprint(&json!({
+            "adapter": REPAIR_DELTA_ADAPTER_NAME,
+            "protocol": REPAIR_DELTA_ADAPTER_PROTOCOL,
+            "source_revision": observer_source_revision,
+            "sources": repair_delta_sources,
+        }))
+        .map_err(adapter_error)?;
+        let repair_delta_identity = BackendIdentity::new(
+            REPAIR_DELTA_ADAPTER_NAME,
+            REPAIR_DELTA_ADAPTER_PROTOCOL,
+            repair_delta_configuration_fingerprint,
+        )
+        .map_err(adapter_error)?;
         Ok(Self {
             root,
             python: python.into(),
             manifest,
             identity,
             observer_identity,
+            repair_delta_identity,
         })
     }
 

@@ -187,12 +187,28 @@ generate rows or train a model.
 The next boundary qualifies the adapter-owned native repair artifact without
 leaking native rows into Encoder Gym's core. Every exact proposal target must
 have a payload-free row assessment containing task-validity, duplicate, and
-source/group/lineage contamination evidence. Deterministic policy produces the
-eligible report; the latest append-only human approval freezes one immutable
-selection. Incomplete, foreign, duplicated, contaminated, tampered, or stale
-evidence fails closed. This contract is separate from fixed-label dataset
-qualification because Nomos rows have row-specific registries and retrieval
-targets rather than one global label vocabulary.
+source/group/lineage contamination evidence. The candidate set also retains the
+payload-free file identity, row count, and identity-set fingerprint for the
+exact base-training, development, and sealed population used by the audit;
+base-training references must equal the proposal's immutable inputs.
+Deterministic policy produces the eligible report; the latest append-only human
+approval freezes one immutable selection. Application freezes the proposal
+review chain, selection freezes the delta review chain, and all qualification
+artifacts must precede proposal expiry. Incomplete, foreign, duplicated,
+contaminated, tampered, or stale evidence fails closed. This contract is
+separate from fixed-label dataset qualification because Nomos rows have
+row-specific registries and retrieval targets rather than one global label
+vocabulary.
+
+The first Nomos implementation is deliberately narrow: one reviewed proposal
+must request the three supported diagnosed target groups, a fixed deterministic
+recipe version, a positive seed, and a finite materialization timeout. The
+adapter invokes only the version-pinned local module, makes no provider call,
+and validates its content-addressed request, output manifest, delta bytes,
+row-free audit, and current project revision. Operators use
+`production-repair delta-build`, `delta-show`, `delta-doctor`, `delta-review`,
+and `delta-select`; approved selection remains a prerequisite for constructing
+the combined training snapshot.
 
 ## First completed production loop
 

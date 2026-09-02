@@ -154,11 +154,16 @@ and `apply` provide the CLI boundary.
 The core also owns the row-free qualification contract for a proposal's native
 repair delta. A compiled task adapter may inspect native payload internally,
 but it returns only canonical row, content, normalized-content, source, group,
-and lineage fingerprints plus task-validation and contamination counts. The
-core requires one complete assessment for every exact proposal target, derives
-deterministic include/exclude decisions from the pinned native quality policy,
-and permits an immutable selection only after an eligible report and the latest
-append-only human approval. It does not reinterpret native retrieval rows as
+and lineage fingerprints plus task-validation and contamination counts. It also
+returns the row-free identity, row count, and identity-set fingerprint of every
+base-training, development, and sealed reference used by the audit. The core
+requires those references to cover the exact proposal training inputs, requires
+one complete assessment for every exact proposal target, derives deterministic
+include/exclude decisions from the pinned native quality policy, and permits an
+immutable selection only after an eligible report and the latest append-only
+human approval. Proposal review freezes at application; delta review freezes at
+selection. Every delta artifact, report, review, and selection must be created
+before proposal expiry. The core does not reinterpret native retrieval rows as
 classification labels and does not retain their text or tool identities.
 
 `encoder-experiment-sqlite` implements this separate quality-store port with
@@ -168,6 +173,14 @@ fingerprints, verify normalized storage envelopes, and freeze the review chain
 after selection. The task adapter remains responsible for constructing the
 native artifact and proving its hashes against the actual files; later
 candidate-snapshot and training stages may consume only the approved selection.
+The Nomos implementation is a separate compiled adapter module. It binds its
+identity to the deterministic generator, native validator, retrieval text
+renderer, and registry sources; writes one immutable content-addressed request;
+executes a fixed Python module under the proposal's finite time budget; and
+deeply verifies the output manifest, delta, audit evidence, exact project
+population, and normalized row evidence before persistence. `delta-build`,
+`delta-show`, `delta-doctor`, `delta-review`, and `delta-select` expose this
+boundary without adding native payload to the CLI or database.
 
 `dataset-quality-core` owns immutable source-set audit plans, explicit quality
 policies, normalized evaluator requests and assessments, deterministic verdicts,

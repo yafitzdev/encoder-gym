@@ -33,7 +33,8 @@ use encoder_repair_core::{
     },
     quality::{
         ApprovedNativeDeltaSelection, NativeDeltaCandidateSet, NativeDeltaQualityReport,
-        NativeDeltaReview, NativeDeltaReviewDecision, NativeRepairRowEvidence,
+        NativeDeltaReview, NativeDeltaReviewDecision, NativeRepairAuditReference,
+        NativeRepairRowEvidence,
     },
 };
 use serde_json::json;
@@ -443,6 +444,47 @@ fn native_rows(
         .collect()
 }
 
+fn native_audit_references() -> Vec<NativeRepairAuditReference> {
+    vec![
+        NativeRepairAuditReference::create(
+            EvidenceRole::Training,
+            "train",
+            1,
+            digest('1'),
+            1,
+            digest('5'),
+        )
+        .unwrap(),
+        NativeRepairAuditReference::create(
+            EvidenceRole::Development,
+            "generic",
+            1,
+            digest('2'),
+            1,
+            digest('6'),
+        )
+        .unwrap(),
+        NativeRepairAuditReference::create(
+            EvidenceRole::Development,
+            "retired",
+            1,
+            digest('3'),
+            1,
+            digest('7'),
+        )
+        .unwrap(),
+        NativeRepairAuditReference::create(
+            EvidenceRole::SealedAcceptance,
+            "sealed",
+            1,
+            digest('4'),
+            1,
+            digest('8'),
+        )
+        .unwrap(),
+    ]
+}
+
 #[tokio::test]
 async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_tampering() {
     let fixture = fixture().await;
@@ -776,6 +818,95 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
         .await
         .unwrap();
     assert_eq!(reservation.id, idempotent.id);
+    let late_proposal_review = RepairProposalReview::create(
+        &proposal,
+        &persisted,
+        Some(&review),
+        RepairReviewDecision::RequestRevision,
+        "operator",
+        "too late after application",
+        time(14),
+    )
+    .unwrap();
+    assert!(
+        fixture
+            .store
+            .append_proposal_review(late_proposal_review)
+            .await
+            .is_err(),
+        "application must freeze the exact proposal approval chain"
+    );
+    assert!(
+        NativeDeltaCandidateSet::create(
+            &proposal,
+            &persisted,
+            &review,
+            None,
+            &reservation,
+            BackendIdentity::new("fake-native-delta", "v1", digest('c')).unwrap(),
+            ExternalArtifactIdentity::new(
+                "unscoped-delta",
+                EvidenceRole::Training,
+                12,
+                digest('9')
+            )
+            .unwrap(),
+            vec![],
+            native_rows(12, &fixture.project.source_revision, false, false),
+            time(14),
+        )
+        .is_err(),
+        "a candidate set must retain its exact payload-free audit population"
+    );
+    let mut foreign_audit_scope = native_audit_references();
+    foreign_audit_scope[0] = NativeRepairAuditReference::create(
+        EvidenceRole::Training,
+        "train",
+        1,
+        digest('9'),
+        1,
+        digest('5'),
+    )
+    .unwrap();
+    assert!(
+        NativeDeltaCandidateSet::create(
+            &proposal,
+            &persisted,
+            &review,
+            None,
+            &reservation,
+            BackendIdentity::new("fake-native-delta", "v1", digest('c')).unwrap(),
+            ExternalArtifactIdentity::new(
+                "foreign-scope-delta",
+                EvidenceRole::Training,
+                12,
+                digest('9')
+            )
+            .unwrap(),
+            foreign_audit_scope,
+            native_rows(12, &fixture.project.source_revision, false, false),
+            time(14),
+        )
+        .is_err(),
+        "the audit scope must exactly match every proposal base-training input"
+    );
+    assert!(
+        NativeDeltaCandidateSet::create(
+            &proposal,
+            &persisted,
+            &review,
+            None,
+            &reservation,
+            BackendIdentity::new("fake-native-delta", "v1", digest('c')).unwrap(),
+            ExternalArtifactIdentity::new("expired-delta", EvidenceRole::Training, 12, digest('9'))
+                .unwrap(),
+            native_audit_references(),
+            native_rows(12, &fixture.project.source_revision, false, false),
+            time(20),
+        )
+        .is_err(),
+        "a candidate set cannot be created after proposal expiry"
+    );
     assert!(
         NativeDeltaCandidateSet::create(
             &proposal,
@@ -791,6 +922,7 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
                 digest('e')
             )
             .unwrap(),
+            native_audit_references(),
             native_rows(11, &fixture.project.source_revision, false, false),
             time(14),
         )
@@ -812,6 +944,7 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
                 digest('f'),
             )
             .unwrap(),
+            native_audit_references(),
             native_rows(12, &fixture.project.source_revision, false, true),
             time(14),
         )
@@ -827,6 +960,7 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
         BackendIdentity::new("fake-native-delta", "v1", digest('c')).unwrap(),
         ExternalArtifactIdentity::new("dirty-delta", EvidenceRole::Training, 12, digest('0'))
             .unwrap(),
+        native_audit_references(),
         native_rows(12, &fixture.project.source_revision, true, false),
         time(14),
     )
@@ -864,6 +998,7 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
         BackendIdentity::new("fake-native-delta", "v1", digest('c')).unwrap(),
         ExternalArtifactIdentity::new("repair-delta", EvidenceRole::Training, 12, digest('d'))
             .unwrap(),
+        native_audit_references(),
         rows,
         time(14),
     )

@@ -13,7 +13,7 @@ use crate::{
     required,
 };
 
-pub const NATIVE_DELTA_CANDIDATE_SET_SCHEMA_VERSION: u32 = 1;
+pub const NATIVE_DELTA_CANDIDATE_SET_SCHEMA_VERSION: u32 = 2;
 pub const NATIVE_DELTA_REPORT_SCHEMA_VERSION: u32 = 1;
 pub const NATIVE_DELTA_REVIEW_SCHEMA_VERSION: u32 = 1;
 pub const NATIVE_DELTA_SELECTION_SCHEMA_VERSION: u32 = 1;
@@ -156,6 +156,79 @@ impl NativeRepairRowEvidence {
     }
 }
 
+/// One payload-free member of the exact contamination-audit population.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeRepairAuditReference {
+    pub role: EvidenceRole,
+    pub key: String,
+    pub bytes: u64,
+    pub fingerprint: String,
+    pub row_count: u64,
+    pub identity_set_fingerprint: String,
+    pub evidence_fingerprint: String,
+}
+
+impl NativeRepairAuditReference {
+    pub fn create(
+        role: EvidenceRole,
+        key: impl Into<String>,
+        bytes: u64,
+        fingerprint: impl Into<String>,
+        row_count: u64,
+        identity_set_fingerprint: impl Into<String>,
+    ) -> Result<Self, EncoderRepairError> {
+        let mut value = Self {
+            role,
+            key: required(key, "native audit reference key")?,
+            bytes,
+            fingerprint: fingerprint.into(),
+            row_count,
+            identity_set_fingerprint: identity_set_fingerprint.into(),
+            evidence_fingerprint: String::new(),
+        };
+        value.validate_fields()?;
+        value.evidence_fingerprint = value.reproduce_fingerprint()?;
+        Ok(value)
+    }
+
+    pub fn validate_integrity(&self) -> Result<(), EncoderRepairError> {
+        self.validate_fields()?;
+        if self.reproduce_fingerprint()? != self.evidence_fingerprint {
+            return Err(EncoderRepairError::Integrity(
+                "native audit reference fingerprint changed".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn reproduce_fingerprint(&self) -> Result<String, EncoderRepairError> {
+        let mut value = self.clone();
+        value.evidence_fingerprint.clear();
+        fingerprint(&value)
+    }
+
+    fn validate_fields(&self) -> Result<(), EncoderRepairError> {
+        if !matches!(
+            self.role,
+            EvidenceRole::Training | EvidenceRole::Development | EvidenceRole::SealedAcceptance
+        ) || self.key.is_empty()
+            || self.key.trim() != self.key
+            || self.bytes == 0
+            || self.row_count == 0
+            || !canonical_sha256(&self.fingerprint)
+            || !canonical_sha256(&self.identity_set_fingerprint)
+            || !self.evidence_fingerprint.is_empty()
+                && !canonical_sha256(&self.evidence_fingerprint)
+        {
+            return Err(EncoderRepairError::Validation(
+                "native audit reference is incomplete or has an unsupported role".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeDeltaCandidateSet {
@@ -168,6 +241,7 @@ pub struct NativeDeltaCandidateSet {
     pub execution_project_fingerprint: String,
     pub adapter: BackendIdentity,
     pub delta_artifact: ExternalArtifactIdentity,
+    pub audit_references: Vec<NativeRepairAuditReference>,
     pub rows: Vec<NativeRepairRowEvidence>,
     pub created_at: DateTime<Utc>,
     pub fingerprint: String,
@@ -183,15 +257,17 @@ impl NativeDeltaCandidateSet {
         application: &RepairProposalApplication,
         adapter: BackendIdentity,
         delta_artifact: ExternalArtifactIdentity,
+        mut audit_references: Vec<NativeRepairAuditReference>,
         mut rows: Vec<NativeRepairRowEvidence>,
         created_at: DateTime<Utc>,
     ) -> Result<Self, EncoderRepairError> {
         proposal.validate_integrity(diagnosis)?;
         approval.validate_against(proposal, approval_predecessor)?;
         application.validate_against(proposal, approval)?;
-        if created_at < application.created_at {
+        if created_at < application.created_at || created_at > proposal.expires_at {
             return Err(EncoderRepairError::Validation(
-                "native delta candidate set cannot predate its repair application".into(),
+                "native delta candidate set must follow application and precede proposal expiry"
+                    .into(),
             ));
         }
         adapter
@@ -200,6 +276,11 @@ impl NativeDeltaCandidateSet {
         delta_artifact
             .validate()
             .map_err(|error| EncoderRepairError::Experiment(error.to_string()))?;
+        audit_references.sort_by(|left, right| {
+            left.role
+                .cmp(&right.role)
+                .then_with(|| left.key.cmp(&right.key))
+        });
         rows.sort_by(|left, right| left.row_id_hash.cmp(&right.row_id_hash));
         let mut value = Self {
             schema_version: NATIVE_DELTA_CANDIDATE_SET_SCHEMA_VERSION,
@@ -217,6 +298,7 @@ impl NativeDeltaCandidateSet {
             execution_project_fingerprint: proposal.context.execution_project.fingerprint.clone(),
             adapter,
             delta_artifact,
+            audit_references,
             rows,
             created_at,
             fingerprint: String::new(),
@@ -247,6 +329,7 @@ impl NativeDeltaCandidateSet {
             "execution_project_fingerprint": self.execution_project_fingerprint,
             "adapter": self.adapter,
             "delta_artifact": self.delta_artifact,
+            "audit_references": self.audit_references,
             "rows": self.rows,
         }))
     }
@@ -262,6 +345,7 @@ impl NativeDeltaCandidateSet {
             "execution_project_fingerprint": self.execution_project_fingerprint,
             "adapter": self.adapter,
             "delta_artifact": self.delta_artifact,
+            "audit_references": self.audit_references,
             "rows": self.rows,
             "created_at": self.created_at,
         }))
@@ -292,6 +376,58 @@ impl NativeDeltaCandidateSet {
         self.delta_artifact
             .validate()
             .map_err(|error| EncoderRepairError::Experiment(error.to_string()))?;
+        let mut audit_keys = BTreeSet::new();
+        let mut audit_roles = BTreeSet::new();
+        for reference in &self.audit_references {
+            reference.validate_integrity()?;
+            if !audit_keys.insert(reference.key.as_str()) {
+                return Err(EncoderRepairError::Validation(
+                    "native delta audit scope repeats an artifact".into(),
+                ));
+            }
+            audit_roles.insert(reference.role);
+        }
+        if !audit_roles.contains(&EvidenceRole::Training)
+            || !audit_roles.contains(&EvidenceRole::Development)
+            || !audit_roles.contains(&EvidenceRole::SealedAcceptance)
+            || self.audit_references.windows(2).any(|pair| {
+                (pair[0].role, pair[0].key.as_str()) >= (pair[1].role, pair[1].key.as_str())
+            })
+        {
+            return Err(EncoderRepairError::Validation(
+                "native delta audit scope must canonically cover training, development, and sealed evidence"
+                    .into(),
+            ));
+        }
+        let audited_training = self
+            .audit_references
+            .iter()
+            .filter(|reference| reference.role == EvidenceRole::Training)
+            .map(|reference| {
+                (
+                    reference.key.as_str(),
+                    reference.bytes,
+                    reference.fingerprint.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let expected_training = proposal
+            .context
+            .base_training_inputs
+            .iter()
+            .map(|reference| {
+                (
+                    reference.key.as_str(),
+                    reference.bytes,
+                    reference.fingerprint.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        if audited_training != expected_training {
+            return Err(EncoderRepairError::Validation(
+                "native delta audit scope does not exactly cover base training inputs".into(),
+            ));
+        }
         let targets = proposal
             .targets
             .iter()
@@ -403,9 +539,10 @@ impl NativeDeltaQualityReport {
     ) -> Result<Self, EncoderRepairError> {
         candidate_set.validate_against(proposal)?;
         proposal.quality_policy.validate_integrity()?;
-        if created_at < candidate_set.created_at {
+        if created_at < candidate_set.created_at || created_at > proposal.expires_at {
             return Err(EncoderRepairError::Validation(
-                "native delta quality report cannot predate its candidate set".into(),
+                "native delta quality report must follow its candidate set before proposal expiry"
+                    .into(),
             ));
         }
         let counts = NativeDeltaQualityCounts::from_rows(&candidate_set.rows);
@@ -451,6 +588,7 @@ impl NativeDeltaQualityReport {
             || self.eligible != reasons.is_empty()
             || self.failure_reasons != reasons
             || self.created_at < candidate_set.created_at
+            || self.created_at > proposal.expires_at
             || self.reproduce_fingerprint()? != self.fingerprint
         {
             return Err(EncoderRepairError::Integrity(
@@ -602,6 +740,7 @@ impl NativeDeltaReview {
                 != predecessor.map(|value| value.fingerprint.as_str())
             || self.decision == NativeDeltaReviewDecision::Approve && !report.eligible
             || self.created_at < report.created_at
+            || self.created_at > proposal.expires_at
             || predecessor.is_some_and(|value| self.created_at < value.created_at)
             || !self.fingerprint.is_empty() && self.reproduce_fingerprint()? != self.fingerprint
         {
@@ -760,7 +899,7 @@ impl ApprovedNativeDeltaSelection {
                 "native delta selection requires the current eligible approval".into(),
             ));
         }
-        if id.is_nil() || created_at < approval.created_at {
+        if id.is_nil() || created_at < approval.created_at || created_at > proposal.expires_at {
             return Err(EncoderRepairError::Validation(
                 "native delta selection identity or timestamp is invalid".into(),
             ));

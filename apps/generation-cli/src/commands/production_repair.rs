@@ -14,11 +14,18 @@ use encoder_repair_core::{
     collection::DevelopmentObservationRequest,
     diagnosis::{CandidateSuiteOutcome, ComparativeDiagnosis},
     observation::DevelopmentObservationSet,
-    ports::{DevelopmentObservationBackend, RepairEvidenceStore},
+    ports::{
+        DevelopmentObservationBackend, NativeRepairDeltaBackend, NativeRepairQualityStore,
+        RepairEvidenceStore,
+    },
     proposal::{
         NativeRepairQualityPolicy, RepairAction, RepairBenchmarkBinding, RepairBudget,
         RepairCandidateHypothesis, RepairContext, RepairProposal, RepairProposalApplication,
         RepairProposalReview, RepairReviewDecision, RepairTarget,
+    },
+    quality::{
+        ApprovedNativeDeltaSelection, NativeDeltaCandidateSet, NativeDeltaQualityReport,
+        NativeDeltaReview, NativeDeltaReviewDecision,
     },
 };
 use serde::Deserialize;
@@ -31,6 +38,8 @@ use workflow_core::{
 use crate::{
     cli::{
         NomosWorkspaceArgs, ProductionRepairCampaignArgs, ProductionRepairCommand,
+        ProductionRepairDeltaIdArgs, ProductionRepairDeltaReportIdArgs,
+        ProductionRepairDeltaReviewArgs, ProductionRepairDeltaReviewDecisionArg,
         ProductionRepairDiagnoseArgs, ProductionRepairIdArgs, ProductionRepairProposalIdArgs,
         ProductionRepairProposeArgs, ProductionRepairReviewArgs, ProductionRepairReviewDecisionArg,
     },
@@ -91,6 +100,11 @@ pub async fn execute(command: ProductionRepairCommand, database_url: &str) -> an
         }
         ProductionRepairCommand::Review(args) => review(&store, &backend, args).await,
         ProductionRepairCommand::Apply(args) => apply(&store, &backend, args).await,
+        ProductionRepairCommand::DeltaBuild(args) => delta_build(&store, &backend, args).await,
+        ProductionRepairCommand::DeltaShow(args) => delta_show(&store, args).await,
+        ProductionRepairCommand::DeltaDoctor(args) => delta_doctor(&store, &backend, args).await,
+        ProductionRepairCommand::DeltaReview(args) => delta_review(&store, &backend, args).await,
+        ProductionRepairCommand::DeltaSelect(args) => delta_select(&store, &backend, args).await,
     }
 }
 
@@ -261,6 +275,297 @@ async fn apply(
     )?;
     let application = store.reserve_proposal_application(application).await?;
     presentation::print(&application)
+}
+
+struct DeltaApplicationContext {
+    project: encoder_experiment_core::domain::ExternalProjectSnapshot,
+    diagnosis: ComparativeDiagnosis,
+    approval: RepairProposalReview,
+    approval_predecessor: Option<RepairProposalReview>,
+    application: RepairProposalApplication,
+}
+
+async fn load_delta_application_context(
+    store: &SqliteExperimentStore,
+    proposal: &RepairProposal,
+) -> anyhow::Result<DeltaApplicationContext> {
+    let project = store
+        .get_project(proposal.context.execution_project.id)
+        .await?
+        .context("repair execution project does not exist")?;
+    proposal.context.execution_project.verify(&project)?;
+    let diagnosis = store
+        .get_diagnosis(proposal.context.diagnosis.id)
+        .await?
+        .context("repair proposal diagnosis does not exist")?;
+    let application = store
+        .get_proposal_application(proposal.id)
+        .await?
+        .context("repair proposal must be applied before native delta construction")?;
+    let reviews = store.list_proposal_reviews(proposal.id).await?;
+    let approval_index = reviews
+        .iter()
+        .position(|review| review.id == application.approval_id)
+        .context("repair application approval is missing")?;
+    if approval_index + 1 != reviews.len() {
+        anyhow::bail!("repair application no longer binds the latest proposal review");
+    }
+    let approval = reviews[approval_index].clone();
+    if approval.decision != RepairReviewDecision::Approve {
+        anyhow::bail!("repair application does not bind an approval");
+    }
+    let approval_predecessor = approval_index
+        .checked_sub(1)
+        .and_then(|index| reviews.get(index))
+        .cloned();
+    application.validate_against(proposal, &approval)?;
+    Ok(DeltaApplicationContext {
+        project,
+        diagnosis,
+        approval,
+        approval_predecessor,
+        application,
+    })
+}
+
+async fn build_delta_candidate(
+    store: &SqliteExperimentStore,
+    backend: &NomosBackend,
+    proposal: &RepairProposal,
+) -> anyhow::Result<NativeDeltaCandidateSet> {
+    let context = load_delta_application_context(store, proposal).await?;
+    backend
+        .build_native_delta(
+            context.project,
+            context.diagnosis,
+            proposal.clone(),
+            context.approval,
+            context.approval_predecessor,
+            context.application,
+        )
+        .await
+        .map_err(Into::into)
+}
+
+async fn delta_build(
+    store: &SqliteExperimentStore,
+    backend: &NomosBackend,
+    args: ProductionRepairProposalIdArgs,
+) -> anyhow::Result<()> {
+    let proposal = load_verified_proposal(store, backend, args.proposal_id, true).await?;
+    let candidate_set = build_delta_candidate(store, backend, &proposal).await?;
+    let candidate_set = store
+        .create_native_delta_candidate_set(candidate_set)
+        .await?;
+    let report = NativeDeltaQualityReport::create(&proposal, &candidate_set, Utc::now())?;
+    let report = store.create_native_delta_report(report).await?;
+    print_delta_summary(&candidate_set, &report, &[], None)
+}
+
+async fn delta_show(
+    store: &SqliteExperimentStore,
+    args: ProductionRepairDeltaIdArgs,
+) -> anyhow::Result<()> {
+    let candidate_set = store
+        .get_native_delta_candidate_set(args.candidate_set_id)
+        .await?
+        .with_context(|| {
+            format!(
+                "native repair delta candidate set {} does not exist",
+                args.candidate_set_id
+            )
+        })?;
+    let report = store
+        .get_native_delta_report_for_candidate_set(candidate_set.id)
+        .await?
+        .context("native repair delta quality report does not exist")?;
+    let reviews = store.list_native_delta_reviews(report.id).await?;
+    let selection = store
+        .get_native_delta_selection_for_proposal(candidate_set.proposal.id)
+        .await?;
+    presentation::print(&serde_json::json!({
+        "candidate_set": candidate_set,
+        "quality_report": report,
+        "reviews": reviews,
+        "selection": selection,
+    }))
+}
+
+async fn delta_doctor(
+    store: &SqliteExperimentStore,
+    backend: &NomosBackend,
+    args: ProductionRepairDeltaIdArgs,
+) -> anyhow::Result<()> {
+    let candidate_set = store
+        .get_native_delta_candidate_set(args.candidate_set_id)
+        .await?
+        .with_context(|| {
+            format!(
+                "native repair delta candidate set {} does not exist",
+                args.candidate_set_id
+            )
+        })?;
+    let proposal = load_verified_proposal(store, backend, candidate_set.proposal.id, true).await?;
+    candidate_set.validate_against(&proposal)?;
+    let report = store
+        .get_native_delta_report_for_candidate_set(candidate_set.id)
+        .await?
+        .context("native repair delta quality report does not exist")?;
+    report.validate_against(&proposal, &candidate_set)?;
+    let reviews = store.list_native_delta_reviews(report.id).await?;
+    let selection = store
+        .get_native_delta_selection_for_proposal(proposal.id)
+        .await?;
+    let rebuilt = build_delta_candidate(store, backend, &proposal).await?;
+    if rebuilt.evidence_fingerprint != candidate_set.evidence_fingerprint {
+        anyhow::bail!("native repair delta no longer reproduces its persisted evidence");
+    }
+    print_delta_doctor(&candidate_set, &report, &reviews, selection.as_ref())
+}
+
+async fn delta_review(
+    store: &SqliteExperimentStore,
+    backend: &NomosBackend,
+    args: ProductionRepairDeltaReviewArgs,
+) -> anyhow::Result<()> {
+    let report = store
+        .get_native_delta_report(args.report_id)
+        .await?
+        .with_context(|| {
+            format!(
+                "native repair delta report {} does not exist",
+                args.report_id
+            )
+        })?;
+    let candidate_set = store
+        .get_native_delta_candidate_set(report.candidate_set.id)
+        .await?
+        .context("native repair delta candidate set does not exist")?;
+    let proposal = load_verified_proposal(store, backend, report.proposal.id, true).await?;
+    report.validate_against(&proposal, &candidate_set)?;
+    let reviews = store.list_native_delta_reviews(report.id).await?;
+    let decision = match args.decision {
+        ProductionRepairDeltaReviewDecisionArg::Approve => NativeDeltaReviewDecision::Approve,
+        ProductionRepairDeltaReviewDecisionArg::Reject => NativeDeltaReviewDecision::Reject,
+        ProductionRepairDeltaReviewDecisionArg::RequestRevision => {
+            NativeDeltaReviewDecision::RequestRevision
+        }
+    };
+    let review = NativeDeltaReview::create(
+        &proposal,
+        &candidate_set,
+        &report,
+        reviews.last(),
+        decision,
+        args.reviewer,
+        args.reason,
+        Utc::now(),
+    )?;
+    let review = store.append_native_delta_review(review).await?;
+    presentation::print(&review)
+}
+
+async fn delta_select(
+    store: &SqliteExperimentStore,
+    backend: &NomosBackend,
+    args: ProductionRepairDeltaReportIdArgs,
+) -> anyhow::Result<()> {
+    let report = store
+        .get_native_delta_report(args.report_id)
+        .await?
+        .with_context(|| {
+            format!(
+                "native repair delta report {} does not exist",
+                args.report_id
+            )
+        })?;
+    let candidate_set = store
+        .get_native_delta_candidate_set(report.candidate_set.id)
+        .await?
+        .context("native repair delta candidate set does not exist")?;
+    let proposal = load_verified_proposal(store, backend, report.proposal.id, true).await?;
+    if let Some(existing) = store
+        .get_native_delta_selection_for_proposal(proposal.id)
+        .await?
+    {
+        if existing.report.id != report.id {
+            anyhow::bail!("repair proposal already has a different approved delta selection");
+        }
+        return presentation::print(&existing);
+    }
+    let reviews = store.list_native_delta_reviews(report.id).await?;
+    let approval = reviews
+        .last()
+        .filter(|review| review.decision == NativeDeltaReviewDecision::Approve)
+        .context("native repair delta requires a latest exact approval before selection")?;
+    let predecessor = reviews
+        .len()
+        .checked_sub(2)
+        .and_then(|index| reviews.get(index));
+    let selection = ApprovedNativeDeltaSelection::create(
+        &proposal,
+        &candidate_set,
+        &report,
+        approval,
+        predecessor,
+        Utc::now(),
+    )?;
+    let selection = store.create_native_delta_selection(selection).await?;
+    presentation::print(&selection)
+}
+
+fn print_delta_summary(
+    candidate_set: &NativeDeltaCandidateSet,
+    report: &NativeDeltaQualityReport,
+    reviews: &[NativeDeltaReview],
+    selection: Option<&ApprovedNativeDeltaSelection>,
+) -> anyhow::Result<()> {
+    presentation::print(&serde_json::json!({
+        "candidate_set_id": candidate_set.id,
+        "candidate_set_fingerprint": candidate_set.fingerprint,
+        "evidence_fingerprint": candidate_set.evidence_fingerprint,
+        "proposal_id": candidate_set.proposal.id,
+        "application_id": candidate_set.application.id,
+        "adapter": candidate_set.adapter,
+        "delta_artifact": candidate_set.delta_artifact,
+        "audit_reference_count": candidate_set.audit_references.len(),
+        "candidate_rows": candidate_set.rows.len(),
+        "quality_report_id": report.id,
+        "quality_report_fingerprint": report.fingerprint,
+        "quality_counts": report.counts,
+        "eligible": report.eligible,
+        "failure_reasons": report.failure_reasons,
+        "latest_review": reviews.last(),
+        "selection_id": selection.map(|value| value.id),
+    }))
+}
+
+fn print_delta_doctor(
+    candidate_set: &NativeDeltaCandidateSet,
+    report: &NativeDeltaQualityReport,
+    reviews: &[NativeDeltaReview],
+    selection: Option<&ApprovedNativeDeltaSelection>,
+) -> anyhow::Result<()> {
+    presentation::print(&serde_json::json!({
+        "verified": true,
+        "native_outputs_reproduced": true,
+        "candidate_set_id": candidate_set.id,
+        "candidate_set_fingerprint": candidate_set.fingerprint,
+        "evidence_fingerprint": candidate_set.evidence_fingerprint,
+        "proposal_id": candidate_set.proposal.id,
+        "execution_project_id": candidate_set.execution_project_id,
+        "delta_artifact": candidate_set.delta_artifact,
+        "audit_references": candidate_set.audit_references,
+        "candidate_rows": candidate_set.rows.len(),
+        "quality_report_id": report.id,
+        "quality_report_fingerprint": report.fingerprint,
+        "quality_counts": report.counts,
+        "eligible": report.eligible,
+        "review_count": reviews.len(),
+        "latest_review": reviews.last(),
+        "selection_id": selection.map(|value| value.id),
+        "selection_fingerprint": selection.map(|value| value.fingerprint.as_str()),
+    }))
 }
 
 async fn register_current_project(
@@ -688,7 +993,13 @@ fn backend_args(command: &ProductionRepairCommand) -> &NomosWorkspaceArgs {
         ProductionRepairCommand::Propose(args) => &args.backend,
         ProductionRepairCommand::ProposalShow(args)
         | ProductionRepairCommand::ProposalDoctor(args)
-        | ProductionRepairCommand::Apply(args) => &args.backend,
+        | ProductionRepairCommand::Apply(args)
+        | ProductionRepairCommand::DeltaBuild(args) => &args.backend,
         ProductionRepairCommand::Review(args) => &args.backend,
+        ProductionRepairCommand::DeltaShow(args) | ProductionRepairCommand::DeltaDoctor(args) => {
+            &args.backend
+        }
+        ProductionRepairCommand::DeltaReview(args) => &args.backend,
+        ProductionRepairCommand::DeltaSelect(args) => &args.backend,
     }
 }

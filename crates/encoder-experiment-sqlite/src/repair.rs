@@ -318,6 +318,15 @@ impl RepairEvidenceStore for SqliteExperimentStore {
         review: RepairProposalReview,
     ) -> BoxFuture<'_, Result<RepairProposalReview, RepairEvidenceStoreError>> {
         Box::pin(async move {
+            if self
+                .get_proposal_application(review.proposal_id)
+                .await?
+                .is_some()
+            {
+                return Err(RepairEvidenceStoreError(
+                    "repair proposal review chain is frozen by its application reservation".into(),
+                ));
+            }
             let proposal = self
                 .get_proposal(review.proposal_id)
                 .await?
