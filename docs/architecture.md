@@ -151,6 +151,24 @@ replays both historical diagnosis evidence and the pinned benchmark journal,
 while `production-repair propose`, `proposal-show`, `proposal-doctor`, `review`,
 and `apply` provide the CLI boundary.
 
+The core also owns the row-free qualification contract for a proposal's native
+repair delta. A compiled task adapter may inspect native payload internally,
+but it returns only canonical row, content, normalized-content, source, group,
+and lineage fingerprints plus task-validation and contamination counts. The
+core requires one complete assessment for every exact proposal target, derives
+deterministic include/exclude decisions from the pinned native quality policy,
+and permits an immutable selection only after an eligible report and the latest
+append-only human approval. It does not reinterpret native retrieval rows as
+classification labels and does not retain their text or tool identities.
+
+`encoder-experiment-sqlite` implements this separate quality-store port with
+append-only candidate-set, report, review, and selection tables. Deep reads
+replay the proposal and application lineage, reproduce all artifact
+fingerprints, verify normalized storage envelopes, and freeze the review chain
+after selection. The task adapter remains responsible for constructing the
+native artifact and proving its hashes against the actual files; later
+candidate-snapshot and training stages may consume only the approved selection.
+
 `dataset-quality-core` owns immutable source-set audit plans, explicit quality
 policies, normalized evaluator requests and assessments, deterministic verdicts,
 append-only row/manifest reviews, curation proposals, and approved manifests.
@@ -347,7 +365,10 @@ aggregate assessments. Repair proposals pin historical and current project
 identities, exact weakness slices, actions, inputs, budgets, quality policy,
 candidate hypotheses, expiry, and the active benchmark-generation head.
 Application remains an immutable review-gated reservation, not native data or
-training execution.
+training execution. Its separate native-delta quality contract owns payload-free
+row evidence, deterministic zero-or-bounded contamination policy, append-only
+review, and an immutable approved selection. Native schema validation and file
+inspection remain behind the compiled task adapter.
 
 ### `generation-supervisor-core`
 

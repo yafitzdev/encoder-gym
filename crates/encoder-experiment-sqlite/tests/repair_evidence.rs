@@ -24,12 +24,16 @@ use encoder_experiment_sqlite::SqliteExperimentStore;
 use encoder_repair_core::{
     diagnosis::{CandidateSuiteOutcome, ComparativeDiagnosis},
     observation::{DevelopmentObservation, DevelopmentObservationSet},
-    ports::RepairEvidenceStore,
+    ports::{NativeRepairQualityStore, RepairEvidenceStore},
     proposal::{
         CandidateMechanism, NativeRepairQualityPolicy, RepairAction, RepairActionKind,
         RepairBenchmarkBinding, RepairBudget, RepairCandidateHypothesis, RepairContext,
         RepairProposal, RepairProposalApplication, RepairProposalReview, RepairReviewDecision,
         RepairTarget,
+    },
+    quality::{
+        ApprovedNativeDeltaSelection, NativeDeltaCandidateSet, NativeDeltaQualityReport,
+        NativeDeltaReview, NativeDeltaReviewDecision, NativeRepairRowEvidence,
     },
 };
 use serde_json::json;
@@ -397,6 +401,48 @@ fn observations(ranks: [Option<u32>; 3]) -> Vec<DevelopmentObservation> {
         .collect()
 }
 
+fn native_rows(
+    count: u64,
+    project_revision: &str,
+    dirty: bool,
+    duplicate_normalized_identity: bool,
+) -> Vec<NativeRepairRowEvidence> {
+    (0..count)
+        .map(|index| {
+            let row_fingerprint = |offset: u64| format!("sha256:{:064x}", index + offset);
+            NativeRepairRowEvidence::create(
+                row_fingerprint(1),
+                row_fingerprint(101),
+                if duplicate_normalized_identity && index == 1 {
+                    format!("sha256:{:064x}", 201)
+                } else {
+                    row_fingerprint(201)
+                },
+                row_fingerprint(301),
+                row_fingerprint(401),
+                row_fingerprint(501),
+                "supported_failure",
+                digest('a'),
+                digest('b'),
+                index + 1,
+                project_revision,
+                !dirty || index != 5,
+                if dirty && index == 5 {
+                    vec!["native task invariant failed".into()]
+                } else {
+                    vec![]
+                },
+                u32::from(dirty && index == 0),
+                u32::from(dirty && index == 1),
+                u32::from(dirty && index == 2),
+                u32::from(dirty && index == 3),
+                u32::from(dirty && index == 4),
+            )
+            .unwrap()
+        })
+        .collect()
+}
+
 #[tokio::test]
 async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_tampering() {
     let fixture = fixture().await;
@@ -730,6 +776,201 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
         .await
         .unwrap();
     assert_eq!(reservation.id, idempotent.id);
+    assert!(
+        NativeDeltaCandidateSet::create(
+            &proposal,
+            &persisted,
+            &review,
+            None,
+            &reservation,
+            BackendIdentity::new("fake-native-delta", "v1", digest('c')).unwrap(),
+            ExternalArtifactIdentity::new(
+                "incomplete-delta",
+                EvidenceRole::Training,
+                11,
+                digest('e')
+            )
+            .unwrap(),
+            native_rows(11, &fixture.project.source_revision, false, false),
+            time(14),
+        )
+        .is_err(),
+        "a candidate set must assess every exact proposal target row"
+    );
+    assert!(
+        NativeDeltaCandidateSet::create(
+            &proposal,
+            &persisted,
+            &review,
+            None,
+            &reservation,
+            BackendIdentity::new("fake-native-delta", "v1", digest('c')).unwrap(),
+            ExternalArtifactIdentity::new(
+                "duplicate-normalized-delta",
+                EvidenceRole::Training,
+                12,
+                digest('f'),
+            )
+            .unwrap(),
+            native_rows(12, &fixture.project.source_revision, false, true),
+            time(14),
+        )
+        .is_err(),
+        "normalized identities must be unique inside a candidate delta"
+    );
+    let dirty_candidate_set = NativeDeltaCandidateSet::create(
+        &proposal,
+        &persisted,
+        &review,
+        None,
+        &reservation,
+        BackendIdentity::new("fake-native-delta", "v1", digest('c')).unwrap(),
+        ExternalArtifactIdentity::new("dirty-delta", EvidenceRole::Training, 12, digest('0'))
+            .unwrap(),
+        native_rows(12, &fixture.project.source_revision, true, false),
+        time(14),
+    )
+    .unwrap();
+    let dirty_report =
+        NativeDeltaQualityReport::create(&proposal, &dirty_candidate_set, time(15)).unwrap();
+    assert!(!dirty_report.eligible);
+    assert_eq!(dirty_report.counts.invalid_rows, 1);
+    assert_eq!(dirty_report.counts.exact_duplicate_rows, 1);
+    assert_eq!(dirty_report.counts.normalized_duplicate_rows, 1);
+    assert_eq!(dirty_report.counts.source_contamination_rows, 1);
+    assert_eq!(dirty_report.counts.group_contamination_rows, 1);
+    assert_eq!(dirty_report.counts.lineage_contamination_rows, 1);
+    assert!(
+        NativeDeltaReview::create(
+            &proposal,
+            &dirty_candidate_set,
+            &dirty_report,
+            None,
+            NativeDeltaReviewDecision::Approve,
+            "operator",
+            "unsafe approval",
+            time(16),
+        )
+        .is_err(),
+        "an ineligible native delta must not be approvable"
+    );
+    let rows = native_rows(12, &fixture.project.source_revision, false, false);
+    let candidate_set = NativeDeltaCandidateSet::create(
+        &proposal,
+        &persisted,
+        &review,
+        None,
+        &reservation,
+        BackendIdentity::new("fake-native-delta", "v1", digest('c')).unwrap(),
+        ExternalArtifactIdentity::new("repair-delta", EvidenceRole::Training, 12, digest('d'))
+            .unwrap(),
+        rows,
+        time(14),
+    )
+    .unwrap();
+    let candidate_set = fixture
+        .store
+        .create_native_delta_candidate_set(candidate_set)
+        .await
+        .unwrap();
+    let report = NativeDeltaQualityReport::create(&proposal, &candidate_set, time(15)).unwrap();
+    let report = fixture
+        .store
+        .create_native_delta_report(report)
+        .await
+        .unwrap();
+    assert!(report.eligible);
+    let delta_review = NativeDeltaReview::create(
+        &proposal,
+        &candidate_set,
+        &report,
+        None,
+        NativeDeltaReviewDecision::Approve,
+        "operator",
+        "all native quality and contamination checks are clean",
+        time(16),
+    )
+    .unwrap();
+    let delta_review = fixture
+        .store
+        .append_native_delta_review(delta_review)
+        .await
+        .unwrap();
+    let selection = ApprovedNativeDeltaSelection::create(
+        &proposal,
+        &candidate_set,
+        &report,
+        &delta_review,
+        None,
+        time(17),
+    )
+    .unwrap();
+    let selection = fixture
+        .store
+        .create_native_delta_selection(selection)
+        .await
+        .unwrap();
+    let duplicate_selection = ApprovedNativeDeltaSelection::create(
+        &proposal,
+        &candidate_set,
+        &report,
+        &delta_review,
+        None,
+        time(17),
+    )
+    .unwrap();
+    let idempotent_selection = fixture
+        .store
+        .create_native_delta_selection(duplicate_selection)
+        .await
+        .unwrap();
+    assert_eq!(selection.id, idempotent_selection.id);
+    assert_eq!(selection.entries.len(), 12);
+    let late_review = NativeDeltaReview::create(
+        &proposal,
+        &candidate_set,
+        &report,
+        Some(&delta_review),
+        NativeDeltaReviewDecision::Reject,
+        "operator",
+        "too late to revise the frozen selection",
+        time(18),
+    )
+    .unwrap();
+    assert!(
+        fixture
+            .store
+            .append_native_delta_review(late_review)
+            .await
+            .is_err(),
+        "an approved immutable selection must freeze its review chain"
+    );
+    assert!(
+        sqlx::query("UPDATE encoder_native_delta_selections SET fingerprint = ? WHERE id = ?")
+            .bind(digest('0'))
+            .bind(selection.id)
+            .execute(fixture.store.pool())
+            .await
+            .is_err()
+    );
+    sqlx::query("DROP TRIGGER encoder_native_delta_selections_no_update")
+        .execute(fixture.store.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE encoder_native_delta_selections SET fingerprint = ? WHERE id = ?")
+        .bind(digest('0'))
+        .bind(selection.id)
+        .execute(fixture.store.pool())
+        .await
+        .unwrap();
+    assert!(
+        fixture
+            .store
+            .get_native_delta_selection(selection.id)
+            .await
+            .is_err(),
+        "deep reads must detect normalized storage-envelope tampering"
+    );
     assert_eq!(
         fixture
             .store

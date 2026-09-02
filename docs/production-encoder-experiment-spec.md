@@ -184,6 +184,16 @@ policy, proposal, or benchmark authority changes. Applying an unchanged exact
 approval only reserves one content-addressed application; it does not yet
 generate rows or train a model.
 
+The next boundary qualifies the adapter-owned native repair artifact without
+leaking native rows into Encoder Gym's core. Every exact proposal target must
+have a payload-free row assessment containing task-validity, duplicate, and
+source/group/lineage contamination evidence. Deterministic policy produces the
+eligible report; the latest append-only human approval freezes one immutable
+selection. Incomplete, foreign, duplicated, contaminated, tampered, or stale
+evidence fails closed. This contract is separate from fixed-label dataset
+qualification because Nomos rows have row-specific registries and retrieval
+targets rather than one global label vocabulary.
+
 ## First completed production loop
 
 The first complete protocol ran on 2026-09-02 with project

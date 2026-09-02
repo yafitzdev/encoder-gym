@@ -2,6 +2,7 @@
 
 mod benchmark_generation;
 mod campaign;
+mod native_delta;
 mod repair;
 
 use std::{str::FromStr, time::Duration};
