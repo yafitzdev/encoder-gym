@@ -638,7 +638,7 @@ impl NomosBackend {
             && current.source_fingerprint == project.source_fingerprint
             && current.backend == project.backend
             && current.inputs == project.inputs
-            && current.baseline_model == project.baseline_model
+            && same_model_content(&current.baseline_model, &project.baseline_model)
             && current.task_configuration == project.task_configuration)
     }
 
@@ -764,6 +764,13 @@ impl NomosBackend {
         }
         Ok(path)
     }
+}
+
+fn same_model_content(left: &ModelArtifactIdentity, right: &ModelArtifactIdentity) -> bool {
+    left.key == right.key
+        && left.format == right.format
+        && left.bytes == right.bytes
+        && left.fingerprint == right.fingerprint
 }
 
 impl EncoderTaskBackend for NomosBackend {
@@ -2683,6 +2690,20 @@ mod tests {
             ]))
             .is_err()
         );
+    }
+
+    #[test]
+    fn current_project_matching_uses_model_content_not_ephemeral_identity() {
+        let left =
+            ModelArtifactIdentity::new("model", "format", 42, prefixed(&"a".repeat(64))).unwrap();
+        let right =
+            ModelArtifactIdentity::new("model", "format", 42, prefixed(&"a".repeat(64))).unwrap();
+        assert_ne!(left.id, right.id);
+        assert!(same_model_content(&left, &right));
+
+        let changed =
+            ModelArtifactIdentity::new("model", "format", 42, prefixed(&"b".repeat(64))).unwrap();
+        assert!(!same_model_content(&left, &changed));
     }
 
     #[test]
