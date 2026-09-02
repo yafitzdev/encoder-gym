@@ -37,6 +37,7 @@ research adapters / apps ─> research-core
 generation-core ──────────> research-core (resolved authenticity context only)
 benchmark architect adapters / apps ─> benchmark-architect-core
 benchmark-architect-core ──> benchmark/evaluation and aggregate research contracts
+encoder-experiment adapters / apps ─> encoder-experiment-core
 dataset architect adapters / apps ─> dataset-architect-core
 dataset-architect-core ────> generation/allocation and governed evidence contracts
 quality evaluator adapters / apps ─> dataset-quality-core
@@ -87,6 +88,13 @@ qualification, and exposure summaries. It does not own benchmark rows,
 snapshots, suite construction, contamination, qualification authority,
 evaluation, SQLite, Pi, or provider transport. Its handoff cannot become a
 workflow authority without the existing ordinary benchmark gates.
+
+`encoder-experiment-core` owns task-neutral immutable production-project,
+input, model, candidate, metric, comparison, and finite-budget contracts. A
+statically composed task adapter owns native row parsing, training, prediction,
+and metric normalization. The core contains no paths, subprocesses, Python,
+CUDA, SQLite, or Nomos types. It extends production task coverage without
+rewriting or weakening the independent text-classification slices.
 
 `dataset-quality-core` owns immutable source-set audit plans, explicit quality
 policies, normalized evaluator requests and assessments, deterministic verdicts,

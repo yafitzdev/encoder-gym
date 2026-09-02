@@ -917,6 +917,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "encoder-experiment-core"
+version = "0.1.0"
+dependencies = [
+ "artifact-core",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
 name = "enum-as-inner"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

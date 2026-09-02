@@ -197,3 +197,11 @@ define an exact initial row budget, run the slices through a durable governed
 workflow, iterate from development evidence within finite limits, and perform a
 separate sealed acceptance assessment without leaking sealed evidence back into
 adaptation.
+
+The production-encoder experiment extension additionally permits a compiled
+task adapter to run a bounded encoder experiment whose native contract is not
+fixed-label classification. Encoder Gym owns immutable authority, budgets,
+normalized metrics, evidence roles, comparison, and promotion; the adapter owns
+native rows, training, prediction, and metric normalization. The first such
+pilot is Nomos retrieval ranking. See
+[Production Encoder Experiments](production-encoder-experiment-spec.md).
