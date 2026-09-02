@@ -40,6 +40,8 @@ benchmark-architect-core ──> benchmark/evaluation and aggregate research con
 encoder-experiment adapters / apps ─> encoder-experiment-core
 encoder-experiment-runner ──────────> encoder-experiment-core
 encoder-experiment-sqlite ──────────> encoder-experiment-core
+encoder-repair adapters / apps ─────> encoder-repair-core
+encoder-repair-core ────────────────> encoder-experiment-core
 dataset architect adapters / apps ─> dataset-architect-core
 dataset-architect-core ────> generation/allocation and governed evidence contracts
 quality evaluator adapters / apps ─> dataset-quality-core
@@ -111,6 +113,15 @@ snapshots, protocols, and compare-and-append journal events in dedicated tables;
 it does not enter the existing synthetic-data persistence module. Adapter
 re-entry adopts only a complete output at the exact immutable candidate or
 evaluation path, allowing process recovery without overwriting artifacts.
+
+`encoder-repair-core` owns the provider-neutral adaptive evidence boundary for
+production encoder tasks. Native adapters may normalize complete development
+rows into text-free observations, but the core accepts only exact development
+report bindings and represents no sealed evidence role. It deterministically
+derives shared and suite-specific weakness, fixed/regressed/persistent rows,
+rank movement, abstention support, minimum-support limitations, and exact
+candidate gate trade-offs. It contains no native row types, paths, subprocesses,
+SQLite, CLI, model inference, generation, or training logic.
 
 `dataset-quality-core` owns immutable source-set audit plans, explicit quality
 policies, normalized evaluator requests and assessments, deterministic verdicts,
@@ -295,6 +306,16 @@ complete candidate source set, validates exact blind label and dimension score
 shapes, derives verdicts from integer policy thresholds, and compiles reviewed
 evidence into a complete immutable selection. Unevaluated rows are excluded in
 V1. A quality evaluator cannot rewrite data or decide snapshot membership.
+
+### `encoder-repair-core`
+
+Owns immutable complete development-observation sets and reproducible
+comparative diagnosis for non-classification production encoder experiments.
+Observation sets retain exact project, campaign, run, model, suite, report,
+observer, and source-artifact authority while excluding row text and native
+labels. Diagnosis consumes only those development artifacts and immutable
+aggregate assessments; later repair proposal and application contracts remain
+advisory and review-gated.
 
 ### `generation-supervisor-core`
 
