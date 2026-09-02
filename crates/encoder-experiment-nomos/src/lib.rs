@@ -162,62 +162,44 @@ impl NomosBackend {
             .filter(|value| value.role == NativeEvidenceRole::Training)
             .map(|value| value.path.clone())
             .collect::<Vec<_>>();
-        let development = self
-            .manifest
-            .dataset_for(NativeEvidenceRole::DevelopmentHoldout)?;
-        let sealed = self
-            .manifest
-            .dataset_for(NativeEvidenceRole::SealedHoldout)?;
-        let development_retrieval_fingerprint = artifact_core::fingerprint(&json!({
-            "evaluator": RETRIEVAL_EVALUATOR_VERSION,
-            "dataset": {
-                "path": development.path,
-                "fingerprint": prefixed(&development.sha256),
-            },
-        }))
-        .map_err(adapter_error)?;
-        let development_agent_fingerprint = artifact_core::fingerprint(&json!({
-            "evaluator": AGENT_EVALUATOR_VERSION,
-            "agent_evaluation": {
-                "chat_model_fingerprint": prefixed(&chat_model_digest),
-                "selector_strategy": self.manifest.agent_evaluation.selector_strategy,
-                "candidate_strategy": self.manifest.agent_evaluation.candidate_strategy,
-                "nomos_top_k": self.manifest.agent_evaluation.nomos_top_k,
-                "max_attempts": self.manifest.agent_evaluation.max_attempts,
-                "suite": self.manifest.agent_evaluation.development,
-            },
-        }))
-        .map_err(adapter_error)?;
-        let development_suite_fingerprint = artifact_core::fingerprint(&json!({
-            "retrieval_fingerprint": development_retrieval_fingerprint,
-            "agent_fingerprint": development_agent_fingerprint,
-        }))
-        .map_err(adapter_error)?;
-        let sealed_retrieval_fingerprint = artifact_core::fingerprint(&json!({
-            "evaluator": RETRIEVAL_EVALUATOR_VERSION,
-            "dataset": {
-                "path": sealed.path,
-                "fingerprint": prefixed(&sealed.sha256),
-            },
-        }))
-        .map_err(adapter_error)?;
-        let sealed_agent_fingerprint = artifact_core::fingerprint(&json!({
-            "evaluator": AGENT_EVALUATOR_VERSION,
-            "agent_evaluation": {
-                "chat_model_fingerprint": prefixed(&chat_model_digest),
-                "selector_strategy": self.manifest.agent_evaluation.selector_strategy,
-                "candidate_strategy": self.manifest.agent_evaluation.candidate_strategy,
-                "nomos_top_k": self.manifest.agent_evaluation.nomos_top_k,
-                "max_attempts": self.manifest.agent_evaluation.max_attempts,
-                "suite": self.manifest.agent_evaluation.sealed,
-            },
-        }))
-        .map_err(adapter_error)?;
-        let sealed_suite_fingerprint = artifact_core::fingerprint(&json!({
-            "retrieval_fingerprint": sealed_retrieval_fingerprint,
-            "agent_fingerprint": sealed_agent_fingerprint,
-        }))
-        .map_err(adapter_error)?;
+        let mut suites = serde_json::Map::new();
+        for suite in self.manifest.evaluation_suites()? {
+            let retrieval_fingerprint = artifact_core::fingerprint(&json!({
+                "evaluator": RETRIEVAL_EVALUATOR_VERSION,
+                "dataset": {
+                    "path": suite.dataset.path,
+                    "fingerprint": prefixed(&suite.dataset.sha256),
+                },
+            }))
+            .map_err(adapter_error)?;
+            let agent_fingerprint = artifact_core::fingerprint(&json!({
+                "evaluator": AGENT_EVALUATOR_VERSION,
+                "agent_evaluation": {
+                    "chat_model_fingerprint": prefixed(&chat_model_digest),
+                    "selector_strategy": self.manifest.agent_evaluation.selector_strategy,
+                    "candidate_strategy": self.manifest.agent_evaluation.candidate_strategy,
+                    "nomos_top_k": self.manifest.agent_evaluation.nomos_top_k,
+                    "max_attempts": self.manifest.agent_evaluation.max_attempts,
+                    "suite": suite.agent,
+                },
+            }))
+            .map_err(adapter_error)?;
+            let fingerprint = artifact_core::fingerprint(&json!({
+                "retrieval_fingerprint": retrieval_fingerprint,
+                "agent_fingerprint": agent_fingerprint,
+            }))
+            .map_err(adapter_error)?;
+            suites.insert(
+                suite.key,
+                json!({
+                    "path": suite.dataset.path,
+                    "role": suite.role,
+                    "fingerprint": fingerprint,
+                    "retrieval_fingerprint": retrieval_fingerprint,
+                    "agent_fingerprint": agent_fingerprint,
+                }),
+            );
+        }
         ExternalProjectSnapshot::create(
             self.manifest.experiment.clone(),
             EncoderTaskKind::RetrievalRanking,
@@ -262,22 +244,7 @@ impl NomosBackend {
                     "development": self.manifest.agent_evaluation.development,
                     "sealed": self.manifest.agent_evaluation.sealed,
                 },
-                "suites": {
-                    "development": {
-                        "path": development.path,
-                        "role": "development",
-                        "fingerprint": development_suite_fingerprint,
-                        "retrieval_fingerprint": development_retrieval_fingerprint,
-                        "agent_fingerprint": development_agent_fingerprint,
-                    },
-                    "sealed": {
-                        "path": sealed.path,
-                        "role": "sealed_acceptance",
-                        "fingerprint": sealed_suite_fingerprint,
-                        "retrieval_fingerprint": sealed_retrieval_fingerprint,
-                        "agent_fingerprint": sealed_agent_fingerprint,
-                    }
-                }
+                "suites": suites,
             }),
             Utc::now(),
         )
@@ -361,6 +328,93 @@ impl NomosBackend {
             .map_err(|error| adapter_error(format!("Nomos task configuration is invalid: {error}")))
     }
 
+    fn supports_identity(&self, identity: &BackendIdentity) -> bool {
+        if identity.name != ADAPTER_NAME || identity.protocol_version != ADAPTER_PROTOCOL_VERSION {
+            return false;
+        }
+        [3_u32, 4_u32].into_iter().any(|schema_version| {
+            artifact_core::fingerprint(&json!({
+                "adapter": ADAPTER_NAME,
+                "protocol_version": ADAPTER_PROTOCOL_VERSION,
+                "manifest_schema_version": schema_version,
+                "tree_hash_algorithm": TREE_HASH_ALGORITHM,
+            }))
+            .is_ok_and(|fingerprint| fingerprint == identity.configuration_fingerprint)
+        })
+    }
+
+    fn project_matches_current(
+        &self,
+        project: &ExternalProjectSnapshot,
+    ) -> Result<bool, EncoderTaskAdapterError> {
+        let current = self.project_snapshot()?;
+        Ok(current.source_revision == project.source_revision
+            && current.source_fingerprint == project.source_fingerprint
+            && current.backend == project.backend
+            && current.inputs == project.inputs
+            && current.baseline_model == project.baseline_model
+            && current.task_configuration == project.task_configuration)
+    }
+
+    fn require_current_project(
+        &self,
+        project: &ExternalProjectSnapshot,
+    ) -> Result<(), EncoderTaskAdapterError> {
+        if !self.project_matches_current(project)? {
+            return Err(adapter_error(
+                "Nomos execution requires the exact current isolated project revision",
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_pinned_project_artifacts(
+        &self,
+        project: &ExternalProjectSnapshot,
+        configuration: &TaskConfiguration,
+    ) -> Result<(), EncoderTaskAdapterError> {
+        let revision_object = format!("{}^{{commit}}", project.source_revision);
+        self.git_output(["cat-file", "-e", revision_object.as_str()])?;
+        for artifact in &project.inputs {
+            let path = self.resolve_existing(&artifact.key)?;
+            verify_file(
+                &path,
+                artifact.bytes,
+                artifact
+                    .fingerprint
+                    .strip_prefix("sha256:")
+                    .ok_or_else(|| adapter_error("Nomos input fingerprint is malformed"))?,
+            )?;
+        }
+        let baseline = self.resolve_existing(&project.baseline_model.key)?;
+        let (bytes, digest) = tree_identity(&baseline)?;
+        if bytes != project.baseline_model.bytes
+            || prefixed(&digest) != project.baseline_model.fingerprint
+        {
+            return Err(adapter_error(
+                "Nomos historical baseline no longer matches its immutable identity",
+            ));
+        }
+        for reference in configuration.reference_models.values() {
+            let path = self.resolve_existing(&reference.path)?;
+            let (bytes, digest) = tree_identity(&path)?;
+            if bytes != reference.bytes || prefixed(&digest) != reference.fingerprint {
+                return Err(adapter_error(
+                    "Nomos historical reference model no longer matches its immutable identity",
+                ));
+            }
+        }
+        let chat = &configuration.agent_evaluation.chat_model;
+        let path = self.resolve_existing(&chat.path)?;
+        let (bytes, digest) = tree_identity(&path)?;
+        if bytes != chat.bytes || prefixed(&digest) != chat.fingerprint {
+            return Err(adapter_error(
+                "Nomos historical agent model no longer matches its immutable identity",
+            ));
+        }
+        Ok(())
+    }
+
     async fn run_bounded(
         &self,
         arguments: &[String],
@@ -426,27 +480,15 @@ impl EncoderTaskBackend for NomosBackend {
     ) -> BoxFuture<'_, Result<AdapterInspection, EncoderTaskAdapterError>> {
         Box::pin(async move {
             project.validate_integrity().map_err(adapter_error)?;
-            if project.backend != self.identity {
+            if !self.supports_identity(&project.backend) {
                 return Err(adapter_error(
                     "Nomos project pins a different adapter identity",
                 ));
             }
-            let current = self.project_snapshot()?;
-            if current.source_revision != project.source_revision
-                || current.source_fingerprint != project.source_fingerprint
-                || current.inputs != project.inputs
-                || current.baseline_model.key != project.baseline_model.key
-                || current.baseline_model.format != project.baseline_model.format
-                || current.baseline_model.bytes != project.baseline_model.bytes
-                || current.baseline_model.fingerprint != project.baseline_model.fingerprint
-                || current.task_configuration != project.task_configuration
-            {
-                return Err(adapter_error(
-                    "isolated Nomos workspace changed after project snapshot creation",
-                ));
-            }
             let configuration = Self::task_configuration(&project)?;
             configuration.validate()?;
+            self.verify_pinned_project_artifacts(&project, &configuration)?;
+            let current_revision_match = self.project_matches_current(&project)?;
             let mut verified_artifact_keys = project
                 .inputs
                 .iter()
@@ -468,6 +510,7 @@ impl EncoderTaskBackend for NomosBackend {
                     "protocol_version": ADAPTER_PROTOCOL_VERSION,
                     "original_repository_access": self.manifest.source.access,
                     "git_remote_present": false,
+                    "current_revision_match": current_revision_match,
                 }),
             })
         })
@@ -483,6 +526,7 @@ impl EncoderTaskBackend for NomosBackend {
             candidate
                 .validate_integrity(&project)
                 .map_err(adapter_error)?;
+            self.require_current_project(&project)?;
             self.inspect(project.clone()).await?;
             let configuration = Self::task_configuration(&project)?;
             configuration.validate()?;
@@ -560,6 +604,7 @@ impl EncoderTaskBackend for NomosBackend {
             project.validate_integrity().map_err(adapter_error)?;
             contract.validate_integrity().map_err(adapter_error)?;
             model.validate().map_err(adapter_error)?;
+            self.require_current_project(&project)?;
             self.inspect(project.clone()).await?;
             let configuration = Self::task_configuration(&project)?;
             configuration.validate()?;
@@ -753,12 +798,14 @@ struct NomosExperimentManifest {
     reference_models: Vec<ReferenceModelManifest>,
     agent_evaluation: AgentEvaluationManifest,
     datasets: Vec<DatasetManifest>,
+    #[serde(default)]
+    evaluation_suites: Vec<NativeEvaluationSuiteManifest>,
     evaluation_runs_tree_sha256: String,
 }
 
 impl NomosExperimentManifest {
     fn validate(&self) -> Result<(), EncoderTaskAdapterError> {
-        if self.schema_version != 3
+        if !matches!(self.schema_version, 3 | 4)
             || self.experiment.trim() != self.experiment
             || self.experiment.is_empty()
             || self.tree_hash_algorithm != TREE_HASH_ALGORITHM
@@ -817,6 +864,7 @@ impl NomosExperimentManifest {
             }
         }
         self.agent_evaluation.validate()?;
+        self.evaluation_suites()?;
         if reference_paths.contains(self.baseline.pytorch_path.as_str())
             || reference_paths.contains(self.baseline.onnx_path.as_str())
             || reference_paths.contains(self.agent_evaluation.chat_model_path.as_str())
@@ -844,6 +892,125 @@ impl NomosExperimentManifest {
         }
         Ok(matching[0])
     }
+
+    fn dataset_by_path(&self, path: &str) -> Result<&DatasetManifest, EncoderTaskAdapterError> {
+        let matching = self
+            .datasets
+            .iter()
+            .filter(|value| value.path == path)
+            .collect::<Vec<_>>();
+        if matching.len() != 1 {
+            return Err(adapter_error(format!(
+                "Nomos evaluation suite dataset {path} is not an exact manifest artifact"
+            )));
+        }
+        Ok(matching[0])
+    }
+
+    fn evaluation_suites(
+        &self,
+    ) -> Result<Vec<ResolvedEvaluationSuite<'_>>, EncoderTaskAdapterError> {
+        if self.schema_version == 3 {
+            if !self.evaluation_suites.is_empty() {
+                return Err(adapter_error(
+                    "legacy Nomos manifests cannot declare dynamic evaluation suites",
+                ));
+            }
+            return Ok(vec![
+                ResolvedEvaluationSuite {
+                    key: "development".into(),
+                    dataset: self.dataset_for(NativeEvidenceRole::DevelopmentHoldout)?,
+                    role: EvidenceRole::Development,
+                    agent: &self.agent_evaluation.development,
+                },
+                ResolvedEvaluationSuite {
+                    key: "sealed".into(),
+                    dataset: self.dataset_for(NativeEvidenceRole::SealedHoldout)?,
+                    role: EvidenceRole::SealedAcceptance,
+                    agent: &self.agent_evaluation.sealed,
+                },
+            ]);
+        }
+        if self.evaluation_suites.len() < 2 {
+            return Err(adapter_error(
+                "Nomos successor manifest requires named development and sealed suites",
+            ));
+        }
+        let mut keys = std::collections::BTreeSet::new();
+        let mut paths = std::collections::BTreeSet::new();
+        let mut sealed_count = 0_u32;
+        let mut development_count = 0_u32;
+        let mut resolved = Vec::with_capacity(self.evaluation_suites.len());
+        for suite in &self.evaluation_suites {
+            validate_canonical_key(&suite.key, "evaluation suite key")?;
+            validate_relative(&suite.dataset_path)?;
+            if !keys.insert(suite.key.as_str()) || !paths.insert(suite.dataset_path.as_str()) {
+                return Err(adapter_error(
+                    "Nomos evaluation suite keys and dataset paths must be unique",
+                ));
+            }
+            let dataset = self.dataset_by_path(&suite.dataset_path)?;
+            let (role, expected_native_role, agent) = match suite.role {
+                NativeEvaluationSuiteRole::Development => {
+                    development_count += 1;
+                    (
+                        EvidenceRole::Development,
+                        NativeEvidenceRole::DevelopmentHoldout,
+                        &self.agent_evaluation.development,
+                    )
+                }
+                NativeEvaluationSuiteRole::SealedAcceptance => {
+                    sealed_count += 1;
+                    (
+                        EvidenceRole::SealedAcceptance,
+                        NativeEvidenceRole::SealedHoldout,
+                        &self.agent_evaluation.sealed,
+                    )
+                }
+            };
+            if dataset.role != expected_native_role {
+                return Err(adapter_error(format!(
+                    "Nomos suite {} role disagrees with dataset {}",
+                    suite.key, suite.dataset_path
+                )));
+            }
+            resolved.push(ResolvedEvaluationSuite {
+                key: suite.key.clone(),
+                dataset,
+                role,
+                agent,
+            });
+        }
+        if development_count == 0 || sealed_count != 1 {
+            return Err(adapter_error(
+                "Nomos successor manifest requires at least one development suite and exactly one sealed suite",
+            ));
+        }
+        resolved.sort_by(|left, right| left.key.cmp(&right.key));
+        Ok(resolved)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeEvaluationSuiteManifest {
+    key: String,
+    dataset_path: String,
+    role: NativeEvaluationSuiteRole,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum NativeEvaluationSuiteRole {
+    Development,
+    SealedAcceptance,
+}
+
+struct ResolvedEvaluationSuite<'a> {
+    key: String,
+    dataset: &'a DatasetManifest,
+    role: EvidenceRole,
+    agent: &'a AgentSuiteManifest,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1858,6 +2025,140 @@ mod tests {
     use encoder_experiment_core::domain::ParameterValue;
 
     use super::*;
+
+    fn manifest_with_named_suites() -> NomosExperimentManifest {
+        NomosExperimentManifest {
+            schema_version: 4,
+            experiment: "successor".into(),
+            tree_hash_algorithm: TREE_HASH_ALGORITHM.into(),
+            source: SourceManifest {
+                repository: "source".into(),
+                access: "read_only_reference".into(),
+                commit: "revision".into(),
+                snapshot_date: "2026-09-02".into(),
+            },
+            isolation: IsolationManifest {
+                git_remote_allowed: false,
+                hard_links_allowed: false,
+                symlinks_allowed: false,
+                outputs_must_remain_below_experiment_root: true,
+            },
+            baseline: BaselineManifest {
+                pytorch_path: "baseline".into(),
+                pytorch_tree_sha256: "1".repeat(64),
+                onnx_path: "onnx".into(),
+                onnx_tree_sha256: "2".repeat(64),
+                weak_agent_raw_completed: CountMetric {
+                    completed: 1,
+                    total: 1,
+                },
+                weak_agent_complete_coprocessor_completed: CountMetric {
+                    completed: 1,
+                    total: 1,
+                },
+            },
+            reference_models: Vec::new(),
+            agent_evaluation: AgentEvaluationManifest {
+                backend: "onnx".into(),
+                chat_model_path: "chat".into(),
+                chat_model_format: "onnxruntime-genai".into(),
+                chat_model_bytes: 1,
+                chat_model_tree_sha256: "3".repeat(64),
+                source: json!({}),
+                selector_strategy: "multiview".into(),
+                candidate_strategy: "multiview".into(),
+                nomos_top_k: 1,
+                max_attempts: 2,
+                development: AgentSuiteManifest {
+                    suite: "development".into(),
+                    sessions: 16,
+                    pairing: "cross-product".into(),
+                    condition: "nomos".into(),
+                },
+                sealed: AgentSuiteManifest {
+                    suite: "promotion".into(),
+                    sessions: 32,
+                    pairing: "cross-product".into(),
+                    condition: "nomos".into(),
+                },
+            },
+            datasets: vec![
+                DatasetManifest {
+                    path: "train.jsonl".into(),
+                    role: NativeEvidenceRole::Training,
+                    bytes: 1,
+                    sha256: "4".repeat(64),
+                },
+                DatasetManifest {
+                    path: "generic.jsonl".into(),
+                    role: NativeEvidenceRole::DevelopmentHoldout,
+                    bytes: 1,
+                    sha256: "5".repeat(64),
+                },
+                DatasetManifest {
+                    path: "retired.jsonl".into(),
+                    role: NativeEvidenceRole::DevelopmentHoldout,
+                    bytes: 1,
+                    sha256: "6".repeat(64),
+                },
+                DatasetManifest {
+                    path: "successor.jsonl".into(),
+                    role: NativeEvidenceRole::SealedHoldout,
+                    bytes: 1,
+                    sha256: "7".repeat(64),
+                },
+            ],
+            evaluation_suites: vec![
+                NativeEvaluationSuiteManifest {
+                    key: "retired_post_scaling".into(),
+                    dataset_path: "retired.jsonl".into(),
+                    role: NativeEvaluationSuiteRole::Development,
+                },
+                NativeEvaluationSuiteManifest {
+                    key: "generic".into(),
+                    dataset_path: "generic.jsonl".into(),
+                    role: NativeEvaluationSuiteRole::Development,
+                },
+                NativeEvaluationSuiteManifest {
+                    key: "successor_sealed".into(),
+                    dataset_path: "successor.jsonl".into(),
+                    role: NativeEvaluationSuiteRole::SealedAcceptance,
+                },
+            ],
+            evaluation_runs_tree_sha256: "8".repeat(64),
+        }
+    }
+
+    #[test]
+    fn successor_manifest_keeps_named_development_suites_independent() {
+        let manifest = manifest_with_named_suites();
+        let suites = manifest.evaluation_suites().unwrap();
+        assert_eq!(
+            suites
+                .iter()
+                .map(|suite| suite.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["generic", "retired_post_scaling", "successor_sealed"]
+        );
+        assert_eq!(
+            suites
+                .iter()
+                .filter(|suite| suite.role == EvidenceRole::Development)
+                .count(),
+            2
+        );
+        assert_eq!(
+            suites
+                .iter()
+                .filter(|suite| suite.role == EvidenceRole::SealedAcceptance)
+                .count(),
+            1
+        );
+
+        let mut invalid = manifest;
+        invalid.evaluation_suites[0].role = NativeEvaluationSuiteRole::SealedAcceptance;
+        assert!(invalid.evaluation_suites().is_err());
+    }
 
     #[test]
     fn candidate_parameter_envelope_is_strict() {
