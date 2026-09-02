@@ -8,9 +8,12 @@ use encoder_experiment_core::{
         CandidateExecutionState, CandidatePhase, ExperimentEvent, ExperimentEventKind,
         ExperimentRunState, ExperimentView, FinalDecision, first_event, replay_experiment,
     },
-    metrics::{CandidateVerdict, MetricContract, assess_candidate, select_development_candidate},
+    metrics::{
+        CandidateVerdict, DevelopmentCandidateEvidence, MetricContract, assess_candidate,
+        select_multi_development_candidate,
+    },
     ports::{EncoderTaskAdapterError, EncoderTaskBackend, ExperimentStore, ExperimentStoreError},
-    protocol::ExperimentProtocol,
+    protocol::{DevelopmentSelectionRule, ExperimentProtocol},
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -119,6 +122,73 @@ where
         Ok(protocol)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub async fn prepare_multi_protocol(
+        &self,
+        project_id: Uuid,
+        metric_contract: MetricContract,
+        budget: OptimizationBudget,
+        maximum_evaluation_seconds: u64,
+        mut development_suite_keys: Vec<String>,
+        sealed_suite_key: impl Into<String>,
+        candidates: Vec<TrainingCandidate>,
+    ) -> Result<ExperimentProtocol, ExperimentRunnerError> {
+        let project = self.project(project_id).await?;
+        self.backend.inspect(project.clone()).await?;
+        development_suite_keys.sort();
+        if development_suite_keys.is_empty()
+            || development_suite_keys
+                .windows(2)
+                .any(|pair| pair[0] == pair[1])
+        {
+            return Err(EncoderExperimentError::Validation(
+                "multi-suite protocol requires unique development suite keys".into(),
+            )
+            .into());
+        }
+        let sealed_suite_key = sealed_suite_key.into();
+        let mut baseline_development_reports = Vec::with_capacity(development_suite_keys.len());
+        for suite_key in development_suite_keys {
+            baseline_development_reports.push(
+                self.backend
+                    .evaluate(
+                        project.clone(),
+                        project.baseline_model.clone(),
+                        metric_contract.clone(),
+                        suite_key,
+                        maximum_evaluation_seconds,
+                    )
+                    .await?,
+            );
+        }
+        // This baseline reference is frozen before adaptive candidate work and
+        // cannot participate in development selection.
+        let baseline_sealed_report = self
+            .backend
+            .evaluate(
+                project.clone(),
+                project.baseline_model.clone(),
+                metric_contract.clone(),
+                sealed_suite_key.clone(),
+                maximum_evaluation_seconds,
+            )
+            .await?;
+        let protocol = ExperimentProtocol::create_multi(
+            &project,
+            metric_contract,
+            baseline_development_reports,
+            baseline_sealed_report,
+            budget,
+            maximum_evaluation_seconds,
+            sealed_suite_key,
+            candidates,
+            DevelopmentSelectionRule::MaximizeWorstSuiteThenMean,
+            Utc::now(),
+        )?;
+        self.store.create_protocol(protocol.clone()).await?;
+        Ok(protocol)
+    }
+
     pub async fn create_run(
         &self,
         protocol_id: Uuid,
@@ -145,7 +215,17 @@ where
         let maximum_steps = protocol
             .candidates
             .len()
-            .checked_mul(3)
+            .checked_mul(
+                protocol
+                    .development_suite_keys()
+                    .len()
+                    .checked_add(2)
+                    .ok_or_else(|| {
+                        EncoderExperimentError::Validation(
+                            "candidate step budget overflowed".into(),
+                        )
+                    })?,
+            )
             .and_then(|value| value.checked_add(3))
             .ok_or_else(|| {
                 EncoderExperimentError::Validation("candidate step budget overflowed".into())
@@ -202,6 +282,11 @@ where
                 .iter()
                 .find(|(_, execution)| execution.state == CandidateExecutionState::Trained)
             {
+                let suite_key = protocol
+                    .development_suite_keys()
+                    .into_iter()
+                    .find(|suite_key| !execution.development_reports.contains_key(suite_key))
+                    .expect("trained candidate has an unfinished development suite");
                 let model = execution
                     .train_output
                     .as_ref()
@@ -214,7 +299,7 @@ where
                         project.clone(),
                         model,
                         protocol.metric_contract.clone(),
-                        protocol.development_suite_key.clone(),
+                        suite_key.clone(),
                         protocol.maximum_evaluation_seconds,
                     )
                     .await
@@ -223,15 +308,18 @@ where
                         let assessment = assess_candidate(
                             &project,
                             &protocol.metric_contract,
-                            &protocol.baseline_development_report,
+                            protocol
+                                .baseline_development_report_for(&suite_key)
+                                .expect("protocol owns the development suite"),
                             &report,
                             Utc::now(),
                         )?;
                         self.append(
                             &protocol,
                             &view,
-                            ExperimentEventKind::CandidateDevelopmentCompleted {
+                            ExperimentEventKind::CandidateDevelopmentSuiteCompleted {
                                 candidate_id: *candidate_id,
+                                suite_key,
                                 report,
                                 assessment,
                             },
@@ -268,23 +356,20 @@ where
                 continue;
             }
 
-            let assessments = view
+            let evidence = view
                 .candidates
-                .values()
-                .filter_map(|execution| execution.development_assessment.clone())
+                .iter()
+                .filter(|(_, execution)| {
+                    execution.state == CandidateExecutionState::DevelopmentCompleted
+                })
+                .map(|(candidate_id, execution)| DevelopmentCandidateEvidence {
+                    candidate_id: *candidate_id,
+                    suite_assessments: execution.development_assessments.clone(),
+                })
                 .collect::<Vec<_>>();
-            let best = select_development_candidate(&assessments)?;
-            let selected_candidate_id = best.and_then(|assessment| {
-                view.candidates
-                    .iter()
-                    .find_map(|(candidate_id, execution)| {
-                        execution
-                            .development_assessment
-                            .as_ref()
-                            .is_some_and(|value| value.id == assessment.id)
-                            .then_some(*candidate_id)
-                    })
-            });
+            let selected_candidate_id =
+                select_multi_development_candidate(&protocol.development_suite_keys(), &evidence)?
+                    .map(|selection| selection.candidate_id);
             self.append(
                 &protocol,
                 &view,

@@ -25,7 +25,10 @@ use crate::{
 struct ProtocolInput {
     budget: OptimizationBudget,
     maximum_evaluation_seconds: u64,
-    development_suite_key: String,
+    #[serde(default)]
+    development_suite_key: Option<String>,
+    #[serde(default)]
+    development_suite_keys: Vec<String>,
     sealed_suite_key: String,
     metric_definitions: Vec<MetricDefinition>,
     primary_metric: String,
@@ -125,24 +128,49 @@ async fn prepare(
             )?)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let protocol = runner
-        .prepare_protocol(
-            project.id,
-            contract,
-            input.budget,
-            input.maximum_evaluation_seconds,
-            input.development_suite_key,
-            input.sealed_suite_key,
-            candidates,
-        )
-        .await?;
+    let protocol = match (input.development_suite_key, input.development_suite_keys) {
+        (Some(suite_key), suite_keys) if suite_keys.is_empty() => {
+            runner
+                .prepare_protocol(
+                    project.id,
+                    contract,
+                    input.budget,
+                    input.maximum_evaluation_seconds,
+                    suite_key,
+                    input.sealed_suite_key,
+                    candidates,
+                )
+                .await?
+        }
+        (None, suite_keys) if !suite_keys.is_empty() => {
+            runner
+                .prepare_multi_protocol(
+                    project.id,
+                    contract,
+                    input.budget,
+                    input.maximum_evaluation_seconds,
+                    suite_keys,
+                    input.sealed_suite_key,
+                    candidates,
+                )
+                .await?
+        }
+        _ => anyhow::bail!(
+            "protocol must define exactly one of development_suite_key or development_suite_keys"
+        ),
+    };
+    let baseline_development_metrics = protocol
+        .baseline_development_reports()
+        .into_iter()
+        .map(|report| (report.suite_key.clone(), report.metrics.clone()))
+        .collect::<BTreeMap<_, _>>();
     presentation::print(&serde_json::json!({
         "protocol_id": protocol.id,
         "protocol_fingerprint": protocol.fingerprint,
         "project_id": protocol.project_snapshot_id,
         "candidate_count": protocol.candidates.len(),
         "budget": protocol.budget,
-        "baseline_development_metrics": protocol.baseline_development_report.metrics,
+        "baseline_development_metrics": baseline_development_metrics,
         "baseline_sealed_reference": {
             "status": "pinned_hidden_until_final_acceptance",
             "report_id": protocol.baseline_sealed_report.id,

@@ -9,7 +9,8 @@ use crate::{
     domain::{EvidenceRole, ExternalProjectSnapshot, ModelArtifactIdentity},
     fingerprint,
     metrics::{
-        CandidateAssessment, CandidateVerdict, EvaluationReport, select_development_candidate,
+        CandidateAssessment, CandidateVerdict, DevelopmentCandidateEvidence, EvaluationReport,
+        select_multi_development_candidate,
     },
     ports::TrainOutput,
     protocol::ExperimentProtocol,
@@ -45,6 +46,12 @@ pub enum ExperimentEventKind {
     },
     CandidateDevelopmentCompleted {
         candidate_id: Uuid,
+        report: EvaluationReport,
+        assessment: CandidateAssessment,
+    },
+    CandidateDevelopmentSuiteCompleted {
+        candidate_id: Uuid,
+        suite_key: String,
         report: EvaluationReport,
         assessment: CandidateAssessment,
     },
@@ -187,8 +194,8 @@ pub enum CandidateExecutionState {
 pub struct CandidateExecution {
     pub state: CandidateExecutionState,
     pub train_output: Option<TrainOutput>,
-    pub development_report: Option<EvaluationReport>,
-    pub development_assessment: Option<CandidateAssessment>,
+    pub development_reports: BTreeMap<String, EvaluationReport>,
+    pub development_assessments: BTreeMap<String, CandidateAssessment>,
     pub failure_phase: Option<CandidatePhase>,
     pub failure_reason: Option<String>,
 }
@@ -198,8 +205,8 @@ impl CandidateExecution {
         Self {
             state: CandidateExecutionState::Pending,
             train_output: None,
-            development_report: None,
-            development_assessment: None,
+            development_reports: BTreeMap::new(),
+            development_assessments: BTreeMap::new(),
             failure_phase: None,
             failure_reason: None,
         }
@@ -416,30 +423,34 @@ fn apply_event(
             report,
             assessment,
         } => {
-            let execution = candidate_execution_mut(view, *candidate_id)?;
-            if execution.state != CandidateExecutionState::Trained {
-                return illegal_event("candidate development report has no trained model");
+            if protocol.development_suite_keys().len() != 1 {
+                return illegal_event("legacy development event cannot complete a multi-suite run");
             }
-            let output = execution
-                .train_output
-                .as_ref()
-                .expect("trained output exists");
-            report.validate_integrity(project, &protocol.metric_contract)?;
-            assessment.validate_integrity(
+            apply_development_suite(
                 project,
-                &protocol.metric_contract,
-                &protocol.baseline_development_report,
+                protocol,
+                view,
+                *candidate_id,
+                &report.suite_key,
                 report,
+                assessment,
             )?;
-            if report.evidence_role != EvidenceRole::Development
-                || report.suite_key != protocol.development_suite_key
-                || report.model != output.model
-            {
-                return illegal_event("candidate development evidence does not match the run");
-            }
-            execution.state = CandidateExecutionState::DevelopmentCompleted;
-            execution.development_report = Some(report.clone());
-            execution.development_assessment = Some(assessment.clone());
+        }
+        ExperimentEventKind::CandidateDevelopmentSuiteCompleted {
+            candidate_id,
+            suite_key,
+            report,
+            assessment,
+        } => {
+            apply_development_suite(
+                project,
+                protocol,
+                view,
+                *candidate_id,
+                suite_key,
+                report,
+                assessment,
+            )?;
         }
         ExperimentEventKind::CandidateFailed {
             candidate_id,
@@ -475,21 +486,20 @@ fn apply_event(
             {
                 return illegal_event("development selection requires every candidate to finish");
             }
-            let assessments = view
+            let evidence = view
                 .candidates
-                .values()
-                .filter_map(|candidate| candidate.development_assessment.clone())
-                .collect::<Vec<_>>();
-            let expected_assessment = select_development_candidate(&assessments)?;
-            let expected_candidate = expected_assessment.and_then(|assessment| {
-                view.candidates.iter().find_map(|(id, execution)| {
-                    (execution
-                        .development_assessment
-                        .as_ref()
-                        .is_some_and(|value| value.id == assessment.id))
-                    .then_some(*id)
+                .iter()
+                .filter(|(_, candidate)| {
+                    candidate.state == CandidateExecutionState::DevelopmentCompleted
                 })
-            });
+                .map(|(candidate_id, candidate)| DevelopmentCandidateEvidence {
+                    candidate_id: *candidate_id,
+                    suite_assessments: candidate.development_assessments.clone(),
+                })
+                .collect::<Vec<_>>();
+            let expected_candidate =
+                select_multi_development_candidate(&protocol.development_suite_keys(), &evidence)?
+                    .map(|selection| selection.candidate_id);
             if *candidate_id != expected_candidate {
                 return illegal_event(
                     "development selection does not match deterministic passing evidence",
@@ -596,6 +606,55 @@ fn apply_event(
             view.failure_reason = Some(bounded_reason(reason)?);
             view.state = ExperimentRunState::Failed;
         }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_development_suite(
+    project: &ExternalProjectSnapshot,
+    protocol: &ExperimentProtocol,
+    view: &mut ExperimentView,
+    candidate_id: Uuid,
+    suite_key: &str,
+    report: &EvaluationReport,
+    assessment: &CandidateAssessment,
+) -> Result<(), EncoderExperimentError> {
+    let baseline = protocol
+        .baseline_development_report_for(suite_key)
+        .ok_or_else(|| {
+            EncoderExperimentError::Validation(
+                "candidate development evidence references an unknown suite".into(),
+            )
+        })?;
+    let suite_count = protocol.development_suite_keys().len();
+    let execution = candidate_execution_mut(view, candidate_id)?;
+    if execution.state != CandidateExecutionState::Trained
+        || execution.development_reports.contains_key(suite_key)
+        || execution.development_assessments.contains_key(suite_key)
+    {
+        return illegal_event("candidate development suite has no reservation or is duplicated");
+    }
+    let output = execution
+        .train_output
+        .as_ref()
+        .expect("trained output exists");
+    report.validate_integrity(project, &protocol.metric_contract)?;
+    assessment.validate_integrity(project, &protocol.metric_contract, baseline, report)?;
+    if report.evidence_role != EvidenceRole::Development
+        || report.suite_key != suite_key
+        || report.model != output.model
+    {
+        return illegal_event("candidate development evidence does not match the run suite");
+    }
+    execution
+        .development_reports
+        .insert(suite_key.to_owned(), report.clone());
+    execution
+        .development_assessments
+        .insert(suite_key.to_owned(), assessment.clone());
+    if execution.development_reports.len() == suite_count {
+        execution.state = CandidateExecutionState::DevelopmentCompleted;
     }
     Ok(())
 }

@@ -70,6 +70,8 @@ impl MetricGateCondition {
 pub struct MetricGate {
     pub key: String,
     pub role: EvidenceRole,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suite_key: Option<String>,
     pub condition: MetricGateCondition,
 }
 
@@ -91,8 +93,22 @@ impl MetricGate {
         Ok(Self {
             key: required(key, "metric gate key")?,
             role,
+            suite_key: None,
             condition,
         })
+    }
+
+    /// Restricts this gate to one named suite. An unscoped gate applies to
+    /// every suite with the matching evidence role.
+    pub fn for_suite(
+        key: impl Into<String>,
+        role: EvidenceRole,
+        suite_key: impl Into<String>,
+        condition: MetricGateCondition,
+    ) -> Result<Self, EncoderExperimentError> {
+        let mut gate = Self::new(key, role, condition)?;
+        gate.suite_key = Some(required(suite_key, "metric gate suite key")?);
+        Ok(gate)
     }
 }
 
@@ -116,6 +132,7 @@ impl MetricContract {
         gates.sort_by(|left, right| {
             left.role
                 .cmp(&right.role)
+                .then_with(|| left.suite_key.cmp(&right.suite_key))
                 .then_with(|| left.key.cmp(&right.key))
         });
         let mut value = Self {
@@ -175,12 +192,24 @@ impl MetricContract {
                 "metric definitions must be unique and include the primary metric".into(),
             ));
         }
+        let mut gate_keys = BTreeSet::new();
         for gate in &self.gates {
             if !definitions.contains(gate.key.as_str()) {
                 return Err(EncoderExperimentError::Validation(format!(
                     "metric gate references unknown metric {}",
                     gate.key
                 )));
+            }
+            if gate
+                .suite_key
+                .as_deref()
+                .is_some_and(|value| value.trim() != value || value.is_empty())
+                || !gate_keys.insert((gate.role, gate.suite_key.as_deref(), gate.key.as_str()))
+            {
+                return Err(EncoderExperimentError::Validation(
+                    "metric gates must have canonical scopes and unique role/suite/metric keys"
+                        .into(),
+                ));
             }
             gate.condition.validate()?;
         }
@@ -428,7 +457,13 @@ pub fn assess_candidate(
     let relevant = contract
         .gates
         .iter()
-        .filter(|gate| gate.role == role)
+        .filter(|gate| {
+            gate.role == role
+                && gate
+                    .suite_key
+                    .as_deref()
+                    .is_none_or(|suite_key| suite_key == candidate.suite_key)
+        })
         .collect::<Vec<_>>();
     if relevant.is_empty() {
         return Err(EncoderExperimentError::Validation(
@@ -518,6 +553,100 @@ pub fn select_development_candidate(
                 .total_cmp(&right.primary_improvement)
                 .then_with(|| right.candidate_report_id.cmp(&left.candidate_report_id))
         }))
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DevelopmentCandidateEvidence {
+    pub candidate_id: Uuid,
+    pub suite_assessments: BTreeMap<String, CandidateAssessment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DevelopmentSelection {
+    pub candidate_id: Uuid,
+    pub minimum_primary_improvement: f64,
+    pub mean_primary_improvement: f64,
+    pub suite_assessment_ids: BTreeMap<String, Uuid>,
+}
+
+/// Selects only candidates that pass every independent development suite.
+/// The conservative score maximizes the worst suite first, then the mean;
+/// the immutable candidate id provides the final stable tie-break.
+pub fn select_multi_development_candidate(
+    expected_suite_keys: &[String],
+    candidates: &[DevelopmentCandidateEvidence],
+) -> Result<Option<DevelopmentSelection>, EncoderExperimentError> {
+    if expected_suite_keys.is_empty()
+        || expected_suite_keys
+            .iter()
+            .any(|key| key.trim() != key || key.is_empty())
+        || expected_suite_keys
+            .windows(2)
+            .any(|pair| pair[0] >= pair[1])
+    {
+        return Err(EncoderExperimentError::Validation(
+            "development suite keys must be non-empty, unique, and ordered".into(),
+        ));
+    }
+    let expected = expected_suite_keys.iter().collect::<BTreeSet<_>>();
+    let mut candidate_ids = BTreeSet::new();
+    let mut eligible = Vec::new();
+    for candidate in candidates {
+        if candidate.candidate_id.is_nil()
+            || !candidate_ids.insert(candidate.candidate_id)
+            || candidate.suite_assessments.keys().collect::<BTreeSet<_>>() != expected
+            || candidate
+                .suite_assessments
+                .values()
+                .any(|assessment| assessment.evidence_role != EvidenceRole::Development)
+        {
+            return Err(EncoderExperimentError::Validation(
+                "candidate development evidence must cover every exact suite once".into(),
+            ));
+        }
+        if candidate
+            .suite_assessments
+            .values()
+            .any(|assessment| assessment.verdict != CandidateVerdict::Passed)
+        {
+            continue;
+        }
+        let improvements = candidate
+            .suite_assessments
+            .values()
+            .map(|assessment| assessment.primary_improvement)
+            .collect::<Vec<_>>();
+        let minimum = improvements
+            .iter()
+            .copied()
+            .min_by(f64::total_cmp)
+            .expect("suite evidence is non-empty");
+        let mean = stable_metric_delta(
+            improvements.iter().sum::<f64>() / improvements.len() as f64,
+            0.0,
+        );
+        eligible.push(DevelopmentSelection {
+            candidate_id: candidate.candidate_id,
+            minimum_primary_improvement: minimum,
+            mean_primary_improvement: mean,
+            suite_assessment_ids: candidate
+                .suite_assessments
+                .iter()
+                .map(|(key, assessment)| (key.clone(), assessment.id))
+                .collect(),
+        });
+    }
+    Ok(eligible.into_iter().max_by(|left, right| {
+        left.minimum_primary_improvement
+            .total_cmp(&right.minimum_primary_improvement)
+            .then_with(|| {
+                left.mean_primary_improvement
+                    .total_cmp(&right.mean_primary_improvement)
+            })
+            .then_with(|| right.candidate_id.cmp(&left.candidate_id))
+    }))
 }
 
 #[cfg(test)]
@@ -710,5 +839,68 @@ mod tests {
         )
         .unwrap();
         candidate.validate_integrity(&project).unwrap();
+    }
+
+    fn selection_assessment(
+        project_id: Uuid,
+        improvement: f64,
+        verdict: CandidateVerdict,
+        second: u32,
+    ) -> CandidateAssessment {
+        CandidateAssessment {
+            id: Uuid::new_v4(),
+            project_snapshot_id: project_id,
+            baseline_report_id: Uuid::new_v4(),
+            candidate_report_id: Uuid::new_v4(),
+            evidence_role: EvidenceRole::Development,
+            primary_metric: "mrr".into(),
+            primary_improvement: improvement,
+            gates: vec![],
+            verdict,
+            created_at: time(second),
+            fingerprint: digest('a'),
+        }
+    }
+
+    #[test]
+    fn multi_suite_selection_requires_every_suite_and_uses_worst_suite_first() {
+        let project_id = Uuid::new_v4();
+        let first_id = Uuid::from_u128(1);
+        let second_id = Uuid::from_u128(2);
+        let evidence = vec![
+            DevelopmentCandidateEvidence {
+                candidate_id: first_id,
+                suite_assessments: BTreeMap::from([
+                    (
+                        "generic".into(),
+                        selection_assessment(project_id, 0.05, CandidateVerdict::Passed, 1),
+                    ),
+                    (
+                        "retired".into(),
+                        selection_assessment(project_id, -0.01, CandidateVerdict::Failed, 2),
+                    ),
+                ]),
+            },
+            DevelopmentCandidateEvidence {
+                candidate_id: second_id,
+                suite_assessments: BTreeMap::from([
+                    (
+                        "generic".into(),
+                        selection_assessment(project_id, 0.02, CandidateVerdict::Passed, 3),
+                    ),
+                    (
+                        "retired".into(),
+                        selection_assessment(project_id, 0.01, CandidateVerdict::Passed, 4),
+                    ),
+                ]),
+            },
+        ];
+        let selected =
+            select_multi_development_candidate(&["generic".into(), "retired".into()], &evidence)
+                .unwrap()
+                .unwrap();
+        assert_eq!(selected.candidate_id, second_id);
+        assert_eq!(selected.minimum_primary_improvement, 0.01);
+        assert_eq!(selected.mean_primary_improvement, 0.015);
     }
 }
