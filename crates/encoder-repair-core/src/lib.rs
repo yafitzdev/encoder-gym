@@ -6,6 +6,7 @@
 
 pub mod diagnosis;
 pub mod observation;
+pub mod ports;
 
 use thiserror::Error;
 

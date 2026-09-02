@@ -198,3 +198,20 @@ synth doctor
 
 Do not delete or rewrite an applied migration. Add the next numbered migration
 and keep historical artifact/provenance rows readable.
+
+## Production encoder experiment database
+
+`encoder-experiment-sqlite` has an independent migration sequence because its
+journal may live in a dedicated production-experiment database:
+
+- `0001_experiment_journal`: immutable projects, protocols, runs, and events;
+- `0002_renewable_campaigns`: renewable benchmark-generation and production-
+  campaign journals;
+- `0003_repair_evidence`: append-only complete development observation sets,
+  comparative diagnoses, and exact normalized diagnosis-to-observation
+  bindings. Stable evidence and derivation fingerprints make collection and
+  diagnosis retries idempotent without rewriting campaign history.
+
+The repair migration upgrades a completed renewable campaign database in place.
+Reads deeply reproduce artifact fingerprints, campaign/run scope, persisted
+development-report authority, normalized bindings, and diagnosis derivation.

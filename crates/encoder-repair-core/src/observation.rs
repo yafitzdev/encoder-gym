@@ -112,6 +112,8 @@ impl DevelopmentObservation {
 pub struct DevelopmentObservationSet {
     pub schema_version: u32,
     pub id: Uuid,
+    /// Stable identity of the exact source evidence, independent from record UUID/time.
+    pub evidence_fingerprint: String,
     pub project_snapshot_id: Uuid,
     pub project_snapshot_fingerprint: String,
     pub source_campaign_id: Uuid,
@@ -159,6 +161,7 @@ impl DevelopmentObservationSet {
         let mut value = Self {
             schema_version: DEVELOPMENT_OBSERVATION_SET_SCHEMA_VERSION,
             id: Uuid::new_v4(),
+            evidence_fingerprint: String::new(),
             project_snapshot_id: project.id,
             project_snapshot_fingerprint: project.fingerprint.clone(),
             source_campaign_id,
@@ -176,12 +179,18 @@ impl DevelopmentObservationSet {
             fingerprint: String::new(),
         };
         value.validate_fields()?;
+        value.evidence_fingerprint = value.reproduce_evidence_fingerprint()?;
         value.fingerprint = value.reproduce_fingerprint()?;
         Ok(value)
     }
 
     pub fn validate_integrity(&self) -> Result<(), EncoderRepairError> {
         self.validate_fields()?;
+        if self.reproduce_evidence_fingerprint()? != self.evidence_fingerprint {
+            return Err(EncoderRepairError::Integrity(
+                "development observation source evidence fingerprint changed".into(),
+            ));
+        }
         if self.reproduce_fingerprint()? != self.fingerprint {
             return Err(EncoderRepairError::Integrity(
                 "development observation set fingerprint changed".into(),
@@ -190,10 +199,30 @@ impl DevelopmentObservationSet {
         Ok(())
     }
 
+    pub fn reproduce_evidence_fingerprint(&self) -> Result<String, EncoderRepairError> {
+        fingerprint(&serde_json::json!({
+            "schema_version": self.schema_version,
+            "project_snapshot_id": self.project_snapshot_id,
+            "project_snapshot_fingerprint": self.project_snapshot_fingerprint,
+            "source_campaign_id": self.source_campaign_id,
+            "source_experiment_run_id": self.source_experiment_run_id,
+            "candidate_id": self.candidate_id,
+            "evaluation_report_id": self.evaluation_report_id,
+            "evaluation_report_fingerprint": self.evaluation_report_fingerprint,
+            "model_fingerprint": self.model_fingerprint,
+            "suite_key": self.suite_key,
+            "suite_fingerprint": self.suite_fingerprint,
+            "observer": self.observer,
+            "observation_artifact": self.observation_artifact,
+            "observations": self.observations,
+        }))
+    }
+
     pub fn reproduce_fingerprint(&self) -> Result<String, EncoderRepairError> {
         fingerprint(&serde_json::json!({
             "schema_version": self.schema_version,
             "id": self.id,
+            "evidence_fingerprint": self.evidence_fingerprint,
             "project_snapshot_id": self.project_snapshot_id,
             "project_snapshot_fingerprint": self.project_snapshot_fingerprint,
             "source_campaign_id": self.source_campaign_id,
@@ -213,6 +242,9 @@ impl DevelopmentObservationSet {
 
     fn validate_fields(&self) -> Result<(), EncoderRepairError> {
         if self.schema_version != DEVELOPMENT_OBSERVATION_SET_SCHEMA_VERSION
+            || self.id.is_nil()
+            || !self.evidence_fingerprint.is_empty()
+                && !canonical_sha256(&self.evidence_fingerprint)
             || self.source_campaign_id.is_nil()
             || self.source_experiment_run_id.is_nil()
             || self.candidate_id.is_some_and(|id| id.is_nil())

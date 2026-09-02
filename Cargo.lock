@@ -979,6 +979,7 @@ dependencies = [
  "chrono",
  "encoder-campaign-core",
  "encoder-experiment-core",
+ "encoder-repair-core",
  "serde_json",
  "sqlx",
  "tempfile",

@@ -2,6 +2,7 @@
 
 mod benchmark_generation;
 mod campaign;
+mod repair;
 
 use std::{str::FromStr, time::Duration};
 

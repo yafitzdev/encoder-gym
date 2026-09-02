@@ -122,6 +122,11 @@ derives shared and suite-specific weakness, fixed/regressed/persistent rows,
 rank movement, abstention support, minimum-support limitations, and exact
 candidate gate trade-offs. It contains no native row types, paths, subprocesses,
 SQLite, CLI, model inference, generation, or training logic.
+`encoder-experiment-sqlite` implements its narrow append-only evidence-store
+port beside the existing experiment and campaign journals. Stable source and
+derivation fingerprints are idempotency keys; the adapter deeply verifies the
+exact persisted development report, project, campaign, run, normalized
+observation bindings, and deterministic diagnosis on every diagnosis read.
 
 `dataset-quality-core` owns immutable source-set audit plans, explicit quality
 policies, normalized evaluator requests and assessments, deterministic verdicts,

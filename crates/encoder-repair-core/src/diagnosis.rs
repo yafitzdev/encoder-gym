@@ -86,7 +86,7 @@ impl CandidateSuiteOutcome {
         let metric_deltas = candidate
             .metrics
             .iter()
-            .map(|(key, value)| (key.clone(), value - baseline.metrics[key]))
+            .map(|(key, value)| (key.clone(), stable_decimal(value - baseline.metrics[key])))
             .collect();
         let mut value = Self {
             candidate_id,
@@ -237,6 +237,8 @@ pub struct CandidateTradeoff {
 pub struct ComparativeDiagnosis {
     pub schema_version: u32,
     pub id: Uuid,
+    /// Stable identity of the exact evidence and derivation policy, excluding record UUID/time.
+    pub derivation_fingerprint: String,
     pub project_snapshot_id: Uuid,
     pub project_snapshot_fingerprint: String,
     pub source_campaign_id: Uuid,
@@ -282,6 +284,7 @@ impl ComparativeDiagnosis {
         let mut value = Self {
             schema_version: COMPARATIVE_DIAGNOSIS_SCHEMA_VERSION,
             id: Uuid::new_v4(),
+            derivation_fingerprint: String::new(),
             project_snapshot_id: project.id,
             project_snapshot_fingerprint: project.fingerprint.clone(),
             source_campaign_id,
@@ -296,6 +299,7 @@ impl ComparativeDiagnosis {
             fingerprint: String::new(),
         };
         value.validate_fields()?;
+        value.derivation_fingerprint = value.reproduce_derivation_fingerprint()?;
         value.fingerprint = value.reproduce_fingerprint()?;
         Ok(value)
     }
@@ -331,6 +335,11 @@ impl ComparativeDiagnosis {
 
     pub fn validate_integrity(&self) -> Result<(), EncoderRepairError> {
         self.validate_fields()?;
+        if self.reproduce_derivation_fingerprint()? != self.derivation_fingerprint {
+            return Err(EncoderRepairError::Integrity(
+                "comparative diagnosis derivation fingerprint changed".into(),
+            ));
+        }
         if self.reproduce_fingerprint()? != self.fingerprint {
             return Err(EncoderRepairError::Integrity(
                 "comparative diagnosis fingerprint changed".into(),
@@ -339,10 +348,25 @@ impl ComparativeDiagnosis {
         Ok(())
     }
 
+    pub fn reproduce_derivation_fingerprint(&self) -> Result<String, EncoderRepairError> {
+        fingerprint(&serde_json::json!({
+            "schema_version": self.schema_version,
+            "project_snapshot_id": self.project_snapshot_id,
+            "project_snapshot_fingerprint": self.project_snapshot_fingerprint,
+            "source_campaign_id": self.source_campaign_id,
+            "source_experiment_run_id": self.source_experiment_run_id,
+            "minimum_support": self.minimum_support,
+            "slice_dimensions": self.slice_dimensions,
+            "observation_sets": self.observation_sets,
+            "candidate_tradeoffs": self.candidate_tradeoffs,
+        }))
+    }
+
     pub fn reproduce_fingerprint(&self) -> Result<String, EncoderRepairError> {
         fingerprint(&serde_json::json!({
             "schema_version": self.schema_version,
             "id": self.id,
+            "derivation_fingerprint": self.derivation_fingerprint,
             "project_snapshot_id": self.project_snapshot_id,
             "project_snapshot_fingerprint": self.project_snapshot_fingerprint,
             "source_campaign_id": self.source_campaign_id,
@@ -360,6 +384,8 @@ impl ComparativeDiagnosis {
     fn validate_fields(&self) -> Result<(), EncoderRepairError> {
         if self.schema_version != COMPARATIVE_DIAGNOSIS_SCHEMA_VERSION
             || self.id.is_nil()
+            || !self.derivation_fingerprint.is_empty()
+                && !canonical_sha256(&self.derivation_fingerprint)
             || self.project_snapshot_id.is_nil()
             || !canonical_sha256(&self.project_snapshot_fingerprint)
             || self.source_campaign_id.is_nil()
@@ -785,6 +811,10 @@ fn ratio(numerator: u64, denominator: u64) -> f64 {
     } else {
         (numerator as f64 / denominator as f64 * 1_000_000_000_000.0).round() / 1_000_000_000_000.0
     }
+}
+
+fn stable_decimal(value: f64) -> f64 {
+    (value * 1_000_000_000_000.0).round() / 1_000_000_000_000.0
 }
 
 #[cfg(test)]
