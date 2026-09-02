@@ -166,3 +166,30 @@ Git-status unchanged.
 
 Ordinary tests use a deterministic fake adapter. The real Nomos process test is
 local, explicit, and uses only the isolated copy.
+
+## First completed production loop
+
+The first complete protocol ran on 2026-09-02 with project
+`2452cb9f-6ffe-4c27-82d2-3b966dadf9cf`, protocol
+`a7e4c189-5e67-406d-9ba2-6851bada70ef`, and run
+`c4e1b908-ed55-434e-928d-ffe321b7a799`. Both finite triplet-interpolation
+candidates passed every development gate. The selected 5% candidate improved
+development MRR from `0.8956535714` to `0.8980035714`, Recall@1 from `0.836`
+to `0.840`, Recall@2 from `0.906` to `0.908`, and mean positive margin from
+`0.2147968518` to `0.2222092217`, with identical agent outcomes.
+
+The one authorized sealed report did not confirm the ranking improvement. MRR
+changed from `0.9664993081` to `0.9656004384`, and Recall@1 changed from
+`0.9597222222` to `0.9583333333`; all measured agent outcomes were identical
+and margin improved. The strict MRR and Recall@1 gates failed, so the durable
+decision is `retain_baseline`. The selected candidate remains an immutable
+rejected artifact with model fingerprint
+`sha256:95943e3eeeb1224cc8da28cdf1c448545ef2e3c33031fe06aa28b8ac99ff856c`.
+
+This is a successful validation of the platform contract, not a promoted
+encoder improvement. Encoder Gym rejected a plausible development-only win,
+preserved the original model, and exhausted exactly the declared sealed-use
+budget. The revealed sealed cohort may not be used to try the runner-up or tune
+another interpolation weight. A subsequent adaptive loop requires a declared
+successor acceptance cohort; the old cohort can enter development only after
+that replacement is frozen and its role change is explicit.
