@@ -30,6 +30,10 @@ dataset-quality-fake.workspace = true
 dataset-quality-openai-compatible.workspace = true
 dataset-quality-runner.workspace = true
 evaluation-core.workspace = true
+encoder-experiment-core.workspace = true
+encoder-experiment-nomos.workspace = true
+encoder-experiment-runner.workspace = true
+encoder-experiment-sqlite.workspace = true
 generation-core.workspace = true
 generation-fake.workspace = true
 generation-openai-compatible = { package = "synthetic-data-openai-compatible", path = "../../crates/generation-openai-compatible" }

@@ -105,6 +105,11 @@ pub enum Command {
         #[command(subcommand)]
         command: EvaluationCommand,
     },
+    /// Run bounded production encoder experiments through compiled task adapters.
+    Experiment {
+        #[command(subcommand)]
+        command: ExperimentCommand,
+    },
     /// Aggregate and inspect persisted classification errors.
     Analysis {
         #[command(subcommand)]
@@ -189,6 +194,68 @@ pub enum Command {
     Rows(RowsArgs),
     /// Export accepted rows.
     Export(ExportArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ExperimentCommand {
+    /// Verify the isolated Nomos copy and every immutable pilot artifact.
+    NomosVerify(NomosWorkspaceArgs),
+    /// Register or reuse the exact verified Nomos project snapshot.
+    NomosRegister(NomosWorkspaceArgs),
+    /// Freeze baseline reports, gates, budgets, and a finite candidate set.
+    Prepare(ExperimentPrepareArgs),
+    /// Create a new append-only run journal for a prepared protocol.
+    Start(ExperimentProtocolArgs),
+    /// Train and development-evaluate every finite candidate.
+    RunDevelopment(ExperimentRunArgs),
+    /// Show a deeply verified run view without advancing it.
+    Status(ExperimentRunArgs),
+    /// Explicitly authorize the development-selected candidate's sealed report.
+    AuthorizeSealed(ExperimentAuthorizeArgs),
+    /// Execute the one authorized candidate sealed report and finalize acceptance.
+    RunSealed(ExperimentRunArgs),
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct NomosWorkspaceArgs {
+    /// Isolated Nomos experiment copy. The source repository is never accepted here.
+    #[arg(long)]
+    pub workspace: PathBuf,
+    /// Python executable containing the local Nomos runtime dependencies.
+    #[arg(long, default_value = "python")]
+    pub python: PathBuf,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct ExperimentPrepareArgs {
+    pub project_id: Uuid,
+    /// Strict JSON protocol input containing metrics, gates, budgets, and candidates.
+    pub file: PathBuf,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct ExperimentProtocolArgs {
+    pub protocol_id: Uuid,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct ExperimentRunArgs {
+    pub run_id: Uuid,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct ExperimentAuthorizeArgs {
+    pub run_id: Uuid,
+    #[arg(long, default_value = "local-operator")]
+    pub authorized_by: String,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
 }
 
 #[derive(Debug, Subcommand)]

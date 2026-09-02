@@ -13,6 +13,7 @@ mod dataset;
 mod doctor;
 mod encoder;
 mod evaluation;
+pub(crate) mod experiment;
 mod export;
 mod generation;
 mod governance;
@@ -72,6 +73,9 @@ pub fn execute(
             Command::Encoder { command } => encoder::execute(command, &store).await,
             Command::Training { command } => training::execute(command, store).await,
             Command::Evaluation { command } => evaluation::execute(command, store).await,
+            Command::Experiment { .. } => {
+                unreachable!("experiment commands are dispatched before the synthetic-data store")
+            }
             Command::Plan { command } => plan::execute(command, &store).await,
             Command::Backend { command } => backend::execute(command, &store).await,
             Command::Recovery { command } => recovery::execute(command, store).await,

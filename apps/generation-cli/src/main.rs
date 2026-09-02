@@ -6,7 +6,7 @@ mod training_examples;
 
 use anyhow::Context;
 use clap::Parser;
-use cli::Cli;
+use cli::{Cli, Command};
 use recovery_core::RecoveryStore;
 use synthetic_data_sqlite::SqliteStore;
 use tracing_subscriber::EnvFilter;
@@ -18,6 +18,12 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     presentation::set_output(cli.output)?;
     let database_url = cli.database_url();
+    let command = match cli.command {
+        Command::Experiment { command } => {
+            return commands::experiment::execute(command, &database_url).await;
+        }
+        command => command,
+    };
     let store = SqliteStore::connect(&database_url)
         .await
         .with_context(|| format!("could not open database at {database_url}"))?;
@@ -28,7 +34,7 @@ async fn main() -> anyhow::Result<()> {
             interrupted.len()
         );
     }
-    commands::execute(cli.command, store).await
+    commands::execute(command, store).await
 }
 
 fn init_tracing() {

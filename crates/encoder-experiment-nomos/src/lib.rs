@@ -250,7 +250,7 @@ impl NomosBackend {
         &self,
         arguments: &[String],
         maximum_seconds: u64,
-    ) -> Result<Value, EncoderTaskAdapterError> {
+    ) -> Result<(), EncoderTaskAdapterError> {
         if maximum_seconds == 0 {
             return Err(adapter_error(
                 "Nomos process requires a positive time limit",
@@ -275,8 +275,7 @@ impl NomosBackend {
                 output.status
             )));
         }
-        serde_json::from_slice(&output.stdout)
-            .map_err(|error| adapter_error(format!("Nomos process output was not JSON: {error}")))
+        Ok(())
     }
 
     fn candidate_output(&self, candidate: &TrainingCandidate) -> PathBuf {
@@ -438,9 +437,9 @@ impl EncoderTaskBackend for NomosBackend {
                 arguments.extend(["--loss".into(), parameters.loss.clone()]);
             }
             let started = std::time::Instant::now();
-            let metadata = self
-                .run_bounded(&arguments, candidate.maximum_training_seconds)
+            self.run_bounded(&arguments, candidate.maximum_training_seconds)
                 .await?;
+            let metadata = read_json(&output.join("nomos_training_manifest.json"))?;
             let (bytes, digest) = tree_identity(&output)?;
             let model = ModelArtifactIdentity::new(
                 output_relative,
@@ -516,7 +515,8 @@ impl EncoderTaskBackend for NomosBackend {
             let raw = if output.exists() {
                 read_json(&output)?
             } else {
-                self.run_bounded(&arguments, maximum_seconds).await?
+                self.run_bounded(&arguments, maximum_seconds).await?;
+                read_json(&output)?
             };
             let native: NativeEvaluation = serde_json::from_value(raw).map_err(|error| {
                 adapter_error(format!("Nomos evaluation JSON is invalid: {error}"))
@@ -725,13 +725,19 @@ impl NativeEvidenceRole {
 #[serde(deny_unknown_fields)]
 struct TaskConfiguration {
     adapter_protocol: String,
+    source_reference: Value,
+    baseline_evidence: Value,
     training_inputs: Vec<String>,
     suites: BTreeMap<String, SuiteConfiguration>,
 }
 
 impl TaskConfiguration {
     fn validate(&self) -> Result<(), EncoderTaskAdapterError> {
-        if self.adapter_protocol != ADAPTER_PROTOCOL_VERSION || self.training_inputs.is_empty() {
+        if self.adapter_protocol != ADAPTER_PROTOCOL_VERSION
+            || self.source_reference.is_null()
+            || self.baseline_evidence.is_null()
+            || self.training_inputs.is_empty()
+        {
             return Err(adapter_error(
                 "Nomos project task configuration does not match this adapter",
             ));
