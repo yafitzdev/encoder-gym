@@ -25,6 +25,12 @@ use encoder_repair_core::{
     diagnosis::{CandidateSuiteOutcome, ComparativeDiagnosis},
     observation::{DevelopmentObservation, DevelopmentObservationSet},
     ports::RepairEvidenceStore,
+    proposal::{
+        CandidateMechanism, NativeRepairQualityPolicy, RepairAction, RepairActionKind,
+        RepairBenchmarkBinding, RepairBudget, RepairCandidateHypothesis, RepairContext,
+        RepairProposal, RepairProposalApplication, RepairProposalReview, RepairReviewDecision,
+        RepairTarget,
+    },
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -263,6 +269,7 @@ struct Fixture {
     campaign_id: Uuid,
     run_id: Uuid,
     protocol: ExperimentProtocol,
+    generation_id: Uuid,
 }
 
 async fn fixture() -> Fixture {
@@ -360,6 +367,7 @@ async fn fixture() -> Fixture {
         campaign_id: campaign.id,
         run_id,
         protocol,
+        generation_id: generation.id,
     }
 }
 
@@ -606,6 +614,130 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
             .unwrap()
             .unwrap(),
         persisted
+    );
+
+    let generation = fixture
+        .store
+        .get_benchmark_generation(fixture.generation_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let generation_events = fixture
+        .store
+        .list_benchmark_generation_events(generation.id)
+        .await
+        .unwrap();
+    let generation_view = replay_benchmark_generation(&generation, &generation_events).unwrap();
+    let benchmark = RepairBenchmarkBinding::create(
+        generation.id,
+        generation.fingerprint.clone(),
+        generation_view.last_sequence,
+        generation_view.last_event_fingerprint.clone(),
+        generation
+            .development_suites
+            .iter()
+            .map(|value| {
+                (
+                    value.suite_key.clone(),
+                    value.bundle.development_suite_fingerprint.clone(),
+                )
+            })
+            .collect(),
+        generation.sealed_suite_id,
+        generation.sealed_suite_fingerprint.clone(),
+        generation.freshness.as_ref().unwrap().valid_until,
+    )
+    .unwrap();
+    let context =
+        RepairContext::create(&persisted, &fixture.project, &fixture.project, benchmark).unwrap();
+    let weakness = persisted.weaknesses.first().unwrap();
+    let proposal = RepairProposal::create(
+        &persisted,
+        context,
+        vec![RepairTarget {
+            key: "supported_failure".into(),
+            slice_fingerprint: weakness.slice_fingerprint.clone(),
+            slice: weakness.slice.clone(),
+            weakness_kind: weakness.kind,
+            suite_key: weakness.suite_key.clone(),
+            rationale: "test the supported diagnosis with bounded rows".into(),
+            absolute_row_target: 12,
+        }],
+        vec![
+            RepairAction {
+                key: "generate".into(),
+                kind: RepairActionKind::GenerateNativeRows,
+                target_keys: vec!["supported_failure".into()],
+                parameters: BTreeMap::from([(
+                    "recipe".into(),
+                    ParameterValue::Text("deterministic-v1".into()),
+                )]),
+            },
+            RepairAction {
+                key: "train".into(),
+                kind: RepairActionKind::ChangeTrainingConfiguration,
+                target_keys: vec!["supported_failure".into()],
+                parameters: BTreeMap::from([("epochs".into(), ParameterValue::Integer(1))]),
+            },
+        ],
+        NativeRepairQualityPolicy::create("native-v1", true, 0, 0, 0, 0, 0, 0, true, true).unwrap(),
+        RepairBudget {
+            maximum_total_rows: 12,
+            maximum_rows_per_target: 12,
+            maximum_candidates: 1,
+            maximum_training_seconds: 30,
+            maximum_evaluation_seconds: 30,
+            maximum_development_evaluations: 2,
+            maximum_external_calls: 0,
+            maximum_sealed_uses: 1,
+        },
+        vec![RepairCandidateHypothesis {
+            key: "targeted".into(),
+            mechanism: CandidateMechanism::GenuineRetraining,
+            hypothesis: "targeted contrasts improve the supported failure".into(),
+            action_keys: vec!["generate".into(), "train".into()],
+            maximum_training_seconds: 30,
+            parameters: BTreeMap::from([("seed".into(), ParameterValue::Integer(7))]),
+        }],
+        time(19),
+        time(11),
+    )
+    .unwrap();
+    let proposal = fixture.store.create_proposal(proposal).await.unwrap();
+    let review = RepairProposalReview::create(
+        &proposal,
+        &persisted,
+        None,
+        RepairReviewDecision::Approve,
+        "operator",
+        "bounded repair approved",
+        time(12),
+    )
+    .unwrap();
+    let review = fixture.store.append_proposal_review(review).await.unwrap();
+    let reservation =
+        RepairProposalApplication::reserve(&proposal, &persisted, &review, None, time(13)).unwrap();
+    let reservation = fixture
+        .store
+        .reserve_proposal_application(reservation)
+        .await
+        .unwrap();
+    let duplicate_reservation =
+        RepairProposalApplication::reserve(&proposal, &persisted, &review, None, time(13)).unwrap();
+    let idempotent = fixture
+        .store
+        .reserve_proposal_application(duplicate_reservation)
+        .await
+        .unwrap();
+    assert_eq!(reservation.id, idempotent.id);
+    assert_eq!(
+        fixture
+            .store
+            .get_proposal(proposal.id)
+            .await
+            .unwrap()
+            .unwrap(),
+        proposal
     );
 
     assert!(

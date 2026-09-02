@@ -173,6 +173,17 @@ development-suite pair, reproduces normalized retrieval metrics within an
 explicit floating-point tolerance, and persists text-free evidence plus a
 deterministic comparative diagnosis. It cannot request the sealed suite.
 
+A diagnosis may be compiled into one finite repair proposal. The proposal pins
+the exact historical diagnosis and source run separately from the clean current
+execution revision, exact diagnosed slice targets and absolute row counts,
+base training inputs, explicit data/training actions, task-neutral native
+quality policy, candidate hypotheses, all finite budgets, expiry, and the
+active renewable benchmark generation plus its journal head. Operator reviews
+are append-only. Approval becomes stale when any pinned project, evidence,
+policy, proposal, or benchmark authority changes. Applying an unchanged exact
+approval only reserves one content-addressed application; it does not yet
+generate rows or train a model.
+
 ## First completed production loop
 
 The first complete protocol ran on 2026-09-02 with project

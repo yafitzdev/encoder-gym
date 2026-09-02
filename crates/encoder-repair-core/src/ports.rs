@@ -4,7 +4,11 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::collection::{CollectedDevelopmentObservations, DevelopmentObservationRequest};
-use crate::{diagnosis::ComparativeDiagnosis, observation::DevelopmentObservationSet};
+use crate::{
+    diagnosis::ComparativeDiagnosis,
+    observation::DevelopmentObservationSet,
+    proposal::{RepairProposal, RepairProposalApplication, RepairProposalReview},
+};
 use encoder_experiment_core::domain::{BackendIdentity, ExternalProjectSnapshot};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -76,4 +80,39 @@ pub trait RepairEvidenceStore: Send + Sync {
         &self,
         campaign_id: Uuid,
     ) -> BoxFuture<'_, Result<Vec<ComparativeDiagnosis>, RepairEvidenceStoreError>>;
+
+    fn create_proposal(
+        &self,
+        proposal: RepairProposal,
+    ) -> BoxFuture<'_, Result<RepairProposal, RepairEvidenceStoreError>>;
+
+    fn get_proposal(
+        &self,
+        id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<RepairProposal>, RepairEvidenceStoreError>>;
+
+    fn find_proposal_by_specification(
+        &self,
+        specification_fingerprint: String,
+    ) -> BoxFuture<'_, Result<Option<RepairProposal>, RepairEvidenceStoreError>>;
+
+    fn append_proposal_review(
+        &self,
+        review: RepairProposalReview,
+    ) -> BoxFuture<'_, Result<RepairProposalReview, RepairEvidenceStoreError>>;
+
+    fn list_proposal_reviews(
+        &self,
+        proposal_id: Uuid,
+    ) -> BoxFuture<'_, Result<Vec<RepairProposalReview>, RepairEvidenceStoreError>>;
+
+    fn reserve_proposal_application(
+        &self,
+        application: RepairProposalApplication,
+    ) -> BoxFuture<'_, Result<RepairProposalApplication, RepairEvidenceStoreError>>;
+
+    fn get_proposal_application(
+        &self,
+        proposal_id: Uuid,
+    ) -> BoxFuture<'_, Result<Option<RepairProposalApplication>, RepairEvidenceStoreError>>;
 }

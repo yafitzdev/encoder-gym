@@ -372,6 +372,16 @@ pub enum ProductionRepairCommand {
     Doctor(ProductionRepairIdArgs),
     /// List row-free repair evidence summaries for one campaign.
     Evidence(ProductionRepairCampaignArgs),
+    /// Compile and persist one finite repair proposal from strict JSON or TOML.
+    Propose(ProductionRepairProposeArgs),
+    /// Show one deeply verified immutable repair proposal and review chain.
+    ProposalShow(ProductionRepairProposalIdArgs),
+    /// Verify proposal evidence, current project revision, and benchmark authority.
+    ProposalDoctor(ProductionRepairProposalIdArgs),
+    /// Append an immutable operator review to a current repair proposal.
+    Review(ProductionRepairReviewArgs),
+    /// Idempotently reserve application of an exactly approved repair proposal.
+    Apply(ProductionRepairProposalIdArgs),
 }
 
 #[derive(Debug, Clone, clap::Args)]
@@ -403,6 +413,43 @@ pub struct ProductionRepairIdArgs {
 #[derive(Debug, Clone, clap::Args)]
 pub struct ProductionRepairCampaignArgs {
     pub campaign_id: Uuid,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionRepairProposeArgs {
+    pub diagnosis_id: Uuid,
+    pub benchmark_generation_id: Uuid,
+    /// Strict JSON or TOML containing targets, actions, policies, budgets, and hypotheses.
+    pub file: PathBuf,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionRepairProposalIdArgs {
+    pub proposal_id: Uuid,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ProductionRepairReviewDecisionArg {
+    Approve,
+    Reject,
+    RequestRevision,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionRepairReviewArgs {
+    pub proposal_id: Uuid,
+    #[arg(long, value_enum)]
+    pub decision: ProductionRepairReviewDecisionArg,
+    #[arg(long)]
+    pub reviewer: String,
+    #[arg(long)]
+    pub reason: String,
     #[command(flatten)]
     pub backend: NomosWorkspaceArgs,
 }

@@ -8,6 +8,7 @@ pub mod collection;
 pub mod diagnosis;
 pub mod observation;
 pub mod ports;
+pub mod proposal;
 
 use thiserror::Error;
 

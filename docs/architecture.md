@@ -138,6 +138,19 @@ every development suite, persists each set idempotently, and derives one
 immutable comparative diagnosis. `show`, `doctor`, and `evidence` read through
 the same deep-verifying persistence contracts.
 
+The same core now owns finite repair proposals, without owning their native
+execution. A proposal distinguishes the historical project that produced the
+diagnosis from the current clean execution project, then pins exact diagnosed
+slices, absolute native-row targets, data and training actions, base training
+inputs, a zero-or-bounded external-call budget, a task-neutral quality policy,
+finite candidate hypotheses, and the active renewable benchmark journal head.
+Append-only reviews bind the exact proposal specification. An application is
+only an idempotent reservation keyed by the approved specification; native row
+qualification and training remain later adapter-owned stages. SQLite deeply
+replays both historical diagnosis evidence and the pinned benchmark journal,
+while `production-repair propose`, `proposal-show`, `proposal-doctor`, `review`,
+and `apply` provide the CLI boundary.
+
 `dataset-quality-core` owns immutable source-set audit plans, explicit quality
 policies, normalized evaluator requests and assessments, deterministic verdicts,
 append-only row/manifest reviews, curation proposals, and approved manifests.
@@ -325,12 +338,16 @@ V1. A quality evaluator cannot rewrite data or decide snapshot membership.
 ### `encoder-repair-core`
 
 Owns immutable complete development-observation sets and reproducible
-comparative diagnosis for non-classification production encoder experiments.
+comparative diagnosis and reviewed finite repair proposals for
+non-classification production encoder experiments.
 Observation sets retain exact project, campaign, run, model, suite, report,
 observer, and source-artifact authority while excluding row text and native
 labels. Diagnosis consumes only those development artifacts and immutable
-aggregate assessments; later repair proposal and application contracts remain
-advisory and review-gated.
+aggregate assessments. Repair proposals pin historical and current project
+identities, exact weakness slices, actions, inputs, budgets, quality policy,
+candidate hypotheses, expiry, and the active benchmark-generation head.
+Application remains an immutable review-gated reservation, not native data or
+training execution.
 
 ### `generation-supervisor-core`
 

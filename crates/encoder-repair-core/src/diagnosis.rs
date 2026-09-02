@@ -32,7 +32,7 @@ impl RepairArtifactBinding {
         }
     }
 
-    fn validate(&self) -> Result<(), EncoderRepairError> {
+    pub fn validate(&self) -> Result<(), EncoderRepairError> {
         if self.id.is_nil() || !canonical_sha256(&self.fingerprint) {
             return Err(EncoderRepairError::Validation(
                 "repair artifact binding is invalid".into(),
