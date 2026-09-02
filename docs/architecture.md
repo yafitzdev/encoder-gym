@@ -94,7 +94,12 @@ workflow authority without the existing ordinary benchmark gates.
 `encoder-experiment-core` owns task-neutral immutable production-project,
 input, model, candidate, metric, comparison, and finite-budget contracts. A
 statically composed task adapter owns native row parsing, training, prediction,
-and metric normalization. The core contains no paths, subprocesses, Python,
+safe model transformations, and metric normalization. An adapter may compose
+multiple native evaluators into one complete declared metric contract when a
+component-level score does not represent production behavior. Every support
+model, reference checkpoint, suite configuration, and native output remains a
+content-verified project dependency below the isolated workspace. The core
+contains no paths, subprocesses, Python,
 CUDA, SQLite, or Nomos types. It extends production task coverage without
 rewriting or weakening the independent text-classification slices.
 

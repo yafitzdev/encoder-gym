@@ -26,7 +26,7 @@ use sha2::{Digest, Sha256};
 use tokio::process::Command;
 
 const ADAPTER_NAME: &str = "nomos";
-const ADAPTER_PROTOCOL_VERSION: &str = "nomos-ranking-v1";
+const ADAPTER_PROTOCOL_VERSION: &str = "nomos-ranking-v2";
 const EXPERIMENT_MANIFEST_NAME: &str = "encoder-gym-experiment.json";
 const TREE_HASH_ALGORITHM: &str = "sha256-ordinal-path-size-content-sha256-v1";
 
@@ -128,6 +128,31 @@ impl NomosBackend {
             prefixed(&baseline_digest),
         )
         .map_err(adapter_error)?;
+        let mut reference_models = BTreeMap::new();
+        for reference in &self.manifest.reference_models {
+            let (bytes, digest) = self.verify_tree_artifact(
+                &reference.path,
+                reference.bytes,
+                &reference.tree_sha256,
+                "reference model",
+            )?;
+            reference_models.insert(
+                reference.key.clone(),
+                json!({
+                    "path": reference.path,
+                    "format": reference.format,
+                    "bytes": bytes,
+                    "fingerprint": prefixed(&digest),
+                    "provenance": reference.provenance,
+                }),
+            );
+        }
+        let (chat_model_bytes, chat_model_digest) = self.verify_tree_artifact(
+            &self.manifest.agent_evaluation.chat_model_path,
+            self.manifest.agent_evaluation.chat_model_bytes,
+            &self.manifest.agent_evaluation.chat_model_tree_sha256,
+            "agent chat model",
+        )?;
         let training_inputs = self
             .manifest
             .datasets
@@ -141,6 +166,36 @@ impl NomosBackend {
         let sealed = self
             .manifest
             .dataset_for(NativeEvidenceRole::SealedHoldout)?;
+        let development_suite_fingerprint = artifact_core::fingerprint(&json!({
+            "retrieval_dataset": {
+                "path": development.path,
+                "fingerprint": prefixed(&development.sha256),
+            },
+            "agent_evaluation": {
+                "chat_model_fingerprint": prefixed(&chat_model_digest),
+                "selector_strategy": self.manifest.agent_evaluation.selector_strategy,
+                "candidate_strategy": self.manifest.agent_evaluation.candidate_strategy,
+                "nomos_top_k": self.manifest.agent_evaluation.nomos_top_k,
+                "max_attempts": self.manifest.agent_evaluation.max_attempts,
+                "suite": self.manifest.agent_evaluation.development,
+            },
+        }))
+        .map_err(adapter_error)?;
+        let sealed_suite_fingerprint = artifact_core::fingerprint(&json!({
+            "retrieval_dataset": {
+                "path": sealed.path,
+                "fingerprint": prefixed(&sealed.sha256),
+            },
+            "agent_evaluation": {
+                "chat_model_fingerprint": prefixed(&chat_model_digest),
+                "selector_strategy": self.manifest.agent_evaluation.selector_strategy,
+                "candidate_strategy": self.manifest.agent_evaluation.candidate_strategy,
+                "nomos_top_k": self.manifest.agent_evaluation.nomos_top_k,
+                "max_attempts": self.manifest.agent_evaluation.max_attempts,
+                "suite": self.manifest.agent_evaluation.sealed,
+            },
+        }))
+        .map_err(adapter_error)?;
         ExternalProjectSnapshot::create(
             self.manifest.experiment.clone(),
             EncoderTaskKind::RetrievalRanking,
@@ -168,16 +223,33 @@ impl NomosBackend {
                     "historical_evaluation_runs_fingerprint": prefixed(&self.manifest.evaluation_runs_tree_sha256),
                 },
                 "training_inputs": training_inputs,
+                "reference_models": reference_models,
+                "agent_evaluation": {
+                    "backend": self.manifest.agent_evaluation.backend,
+                    "chat_model": {
+                        "path": self.manifest.agent_evaluation.chat_model_path,
+                        "format": self.manifest.agent_evaluation.chat_model_format,
+                        "bytes": chat_model_bytes,
+                        "fingerprint": prefixed(&chat_model_digest),
+                        "source": self.manifest.agent_evaluation.source,
+                    },
+                    "selector_strategy": self.manifest.agent_evaluation.selector_strategy,
+                    "candidate_strategy": self.manifest.agent_evaluation.candidate_strategy,
+                    "nomos_top_k": self.manifest.agent_evaluation.nomos_top_k,
+                    "max_attempts": self.manifest.agent_evaluation.max_attempts,
+                    "development": self.manifest.agent_evaluation.development,
+                    "sealed": self.manifest.agent_evaluation.sealed,
+                },
                 "suites": {
                     "development": {
                         "path": development.path,
                         "role": "development",
-                        "fingerprint": prefixed(&development.sha256),
+                        "fingerprint": development_suite_fingerprint,
                     },
                     "sealed": {
                         "path": sealed.path,
                         "role": "sealed_acceptance",
-                        "fingerprint": prefixed(&sealed.sha256),
+                        "fingerprint": sealed_suite_fingerprint,
                     }
                 }
             }),
@@ -237,6 +309,23 @@ impl NomosBackend {
             ));
         }
         Ok(resolved)
+    }
+
+    fn verify_tree_artifact(
+        &self,
+        relative: &str,
+        expected_bytes: u64,
+        expected_digest: &str,
+        kind: &str,
+    ) -> Result<(u64, String), EncoderTaskAdapterError> {
+        let path = self.resolve_existing(relative)?;
+        let (bytes, digest) = tree_identity(&path)?;
+        if bytes != expected_bytes || digest != expected_digest {
+            return Err(adapter_error(format!(
+                "Nomos {kind} {relative} no longer matches its immutable manifest identity"
+            )));
+        }
+        Ok((bytes, digest))
     }
 
     fn task_configuration(
@@ -320,19 +409,34 @@ impl EncoderTaskBackend for NomosBackend {
             if current.source_revision != project.source_revision
                 || current.source_fingerprint != project.source_fingerprint
                 || current.inputs != project.inputs
+                || current.baseline_model.key != project.baseline_model.key
+                || current.baseline_model.format != project.baseline_model.format
+                || current.baseline_model.bytes != project.baseline_model.bytes
                 || current.baseline_model.fingerprint != project.baseline_model.fingerprint
+                || current.task_configuration != project.task_configuration
             {
                 return Err(adapter_error(
                     "isolated Nomos workspace changed after project snapshot creation",
                 ));
             }
+            let configuration = Self::task_configuration(&project)?;
+            configuration.validate()?;
+            let mut verified_artifact_keys = project
+                .inputs
+                .iter()
+                .map(|value| value.key.clone())
+                .collect::<Vec<_>>();
+            verified_artifact_keys.extend(
+                configuration
+                    .reference_models
+                    .values()
+                    .map(|value| value.path.clone()),
+            );
+            verified_artifact_keys.push(configuration.agent_evaluation.chat_model.path);
+            verified_artifact_keys.sort();
             Ok(AdapterInspection {
                 source_fingerprint: project.source_fingerprint,
-                verified_artifact_keys: project
-                    .inputs
-                    .iter()
-                    .map(|value| value.key.clone())
-                    .collect(),
+                verified_artifact_keys,
                 metadata: json!({
                     "adapter": ADAPTER_NAME,
                     "protocol_version": ADAPTER_PROTOCOL_VERSION,
@@ -356,7 +460,7 @@ impl EncoderTaskBackend for NomosBackend {
             self.inspect(project.clone()).await?;
             let configuration = Self::task_configuration(&project)?;
             configuration.validate()?;
-            let parameters = NativeTrainingParameters::parse(&candidate.parameters)?;
+            let strategy = NativeCandidateStrategy::parse(&candidate.parameters)?;
             let output = self.candidate_output(&candidate);
             let output_relative = output
                 .strip_prefix(&self.root)
@@ -364,16 +468,12 @@ impl EncoderTaskBackend for NomosBackend {
                 .to_string_lossy()
                 .replace('\\', "/");
             if output.exists() {
-                let native_manifest = read_json(&output.join("nomos_training_manifest.json"))?;
-                let native_output = native_manifest
-                    .get("output")
-                    .and_then(Value::as_str)
-                    .map(|value| value.replace('\\', "/"));
-                if native_output.as_deref() != Some(output_relative.as_str()) {
-                    return Err(adapter_error(
-                        "existing Nomos candidate output does not belong to this immutable candidate",
-                    ));
-                }
+                let native_manifest = strategy.read_and_validate_manifest(
+                    &output,
+                    &output_relative,
+                    &project,
+                    &configuration,
+                )?;
                 let (bytes, digest) = tree_identity(&output)?;
                 return Ok(TrainOutput {
                     model: ModelArtifactIdentity::new(
@@ -388,58 +488,21 @@ impl EncoderTaskBackend for NomosBackend {
                     duration_seconds: candidate.maximum_training_seconds,
                     metadata: json!({
                         "recovered_completed_output": true,
+                        "strategy": strategy.name(),
                         "native_manifest": native_manifest,
                     }),
                 });
             }
-            let module = match parameters.loss.as_str() {
-                "triplet" => "tools.train_dense_triplet_router",
-                "mnrl" | "cached-mnrl" => "tools.train_dense_router",
-                _ => return Err(adapter_error("unsupported Nomos loss")),
-            };
-            let mut arguments = vec![
-                "-m".into(),
-                module.into(),
-                "--base-model".into(),
-                project.baseline_model.key.clone(),
-            ];
-            for input in &configuration.training_inputs {
-                validate_relative(input)?;
-                arguments.push("--input".into());
-                arguments.push(input.clone());
-            }
-            arguments.extend([
-                "--output".into(),
-                output_relative.clone(),
-                "--epochs".into(),
-                parameters.epochs.to_string(),
-                "--batch-size".into(),
-                parameters.batch_size.to_string(),
-                "--learning-rate".into(),
-                parameters.learning_rate.to_string(),
-                "--seed".into(),
-                parameters.seed.to_string(),
-                "--device".into(),
-                parameters.device.clone(),
-            ]);
-            if module.ends_with("triplet_router") {
-                arguments.extend([
-                    "--margin".into(),
-                    parameters.margin.to_string(),
-                    "--mining-batch-size".into(),
-                    parameters.mining_batch_size.to_string(),
-                    "--query-strategy".into(),
-                    parameters.query_strategy.clone(),
-                    "--positive-strategy".into(),
-                    parameters.positive_strategy.clone(),
-                ]);
-            } else {
-                arguments.extend(["--loss".into(), parameters.loss.clone()]);
-            }
+            let arguments = strategy.arguments(&project, &configuration, &output_relative)?;
             let started = std::time::Instant::now();
             self.run_bounded(&arguments, candidate.maximum_training_seconds)
                 .await?;
-            let metadata = read_json(&output.join("nomos_training_manifest.json"))?;
+            let native_manifest = strategy.read_and_validate_manifest(
+                &output,
+                &output_relative,
+                &project,
+                &configuration,
+            )?;
             let (bytes, digest) = tree_identity(&output)?;
             let model = ModelArtifactIdentity::new(
                 output_relative,
@@ -451,7 +514,10 @@ impl EncoderTaskBackend for NomosBackend {
             Ok(TrainOutput {
                 model,
                 duration_seconds: started.elapsed().as_secs(),
-                metadata,
+                metadata: json!({
+                    "strategy": strategy.name(),
+                    "native_manifest": native_manifest,
+                }),
             })
         })
     }
@@ -477,13 +543,13 @@ impl EncoderTaskBackend for NomosBackend {
                 .ok_or_else(|| adapter_error(format!("unknown Nomos suite {suite_key}")))?;
             let input = self.resolve_existing(&suite.path)?;
             let model_path = self.model_path(&model)?;
-            let output = self
+            let evaluation_root = self
                 .root
                 .join("runs")
                 .join("encoder-gym-evaluations")
-                .join(model.id.to_string())
-                .join(format!("{suite_key}.json"));
-            let output_relative = output
+                .join(model.id.to_string());
+            let retrieval_output = evaluation_root.join(format!("{suite_key}.retrieval.json"));
+            let retrieval_output_relative = retrieval_output
                 .strip_prefix(&self.root)
                 .map_err(adapter_error)?
                 .to_string_lossy()
@@ -502,7 +568,7 @@ impl EncoderTaskBackend for NomosBackend {
                 "-m".into(),
                 "tools.evaluate_dense_router".into(),
                 "--model".into(),
-                model_relative,
+                model_relative.clone(),
                 "--input".into(),
                 input_relative,
                 "--limit".into(),
@@ -510,13 +576,13 @@ impl EncoderTaskBackend for NomosBackend {
                 "--device".into(),
                 "cpu".into(),
                 "--output".into(),
-                output_relative,
+                retrieval_output_relative,
             ];
-            let raw = if output.exists() {
-                read_json(&output)?
+            let raw = if retrieval_output.exists() {
+                read_json(&retrieval_output)?
             } else {
                 self.run_bounded(&arguments, maximum_seconds).await?;
-                read_json(&output)?
+                read_json(&retrieval_output)?
             };
             let native: NativeEvaluation = serde_json::from_value(raw).map_err(|error| {
                 adapter_error(format!("Nomos evaluation JSON is invalid: {error}"))
@@ -531,7 +597,7 @@ impl EncoderTaskBackend for NomosBackend {
                     "Nomos evaluation must normalize exactly one suite",
                 ));
             }
-            let available = BTreeMap::from([
+            let mut available = BTreeMap::from([
                 ("recall_at_1".to_owned(), first.metrics.recall_at_1),
                 ("recall_at_2".to_owned(), first.metrics.recall_at_2),
                 ("recall_at_3".to_owned(), first.metrics.recall_at_3),
@@ -541,6 +607,86 @@ impl EncoderTaskBackend for NomosBackend {
                     first.metrics.mean_positive_margin,
                 ),
             ]);
+            let mut support = first.metrics.states;
+            let requires_agent = contract
+                .definitions
+                .iter()
+                .any(|definition| definition.key.starts_with("agent_"));
+            if requires_agent {
+                let agent = &configuration.agent_evaluation;
+                let agent_suite = agent.suite(suite.role);
+                let chat_model = self.resolve_existing(&agent.chat_model.path)?;
+                let (chat_bytes, chat_digest) = tree_identity(&chat_model)?;
+                if chat_bytes != agent.chat_model.bytes
+                    || prefixed(&chat_digest) != agent.chat_model.fingerprint
+                {
+                    return Err(adapter_error(
+                        "Nomos agent chat model changed after project registration",
+                    ));
+                }
+                let chat_model_relative = chat_model
+                    .strip_prefix(&self.root)
+                    .map_err(adapter_error)?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let agent_output = evaluation_root.join(format!("{suite_key}.agent.json"));
+                let agent_trace = evaluation_root.join(format!("{suite_key}.agent-trace.jsonl"));
+                let agent_output_relative = workspace_relative(&self.root, &agent_output)?;
+                let agent_trace_relative = workspace_relative(&self.root, &agent_trace)?;
+                let agent_arguments = vec![
+                    "-m".into(),
+                    "tools.evaluate_real_agent_sessions".into(),
+                    "--backend".into(),
+                    agent.backend.clone(),
+                    "--onnx-model".into(),
+                    chat_model_relative,
+                    "--nomos-model".into(),
+                    model_relative,
+                    "--selector-strategy".into(),
+                    agent.selector_strategy.clone(),
+                    "--candidate-strategy".into(),
+                    agent.candidate_strategy.clone(),
+                    "--sessions".into(),
+                    agent_suite.sessions.to_string(),
+                    "--pairing".into(),
+                    agent_suite.pairing.clone(),
+                    "--suite".into(),
+                    agent_suite.suite.clone(),
+                    "--max-attempts".into(),
+                    agent.max_attempts.to_string(),
+                    "--nomos-top-k".into(),
+                    agent.nomos_top_k.to_string(),
+                    "--condition".into(),
+                    agent_suite.condition.clone(),
+                    "--output".into(),
+                    agent_output_relative,
+                    "--trace-output".into(),
+                    agent_trace_relative,
+                ];
+                let raw_agent = if agent_output.exists() {
+                    if !agent_trace.is_file() {
+                        return Err(adapter_error(
+                            "Nomos agent evaluation report exists without its trace evidence",
+                        ));
+                    }
+                    read_json(&agent_output)?
+                } else {
+                    self.run_bounded(&agent_arguments, maximum_seconds).await?;
+                    if !agent_trace.is_file() {
+                        return Err(adapter_error(
+                            "Nomos agent evaluation did not produce trace evidence",
+                        ));
+                    }
+                    read_json(&agent_output)?
+                };
+                let native_agent: NativeAgentEvaluation = serde_json::from_value(raw_agent)
+                    .map_err(|error| {
+                        adapter_error(format!("Nomos agent evaluation JSON is invalid: {error}"))
+                    })?;
+                let summary = native_agent.validate_and_summary(agent, agent_suite)?;
+                available.extend(summary.normalized_metrics()?);
+                support = support.min(summary.sessions);
+            }
             let mut normalized = BTreeMap::new();
             for definition in &contract.definitions {
                 normalized.insert(
@@ -561,7 +707,7 @@ impl EncoderTaskBackend for NomosBackend {
                 suite.fingerprint.clone(),
                 &contract,
                 normalized,
-                first.metrics.states,
+                support,
                 Utc::now(),
             )
             .map_err(adapter_error)
@@ -578,13 +724,15 @@ struct NomosExperimentManifest {
     source: SourceManifest,
     isolation: IsolationManifest,
     baseline: BaselineManifest,
+    reference_models: Vec<ReferenceModelManifest>,
+    agent_evaluation: AgentEvaluationManifest,
     datasets: Vec<DatasetManifest>,
     evaluation_runs_tree_sha256: String,
 }
 
 impl NomosExperimentManifest {
     fn validate(&self) -> Result<(), EncoderTaskAdapterError> {
-        if self.schema_version != 2
+        if self.schema_version != 3
             || self.experiment.trim() != self.experiment
             || self.experiment.is_empty()
             || self.tree_hash_algorithm != TREE_HASH_ALGORITHM
@@ -605,6 +753,7 @@ impl NomosExperimentManifest {
                 .baseline
                 .weak_agent_complete_coprocessor_completed
                 .valid()
+            || self.reference_models.is_empty()
         {
             return Err(adapter_error(
                 "Nomos experiment isolation manifest is invalid",
@@ -628,6 +777,27 @@ impl NomosExperimentManifest {
             if dataset.bytes == 0 || !raw_sha256(&dataset.sha256) {
                 return Err(adapter_error("Nomos dataset identity is invalid"));
             }
+        }
+        let mut reference_keys = std::collections::BTreeSet::new();
+        let mut reference_paths = std::collections::BTreeSet::new();
+        for reference in &self.reference_models {
+            reference.validate()?;
+            if !reference_keys.insert(reference.key.as_str())
+                || !reference_paths.insert(reference.path.as_str())
+            {
+                return Err(adapter_error(
+                    "Nomos reference model keys and paths must be unique",
+                ));
+            }
+        }
+        self.agent_evaluation.validate()?;
+        if reference_paths.contains(self.baseline.pytorch_path.as_str())
+            || reference_paths.contains(self.baseline.onnx_path.as_str())
+            || reference_paths.contains(self.agent_evaluation.chat_model_path.as_str())
+        {
+            return Err(adapter_error(
+                "Nomos support artifacts must use distinct paths",
+            ));
         }
         Ok(())
     }
@@ -681,6 +851,95 @@ struct BaselineManifest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ReferenceModelManifest {
+    key: String,
+    path: String,
+    format: String,
+    bytes: u64,
+    tree_sha256: String,
+    provenance: Value,
+}
+
+impl ReferenceModelManifest {
+    fn validate(&self) -> Result<(), EncoderTaskAdapterError> {
+        validate_canonical_key(&self.key, "reference model key")?;
+        validate_relative(&self.path)?;
+        if self.format.trim() != self.format
+            || self.format.is_empty()
+            || self.bytes == 0
+            || !raw_sha256(&self.tree_sha256)
+            || !self.provenance.is_object()
+        {
+            return Err(adapter_error("Nomos reference model identity is invalid"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentEvaluationManifest {
+    backend: String,
+    chat_model_path: String,
+    chat_model_format: String,
+    chat_model_bytes: u64,
+    chat_model_tree_sha256: String,
+    source: Value,
+    selector_strategy: String,
+    candidate_strategy: String,
+    nomos_top_k: u64,
+    max_attempts: u64,
+    development: AgentSuiteManifest,
+    sealed: AgentSuiteManifest,
+}
+
+impl AgentEvaluationManifest {
+    fn validate(&self) -> Result<(), EncoderTaskAdapterError> {
+        validate_relative(&self.chat_model_path)?;
+        if self.backend != "onnx"
+            || self.chat_model_format != "onnxruntime-genai"
+            || self.chat_model_bytes == 0
+            || !raw_sha256(&self.chat_model_tree_sha256)
+            || !self.source.is_object()
+            || self.selector_strategy != "multiview"
+            || self.candidate_strategy != "multiview"
+            || !(1..=3).contains(&self.nomos_top_k)
+            || !(1..=5).contains(&self.max_attempts)
+        {
+            return Err(adapter_error(
+                "Nomos agent evaluation configuration is invalid",
+            ));
+        }
+        self.development.validate("development")?;
+        self.sealed.validate("promotion")?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentSuiteManifest {
+    suite: String,
+    sessions: u64,
+    pairing: String,
+    condition: String,
+}
+
+impl AgentSuiteManifest {
+    fn validate(&self, expected_suite: &str) -> Result<(), EncoderTaskAdapterError> {
+        if self.suite != expected_suite
+            || !(1..=256).contains(&self.sessions)
+            || !["cycle", "cross-product"].contains(&self.pairing.as_str())
+            || self.condition != "nomos"
+        {
+            return Err(adapter_error("Nomos agent suite configuration is invalid"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CountMetric {
     completed: u64,
     total: u64,
@@ -728,6 +987,8 @@ struct TaskConfiguration {
     source_reference: Value,
     baseline_evidence: Value,
     training_inputs: Vec<String>,
+    reference_models: BTreeMap<String, PinnedTreeConfiguration>,
+    agent_evaluation: AgentEvaluationConfiguration,
     suites: BTreeMap<String, SuiteConfiguration>,
 }
 
@@ -737,6 +998,7 @@ impl TaskConfiguration {
             || self.source_reference.is_null()
             || self.baseline_evidence.is_null()
             || self.training_inputs.is_empty()
+            || self.reference_models.is_empty()
         {
             return Err(adapter_error(
                 "Nomos project task configuration does not match this adapter",
@@ -745,6 +1007,11 @@ impl TaskConfiguration {
         for input in &self.training_inputs {
             validate_relative(input)?;
         }
+        for (key, reference) in &self.reference_models {
+            validate_canonical_key(key, "reference model key")?;
+            reference.validate("reference model")?;
+        }
+        self.agent_evaluation.validate()?;
         if self.suites.is_empty() {
             return Err(adapter_error("Nomos project defines no evaluation suites"));
         }
@@ -769,10 +1036,300 @@ impl TaskConfiguration {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct PinnedTreeConfiguration {
+    path: String,
+    format: String,
+    bytes: u64,
+    fingerprint: String,
+    provenance: Value,
+}
+
+impl PinnedTreeConfiguration {
+    fn validate(&self, kind: &str) -> Result<(), EncoderTaskAdapterError> {
+        validate_relative(&self.path)?;
+        if self.format.trim() != self.format
+            || self.format.is_empty()
+            || self.bytes == 0
+            || !self
+                .fingerprint
+                .strip_prefix("sha256:")
+                .is_some_and(raw_sha256)
+            || !self.provenance.is_object()
+        {
+            return Err(adapter_error(format!(
+                "Nomos {kind} configuration is invalid"
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentEvaluationConfiguration {
+    backend: String,
+    chat_model: AgentChatModelConfiguration,
+    selector_strategy: String,
+    candidate_strategy: String,
+    nomos_top_k: u64,
+    max_attempts: u64,
+    development: AgentSuiteManifest,
+    sealed: AgentSuiteManifest,
+}
+
+impl AgentEvaluationConfiguration {
+    fn validate(&self) -> Result<(), EncoderTaskAdapterError> {
+        self.chat_model.validate()?;
+        if self.backend != "onnx"
+            || self.selector_strategy != "multiview"
+            || self.candidate_strategy != "multiview"
+            || !(1..=3).contains(&self.nomos_top_k)
+            || !(1..=5).contains(&self.max_attempts)
+        {
+            return Err(adapter_error(
+                "Nomos agent evaluation task configuration is invalid",
+            ));
+        }
+        self.development.validate("development")?;
+        self.sealed.validate("promotion")?;
+        Ok(())
+    }
+
+    fn suite(&self, role: EvidenceRole) -> &AgentSuiteManifest {
+        match role {
+            EvidenceRole::Development => &self.development,
+            EvidenceRole::SealedAcceptance => &self.sealed,
+            _ => unreachable!("task suites are validated as development or sealed"),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentChatModelConfiguration {
+    path: String,
+    format: String,
+    bytes: u64,
+    fingerprint: String,
+    source: Value,
+}
+
+impl AgentChatModelConfiguration {
+    fn validate(&self) -> Result<(), EncoderTaskAdapterError> {
+        validate_relative(&self.path)?;
+        if self.format != "onnxruntime-genai"
+            || self.bytes == 0
+            || !self
+                .fingerprint
+                .strip_prefix("sha256:")
+                .is_some_and(raw_sha256)
+            || !self.source.is_object()
+        {
+            return Err(adapter_error("Nomos agent chat model identity is invalid"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SuiteConfiguration {
     path: String,
     role: EvidenceRole,
     fingerprint: String,
+}
+
+#[derive(Debug)]
+enum NativeCandidateStrategy {
+    FineTune(NativeTrainingParameters),
+    LinearInterpolation {
+        reference_model: String,
+        specialist_weight: f64,
+    },
+}
+
+impl NativeCandidateStrategy {
+    fn parse(values: &BTreeMap<String, ParameterValue>) -> Result<Self, EncoderTaskAdapterError> {
+        match text_parameter(values, "strategy", "fine_tune")?.as_str() {
+            "fine_tune" => Ok(Self::FineTune(NativeTrainingParameters::parse(values)?)),
+            "linear_interpolation" => {
+                let allowed = ["strategy", "reference_model", "specialist_weight"];
+                if values.keys().any(|key| !allowed.contains(&key.as_str())) {
+                    return Err(adapter_error(
+                        "Nomos interpolation candidate contains an unknown parameter",
+                    ));
+                }
+                let reference_model = text_parameter(values, "reference_model", "")?;
+                let specialist_weight = number_parameter(values, "specialist_weight", 0.0)?;
+                validate_canonical_key(&reference_model, "reference model key")?;
+                if !(0.0 < specialist_weight && specialist_weight <= 0.5) {
+                    return Err(adapter_error(
+                        "Nomos specialist weight must be greater than zero and at most 0.5",
+                    ));
+                }
+                Ok(Self::LinearInterpolation {
+                    reference_model,
+                    specialist_weight,
+                })
+            }
+            _ => Err(adapter_error("unsupported Nomos candidate strategy")),
+        }
+    }
+
+    const fn name(&self) -> &'static str {
+        match self {
+            Self::FineTune(_) => "fine_tune",
+            Self::LinearInterpolation { .. } => "linear_interpolation",
+        }
+    }
+
+    fn arguments(
+        &self,
+        project: &ExternalProjectSnapshot,
+        configuration: &TaskConfiguration,
+        output_relative: &str,
+    ) -> Result<Vec<String>, EncoderTaskAdapterError> {
+        match self {
+            Self::FineTune(parameters) => {
+                let module = match parameters.loss.as_str() {
+                    "triplet" => "tools.train_dense_triplet_router",
+                    "mnrl" | "cached-mnrl" => "tools.train_dense_router",
+                    _ => return Err(adapter_error("unsupported Nomos loss")),
+                };
+                let mut arguments = vec![
+                    "-m".into(),
+                    module.into(),
+                    "--base-model".into(),
+                    project.baseline_model.key.clone(),
+                ];
+                for input in &configuration.training_inputs {
+                    validate_relative(input)?;
+                    arguments.push("--input".into());
+                    arguments.push(input.clone());
+                }
+                arguments.extend([
+                    "--output".into(),
+                    output_relative.into(),
+                    "--epochs".into(),
+                    parameters.epochs.to_string(),
+                    "--batch-size".into(),
+                    parameters.batch_size.to_string(),
+                    "--learning-rate".into(),
+                    parameters.learning_rate.to_string(),
+                    "--seed".into(),
+                    parameters.seed.to_string(),
+                    "--device".into(),
+                    parameters.device.clone(),
+                ]);
+                if module.ends_with("triplet_router") {
+                    arguments.extend([
+                        "--margin".into(),
+                        parameters.margin.to_string(),
+                        "--mining-batch-size".into(),
+                        parameters.mining_batch_size.to_string(),
+                        "--query-strategy".into(),
+                        parameters.query_strategy.clone(),
+                        "--positive-strategy".into(),
+                        parameters.positive_strategy.clone(),
+                    ]);
+                } else {
+                    arguments.extend(["--loss".into(), parameters.loss.clone()]);
+                }
+                Ok(arguments)
+            }
+            Self::LinearInterpolation {
+                reference_model,
+                specialist_weight,
+            } => {
+                let reference = configuration
+                    .reference_models
+                    .get(reference_model)
+                    .ok_or_else(|| adapter_error("unknown pinned Nomos reference model"))?;
+                Ok(vec![
+                    "-m".into(),
+                    "tools.interpolate_dense_models".into(),
+                    "--base".into(),
+                    project.baseline_model.key.clone(),
+                    "--specialist".into(),
+                    reference.path.clone(),
+                    "--specialist-weight".into(),
+                    specialist_weight.to_string(),
+                    "--output".into(),
+                    output_relative.into(),
+                ])
+            }
+        }
+    }
+
+    fn read_and_validate_manifest(
+        &self,
+        output: &Path,
+        output_relative: &str,
+        project: &ExternalProjectSnapshot,
+        configuration: &TaskConfiguration,
+    ) -> Result<Value, EncoderTaskAdapterError> {
+        let (path, expected_method) = match self {
+            Self::FineTune(_) => (output.join("nomos_training_manifest.json"), None),
+            Self::LinearInterpolation { .. } => (
+                output.join("nomos_interpolation_manifest.json"),
+                Some("linear_weight_interpolation"),
+            ),
+        };
+        let native_manifest = read_json(&path)?;
+        let native_output = native_manifest
+            .get("output")
+            .and_then(Value::as_str)
+            .map(normalized_native_path);
+        if native_output.as_deref() != Some(output_relative) {
+            return Err(adapter_error(
+                "existing Nomos candidate output does not belong to this immutable candidate",
+            ));
+        }
+        match self {
+            Self::FineTune(_) => {
+                let native_base = native_manifest
+                    .get("base_model")
+                    .and_then(Value::as_str)
+                    .map(normalized_native_path);
+                if native_base.as_deref() != Some(project.baseline_model.key.as_str()) {
+                    return Err(adapter_error(
+                        "Nomos fine-tune manifest references the wrong baseline",
+                    ));
+                }
+            }
+            Self::LinearInterpolation {
+                reference_model,
+                specialist_weight,
+            } => {
+                let reference = configuration
+                    .reference_models
+                    .get(reference_model)
+                    .ok_or_else(|| adapter_error("unknown pinned Nomos reference model"))?;
+                let method = native_manifest.get("method").and_then(Value::as_str);
+                let base = native_manifest
+                    .get("base")
+                    .and_then(Value::as_str)
+                    .map(normalized_native_path);
+                let specialist = native_manifest
+                    .get("specialist")
+                    .and_then(Value::as_str)
+                    .map(normalized_native_path);
+                let observed_weight = native_manifest
+                    .get("specialist_weight")
+                    .and_then(Value::as_f64);
+                if method != expected_method
+                    || base.as_deref() != Some(project.baseline_model.key.as_str())
+                    || specialist.as_deref() != Some(reference.path.as_str())
+                    || observed_weight != Some(*specialist_weight)
+                {
+                    return Err(adapter_error(
+                        "Nomos interpolation manifest does not match its immutable candidate",
+                    ));
+                }
+            }
+        }
+        Ok(native_manifest)
+    }
 }
 
 #[derive(Debug)]
@@ -792,6 +1349,7 @@ struct NativeTrainingParameters {
 impl NativeTrainingParameters {
     fn parse(values: &BTreeMap<String, ParameterValue>) -> Result<Self, EncoderTaskAdapterError> {
         let allowed = [
+            "strategy",
             "loss",
             "epochs",
             "batch_size",
@@ -820,7 +1378,8 @@ impl NativeTrainingParameters {
             seed: integer_parameter(values, "seed", 20_260_902)?,
             device: text_parameter(values, "device", "cuda")?,
         };
-        if !["triplet", "mnrl", "cached-mnrl"].contains(&result.loss.as_str())
+        if text_parameter(values, "strategy", "fine_tune")? != "fine_tune"
+            || !["triplet", "mnrl", "cached-mnrl"].contains(&result.loss.as_str())
             || !(0.0 < result.epochs && result.epochs <= 10.0)
             || !(1..=4_096).contains(&result.batch_size)
             || !(1..=100_000).contains(&result.mining_batch_size)
@@ -873,6 +1432,153 @@ struct NativeRankingMetrics {
     mean_positive_margin: f64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAgentEvaluation {
+    backend: String,
+    suite: String,
+    suite_version: String,
+    sessions_per_condition: u64,
+    pairing: String,
+    max_attempts: u64,
+    nomos_top_k: u64,
+    summaries: BTreeMap<String, NativeAgentSummary>,
+}
+
+impl NativeAgentEvaluation {
+    fn validate_and_summary<'a>(
+        &'a self,
+        configuration: &AgentEvaluationConfiguration,
+        suite: &AgentSuiteManifest,
+    ) -> Result<&'a NativeAgentSummary, EncoderTaskAdapterError> {
+        if self.backend != configuration.backend
+            || self.suite != suite.suite
+            || self.suite_version.trim() != self.suite_version
+            || self.suite_version.is_empty()
+            || self.sessions_per_condition != suite.sessions
+            || self.pairing != suite.pairing
+            || self.max_attempts != configuration.max_attempts
+            || self.nomos_top_k != configuration.nomos_top_k
+            || self.summaries.len() != 1
+        {
+            return Err(adapter_error(
+                "Nomos agent report does not match the pinned evaluation configuration",
+            ));
+        }
+        let summary = self
+            .summaries
+            .get(&suite.condition)
+            .ok_or_else(|| adapter_error("Nomos agent report omitted its pinned condition"))?;
+        summary.validate(suite.sessions)?;
+        Ok(summary)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAgentSummary {
+    sessions: u64,
+    success_rate: f64,
+    mean_completed_stage_rate: f64,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    tool_call_attempts: u64,
+    prompt_tokens_per_attempt: f64,
+    successful_execution_rate: f64,
+    tool_selection_accuracy: f64,
+    schema_valid_call_rate: f64,
+    wrong_tool_executions: u64,
+    invalid_calls: u64,
+    visible_oracle_hit_rate: f64,
+    tool_description_reduction: f64,
+}
+
+impl NativeAgentSummary {
+    fn validate(&self, expected_sessions: u64) -> Result<(), EncoderTaskAdapterError> {
+        let rates = [
+            self.success_rate,
+            self.mean_completed_stage_rate,
+            self.successful_execution_rate,
+            self.tool_selection_accuracy,
+            self.schema_valid_call_rate,
+            self.visible_oracle_hit_rate,
+            self.tool_description_reduction,
+        ];
+        if self.sessions != expected_sessions
+            || self.tool_call_attempts == 0
+            || self.invalid_calls > self.tool_call_attempts
+            || self.wrong_tool_executions > self.tool_call_attempts - self.invalid_calls
+            || self.prompt_tokens == 0
+            || self.completion_tokens == 0
+            || !self.prompt_tokens_per_attempt.is_finite()
+            || self.prompt_tokens_per_attempt <= 0.0
+            || rates
+                .iter()
+                .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+        {
+            return Err(adapter_error("Nomos agent summary is invalid"));
+        }
+        let observed = self.prompt_tokens as f64 / self.tool_call_attempts as f64;
+        if (observed - self.prompt_tokens_per_attempt).abs() > 1e-9 {
+            return Err(adapter_error(
+                "Nomos agent prompt-token accounting is inconsistent",
+            ));
+        }
+        Ok(())
+    }
+
+    fn normalized_metrics(&self) -> Result<BTreeMap<String, f64>, EncoderTaskAdapterError> {
+        let valid_executions = self
+            .tool_call_attempts
+            .checked_sub(self.invalid_calls)
+            .ok_or_else(|| adapter_error("Nomos agent call accounting underflowed"))?;
+        if valid_executions == 0 {
+            return Err(adapter_error(
+                "Nomos agent report contains no valid execution attempts",
+            ));
+        }
+        Ok(BTreeMap::from([
+            ("agent_success_rate".into(), self.success_rate),
+            (
+                "agent_mean_completed_stage_rate".into(),
+                self.mean_completed_stage_rate,
+            ),
+            (
+                "agent_successful_execution_rate".into(),
+                self.successful_execution_rate,
+            ),
+            (
+                "agent_tool_selection_accuracy".into(),
+                self.tool_selection_accuracy,
+            ),
+            (
+                "agent_schema_valid_call_rate".into(),
+                self.schema_valid_call_rate,
+            ),
+            (
+                "agent_visible_oracle_hit_rate".into(),
+                self.visible_oracle_hit_rate,
+            ),
+            (
+                "agent_invalid_call_rate".into(),
+                self.invalid_calls as f64 / self.tool_call_attempts as f64,
+            ),
+            (
+                "agent_wrong_tool_execution_rate".into(),
+                self.wrong_tool_executions as f64 / valid_executions as f64,
+            ),
+            (
+                "agent_prompt_tokens_per_attempt".into(),
+                self.prompt_tokens_per_attempt,
+            ),
+            (
+                "agent_tool_description_reduction".into(),
+                self.tool_description_reduction,
+            ),
+        ]))
+    }
+}
+
 fn text_parameter(
     values: &BTreeMap<String, ParameterValue>,
     key: &str,
@@ -915,6 +1621,18 @@ fn integer_parameter(
     }
 }
 
+fn validate_canonical_key(value: &str, kind: &str) -> Result<(), EncoderTaskAdapterError> {
+    if value.trim() != value
+        || value.is_empty()
+        || !value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        return Err(adapter_error(format!("Nomos {kind} is not canonical")));
+    }
+    Ok(())
+}
+
 fn validate_relative(value: &str) -> Result<(), EncoderTaskAdapterError> {
     let path = Path::new(value);
     if value.trim() != value
@@ -932,6 +1650,16 @@ fn validate_relative(value: &str) -> Result<(), EncoderTaskAdapterError> {
         ));
     }
     Ok(())
+}
+
+fn normalized_native_path(value: &str) -> String {
+    value.replace('\\', "/")
+}
+
+fn workspace_relative(root: &Path, path: &Path) -> Result<String, EncoderTaskAdapterError> {
+    path.strip_prefix(root)
+        .map(|value| value.to_string_lossy().replace('\\', "/"))
+        .map_err(adapter_error)
 }
 
 fn verify_file(
@@ -1087,6 +1815,34 @@ mod tests {
             )]))
             .is_err()
         );
+
+        let interpolation = NativeCandidateStrategy::parse(&BTreeMap::from([
+            (
+                "strategy".into(),
+                ParameterValue::Text("linear_interpolation".into()),
+            ),
+            (
+                "reference_model".into(),
+                ParameterValue::Text("balanced_fullreplay_mnrl_v1".into()),
+            ),
+            ("specialist_weight".into(), ParameterValue::Number(0.1)),
+        ]))
+        .unwrap();
+        assert_eq!(interpolation.name(), "linear_interpolation");
+        assert!(
+            NativeCandidateStrategy::parse(&BTreeMap::from([
+                (
+                    "strategy".into(),
+                    ParameterValue::Text("linear_interpolation".into()),
+                ),
+                (
+                    "reference_model".into(),
+                    ParameterValue::Text("balanced_fullreplay_mnrl_v1".into()),
+                ),
+                ("specialist_weight".into(), ParameterValue::Number(0.75)),
+            ]))
+            .is_err()
+        );
     }
 
     #[test]
@@ -1094,5 +1850,71 @@ mod tests {
         assert!(validate_relative("data/generated/train.jsonl").is_ok());
         assert!(validate_relative("../fitz-tool/data.jsonl").is_err());
         assert!(validate_relative("C:\\Users\\source.jsonl").is_err());
+    }
+
+    #[test]
+    fn agent_report_normalization_preserves_production_outcomes() {
+        let report: NativeAgentEvaluation = serde_json::from_value(json!({
+            "backend": "onnx",
+            "suite": "development",
+            "suite_version": "development.v1",
+            "sessions_per_condition": 16,
+            "pairing": "cross-product",
+            "max_attempts": 2,
+            "nomos_top_k": 3,
+            "summaries": {
+                "nomos": {
+                    "sessions": 16,
+                    "success_rate": 0.75,
+                    "mean_completed_stage_rate": 0.8,
+                    "prompt_tokens": 3200,
+                    "completion_tokens": 800,
+                    "tool_call_attempts": 40,
+                    "prompt_tokens_per_attempt": 80.0,
+                    "successful_execution_rate": 0.9,
+                    "tool_selection_accuracy": 0.875,
+                    "schema_valid_call_rate": 0.95,
+                    "wrong_tool_executions": 2,
+                    "invalid_calls": 2,
+                    "visible_oracle_hit_rate": 1.0,
+                    "tool_description_reduction": 0.91
+                }
+            }
+        }))
+        .unwrap();
+        let configuration = AgentEvaluationConfiguration {
+            backend: "onnx".into(),
+            chat_model: AgentChatModelConfiguration {
+                path: "artifacts/chat".into(),
+                format: "onnxruntime-genai".into(),
+                bytes: 1,
+                fingerprint: prefixed(&"a".repeat(64)),
+                source: json!({"revision":"pinned"}),
+            },
+            selector_strategy: "multiview".into(),
+            candidate_strategy: "multiview".into(),
+            nomos_top_k: 3,
+            max_attempts: 2,
+            development: AgentSuiteManifest {
+                suite: "development".into(),
+                sessions: 16,
+                pairing: "cross-product".into(),
+                condition: "nomos".into(),
+            },
+            sealed: AgentSuiteManifest {
+                suite: "promotion".into(),
+                sessions: 32,
+                pairing: "cross-product".into(),
+                condition: "nomos".into(),
+            },
+        };
+        let metrics = report
+            .validate_and_summary(&configuration, &configuration.development)
+            .unwrap()
+            .normalized_metrics()
+            .unwrap();
+        assert_eq!(metrics["agent_success_rate"], 0.75);
+        assert_eq!(metrics["agent_invalid_call_rate"], 0.05);
+        assert_eq!(metrics["agent_wrong_tool_execution_rate"], 2.0 / 38.0);
     }
 }

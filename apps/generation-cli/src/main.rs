@@ -20,7 +20,9 @@ async fn main() -> anyhow::Result<()> {
     let database_url = cli.database_url();
     let command = match cli.command {
         Command::Experiment { command } => {
-            return commands::experiment::execute(command, &database_url).await;
+            // Keep the experiment handler's aggregate future off the small Windows
+            // main-thread stack, just like the ordinary command dispatcher below.
+            return Box::pin(commands::experiment::execute(command, &database_url)).await;
         }
         command => command,
     };

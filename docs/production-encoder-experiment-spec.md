@@ -101,6 +101,44 @@ The first loop must use existing copied development evidence to choose changes.
 It must not repeatedly query the sealed holdout or generate another large
 paraphrase cohort before a small controlled result establishes value.
 
+The first real loop trained two continued-triplet candidates. Both completed,
+were recovered from their immutable output directories after a process-output
+normalization failure, and regressed development MRR and Recall@1/2. Encoder
+Gym therefore retained the baseline without evaluating either candidate on
+sealed evidence. That result closes the naive "train the same rows again"
+branch rather than weakening its gates.
+
+The next bounded branch uses linear checkpoint interpolation. A candidate may
+name only an immutable reference-model key declared by the isolated project;
+the adapter verifies that copied tree and invokes one fixed interpolation
+module. It rejects arbitrary paths, weights above 0.5, extra parameters, and
+native manifests that do not reproduce the exact baseline, reference, weight,
+and candidate output identity. This generalizes the trainer port to safe model
+transformations without leaking Nomos-specific types into the core.
+
+## Composite production evaluation
+
+Nomos exposed that a single offline metric family is not sufficient for a
+production encoder. The adapter therefore composes two native evaluators into
+one normalized report:
+
+1. frozen retrieval evaluation produces Recall@k, MRR, and positive margin;
+2. deterministic local agent sessions produce completion, completed-stage,
+   tool-selection, schema-validity, execution, invalid-call, wrong-execution,
+   oracle-visibility, prompt-token, and description-reduction metrics.
+
+The local ONNX chat model, evaluator configuration, suite pairing, session
+count, and top-k policy are immutable project dependencies. Development and
+promotion agent suites have distinct composite fingerprints. Raw reports and
+traces remain below the isolated experiment root. If a report exists without
+its trace, the adapter fails closed instead of treating it as recoverable
+evidence.
+
+The production protocol uses development agent outcomes as regression gates in
+addition to retrieval gains. The promotion agent suite remains sealed and can
+run only for the one development-selected candidate after explicit operator
+authorization.
+
 ## Completion criterion
 
 The pilot is complete only when Encoder Gym can register and verify the copied
