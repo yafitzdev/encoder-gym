@@ -669,6 +669,7 @@ mod tests {
         let candidate = TrainingCandidate::create(
             &project,
             1,
+            600,
             BTreeMap::from([
                 ("learning_rate".into(), ParameterValue::Number(0.000003)),
                 ("loss".into(), ParameterValue::Text("triplet".into())),

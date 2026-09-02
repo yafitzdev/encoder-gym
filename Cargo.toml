@@ -18,6 +18,7 @@ members = [
     "crates/dataset-architect-core",
     "crates/dataset-architect-runner",
     "crates/encoder-experiment-core",
+    "crates/encoder-experiment-nomos",
     "crates/evaluation-core",
     "crates/generation-core",
     "crates/generation-fake",
@@ -91,6 +92,7 @@ dataset-architect-runner = { package = "dataset-architect-runner", path = "crate
 training-core = { package = "training-core", path = "crates/training-core" }
 evaluation-core = { package = "evaluation-core", path = "crates/evaluation-core" }
 encoder-experiment-core = { package = "encoder-experiment-core", path = "crates/encoder-experiment-core" }
+encoder-experiment-nomos = { package = "encoder-experiment-nomos", path = "crates/encoder-experiment-nomos" }
 analysis-core = { package = "analysis-core", path = "crates/analysis-core" }
 artifact-core = { package = "artifact-core", path = "crates/artifact-core" }
 benchmark-architect-core = { package = "benchmark-architect-core", path = "crates/benchmark-architect-core" }

@@ -316,6 +316,7 @@ pub struct TrainingCandidate {
     pub project_snapshot_id: Uuid,
     pub project_snapshot_fingerprint: String,
     pub sequence: u32,
+    pub maximum_training_seconds: u64,
     pub parameters: BTreeMap<String, ParameterValue>,
     pub fingerprint: String,
 }
@@ -324,12 +325,14 @@ impl TrainingCandidate {
     pub fn create(
         project: &ExternalProjectSnapshot,
         sequence: u32,
+        maximum_training_seconds: u64,
         parameters: BTreeMap<String, ParameterValue>,
     ) -> Result<Self, EncoderExperimentError> {
         project.validate_integrity()?;
-        if sequence == 0 || parameters.is_empty() {
+        if sequence == 0 || maximum_training_seconds == 0 || parameters.is_empty() {
             return Err(EncoderExperimentError::Validation(
-                "training candidate requires a positive sequence and parameters".into(),
+                "training candidate requires a positive sequence, time limit, and parameters"
+                    .into(),
             ));
         }
         for (key, value) in &parameters {
@@ -345,6 +348,7 @@ impl TrainingCandidate {
             project_snapshot_id: project.id,
             project_snapshot_fingerprint: project.fingerprint.clone(),
             sequence,
+            maximum_training_seconds,
             parameters,
             fingerprint: String::new(),
         };
@@ -358,6 +362,7 @@ impl TrainingCandidate {
             "project_snapshot_id": self.project_snapshot_id,
             "project_snapshot_fingerprint": self.project_snapshot_fingerprint,
             "sequence": self.sequence,
+            "maximum_training_seconds": self.maximum_training_seconds,
             "parameters": self.parameters,
         }))
     }
@@ -369,6 +374,7 @@ impl TrainingCandidate {
         if self.project_snapshot_id != project.id
             || self.project_snapshot_fingerprint != project.fingerprint
             || self.sequence == 0
+            || self.maximum_training_seconds == 0
             || self.parameters.is_empty()
             || self.reproduce_fingerprint()? != self.fingerprint
         {
@@ -474,6 +480,7 @@ mod tests {
         let candidate = TrainingCandidate::create(
             &snapshot,
             1,
+            600,
             BTreeMap::from([
                 ("learning_rate".into(), ParameterValue::Number(0.000003)),
                 ("loss".into(), ParameterValue::Text("triplet".into())),

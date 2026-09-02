@@ -56,5 +56,6 @@ pub trait EncoderTaskBackend: Send + Sync {
         model: ModelArtifactIdentity,
         contract: MetricContract,
         suite_key: String,
+        maximum_seconds: u64,
     ) -> BoxFuture<'_, Result<EvaluationReport, EncoderTaskAdapterError>>;
 }
