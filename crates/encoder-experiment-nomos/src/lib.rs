@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use encoder_experiment_core::{
     domain::{
         BackendIdentity, EncoderTaskKind, EvidenceRole, ExternalArtifactIdentity,
@@ -24,6 +24,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::process::Command;
+use uuid::Uuid;
+use workflow_core::benchmark_generation::{
+    BenchmarkFreshnessAuthority, BenchmarkGeneration, DevelopmentSuiteAuthority,
+    ExternalBenchmarkAuthority,
+};
 
 const ADAPTER_NAME: &str = "nomos";
 const ADAPTER_PROTOCOL_VERSION: &str = "nomos-ranking-v3";
@@ -155,6 +160,10 @@ impl NomosBackend {
             &self.manifest.agent_evaluation.chat_model_tree_sha256,
             "agent chat model",
         )?;
+        if let Some(authority) = &self.manifest.benchmark_authority {
+            let path = self.resolve_existing(&authority.path)?;
+            verify_file(&path, authority.bytes, &authority.sha256)?;
+        }
         let training_inputs = self
             .manifest
             .datasets
@@ -200,6 +209,57 @@ impl NomosBackend {
                 }),
             );
         }
+        let mut task_configuration = json!({
+            "adapter_protocol": ADAPTER_PROTOCOL_VERSION,
+            "source_reference": {
+                "repository": self.manifest.source.repository,
+                "commit": self.manifest.source.commit,
+                "snapshot_date": self.manifest.source.snapshot_date,
+                "access": self.manifest.source.access,
+            },
+            "baseline_evidence": {
+                "onnx": {
+                    "path": self.manifest.baseline.onnx_path,
+                    "bytes": onnx_bytes,
+                    "fingerprint": prefixed(&onnx_digest),
+                },
+                "weak_agent_raw": self.manifest.baseline.weak_agent_raw_completed,
+                "weak_agent_complete_coprocessor": self.manifest.baseline.weak_agent_complete_coprocessor_completed,
+                "historical_evaluation_runs_fingerprint": prefixed(&self.manifest.evaluation_runs_tree_sha256),
+            },
+            "training_inputs": training_inputs,
+            "reference_models": reference_models,
+            "agent_evaluation": {
+                "backend": self.manifest.agent_evaluation.backend,
+                "chat_model": {
+                    "path": self.manifest.agent_evaluation.chat_model_path,
+                    "format": self.manifest.agent_evaluation.chat_model_format,
+                    "bytes": chat_model_bytes,
+                    "fingerprint": prefixed(&chat_model_digest),
+                    "source": self.manifest.agent_evaluation.source,
+                },
+                "selector_strategy": self.manifest.agent_evaluation.selector_strategy,
+                "candidate_strategy": self.manifest.agent_evaluation.candidate_strategy,
+                "nomos_top_k": self.manifest.agent_evaluation.nomos_top_k,
+                "max_attempts": self.manifest.agent_evaluation.max_attempts,
+                "development": self.manifest.agent_evaluation.development,
+                "sealed": self.manifest.agent_evaluation.sealed,
+            },
+            "suites": suites,
+        });
+        if let Some(authority) = &self.manifest.benchmark_authority {
+            task_configuration
+                .as_object_mut()
+                .expect("task configuration is an object")
+                .insert(
+                    "benchmark_authority".into(),
+                    json!({
+                        "path": authority.path,
+                        "bytes": authority.bytes,
+                        "fingerprint": prefixed(&authority.sha256),
+                    }),
+                );
+        }
         ExternalProjectSnapshot::create(
             self.manifest.experiment.clone(),
             EncoderTaskKind::RetrievalRanking,
@@ -208,47 +268,273 @@ impl NomosBackend {
             self.identity.clone(),
             inputs,
             baseline_model,
-            json!({
-                "adapter_protocol": ADAPTER_PROTOCOL_VERSION,
-                "source_reference": {
-                    "repository": self.manifest.source.repository,
-                    "commit": self.manifest.source.commit,
-                    "snapshot_date": self.manifest.source.snapshot_date,
-                    "access": self.manifest.source.access,
-                },
-                "baseline_evidence": {
-                    "onnx": {
-                        "path": self.manifest.baseline.onnx_path,
-                        "bytes": onnx_bytes,
-                        "fingerprint": prefixed(&onnx_digest),
-                    },
-                    "weak_agent_raw": self.manifest.baseline.weak_agent_raw_completed,
-                    "weak_agent_complete_coprocessor": self.manifest.baseline.weak_agent_complete_coprocessor_completed,
-                    "historical_evaluation_runs_fingerprint": prefixed(&self.manifest.evaluation_runs_tree_sha256),
-                },
-                "training_inputs": training_inputs,
-                "reference_models": reference_models,
-                "agent_evaluation": {
-                    "backend": self.manifest.agent_evaluation.backend,
-                    "chat_model": {
-                        "path": self.manifest.agent_evaluation.chat_model_path,
-                        "format": self.manifest.agent_evaluation.chat_model_format,
-                        "bytes": chat_model_bytes,
-                        "fingerprint": prefixed(&chat_model_digest),
-                        "source": self.manifest.agent_evaluation.source,
-                    },
-                    "selector_strategy": self.manifest.agent_evaluation.selector_strategy,
-                    "candidate_strategy": self.manifest.agent_evaluation.candidate_strategy,
-                    "nomos_top_k": self.manifest.agent_evaluation.nomos_top_k,
-                    "max_attempts": self.manifest.agent_evaluation.max_attempts,
-                    "development": self.manifest.agent_evaluation.development,
-                    "sealed": self.manifest.agent_evaluation.sealed,
-                },
-                "suites": suites,
-            }),
+            task_configuration,
             Utc::now(),
         )
         .map_err(adapter_error)
+    }
+
+    /// Compile the current schema-v4, row-free Nomos authority evidence into
+    /// the provider-neutral renewable benchmark contract.
+    pub fn benchmark_generation(
+        &self,
+        predecessor: Option<&BenchmarkGeneration>,
+    ) -> Result<BenchmarkGeneration, EncoderTaskAdapterError> {
+        let pin =
+            self.manifest.benchmark_authority.as_ref().ok_or_else(|| {
+                adapter_error("Nomos manifest has no benchmark-generation authority")
+            })?;
+        let path = self.resolve_existing(&pin.path)?;
+        verify_file(&path, pin.bytes, &pin.sha256)?;
+        let raw = fs::read(&path).map_err(adapter_error)?;
+        let evidence: NomosGenerationAuthorityFile =
+            serde_json::from_slice(&raw).map_err(|error| {
+                adapter_error(format!("Nomos benchmark authority is invalid: {error}"))
+            })?;
+        evidence.validate()?;
+        let project = self.project_snapshot()?;
+        let configuration = Self::task_configuration(&project)?;
+        configuration.validate()?;
+        let development = configuration
+            .suites
+            .iter()
+            .filter(|(_, suite)| suite.role == EvidenceRole::Development)
+            .collect::<BTreeMap<_, _>>();
+        let sealed = configuration
+            .suites
+            .iter()
+            .filter(|(_, suite)| suite.role == EvidenceRole::SealedAcceptance)
+            .collect::<Vec<_>>();
+        if sealed.len() != 1
+            || development.len() != evidence.development_suites.len()
+            || development
+                .keys()
+                .map(|key| key.as_str())
+                .collect::<Vec<_>>()
+                != evidence
+                    .development_suites
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+        {
+            return Err(adapter_error(
+                "Nomos authority suite set does not match the current project snapshot",
+            ));
+        }
+        let (sealed_key, sealed_suite) = sealed[0];
+        let mut authorities = Vec::with_capacity(development.len());
+        for (suite_key, suite) in development {
+            let authority = evidence
+                .development_suites
+                .get(suite_key)
+                .expect("suite sets were checked");
+            if authority.development_suite_fingerprint != suite.fingerprint
+                || authority.sealed_suite_fingerprint != sealed_suite.fingerprint
+                || evidence.sealed_suite_key != *sealed_key
+            {
+                return Err(adapter_error(
+                    "Nomos authority fingerprints do not match the current evaluation suites",
+                ));
+            }
+            authorities.push(
+                DevelopmentSuiteAuthority::from_external_evidence(
+                    suite_key.clone(),
+                    authority.clone(),
+                )
+                .map_err(adapter_error)?,
+            );
+        }
+        if evidence.freshness.sealed_suite_id
+            != authorities[0]
+                .bundle
+                .sealed_suite_id
+                .expect("external authority requires sealed suite")
+            || evidence.freshness.sealed_suite_fingerprint != sealed_suite.fingerprint
+        {
+            return Err(adapter_error(
+                "Nomos freshness evidence does not bind the successor sealed suite",
+            ));
+        }
+        BenchmarkGeneration::create(
+            predecessor,
+            authorities,
+            evidence.freshness,
+            evidence.created_at,
+        )
+        .map_err(adapter_error)
+    }
+
+    /// Convert the isolated cohort's row-free audit into the strict external
+    /// authority envelope consumed by renewable benchmark generations.
+    ///
+    /// This does not inspect benchmark rows or execute a model. The audit is
+    /// accepted only when it proves a frozen population, zero overlap under
+    /// every required identity, sufficient per-slice support, no prior model
+    /// evaluation, and an independent reviewer.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_benchmark_authority(
+        &self,
+        qualification_report: impl AsRef<Path>,
+        acquired_by: impl Into<String>,
+        reviewed_by: impl Into<String>,
+        rationale: impl Into<String>,
+        reviewed_at: DateTime<Utc>,
+        valid_until: DateTime<Utc>,
+    ) -> Result<Vec<u8>, EncoderTaskAdapterError> {
+        let report_path = qualification_report.as_ref();
+        let report_path = if report_path.is_absolute() {
+            let canonical = report_path.canonicalize().map_err(adapter_error)?;
+            if !canonical.starts_with(&self.root) {
+                return Err(adapter_error(
+                    "Nomos qualification report must be inside the isolated workspace",
+                ));
+            }
+            canonical
+        } else {
+            let report_path = report_path.to_str().ok_or_else(|| {
+                adapter_error("Nomos qualification report path is not valid UTF-8")
+            })?;
+            self.resolve_existing(report_path)?
+        };
+        let raw = fs::read(&report_path).map_err(adapter_error)?;
+        let report: NomosExternalQualificationReport =
+            serde_json::from_slice(&raw).map_err(|error| {
+                adapter_error(format!("Nomos qualification report is invalid: {error}"))
+            })?;
+        report.validate()?;
+
+        let acquired_by = acquired_by.into();
+        let reviewed_by = reviewed_by.into();
+        let rationale = rationale.into();
+        if acquired_by.trim().is_empty()
+            || acquired_by.trim() != acquired_by
+            || reviewed_by.trim().is_empty()
+            || reviewed_by.trim() != reviewed_by
+            || acquired_by == reviewed_by
+            || rationale.trim().is_empty()
+            || rationale.trim() != rationale
+            || reviewed_at >= valid_until
+        {
+            return Err(adapter_error(
+                "Nomos benchmark authority review fields are invalid or not independent",
+            ));
+        }
+
+        let project = self.project_snapshot()?;
+        let configuration = Self::task_configuration(&project)?;
+        configuration.validate()?;
+        let development = configuration
+            .suites
+            .iter()
+            .filter(|(_, suite)| suite.role == EvidenceRole::Development)
+            .collect::<BTreeMap<_, _>>();
+        let sealed = configuration
+            .suites
+            .iter()
+            .filter(|(_, suite)| suite.role == EvidenceRole::SealedAcceptance)
+            .collect::<Vec<_>>();
+        if development.is_empty() || sealed.len() != 1 {
+            return Err(adapter_error(
+                "Nomos authority requires development suites and exactly one sealed suite",
+            ));
+        }
+        let (sealed_suite_key, sealed_suite) = sealed[0];
+        let sealed_suite_id = Uuid::new_v4();
+        let population_fingerprint = prefixed(&report.population_fingerprint);
+        let source_manifest_fingerprint = prefixed(&report.source_manifest_fingerprint);
+        let acquisition_spec_fingerprint = artifact_core::fingerprint(&json!({
+            "protocol": report.protocol,
+            "policy": report.policy,
+            "source_manifest_fingerprint": source_manifest_fingerprint,
+        }))
+        .map_err(adapter_error)?;
+
+        let mut development_suites = BTreeMap::new();
+        for (suite_key, suite) in development {
+            let mut contamination =
+                workflow_core::benchmark_generation::ExternalContaminationEvidence {
+                    id: Uuid::new_v4(),
+                    population_fingerprint: population_fingerprint.clone(),
+                    policy: report.policy.clone(),
+                    overlap_counts: report.overlap_counts.clone(),
+                    checked_at: reviewed_at,
+                    fingerprint: String::new(),
+                };
+            contamination.fingerprint = contamination
+                .reproduce_fingerprint()
+                .map_err(adapter_error)?;
+            let mut qualification =
+                workflow_core::benchmark_generation::ExternalQualificationEvidence {
+                    id: Uuid::new_v4(),
+                    population_fingerprint: population_fingerprint.clone(),
+                    minimum_overall_support: report.minimum_overall_support,
+                    observed_overall_support: report.observed_overall_support,
+                    minimum_slice_support: report.minimum_slice_support.clone(),
+                    observed_slice_support: report.observed_slice_support.clone(),
+                    ready: report.ready,
+                    assessed_at: reviewed_at,
+                    fingerprint: String::new(),
+                };
+            qualification.fingerprint = qualification
+                .reproduce_fingerprint()
+                .map_err(adapter_error)?;
+            let mut approval = workflow_core::benchmark_generation::ExternalQualificationApproval {
+                id: Uuid::new_v4(),
+                qualification_id: qualification.id,
+                qualification_fingerprint: qualification.fingerprint.clone(),
+                approved: true,
+                reviewed_by: reviewed_by.clone(),
+                independent: true,
+                rationale: rationale.clone(),
+                reviewed_at,
+                fingerprint: String::new(),
+            };
+            approval.fingerprint = approval.reproduce_fingerprint().map_err(adapter_error)?;
+            let mut authority = ExternalBenchmarkAuthority {
+                schema_version:
+                    workflow_core::benchmark_generation::EXTERNAL_BENCHMARK_AUTHORITY_SCHEMA_VERSION,
+                id: Uuid::new_v4(),
+                bundle_id: Uuid::new_v4(),
+                development_suite_id: Uuid::new_v4(),
+                development_suite_fingerprint: suite.fingerprint.clone(),
+                sealed_suite_id,
+                sealed_suite_fingerprint: sealed_suite.fingerprint.clone(),
+                acquisition_spec_fingerprint: acquisition_spec_fingerprint.clone(),
+                source_manifest_fingerprint: source_manifest_fingerprint.clone(),
+                population_fingerprint: population_fingerprint.clone(),
+                acquired_by: acquired_by.clone(),
+                contamination,
+                qualification,
+                approval,
+                created_at: reviewed_at,
+                fingerprint: String::new(),
+            };
+            authority.fingerprint = authority.reproduce_fingerprint().map_err(adapter_error)?;
+            authority.validate_integrity().map_err(adapter_error)?;
+            development_suites.insert(suite_key.clone(), authority);
+        }
+
+        let freshness = BenchmarkFreshnessAuthority::create(
+            sealed_suite_id,
+            sealed_suite.fingerprint.clone(),
+            population_fingerprint,
+            source_manifest_fingerprint,
+            reviewed_at,
+            reviewed_at,
+            valid_until,
+            reviewed_by,
+            rationale,
+        )
+        .map_err(adapter_error)?;
+        let envelope = NomosGenerationAuthorityFile {
+            schema_version: 1,
+            sealed_suite_key: sealed_suite_key.clone(),
+            development_suites,
+            freshness,
+            created_at: reviewed_at,
+        };
+        envelope.validate()?;
+        serde_json::to_vec_pretty(&envelope).map_err(adapter_error)
     }
 
     fn verify_no_remote(&self) -> Result<(), EncoderTaskAdapterError> {
@@ -412,6 +698,17 @@ impl NomosBackend {
                 "Nomos historical agent model no longer matches its immutable identity",
             ));
         }
+        if let Some(authority) = &configuration.benchmark_authority {
+            let path = self.resolve_existing(&authority.path)?;
+            verify_file(
+                &path,
+                authority.bytes,
+                authority
+                    .fingerprint
+                    .strip_prefix("sha256:")
+                    .ok_or_else(|| adapter_error("Nomos authority fingerprint is malformed"))?,
+            )?;
+        }
         Ok(())
     }
 
@@ -501,6 +798,9 @@ impl EncoderTaskBackend for NomosBackend {
                     .map(|value| value.path.clone()),
             );
             verified_artifact_keys.push(configuration.agent_evaluation.chat_model.path);
+            if let Some(authority) = &configuration.benchmark_authority {
+                verified_artifact_keys.push(authority.path.clone());
+            }
             verified_artifact_keys.sort();
             Ok(AdapterInspection {
                 source_fingerprint: project.source_fingerprint,
@@ -800,6 +1100,8 @@ struct NomosExperimentManifest {
     datasets: Vec<DatasetManifest>,
     #[serde(default)]
     evaluation_suites: Vec<NativeEvaluationSuiteManifest>,
+    #[serde(default)]
+    benchmark_authority: Option<PinnedFileManifest>,
     evaluation_runs_tree_sha256: String,
 }
 
@@ -865,6 +1167,15 @@ impl NomosExperimentManifest {
         }
         self.agent_evaluation.validate()?;
         self.evaluation_suites()?;
+        match (self.schema_version, &self.benchmark_authority) {
+            (3 | 4, None) => {}
+            (4, Some(authority)) => authority.validate("benchmark authority")?,
+            _ => {
+                return Err(adapter_error(
+                    "only successor Nomos manifests may pin benchmark authority evidence",
+                ));
+            }
+        }
         if reference_paths.contains(self.baseline.pytorch_path.as_str())
             || reference_paths.contains(self.baseline.onnx_path.as_str())
             || reference_paths.contains(self.agent_evaluation.chat_model_path.as_str())
@@ -1053,6 +1364,138 @@ struct ReferenceModelManifest {
     provenance: Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PinnedFileManifest {
+    path: String,
+    bytes: u64,
+    sha256: String,
+}
+
+impl PinnedFileManifest {
+    fn validate(&self, kind: &str) -> Result<(), EncoderTaskAdapterError> {
+        validate_relative(&self.path)?;
+        if self.bytes == 0 || !raw_sha256(&self.sha256) {
+            return Err(adapter_error(format!("Nomos {kind} pin is invalid")));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NomosGenerationAuthorityFile {
+    schema_version: u32,
+    sealed_suite_key: String,
+    development_suites: BTreeMap<String, ExternalBenchmarkAuthority>,
+    freshness: BenchmarkFreshnessAuthority,
+    created_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NomosExternalQualificationReport {
+    schema_version: u32,
+    protocol: String,
+    policy: String,
+    source_manifest: Value,
+    source_manifest_fingerprint: String,
+    population_fingerprint: String,
+    overlap_counts: BTreeMap<String, u64>,
+    overlap_by_artifact: BTreeMap<String, BTreeMap<String, u64>>,
+    minimum_overall_support: u64,
+    observed_overall_support: u64,
+    minimum_slice_support: BTreeMap<String, u64>,
+    observed_slice_support: BTreeMap<String, u64>,
+    ready: bool,
+    rows_disclosed: bool,
+    model_evaluations_performed: u64,
+    review_status: String,
+}
+
+impl NomosExternalQualificationReport {
+    fn validate(&self) -> Result<(), EncoderTaskAdapterError> {
+        let expected_overlap = [
+            "exact_content",
+            "group_identity",
+            "normalized_content",
+            "source_identity",
+        ]
+        .into_iter()
+        .map(|key| (key.to_owned(), 0_u64))
+        .collect::<BTreeMap<_, _>>();
+        let reproduced_manifest = artifact_core::fingerprint(&self.source_manifest)
+            .map_err(adapter_error)?
+            .strip_prefix("sha256:")
+            .expect("artifact fingerprints are prefixed")
+            .to_owned();
+        if self.schema_version != 1
+            || self.protocol != "nomos-successor-qualification-v1"
+            || self.policy != "zero_tolerance_all_pairwise_v1"
+            || !self.source_manifest.is_object()
+            || !raw_sha256(&self.source_manifest_fingerprint)
+            || reproduced_manifest != self.source_manifest_fingerprint
+            || !raw_sha256(&self.population_fingerprint)
+            || self.overlap_counts != expected_overlap
+            || self.overlap_by_artifact.is_empty()
+            || self
+                .overlap_by_artifact
+                .values()
+                .any(|counts| *counts != expected_overlap)
+            || self.minimum_overall_support == 0
+            || self.observed_overall_support < self.minimum_overall_support
+            || self.minimum_slice_support.is_empty()
+            || self.minimum_slice_support.keys().collect::<Vec<_>>()
+                != self.observed_slice_support.keys().collect::<Vec<_>>()
+            || self.minimum_slice_support.iter().any(|(key, minimum)| {
+                key.trim().is_empty()
+                    || key.trim() != key
+                    || *minimum == 0
+                    || self.observed_slice_support[key] < *minimum
+            })
+            || !self.ready
+            || self.rows_disclosed
+            || self.model_evaluations_performed != 0
+            || self.review_status != "awaiting_independent_approval"
+        {
+            return Err(adapter_error(
+                "Nomos qualification report does not satisfy strict successor authority",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl NomosGenerationAuthorityFile {
+    fn validate(&self) -> Result<(), EncoderTaskAdapterError> {
+        if self.schema_version != 1
+            || self.sealed_suite_key.trim() != self.sealed_suite_key
+            || self.sealed_suite_key.is_empty()
+            || self.development_suites.is_empty()
+        {
+            return Err(adapter_error(
+                "Nomos benchmark authority envelope is invalid",
+            ));
+        }
+        for (key, authority) in &self.development_suites {
+            validate_canonical_key(key, "benchmark development suite key")?;
+            authority.validate_integrity().map_err(adapter_error)?;
+            if self.created_at < authority.created_at {
+                return Err(adapter_error(
+                    "Nomos benchmark authority envelope predates its evidence",
+                ));
+            }
+        }
+        self.freshness.validate_integrity().map_err(adapter_error)?;
+        if self.created_at < self.freshness.frozen_at {
+            return Err(adapter_error(
+                "Nomos benchmark authority envelope predates freshness review",
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl ReferenceModelManifest {
     fn validate(&self) -> Result<(), EncoderTaskAdapterError> {
         validate_canonical_key(&self.key, "reference model key")?;
@@ -1183,6 +1626,8 @@ struct TaskConfiguration {
     reference_models: BTreeMap<String, PinnedTreeConfiguration>,
     agent_evaluation: AgentEvaluationConfiguration,
     suites: BTreeMap<String, SuiteConfiguration>,
+    #[serde(default)]
+    benchmark_authority: Option<PinnedFileConfiguration>,
 }
 
 impl TaskConfiguration {
@@ -1205,6 +1650,9 @@ impl TaskConfiguration {
             reference.validate("reference model")?;
         }
         self.agent_evaluation.validate()?;
+        if let Some(authority) = &self.benchmark_authority {
+            authority.validate()?;
+        }
         if self.suites.is_empty() {
             return Err(adapter_error("Nomos project defines no evaluation suites"));
         }
@@ -1224,6 +1672,31 @@ impl TaskConfiguration {
                     ));
                 }
             }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PinnedFileConfiguration {
+    path: String,
+    bytes: u64,
+    fingerprint: String,
+}
+
+impl PinnedFileConfiguration {
+    fn validate(&self) -> Result<(), EncoderTaskAdapterError> {
+        validate_relative(&self.path)?;
+        if self.bytes == 0
+            || !self
+                .fingerprint
+                .strip_prefix("sha256:")
+                .is_some_and(raw_sha256)
+        {
+            return Err(adapter_error(
+                "Nomos pinned authority configuration is invalid",
+            ));
         }
         Ok(())
     }
@@ -2125,6 +2598,11 @@ mod tests {
                     role: NativeEvaluationSuiteRole::SealedAcceptance,
                 },
             ],
+            benchmark_authority: Some(PinnedFileManifest {
+                path: "authority.json".into(),
+                bytes: 1,
+                sha256: "9".repeat(64),
+            }),
             evaluation_runs_tree_sha256: "8".repeat(64),
         }
     }

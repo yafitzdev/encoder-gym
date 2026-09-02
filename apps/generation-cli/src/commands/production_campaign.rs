@@ -1,4 +1,8 @@
-use std::path::Path;
+use std::{
+    fs::OpenOptions,
+    io::Write,
+    path::{Component, Path},
+};
 
 use anyhow::Context;
 use chrono::Utc;
@@ -10,19 +14,20 @@ use encoder_campaign_core::{
     replay_campaign, start_run_event,
 };
 use encoder_experiment_core::{
-    journal::{ExperimentRunState, ExperimentView},
+    journal::{ExperimentRunState, ExperimentView, replay_experiment},
     ports::{EncoderTaskBackend, ExperimentStore},
 };
 use encoder_experiment_nomos::NomosBackend;
 use encoder_experiment_runner::ExperimentRunner;
 use encoder_experiment_sqlite::SqliteExperimentStore;
 use serde::Deserialize;
+use sha2::Digest;
 use uuid::Uuid;
 use workflow_core::{
     benchmark_generation::{
         BenchmarkGeneration, BenchmarkGenerationEventKind, BenchmarkGenerationState,
-        BenchmarkGenerationView, first_generation_event, prepare_successor_activation,
-        replay_benchmark_generation,
+        BenchmarkGenerationView, HistoricalBenchmarkConsumption, first_generation_event,
+        prepare_successor_activation, replay_benchmark_generation,
     },
     ports::BenchmarkGenerationStore,
 };
@@ -51,6 +56,147 @@ pub async fn execute_generation(
     ensure_database_belongs_to_workspace(database_url, &backend.workspace)?;
     let store = SqliteExperimentStore::connect(database_url).await?;
     match command {
+        BenchmarkGenerationCommand::NomosBuildAuthority(args) => {
+            if args.valid_days <= 0 || args.valid_days > 365 {
+                anyhow::bail!("authority validity must be between 1 and 365 days");
+            }
+            if args.output.is_absolute()
+                || args.output.components().any(|part| {
+                    matches!(
+                        part,
+                        Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                    )
+                })
+            {
+                anyhow::bail!("authority output must be a relative path inside the workspace");
+            }
+            let workspace = args.backend.workspace.canonicalize().with_context(|| {
+                format!("could not resolve {}", args.backend.workspace.display())
+            })?;
+            let output = workspace.join(&args.output);
+            let parent = output.parent().context("authority output has no parent")?;
+            let canonical_parent = parent
+                .canonicalize()
+                .with_context(|| format!("could not resolve {}", parent.display()))?;
+            if !canonical_parent.starts_with(&workspace) {
+                anyhow::bail!("authority output escapes the isolated workspace");
+            }
+            let now = Utc::now();
+            let backend = NomosBackend::open(&workspace, args.backend.python)?;
+            let bytes = backend.build_benchmark_authority(
+                &args.qualification_report,
+                args.acquired_by,
+                args.reviewed_by,
+                args.rationale,
+                now,
+                now + chrono::Duration::days(args.valid_days),
+            )?;
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&output)
+                .with_context(|| {
+                    format!(
+                        "could not create {}; authority files are never overwritten",
+                        output.display()
+                    )
+                })?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            let sha256 = format!("{:x}", sha2::Sha256::digest(&bytes));
+            presentation::print(&serde_json::json!({
+                "created": true,
+                "path": args.output,
+                "bytes": bytes.len(),
+                "sha256": sha256,
+                "valid_until": now + chrono::Duration::days(args.valid_days),
+            }))
+        }
+        BenchmarkGenerationCommand::MigrateConsumed(args) => {
+            let events = store.load_events(args.experiment_run_id).await?;
+            let first = events.first().with_context(|| {
+                format!(
+                    "experiment run {} has no persisted journal",
+                    args.experiment_run_id
+                )
+            })?;
+            if first.run_id != args.experiment_run_id {
+                anyhow::bail!("experiment run journal identity does not match the request");
+            }
+            let protocol = store
+                .get_protocol(first.protocol_id)
+                .await?
+                .with_context(|| {
+                    format!("experiment protocol {} does not exist", first.protocol_id)
+                })?;
+            if protocol.fingerprint != first.protocol_fingerprint {
+                anyhow::bail!("experiment protocol fingerprint does not match the run journal");
+            }
+            let project = store
+                .get_project(protocol.project_snapshot_id)
+                .await?
+                .with_context(|| {
+                    format!(
+                        "experiment project {} does not exist",
+                        protocol.project_snapshot_id
+                    )
+                })?;
+            let backend = NomosBackend::open(&args.backend.workspace, args.backend.python)?;
+            backend.inspect(project.clone()).await?;
+            let view = replay_experiment(&project, &protocol, &events)?;
+            if view.state != ExperimentRunState::Completed || view.final_decision.is_none() {
+                anyhow::bail!(
+                    "only a deeply replayed completed experiment can become a historical anchor"
+                );
+            }
+            let sealed_report = view
+                .sealed_report
+                .as_ref()
+                .context("completed experiment has no sealed report")?;
+            let sealed_assessment = view
+                .sealed_assessment
+                .as_ref()
+                .context("completed experiment has no sealed assessment")?;
+            let history = HistoricalBenchmarkConsumption::create(
+                project.id,
+                project.fingerprint,
+                view.run_id,
+                protocol.fingerprint,
+                sealed_report.suite_fingerprint.clone(),
+                sealed_assessment.id,
+                sealed_assessment.fingerprint.clone(),
+                view.last_event_fingerprint,
+                view.updated_at,
+                args.recorded_by,
+            )?;
+            let generation = BenchmarkGeneration::historical_exhausted_anchor(history, Utc::now())?;
+            let first = first_generation_event(&generation, generation.created_at)?;
+            store
+                .create_benchmark_generation(&generation, &first)
+                .await?;
+            print_generation(
+                &generation,
+                &replay_benchmark_generation(&generation, &[first])?,
+            )
+        }
+        BenchmarkGenerationCommand::NomosCreate(args) => {
+            let predecessor = match args.predecessor_generation_id {
+                Some(id) => Some(store.get_benchmark_generation(id).await?.with_context(|| {
+                    format!("predecessor benchmark generation {id} does not exist")
+                })?),
+                None => None,
+            };
+            let backend = NomosBackend::open(&args.backend.workspace, args.backend.python)?;
+            let generation = backend.benchmark_generation(predecessor.as_ref())?;
+            let first = first_generation_event(&generation, generation.created_at)?;
+            store
+                .create_benchmark_generation(&generation, &first)
+                .await?;
+            print_generation(
+                &generation,
+                &replay_benchmark_generation(&generation, &[first])?,
+            )
+        }
         BenchmarkGenerationCommand::Import(args) => {
             let generation: BenchmarkGeneration = read_strict_json(&args.file, 4 * 1_048_576)?;
             generation.validate_integrity()?;
@@ -346,7 +492,12 @@ fn ensure_bound_generation_eligible(context: &CampaignContext) -> anyhow::Result
     if !generation.1.is_adaptive_eligible() {
         anyhow::bail!("bound benchmark generation is exhausted or inactive");
     }
-    generation.0.freshness.validate_at(Utc::now())?;
+    generation
+        .0
+        .freshness
+        .as_ref()
+        .context("bound benchmark generation has no renewable freshness authority")?
+        .validate_at(Utc::now())?;
     Ok(())
 }
 
@@ -505,7 +656,10 @@ fn print_generation(
         "generation": generation,
         "lifecycle": view,
         "adaptive_eligible": view.is_adaptive_eligible(),
-        "fresh_at_command_time": generation.freshness.validate_at(Utc::now()).is_ok(),
+        "fresh_at_command_time": generation
+            .freshness
+            .as_ref()
+            .is_some_and(|freshness| freshness.validate_at(Utc::now()).is_ok()),
     }))
 }
 
@@ -597,6 +751,9 @@ fn read_strict_json<T: for<'de> Deserialize<'de>>(
 
 fn generation_backend_args(command: &BenchmarkGenerationCommand) -> &NomosWorkspaceArgs {
     match command {
+        BenchmarkGenerationCommand::NomosBuildAuthority(args) => &args.backend,
+        BenchmarkGenerationCommand::MigrateConsumed(args) => &args.backend,
+        BenchmarkGenerationCommand::NomosCreate(args) => &args.backend,
         BenchmarkGenerationCommand::Import(args) => &args.backend,
         BenchmarkGenerationCommand::Show(BenchmarkGenerationIdArgs { backend, .. }) => backend,
         BenchmarkGenerationCommand::MarkReady(args)

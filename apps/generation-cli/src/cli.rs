@@ -228,6 +228,12 @@ pub enum ExperimentCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum BenchmarkGenerationCommand {
+    /// Build a strict row-free Nomos authority envelope from a qualification audit.
+    NomosBuildAuthority(BenchmarkGenerationNomosAuthorityArgs),
+    /// Import a completed pre-journal sealed run as an exhausted historical anchor.
+    MigrateConsumed(BenchmarkGenerationHistoricalArgs),
+    /// Compile the current verified Nomos authority evidence into a draft generation.
+    NomosCreate(BenchmarkGenerationNomosCreateArgs),
     /// Import one integrity-checked generation authority artifact in draft state.
     Import(BenchmarkGenerationFileArgs),
     /// Show the immutable authority and deeply replayed lifecycle state.
@@ -240,6 +246,44 @@ pub enum BenchmarkGenerationCommand {
     ActivateSuccessor(BenchmarkGenerationSuccessorArgs),
     /// Retire a ready or active generation without consuming sealed evidence.
     Exhaust(BenchmarkGenerationExhaustArgs),
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct BenchmarkGenerationHistoricalArgs {
+    pub experiment_run_id: Uuid,
+    #[arg(long, default_value = "local-operator")]
+    pub recorded_by: String,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct BenchmarkGenerationNomosAuthorityArgs {
+    /// Qualification audit path, relative to the isolated workspace or absolute within it.
+    pub qualification_report: PathBuf,
+    /// New authority JSON path, relative to the isolated workspace.
+    pub output: PathBuf,
+    #[arg(long, default_value = "nomos-successor-acquisition")]
+    pub acquired_by: String,
+    #[arg(long, default_value = "local-operator")]
+    pub reviewed_by: String,
+    #[arg(
+        long,
+        default_value = "Frozen successor cohort independently reviewed for one bounded production campaign"
+    )]
+    pub rationale: String,
+    #[arg(long, default_value_t = 90)]
+    pub valid_days: i64,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct BenchmarkGenerationNomosCreateArgs {
+    #[arg(long)]
+    pub predecessor_generation_id: Option<Uuid>,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
 }
 
 #[derive(Debug, Clone, clap::Args)]

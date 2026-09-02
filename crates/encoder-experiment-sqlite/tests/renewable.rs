@@ -81,6 +81,7 @@ fn generation(
             benchmark_bundle_id: bundle.id,
             benchmark_bundle_fingerprint: bundle.fingerprint,
         },
+        external_evidence: None,
     };
     let freshness = BenchmarkFreshnessAuthority::create(
         sealed_suite_id,

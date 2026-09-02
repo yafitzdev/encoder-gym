@@ -954,6 +954,8 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "uuid",
+ "workflow-core",
 ]
 
 [[package]]
