@@ -1,14 +1,25 @@
 use chrono::{DateTime, TimeZone, Utc};
+use std::collections::BTreeMap;
+
 use encoder_campaign_core::{
     CampaignBenchmarkBinding, CampaignBudget, CampaignStore, ProductionCampaign,
-    bind_generation_event, first_campaign_event, replay_campaign,
+    SEALED_ASSESSMENT_EXPOSURE_SCHEMA_VERSION, SealedAssessmentExposure, bind_generation_event,
+    finalize_iteration_event, first_campaign_event, prepare_iteration_event,
+    record_development_event, record_sealed_authorization_event, replay_campaign, start_run_event,
 };
 use encoder_experiment_core::{
     domain::{
         BackendIdentity, EncoderTaskKind, EvidenceRole, ExternalArtifactIdentity,
-        ExternalProjectSnapshot, ModelArtifactIdentity,
+        ExternalProjectSnapshot, ModelArtifactIdentity, OptimizationBudget, ParameterValue,
+        TrainingCandidate,
+    },
+    journal::{ExperimentRunState, ExperimentView, FinalDecision},
+    metrics::{
+        EvaluationReport, MetricContract, MetricDefinition, MetricDirection, MetricGate,
+        MetricGateCondition,
     },
     ports::ExperimentStore,
+    protocol::{DevelopmentSelectionRule, ExperimentProtocol},
 };
 use encoder_experiment_sqlite::SqliteExperimentStore;
 use serde_json::json;
@@ -51,6 +62,114 @@ fn project() -> ExternalProjectSnapshot {
         time(0),
     )
     .unwrap()
+}
+
+fn protocol(
+    project: &ExternalProjectSnapshot,
+    generation: &BenchmarkGeneration,
+) -> ExperimentProtocol {
+    let contract = MetricContract::create(
+        vec![MetricDefinition::new("mrr", MetricDirection::HigherIsBetter).unwrap()],
+        "mrr",
+        vec![
+            MetricGate::new(
+                "mrr",
+                EvidenceRole::Development,
+                MetricGateCondition::MinimumImprovement { value: 0.0 },
+            )
+            .unwrap(),
+            MetricGate::new(
+                "mrr",
+                EvidenceRole::SealedAcceptance,
+                MetricGateCondition::MaximumRegression { value: 0.0 },
+            )
+            .unwrap(),
+        ],
+    )
+    .unwrap();
+    let development_authority = &generation.development_suites[0];
+    let baseline_report = |role, suite_key: &str, suite_fingerprint: String| {
+        EvaluationReport::create(
+            project,
+            project.baseline_model.clone(),
+            role,
+            suite_key,
+            suite_fingerprint,
+            &contract,
+            BTreeMap::from([("mrr".into(), 0.8)]),
+            100,
+            time(3),
+        )
+        .unwrap()
+    };
+    let candidate = TrainingCandidate::create(
+        project,
+        1,
+        60,
+        BTreeMap::from([("weight".into(), ParameterValue::Number(0.05))]),
+    )
+    .unwrap();
+    let development_reports = vec![baseline_report(
+        EvidenceRole::Development,
+        &development_authority.suite_key,
+        development_authority
+            .bundle
+            .development_suite_fingerprint
+            .clone(),
+    )];
+    let sealed_report = baseline_report(
+        EvidenceRole::SealedAcceptance,
+        "sealed",
+        generation
+            .freshness
+            .as_ref()
+            .unwrap()
+            .sealed_suite_fingerprint
+            .clone(),
+    );
+    ExperimentProtocol::create_multi(
+        project,
+        contract,
+        development_reports,
+        sealed_report,
+        OptimizationBudget {
+            maximum_candidates: 1,
+            maximum_training_seconds: 60,
+            maximum_development_evaluations: 1,
+            maximum_sealed_evaluations: 1,
+        },
+        60,
+        "sealed",
+        vec![candidate],
+        DevelopmentSelectionRule::MaximizeWorstSuiteThenMean,
+        time(3),
+    )
+    .unwrap()
+}
+
+fn experiment_view(
+    protocol: &ExperimentProtocol,
+    run_id: Uuid,
+    state: ExperimentRunState,
+    selected_candidate_id: Option<Uuid>,
+    final_decision: Option<FinalDecision>,
+    sequence: u32,
+) -> ExperimentView {
+    ExperimentView {
+        run_id,
+        protocol_id: protocol.id,
+        state,
+        candidates: BTreeMap::new(),
+        selected_candidate_id,
+        sealed_authorized_by: None,
+        sealed_report: None,
+        sealed_assessment: None,
+        final_decision,
+        failure_reason: None,
+        last_sequence: sequence,
+        last_event_fingerprint: digest('f'),
+        updated_at: time(sequence),
+    }
 }
 
 fn generation(
@@ -272,6 +391,192 @@ async fn successor_activation_updates_both_journals_atomically() {
         replay_benchmark_generation(&successor, &successor_reloaded)
             .unwrap()
             .is_adaptive_eligible()
+    );
+}
+
+#[tokio::test]
+async fn sealed_iteration_finalization_rolls_back_both_journals_on_conflict() {
+    let store = SqliteExperimentStore::connect("sqlite::memory:")
+        .await
+        .unwrap();
+    let project = project();
+    store.create_project(project.clone()).await.unwrap();
+    let generation = generation(None, 'c');
+    let generation_events = create_active_generation(&store, &generation).await;
+    let generation_view = replay_benchmark_generation(&generation, &generation_events).unwrap();
+    let binding =
+        CampaignBenchmarkBinding::from_active_generation(&generation, &generation_view, "sealed")
+            .unwrap();
+    let protocol = protocol(&project, &generation);
+    let campaign = ProductionCampaign::create(
+        "atomic finalization",
+        project.id,
+        project.fingerprint.clone(),
+        CampaignBudget {
+            maximum_iterations: 1,
+            maximum_candidates: 1,
+            maximum_training_seconds: 60,
+            maximum_development_evaluations: 1,
+            maximum_sealed_evaluations: 1,
+            maximum_backend_operations: 10,
+        },
+        time(3),
+    )
+    .unwrap();
+    let first = first_campaign_event(&campaign, time(3)).unwrap();
+    store.create_campaign(&campaign, &first).await.unwrap();
+    let mut campaign_events = vec![first.clone()];
+    let mut campaign_view = replay_campaign(&campaign, &campaign_events).unwrap();
+    let bound = bind_generation_event(&campaign, &campaign_view, binding.clone(), time(4)).unwrap();
+    store.append_campaign_event(&bound).await.unwrap();
+    campaign_events.push(bound);
+    campaign_view = replay_campaign(&campaign, &campaign_events).unwrap();
+    let prepared = prepare_iteration_event(&campaign, &campaign_view, &protocol, time(5)).unwrap();
+    store.append_campaign_event(&prepared).await.unwrap();
+    campaign_events.push(prepared);
+    campaign_view = replay_campaign(&campaign, &campaign_events).unwrap();
+    let run_id = Uuid::new_v4();
+    let ready = experiment_view(&protocol, run_id, ExperimentRunState::Ready, None, None, 1);
+    let started = start_run_event(&campaign, &campaign_view, &ready, time(6)).unwrap();
+    store.append_campaign_event(&started).await.unwrap();
+    campaign_events.push(started);
+    campaign_view = replay_campaign(&campaign, &campaign_events).unwrap();
+    let candidate_id = protocol.candidates[0].id;
+    let development = experiment_view(
+        &protocol,
+        run_id,
+        ExperimentRunState::AwaitingSealedAuthorization,
+        Some(candidate_id),
+        None,
+        5,
+    );
+    let developed =
+        record_development_event(&campaign, &campaign_view, &development, time(7)).unwrap();
+    store.append_campaign_event(&developed).await.unwrap();
+    campaign_events.push(developed);
+    campaign_view = replay_campaign(&campaign, &campaign_events).unwrap();
+    let authorized = experiment_view(
+        &protocol,
+        run_id,
+        ExperimentRunState::SealedAuthorized,
+        Some(candidate_id),
+        None,
+        6,
+    );
+    let authorization = record_sealed_authorization_event(
+        &campaign,
+        &campaign_view,
+        &authorized,
+        "operator",
+        time(8),
+    )
+    .unwrap();
+    store.append_campaign_event(&authorization).await.unwrap();
+    campaign_events.push(authorization);
+    campaign_view = replay_campaign(&campaign, &campaign_events).unwrap();
+
+    let completed = experiment_view(
+        &protocol,
+        run_id,
+        ExperimentRunState::Completed,
+        Some(candidate_id),
+        Some(FinalDecision::RetainBaseline),
+        9,
+    );
+    let mut exposure = SealedAssessmentExposure {
+        schema_version: SEALED_ASSESSMENT_EXPOSURE_SCHEMA_VERSION,
+        id: Uuid::new_v4(),
+        campaign_id: campaign.id,
+        campaign_fingerprint: campaign.fingerprint.clone(),
+        generation_id: generation.id,
+        generation_fingerprint: generation.fingerprint.clone(),
+        iteration: 1,
+        experiment_run_id: run_id,
+        experiment_protocol_id: protocol.id,
+        experiment_protocol_fingerprint: protocol.fingerprint.clone(),
+        candidate_id,
+        sealed_suite_id: binding.sealed_suite_id,
+        sealed_suite_fingerprint: binding.sealed_suite_fingerprint.clone(),
+        report_id: Uuid::new_v4(),
+        report_fingerprint: digest('d'),
+        assessment_id: Uuid::new_v4(),
+        assessment_fingerprint: digest('e'),
+        authorized_by: "operator".into(),
+        created_at: time(9),
+        fingerprint: String::new(),
+    };
+    exposure.fingerprint = exposure.reproduce_fingerprint().unwrap();
+    let terminal = generation_view
+        .next_event(
+            &generation,
+            BenchmarkGenerationEventKind::IterationConsumed {
+                experiment_run_id: run_id,
+                experiment_protocol_fingerprint: protocol.fingerprint.clone(),
+                sealed_exposure_id: exposure.id,
+                sealed_exposure_fingerprint: exposure.fingerprint.clone(),
+                final_decision_fingerprint: completed.last_event_fingerprint.clone(),
+            },
+            time(9),
+        )
+        .unwrap();
+    let finalized = finalize_iteration_event(
+        &campaign,
+        &campaign_view,
+        &completed,
+        Some(&terminal),
+        Some(exposure),
+        time(10),
+    )
+    .unwrap();
+
+    let generation_count = generation_events.len();
+    let campaign_count = campaign_events.len();
+    let mut colliding_finalized = finalized.clone();
+    colliding_finalized.id = first.id;
+    colliding_finalized.fingerprint = colliding_finalized.reproduce_fingerprint().unwrap();
+    assert!(
+        store
+            .append_iteration_finalization(&terminal, &colliding_finalized)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store
+            .list_benchmark_generation_events(generation.id)
+            .await
+            .unwrap()
+            .len(),
+        generation_count
+    );
+    assert_eq!(
+        store.list_campaign_events(campaign.id).await.unwrap().len(),
+        campaign_count
+    );
+
+    store
+        .append_iteration_finalization(&terminal, &finalized)
+        .await
+        .unwrap();
+    let generation_view = replay_benchmark_generation(
+        &generation,
+        &store
+            .list_benchmark_generation_events(generation.id)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let campaign_view = replay_campaign(
+        &campaign,
+        &store.list_campaign_events(campaign.id).await.unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        generation_view.state,
+        workflow_core::benchmark_generation::BenchmarkGenerationState::Exhausted
+    );
+    assert_eq!(
+        campaign_view.state,
+        encoder_campaign_core::CampaignState::RenewalRequired
     );
 }
 

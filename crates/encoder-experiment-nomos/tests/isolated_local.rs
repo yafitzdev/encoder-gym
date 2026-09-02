@@ -13,7 +13,7 @@ async fn verifies_the_real_isolated_nomos_snapshot() {
 
     assert_eq!(project.backend, backend.identity());
     assert_eq!(inspection.source_fingerprint, project.source_fingerprint);
-    assert_eq!(inspection.verified_artifact_keys.len(), 8);
+    assert_eq!(inspection.verified_artifact_keys.len(), 10);
     assert!(
         inspection
             .verified_artifact_keys
@@ -31,5 +31,17 @@ async fn verifies_the_real_isolated_nomos_snapshot() {
             .verified_artifact_keys
             .iter()
             .any(|key| key.contains("qwen3-0.6b-dq-onnx"))
+    );
+    assert!(
+        inspection
+            .verified_artifact_keys
+            .iter()
+            .any(|key| key.contains("nomos_successor_holdout_v2"))
+    );
+    assert!(
+        inspection
+            .verified_artifact_keys
+            .iter()
+            .any(|key| key.contains("encoder_gym_successor_authority_v1"))
     );
 }

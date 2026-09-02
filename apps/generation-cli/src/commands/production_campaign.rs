@@ -7,11 +7,11 @@ use std::{
 use anyhow::Context;
 use chrono::Utc;
 use encoder_campaign_core::{
-    CampaignBenchmarkBinding, CampaignBudget, CampaignState, CampaignStore, CampaignView,
-    ProductionCampaign, SealedAssessmentExposure, bind_generation_event, complete_campaign_event,
-    finalize_iteration_event, first_campaign_event, prepare_iteration_event,
-    record_development_event, record_sealed_authorization_event, renewal_handoff_event,
-    replay_campaign, start_run_event,
+    CampaignBenchmarkBinding, CampaignBudget, CampaignEventKind, CampaignState, CampaignStore,
+    CampaignView, ProductionCampaign, SealedAssessmentExposure, bind_generation_event,
+    complete_campaign_event, finalize_iteration_event, first_campaign_event,
+    prepare_iteration_event, record_development_event, record_sealed_authorization_event,
+    renewal_handoff_event, replay_campaign, start_run_event,
 };
 use encoder_experiment_core::{
     journal::{ExperimentRunState, ExperimentView, replay_experiment},
@@ -338,6 +338,19 @@ pub async fn execute_campaign(
                 context.experiment.as_ref(),
             )
         }
+        ProductionCampaignCommand::Doctor(args) => {
+            let provenance = campaign_provenance(&store, &backend, args.campaign_id).await?;
+            presentation::print(&serde_json::json!({
+                "verified": true,
+                "campaign_id": args.campaign_id,
+                "provenance_fingerprint": artifact_core::fingerprint(&provenance)?,
+                "state": provenance["campaign"]["state"],
+                "decision": provenance["experiment"]["final_decision"],
+            }))
+        }
+        ProductionCampaignCommand::Provenance(args) => {
+            presentation::print(&campaign_provenance(&store, &backend, args.campaign_id).await?)
+        }
         ProductionCampaignCommand::Readiness(args) => {
             let context = load_campaign_context(&store, &backend, args.campaign_id).await?;
             print_readiness(&context)
@@ -425,6 +438,170 @@ struct CampaignContext {
     view: CampaignView,
     generation: Option<(BenchmarkGeneration, BenchmarkGenerationView)>,
     experiment: Option<ExperimentView>,
+}
+
+async fn campaign_provenance(
+    store: &SqliteExperimentStore,
+    backend: &NomosBackend,
+    campaign_id: Uuid,
+) -> anyhow::Result<serde_json::Value> {
+    let context = load_campaign_context(store, backend, campaign_id).await?;
+    let project = store
+        .get_project(context.campaign.project_snapshot_id)
+        .await?
+        .context("campaign project does not exist")?;
+    let protocol = match context.view.protocol_id {
+        Some(id) => Some(
+            store
+                .get_protocol(id)
+                .await?
+                .with_context(|| format!("campaign protocol {id} does not exist"))?,
+        ),
+        None => None,
+    };
+    if let Some(protocol) = &protocol {
+        protocol.validate_integrity(&project)?;
+        if Some(protocol.fingerprint.as_str()) != context.view.protocol_fingerprint.as_deref() {
+            anyhow::bail!("campaign protocol binding changed");
+        }
+    }
+    let predecessor = match context
+        .generation
+        .as_ref()
+        .and_then(|value| value.0.predecessor_id)
+    {
+        Some(id) => {
+            let (generation, view) = load_generation(store, id).await?;
+            let current = &context
+                .generation
+                .as_ref()
+                .expect("predecessor implies current generation")
+                .0;
+            if current.predecessor_fingerprint.as_deref() != Some(generation.fingerprint.as_str())
+                || view.state != BenchmarkGenerationState::Superseded
+            {
+                anyhow::bail!("campaign generation predecessor chain changed");
+            }
+            Some((generation, view))
+        }
+        None => None,
+    };
+    let campaign_events = store.list_campaign_events(campaign_id).await?;
+    let sealed_exposures = campaign_events
+        .iter()
+        .filter_map(|event| match &event.event {
+            CampaignEventKind::IterationFinalized {
+                sealed_exposure: Some(exposure),
+                ..
+            } => Some(exposure.as_ref()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if sealed_exposures.len() > context.campaign.budget.maximum_sealed_evaluations as usize {
+        anyhow::bail!("campaign persisted more sealed exposures than its finite budget");
+    }
+    if let Some((_, generation_view)) = &context.generation {
+        if sealed_exposures.is_empty() && generation_view.consuming_experiment_run_id.is_some() {
+            anyhow::bail!("generation claims consumption without a campaign sealed exposure");
+        }
+        if !sealed_exposures.is_empty()
+            && !matches!(
+                generation_view.state,
+                BenchmarkGenerationState::Exhausted | BenchmarkGenerationState::Superseded
+            )
+        {
+            anyhow::bail!("campaign sealed exposure did not exhaust its generation");
+        }
+    }
+    let candidates = context
+        .experiment
+        .as_ref()
+        .map(|experiment| {
+            experiment
+                .candidates
+                .iter()
+                .map(|(candidate_id, execution)| {
+                    let suites = execution
+                        .development_assessments
+                        .iter()
+                        .map(|(suite_key, assessment)| {
+                            let report = execution
+                                .development_reports
+                                .get(suite_key)
+                                .expect("deep replay requires one report per assessment");
+                            serde_json::json!({
+                                "suite_key": suite_key,
+                                "report_id": report.id,
+                                "report_fingerprint": report.fingerprint,
+                                "assessment_id": assessment.id,
+                                "assessment_fingerprint": assessment.fingerprint,
+                                "verdict": assessment.verdict,
+                                "primary_improvement": assessment.primary_improvement,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    serde_json::json!({
+                        "candidate_id": candidate_id,
+                        "state": execution.state,
+                        "model_fingerprint": execution
+                            .train_output
+                            .as_ref()
+                            .map(|output| output.model.fingerprint.as_str()),
+                        "development_suites": suites,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(serde_json::json!({
+        "campaign": {
+            "id": context.campaign.id,
+            "fingerprint": context.campaign.fingerprint,
+            "state": context.view.state,
+            "event_count": campaign_events.len(),
+            "head_fingerprint": context.view.last_event_fingerprint,
+            "budget": context.campaign.budget,
+            "reserved_usage": context.view.reserved_usage,
+        },
+        "project": {
+            "id": project.id,
+            "fingerprint": project.fingerprint,
+            "source_revision": project.source_revision,
+            "source_fingerprint": project.source_fingerprint,
+        },
+        "predecessor_generation": predecessor.as_ref().map(|(generation, view)| serde_json::json!({
+            "id": generation.id,
+            "fingerprint": generation.fingerprint,
+            "state": view.state,
+            "head_fingerprint": view.last_event_fingerprint,
+            "historical_consumption": generation.historical_consumption,
+        })),
+        "benchmark_generation": context.generation.as_ref().map(|(generation, view)| serde_json::json!({
+            "id": generation.id,
+            "fingerprint": generation.fingerprint,
+            "state": view.state,
+            "adaptive_eligible": view.is_adaptive_eligible(),
+            "head_fingerprint": view.last_event_fingerprint,
+            "sealed_suite_fingerprint": generation.sealed_suite_fingerprint,
+            "development_suite_keys": generation.development_suites.iter().map(|value| value.suite_key.as_str()).collect::<Vec<_>>(),
+        })),
+        "protocol": protocol.as_ref().map(|value| serde_json::json!({
+            "id": value.id,
+            "fingerprint": value.fingerprint,
+            "development_suite_keys": value.development_suite_keys(),
+            "sealed_suite_key": value.sealed_suite_key,
+            "candidate_count": value.candidates.len(),
+        })),
+        "experiment": context.experiment.as_ref().map(|value| serde_json::json!({
+            "run_id": value.run_id,
+            "state": value.state,
+            "head_fingerprint": value.last_event_fingerprint,
+            "selected_candidate_id": value.selected_candidate_id,
+            "final_decision": value.final_decision,
+            "candidates": candidates,
+        })),
+        "sealed_exposures": sealed_exposures,
+    }))
 }
 
 async fn load_campaign_context(
@@ -614,37 +791,41 @@ async fn finalize_campaign_iteration(
     } else {
         None
     };
-    let terminal = generation_view.next_event(
-        generation,
-        match &exposure {
-            Some(exposure) => BenchmarkGenerationEventKind::IterationConsumed {
-                experiment_run_id: experiment.run_id,
-                experiment_protocol_fingerprint: context
-                    .view
-                    .protocol_fingerprint
-                    .clone()
-                    .context("campaign protocol fingerprint is missing")?,
-                sealed_exposure_id: exposure.id,
-                sealed_exposure_fingerprint: exposure.fingerprint.clone(),
-                final_decision_fingerprint: experiment.last_event_fingerprint.clone(),
-            },
-            None => BenchmarkGenerationEventKind::Exhausted {
-                reason: "no candidate passed every development suite".into(),
-            },
-        },
-        now,
-    )?;
+    let terminal = match &exposure {
+        Some(exposure) => Some(
+            generation_view.next_event(
+                generation,
+                BenchmarkGenerationEventKind::IterationConsumed {
+                    experiment_run_id: experiment.run_id,
+                    experiment_protocol_fingerprint: context
+                        .view
+                        .protocol_fingerprint
+                        .clone()
+                        .context("campaign protocol fingerprint is missing")?,
+                    sealed_exposure_id: exposure.id,
+                    sealed_exposure_fingerprint: exposure.fingerprint.clone(),
+                    final_decision_fingerprint: experiment.last_event_fingerprint.clone(),
+                },
+                now,
+            )?,
+        ),
+        None => None,
+    };
     let campaign_event = finalize_iteration_event(
         &context.campaign,
         &context.view,
         experiment,
-        &terminal,
+        terminal.as_ref(),
         exposure,
         now,
     )?;
-    store
-        .append_iteration_finalization(&terminal, &campaign_event)
-        .await?;
+    if let Some(terminal) = terminal {
+        store
+            .append_iteration_finalization(&terminal, &campaign_event)
+            .await?;
+    } else {
+        store.append_campaign_event(&campaign_event).await?;
+    }
     Ok(())
 }
 
@@ -767,6 +948,8 @@ fn campaign_backend_args(command: &ProductionCampaignCommand) -> &NomosWorkspace
     match command {
         ProductionCampaignCommand::Create(args) => &args.backend,
         ProductionCampaignCommand::Show(ProductionCampaignIdArgs { backend, .. })
+        | ProductionCampaignCommand::Doctor(ProductionCampaignIdArgs { backend, .. })
+        | ProductionCampaignCommand::Provenance(ProductionCampaignIdArgs { backend, .. })
         | ProductionCampaignCommand::Readiness(ProductionCampaignIdArgs { backend, .. })
         | ProductionCampaignCommand::Start(ProductionCampaignIdArgs { backend, .. })
         | ProductionCampaignCommand::Advance(ProductionCampaignIdArgs { backend, .. }) => backend,

@@ -335,6 +335,10 @@ pub enum ProductionCampaignCommand {
     Create(ProductionCampaignCreateArgs),
     /// Show the deeply replayed campaign and linked experiment/generation facts.
     Show(ProductionCampaignIdArgs),
+    /// Deeply verify the complete project, generation, experiment, and exposure chain.
+    Doctor(ProductionCampaignIdArgs),
+    /// Print a row-free fingerprinted provenance chain for audit and handoff.
+    Provenance(ProductionCampaignIdArgs),
     /// Explain the exact next action or blocking approval boundary.
     Readiness(ProductionCampaignIdArgs),
     /// Bind one currently active, unused benchmark generation.

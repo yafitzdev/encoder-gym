@@ -542,8 +542,8 @@ pub enum CampaignEventKind {
         decision: FinalDecision,
         experiment_head_fingerprint: String,
         sealed_exposure: Option<Box<SealedAssessmentExposure>>,
-        generation_terminal_event_id: Uuid,
-        generation_terminal_event_fingerprint: String,
+        generation_terminal_event_id: Option<Uuid>,
+        generation_terminal_event_fingerprint: Option<String>,
     },
     RenewalHandoffCreated {
         handoff_id: Uuid,
@@ -838,13 +838,15 @@ pub fn finalize_iteration_event(
     campaign: &ProductionCampaign,
     view: &CampaignView,
     experiment: &ExperimentView,
-    generation_terminal_event: &BenchmarkGenerationEvent,
+    generation_terminal_event: Option<&BenchmarkGenerationEvent>,
     sealed_exposure: Option<SealedAssessmentExposure>,
     created_at: DateTime<Utc>,
 ) -> Result<CampaignEvent, CampaignError> {
-    generation_terminal_event
-        .validate_integrity()
-        .map_err(|error| CampaignError::Benchmark(error.to_string()))?;
+    if let Some(event) = generation_terminal_event {
+        event
+            .validate_integrity()
+            .map_err(|error| CampaignError::Benchmark(error.to_string()))?;
+    }
     let binding = view
         .current_generation
         .as_ref()
@@ -858,10 +860,16 @@ pub fn finalize_iteration_event(
         || experiment.final_decision.is_none()
         || experiment.selected_candidate_id != view.selected_candidate_id
         || selected != sealed_exposure.is_some()
-        || generation_terminal_event.generation_id != binding.generation_id
-        || generation_terminal_event.generation_fingerprint != binding.generation_fingerprint
+        || selected != generation_terminal_event.is_some()
     {
         return Err(CampaignError::ExperimentMismatch);
+    }
+    if let Some(event) = generation_terminal_event {
+        if event.generation_id != binding.generation_id
+            || event.generation_fingerprint != binding.generation_fingerprint
+        {
+            return Err(CampaignError::ExperimentMismatch);
+        }
     }
     if let Some(exposure) = &sealed_exposure {
         exposure.validate_integrity()?;
@@ -874,14 +882,14 @@ pub fn finalize_iteration_event(
             return Err(CampaignError::ExperimentMismatch);
         }
     }
-    let terminal_matches = match &generation_terminal_event.event {
-        BenchmarkGenerationEventKind::IterationConsumed {
+    let terminal_matches = match generation_terminal_event.map(|value| &value.event) {
+        Some(BenchmarkGenerationEventKind::IterationConsumed {
             experiment_run_id,
             experiment_protocol_fingerprint,
             sealed_exposure_id,
             sealed_exposure_fingerprint,
             final_decision_fingerprint,
-        } => {
+        }) => {
             let exposure = sealed_exposure.as_ref();
             selected
                 && *experiment_run_id == experiment.run_id
@@ -891,8 +899,8 @@ pub fn finalize_iteration_event(
                     == Some(sealed_exposure_fingerprint.as_str())
                 && final_decision_fingerprint == &experiment.last_event_fingerprint
         }
-        BenchmarkGenerationEventKind::Exhausted { .. } => !selected,
-        _ => false,
+        None => !selected && sealed_exposure.is_none(),
+        Some(_) => false,
     };
     if !terminal_matches {
         return Err(CampaignError::ExperimentMismatch);
@@ -907,8 +915,9 @@ pub fn finalize_iteration_event(
                 .expect("completed experiment owns a decision"),
             experiment_head_fingerprint: experiment.last_event_fingerprint.clone(),
             sealed_exposure: sealed_exposure.map(Box::new),
-            generation_terminal_event_id: generation_terminal_event.id,
-            generation_terminal_event_fingerprint: generation_terminal_event.fingerprint.clone(),
+            generation_terminal_event_id: generation_terminal_event.map(|value| value.id),
+            generation_terminal_event_fingerprint: generation_terminal_event
+                .map(|value| value.fingerprint.clone()),
         },
         created_at,
     )
@@ -1131,12 +1140,22 @@ fn apply_event(
                 || sealed_exposure
                     .as_ref()
                     .is_some_and(|value| value.validate_integrity().is_err())
-                || generation_terminal_event_id.is_nil()
-                || !canonical_fingerprint(generation_terminal_event_fingerprint)
+                || selected != generation_terminal_event_id.is_some()
+                || selected != generation_terminal_event_fingerprint.is_some()
+                || generation_terminal_event_id.is_some_and(|id| id.is_nil())
+                || generation_terminal_event_fingerprint
+                    .as_deref()
+                    .is_some_and(|value| !canonical_fingerprint(value))
             {
                 return Err(CampaignError::IllegalTransition);
             }
-            view.state = CampaignState::RenewalRequired;
+            view.state = if selected {
+                CampaignState::RenewalRequired
+            } else if view.current_iteration >= campaign.budget.maximum_iterations {
+                CampaignState::Completed
+            } else {
+                CampaignState::ReadyToPrepare
+            };
         }
         CampaignEventKind::RenewalHandoffCreated {
             handoff_id,
@@ -1522,7 +1541,9 @@ mod tests {
     fn campaign_stops_at_sealed_authorization_and_requires_generation_exhaustion() {
         let project = project();
         let protocol = protocol(&project);
-        let campaign = campaign(&project);
+        let mut campaign = campaign(&project);
+        campaign.budget.maximum_iterations = 1;
+        campaign.fingerprint = campaign.reproduce_fingerprint().unwrap();
         let binding = binding();
         let first = first_campaign_event(&campaign, time(2)).unwrap();
         let mut events = vec![first];
@@ -1576,7 +1597,7 @@ mod tests {
                 &campaign,
                 &view,
                 &completed,
-                &terminal,
+                Some(&terminal),
                 Some(exposure),
                 time(9),
             )
@@ -1586,6 +1607,53 @@ mod tests {
         assert_eq!(view.state, CampaignState::RenewalRequired);
         assert_eq!(view.current_iteration, 1);
         assert_eq!(view.reserved_usage.development_evaluations, 2);
+    }
+
+    #[test]
+    fn development_only_retention_does_not_consume_sealed_generation() {
+        let project = project();
+        let protocol = protocol(&project);
+        let mut campaign = campaign(&project);
+        campaign.budget.maximum_iterations = 1;
+        campaign.fingerprint = campaign.reproduce_fingerprint().unwrap();
+        let binding = binding();
+        let first = first_campaign_event(&campaign, time(2)).unwrap();
+        let mut events = vec![first];
+        let mut view = replay_campaign(&campaign, &events).unwrap();
+        events.push(bind_generation_event(&campaign, &view, binding, time(3)).unwrap());
+        view = replay_campaign(&campaign, &events).unwrap();
+        events.push(prepare_iteration_event(&campaign, &view, &protocol, time(4)).unwrap());
+        view = replay_campaign(&campaign, &events).unwrap();
+        let run_id = Uuid::new_v4();
+        let ready = experiment_view(&protocol, run_id, ExperimentRunState::Ready, None, None, 1);
+        events.push(start_run_event(&campaign, &view, &ready, time(5)).unwrap());
+        view = replay_campaign(&campaign, &events).unwrap();
+        let completed = experiment_view(
+            &protocol,
+            run_id,
+            ExperimentRunState::Completed,
+            None,
+            Some(FinalDecision::RetainBaseline),
+            5,
+        );
+        events.push(record_development_event(&campaign, &view, &completed, time(6)).unwrap());
+        view = replay_campaign(&campaign, &events).unwrap();
+        assert_eq!(view.state, CampaignState::AwaitingFinalization);
+
+        let finalized =
+            finalize_iteration_event(&campaign, &view, &completed, None, None, time(7)).unwrap();
+        assert!(matches!(
+            finalized.event,
+            CampaignEventKind::IterationFinalized {
+                generation_terminal_event_id: None,
+                generation_terminal_event_fingerprint: None,
+                sealed_exposure: None,
+                ..
+            }
+        ));
+        events.push(finalized);
+        view = replay_campaign(&campaign, &events).unwrap();
+        assert_eq!(view.state, CampaignState::Completed);
     }
 
     #[test]
