@@ -3369,6 +3369,7 @@ dependencies = [
  "encoder-experiment-nomos",
  "encoder-experiment-runner",
  "encoder-experiment-sqlite",
+ "encoder-repair-core",
  "evaluation-core",
  "generation-supervisor-core",
  "generation-supervisor-runner",

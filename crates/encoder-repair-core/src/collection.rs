@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use encoder_experiment_core::{
     domain::{
@@ -15,6 +15,7 @@ use crate::{
 
 pub const DEVELOPMENT_OBSERVATION_REQUEST_SCHEMA_VERSION: u32 = 1;
 pub const COLLECTED_DEVELOPMENT_OBSERVATIONS_SCHEMA_VERSION: u32 = 1;
+const OBSERVATION_METRIC_TOLERANCE: f64 = 1e-8;
 
 /// Exact development-report authority presented to a native observation adapter.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -29,7 +30,13 @@ pub struct DevelopmentObservationRequest {
     pub model: ModelArtifactIdentity,
     pub suite_key: String,
     pub suite_fingerprint: String,
-    pub metric_support: u64,
+    /// Conservative aggregate support recorded by the normalized report. A native suite may
+    /// combine metric families with different populations, so this is a lower bound rather than
+    /// the row observer's eligible count.
+    pub report_support: u64,
+    /// Exact normalized report metrics. Observation-derived ranking metrics are reproduced from
+    /// complete rows; other metric families remain bound through the report fingerprint.
+    pub report_metrics: BTreeMap<String, f64>,
     pub slice_dimensions: Vec<String>,
     pub maximum_seconds: u64,
     pub fingerprint: String,
@@ -66,7 +73,8 @@ impl DevelopmentObservationRequest {
             model: report.model.clone(),
             suite_key: report.suite_key.clone(),
             suite_fingerprint: report.suite_fingerprint.clone(),
-            metric_support: report.support,
+            report_support: report.support,
+            report_metrics: report.metrics.clone(),
             slice_dimensions,
             maximum_seconds,
             fingerprint: String::new(),
@@ -120,7 +128,8 @@ impl DevelopmentObservationRequest {
             "model": self.model,
             "suite_key": self.suite_key,
             "suite_fingerprint": self.suite_fingerprint,
-            "metric_support": self.metric_support,
+            "report_support": self.report_support,
+            "report_metrics": self.report_metrics,
             "slice_dimensions": self.slice_dimensions,
             "maximum_seconds": self.maximum_seconds,
         }))
@@ -139,7 +148,9 @@ impl DevelopmentObservationRequest {
             || self.suite_key.is_empty()
             || self.suite_key.trim() != self.suite_key
             || !canonical_sha256(&self.suite_fingerprint)
-            || self.metric_support == 0
+            || self.report_support == 0
+            || self.report_metrics.is_empty()
+            || self.report_metrics.values().any(|value| !value.is_finite())
             || self.slice_dimensions.is_empty()
             || self.maximum_seconds == 0
             || !self.fingerprint.is_empty() && !canonical_sha256(&self.fingerprint)
@@ -212,10 +223,10 @@ impl CollectedDevelopmentObservations {
         request.validate_integrity()?;
         self.validate_fields()?;
         if self.request_fingerprint != request.fingerprint
-            || self.metric_eligible_row_count != request.metric_support
+            || self.metric_eligible_row_count < request.report_support
         {
             return Err(EncoderRepairError::Integrity(
-                "collected observations do not match the exact report request".into(),
+                "collected observations do not satisfy the exact report request support".into(),
             ));
         }
         let abstentions = self
@@ -228,10 +239,92 @@ impl CollectedDevelopmentObservations {
                 "collected observation eligibility does not explain the complete source set".into(),
             ));
         }
+        self.verify_observation_metrics(request)?;
         if !self.fingerprint.is_empty() && self.reproduce_fingerprint()? != self.fingerprint {
             return Err(EncoderRepairError::Integrity(
                 "collected development observation fingerprint changed".into(),
             ));
+        }
+        Ok(())
+    }
+
+    fn verify_observation_metrics(
+        &self,
+        request: &DevelopmentObservationRequest,
+    ) -> Result<(), EncoderRepairError> {
+        let eligible = self
+            .observations
+            .iter()
+            .filter(|value| !value.expected_abstention)
+            .collect::<Vec<_>>();
+        if eligible.len() as u64 != self.metric_eligible_row_count {
+            return Err(EncoderRepairError::Integrity(
+                "collected observation eligibility count changed".into(),
+            ));
+        }
+        let support = eligible.len() as f64;
+        let reproduced = BTreeMap::from([
+            (
+                "mrr",
+                eligible
+                    .iter()
+                    .map(|value| value.reciprocal_rank)
+                    .sum::<f64>()
+                    / support,
+            ),
+            (
+                "recall_at_1",
+                eligible
+                    .iter()
+                    .filter(|value| value.top_one_correct())
+                    .count() as f64
+                    / support,
+            ),
+            (
+                "recall_at_2",
+                eligible
+                    .iter()
+                    .filter(|value| value.top_two_correct())
+                    .count() as f64
+                    / support,
+            ),
+            (
+                "recall_at_3",
+                eligible
+                    .iter()
+                    .filter(|value| value.top_three_correct())
+                    .count() as f64
+                    / support,
+            ),
+        ]);
+        for (key, value) in reproduced {
+            if request
+                .report_metrics
+                .get(key)
+                .is_some_and(|expected| (expected - value).abs() > OBSERVATION_METRIC_TOLERANCE)
+            {
+                return Err(EncoderRepairError::Integrity(format!(
+                    "collected observations do not reproduce report metric {key}"
+                )));
+            }
+        }
+        if let Some(expected) = request.report_metrics.get("mean_positive_margin") {
+            let margins = eligible
+                .iter()
+                .map(|value| value.positive_margin)
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| {
+                    EncoderRepairError::Integrity(
+                        "collected observations omitted report margin evidence".into(),
+                    )
+                })?;
+            let observed = margins.into_iter().sum::<f64>() / support;
+            if (expected - observed).abs() > OBSERVATION_METRIC_TOLERANCE {
+                return Err(EncoderRepairError::Integrity(
+                    "collected observations do not reproduce report metric mean_positive_margin"
+                        .into(),
+                ));
+            }
         }
         Ok(())
     }
@@ -377,7 +470,7 @@ mod tests {
                 digest('6')
             },
             &contract(),
-            BTreeMap::from([("mrr".into(), 0.8)]),
+            BTreeMap::from([("mrr".into(), 1.0)]),
             1,
             Utc.with_ymd_and_hms(2026, 9, 2, 0, 0, 1).unwrap(),
         )

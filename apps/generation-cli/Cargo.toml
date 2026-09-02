@@ -35,6 +35,7 @@ encoder-campaign-core.workspace = true
 encoder-experiment-nomos.workspace = true
 encoder-experiment-runner.workspace = true
 encoder-experiment-sqlite.workspace = true
+encoder-repair-core.workspace = true
 generation-core.workspace = true
 generation-fake.workspace = true
 generation-openai-compatible = { package = "synthetic-data-openai-compatible", path = "../../crates/generation-openai-compatible" }

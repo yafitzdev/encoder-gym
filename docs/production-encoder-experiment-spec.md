@@ -167,6 +167,12 @@ Git-status unchanged.
 Ordinary tests use a deterministic fake adapter. The real Nomos process test is
 local, explicit, and uses only the isolated copy.
 
+Development-only repair diagnosis is a separate post-experiment operation. It
+uses complete native row observations for every baseline/candidate and
+development-suite pair, reproduces normalized retrieval metrics within an
+explicit floating-point tolerance, and persists text-free evidence plus a
+deterministic comparative diagnosis. It cannot request the sealed suite.
+
 ## First completed production loop
 
 The first complete protocol ran on 2026-09-02 with project

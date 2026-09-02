@@ -132,6 +132,11 @@ it verifies historical manifest-pinned inputs and exact model trees, executes a
 version-pinned native observer, and returns only complete text-free normalized
 observations in a content-addressed development artifact. Sealed suites are
 unrepresentable in the request and rejected again by the native adapter.
+`synth production-repair diagnose` is the thin composition root: it replays one
+campaign-linked experiment, collects baseline and candidate observations for
+every development suite, persists each set idempotently, and derives one
+immutable comparative diagnosis. `show`, `doctor`, and `evidence` read through
+the same deep-verifying persistence contracts.
 
 `dataset-quality-core` owns immutable source-set audit plans, explicit quality
 policies, normalized evaluator requests and assessments, deterministic verdicts,

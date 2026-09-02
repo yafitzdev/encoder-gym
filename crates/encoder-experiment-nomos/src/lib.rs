@@ -855,7 +855,8 @@ impl DevelopmentObservationBackend for NomosBackend {
             let model_relative =
                 workspace_relative(&self.root, &model_path).map_err(observation_error)?;
             let output =
-                development_observation_output(&self.root, &request).map_err(observation_error)?;
+                development_observation_output(&self.root, &self.observer_identity, &request)
+                    .map_err(observation_error)?;
             let output_relative =
                 workspace_relative(&self.root, &output).map_err(observation_error)?;
             let mut arguments = vec![
@@ -1809,7 +1810,7 @@ impl NativeDevelopmentObservationFile {
             || self.text_version != DENSE_TEXT_VERSION
             || self.slice_dimensions != request.slice_dimensions
             || self.source_row_count == 0
-            || self.metric_eligible_row_count != request.metric_support
+            || self.metric_eligible_row_count < request.report_support
             || self.metric_eligible_row_count > self.source_row_count
             || self.observations.len() as u64 != self.source_row_count
         {
@@ -2538,8 +2539,14 @@ fn workspace_relative(root: &Path, path: &Path) -> Result<String, EncoderTaskAda
 
 fn development_observation_output(
     root: &Path,
+    observer: &BackendIdentity,
     request: &DevelopmentObservationRequest,
 ) -> Result<PathBuf, EncoderTaskAdapterError> {
+    let observer_digest = observer
+        .configuration_fingerprint
+        .strip_prefix("sha256:")
+        .filter(|value| raw_sha256(value))
+        .ok_or_else(|| adapter_error("Nomos observer fingerprint is not canonical"))?;
     let model_digest = request
         .model
         .fingerprint
@@ -2561,6 +2568,7 @@ fn development_observation_output(
         .join("encoder-gym-repair")
         .join("observations")
         .join("by-content")
+        .join(observer_digest)
         .join(model_digest)
         .join(suite_digest)
         .join(format!("{request_digest}.json")))
@@ -3024,7 +3032,8 @@ mod tests {
             .unwrap(),
             suite_key: "generic".into(),
             suite_fingerprint: prefixed(&"4".repeat(64)),
-            metric_support: 1,
+            report_support: 1,
+            report_metrics: BTreeMap::from([("mrr".into(), 1.0), ("recall_at_1".into(), 1.0)]),
             slice_dimensions: vec!["workflow".into()],
             maximum_seconds: 60,
             fingerprint: prefixed(&"5".repeat(64)),
@@ -3083,14 +3092,18 @@ mod tests {
             .unwrap(),
             suite_key: "generic".into(),
             suite_fingerprint: prefixed(&"4".repeat(64)),
-            metric_support: 1,
+            report_support: 1,
+            report_metrics: BTreeMap::from([("mrr".into(), 1.0)]),
             slice_dimensions: vec!["workflow".into()],
             maximum_seconds: 60,
             fingerprint: prefixed(&"5".repeat(64)),
         };
-        let path = development_observation_output(Path::new("workspace"), &request).unwrap();
+        let observer = BackendIdentity::new("observer", "v1", prefixed(&"0".repeat(64))).unwrap();
+        let path =
+            development_observation_output(Path::new("workspace"), &observer, &request).unwrap();
         assert!(path.ends_with(Path::new(&format!(
-            "runs/encoder-gym-repair/observations/by-content/{}/{}/{}.json",
+            "runs/encoder-gym-repair/observations/by-content/{}/{}/{}/{}.json",
+            "0".repeat(64),
             "3".repeat(64),
             "4".repeat(64),
             "5".repeat(64)

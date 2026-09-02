@@ -54,6 +54,13 @@ async fn run() -> anyhow::Result<()> {
             ))
             .await;
         }
+        Command::ProductionRepair { command } => {
+            return Box::pin(commands::production_repair::execute(
+                *command,
+                &database_url,
+            ))
+            .await;
+        }
         command => command,
     };
     let store = SqliteStore::connect(&database_url)

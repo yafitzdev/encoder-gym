@@ -22,6 +22,7 @@ mod inspect;
 mod optimization;
 mod plan;
 pub(crate) mod production_campaign;
+pub(crate) mod production_repair;
 mod project_bootstrap;
 mod project_preparation;
 mod provenance;
@@ -77,7 +78,9 @@ pub fn execute(
             Command::Experiment { .. } => {
                 unreachable!("experiment commands are dispatched before the synthetic-data store")
             }
-            Command::BenchmarkGeneration { .. } | Command::ProductionCampaign { .. } => {
+            Command::BenchmarkGeneration { .. }
+            | Command::ProductionCampaign { .. }
+            | Command::ProductionRepair { .. } => {
                 unreachable!(
                     "production campaign commands are dispatched before the synthetic-data store"
                 )

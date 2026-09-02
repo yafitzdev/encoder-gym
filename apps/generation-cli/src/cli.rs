@@ -120,6 +120,11 @@ pub enum Command {
         #[command(subcommand)]
         command: Box<ProductionCampaignCommand>,
     },
+    /// Diagnose and inspect development-only production encoder repair evidence.
+    ProductionRepair {
+        #[command(subcommand)]
+        command: Box<ProductionRepairCommand>,
+    },
     /// Aggregate and inspect persisted classification errors.
     Analysis {
         #[command(subcommand)]
@@ -355,6 +360,51 @@ pub enum ProductionCampaignCommand {
     LinkRenewalHandoff(ProductionCampaignHandoffArgs),
     /// End a campaign that has reached a renewal boundary.
     Complete(ProductionCampaignCompleteArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProductionRepairCommand {
+    /// Collect complete development observations and persist a comparative diagnosis.
+    Diagnose(ProductionRepairDiagnoseArgs),
+    /// Show one deeply verified immutable comparative diagnosis.
+    Show(ProductionRepairIdArgs),
+    /// Deeply verify the diagnosis, all source reports, and every observation binding.
+    Doctor(ProductionRepairIdArgs),
+    /// List row-free repair evidence summaries for one campaign.
+    Evidence(ProductionRepairCampaignArgs),
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionRepairDiagnoseArgs {
+    pub campaign_id: Uuid,
+    /// Historical campaign run to diagnose. Defaults to the latest linked run.
+    #[arg(long)]
+    pub run_id: Option<Uuid>,
+    /// Native categorical slice to include. Repeat for multiple dimensions.
+    #[arg(long = "dimension", required = true)]
+    pub dimensions: Vec<String>,
+    /// Minimum eligible support required before a slice weakness is actionable.
+    #[arg(long, default_value_t = 12)]
+    pub minimum_support: u64,
+    /// Finite time limit for each model/suite observation collection.
+    #[arg(long, default_value_t = 900)]
+    pub maximum_seconds: u64,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionRepairIdArgs {
+    pub diagnosis_id: Uuid,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct ProductionRepairCampaignArgs {
+    pub campaign_id: Uuid,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
 }
 
 #[derive(Debug, Clone, clap::Args)]
