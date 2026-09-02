@@ -36,7 +36,7 @@ use encoder_repair_core::{
         NativeDeltaReview, NativeDeltaReviewDecision, NativeRepairAuditReference,
         NativeRepairRowEvidence,
     },
-    training::NativeRepairTrainingSnapshot,
+    training::{NativeRepairTrainingSnapshot, REPAIR_DELTA_FINGERPRINT_PARAMETER},
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -766,7 +766,7 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
                 key: "train".into(),
                 kind: RepairActionKind::ChangeTrainingConfiguration,
                 target_keys: vec!["supported_failure".into()],
-                parameters: BTreeMap::from([("epochs".into(), ParameterValue::Integer(1))]),
+                parameters: BTreeMap::from([("seed".into(), ParameterValue::Integer(7))]),
             },
         ],
         NativeRepairQualityPolicy::create("native-v1", true, 0, 0, 0, 0, 0, 0, true, true).unwrap(),
@@ -1098,6 +1098,16 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
     assert_eq!(training_snapshot.base_rows, 1);
     assert_eq!(training_snapshot.delta_rows, 12);
     assert_eq!(training_snapshot.total_rows, 13);
+    let compiled_candidates = training_snapshot
+        .compile_training_candidates(&fixture.project, &proposal)
+        .unwrap();
+    assert_eq!(compiled_candidates.len(), 1);
+    assert_eq!(
+        compiled_candidates[0]
+            .parameters
+            .get(REPAIR_DELTA_FINGERPRINT_PARAMETER),
+        Some(&ParameterValue::Text(digest('d')))
+    );
     assert_eq!(
         fixture
             .store

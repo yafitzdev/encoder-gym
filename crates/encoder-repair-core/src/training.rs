@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
-use encoder_experiment_core::domain::{EvidenceRole, ExternalProjectSnapshot};
+use encoder_experiment_core::domain::{
+    EvidenceRole, ExternalProjectSnapshot, ParameterValue, TrainingCandidate,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -9,7 +11,7 @@ use crate::{
     EncoderRepairError, canonical_sha256,
     diagnosis::RepairArtifactBinding,
     fingerprint,
-    proposal::{ProjectBinding, RepairProposal},
+    proposal::{CandidateMechanism, ProjectBinding, RepairActionKind, RepairProposal},
     quality::{
         ApprovedNativeDeltaSelection, NativeDeltaCandidateSet, NativeDeltaQualityReport,
         NativeDeltaReview,
@@ -18,6 +20,20 @@ use crate::{
 };
 
 pub const NATIVE_REPAIR_TRAINING_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
+pub const REPAIR_SNAPSHOT_ID_PARAMETER: &str = "repair_snapshot_id";
+pub const REPAIR_SNAPSHOT_FINGERPRINT_PARAMETER: &str = "repair_snapshot_fingerprint";
+pub const REPAIR_SNAPSHOT_SPECIFICATION_PARAMETER: &str =
+    "repair_snapshot_specification_fingerprint";
+pub const REPAIR_COMBINED_MEMBERSHIP_PARAMETER: &str = "repair_combined_membership_fingerprint";
+pub const REPAIR_INPUTS_FINGERPRINT_PARAMETER: &str = "repair_inputs_fingerprint";
+pub const REPAIR_SELECTION_ID_PARAMETER: &str = "repair_selection_id";
+pub const REPAIR_SELECTION_FINGERPRINT_PARAMETER: &str = "repair_selection_fingerprint";
+pub const REPAIR_DELTA_KEY_PARAMETER: &str = "repair_delta_key";
+pub const REPAIR_DELTA_BYTES_PARAMETER: &str = "repair_delta_bytes";
+pub const REPAIR_DELTA_FINGERPRINT_PARAMETER: &str = "repair_delta_fingerprint";
+pub const REPAIR_BASE_ROWS_PARAMETER: &str = "repair_base_rows";
+pub const REPAIR_DELTA_ROWS_PARAMETER: &str = "repair_delta_rows";
+pub const REPAIR_TOTAL_ROWS_PARAMETER: &str = "repair_total_rows";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -286,6 +302,177 @@ impl NativeRepairTrainingSnapshot {
         let mut value = self.clone();
         value.fingerprint.clear();
         fingerprint(&value)
+    }
+
+    /// Compile the proposal's predeclared genuine-retraining hypotheses into ordinary immutable
+    /// experiment candidates. Repair lineage is carried only as normalized parameters so the
+    /// generic experiment runner does not acquire repair-specific business logic.
+    pub fn compile_training_candidates(
+        &self,
+        project: &ExternalProjectSnapshot,
+        proposal: &RepairProposal,
+    ) -> Result<Vec<TrainingCandidate>, EncoderRepairError> {
+        self.validate_integrity()?;
+        project
+            .validate_integrity()
+            .map_err(|error| EncoderRepairError::Experiment(error.to_string()))?;
+        self.execution_project.verify(project)?;
+        if self.proposal.id != proposal.id
+            || self.proposal.fingerprint != proposal.fingerprint
+            || self.created_at > proposal.expires_at
+        {
+            return Err(EncoderRepairError::Integrity(
+                "repair training snapshot does not belong to the proposal".into(),
+            ));
+        }
+        let delta = self
+            .inputs
+            .iter()
+            .find(|input| input.kind == RepairTrainingInputKind::ApprovedDelta)
+            .ok_or_else(|| {
+                EncoderRepairError::Integrity(
+                    "repair training snapshot has no approved delta input".into(),
+                )
+            })?;
+        let delta_bytes = i64::try_from(delta.bytes).map_err(|_| {
+            EncoderRepairError::Validation("repair delta byte count exceeds candidate range".into())
+        })?;
+        let inputs_fingerprint = fingerprint(&self.inputs)?;
+        let reserved = [
+            REPAIR_SNAPSHOT_ID_PARAMETER,
+            REPAIR_SNAPSHOT_FINGERPRINT_PARAMETER,
+            REPAIR_SNAPSHOT_SPECIFICATION_PARAMETER,
+            REPAIR_COMBINED_MEMBERSHIP_PARAMETER,
+            REPAIR_INPUTS_FINGERPRINT_PARAMETER,
+            REPAIR_SELECTION_ID_PARAMETER,
+            REPAIR_SELECTION_FINGERPRINT_PARAMETER,
+            REPAIR_DELTA_KEY_PARAMETER,
+            REPAIR_DELTA_BYTES_PARAMETER,
+            REPAIR_DELTA_FINGERPRINT_PARAMETER,
+            REPAIR_BASE_ROWS_PARAMETER,
+            REPAIR_DELTA_ROWS_PARAMETER,
+            REPAIR_TOTAL_ROWS_PARAMETER,
+        ];
+        let mut compiled = Vec::with_capacity(proposal.candidates.len());
+        for (index, hypothesis) in proposal.candidates.iter().enumerate() {
+            if hypothesis.mechanism != CandidateMechanism::GenuineRetraining
+                || hypothesis.parameters.keys().any(|key| {
+                    reserved.contains(&key.as_str())
+                        || key == "strategy"
+                            && hypothesis.parameters.get(key)
+                                != Some(&ParameterValue::Text("fine_tune".into()))
+                })
+            {
+                return Err(EncoderRepairError::Validation(
+                    "repair training snapshot supports only predeclared genuine fine-tuning".into(),
+                ));
+            }
+            let training_actions = hypothesis
+                .action_keys
+                .iter()
+                .filter_map(|key| proposal.actions.iter().find(|action| action.key == *key))
+                .filter(|action| action.kind == RepairActionKind::ChangeTrainingConfiguration)
+                .collect::<Vec<_>>();
+            if training_actions.len() != 1
+                || training_actions[0].parameters != hypothesis.parameters
+            {
+                return Err(EncoderRepairError::Validation(
+                    "repair candidate parameters must exactly match one declared training action"
+                        .into(),
+                ));
+            }
+            let mut parameters = hypothesis.parameters.clone();
+            parameters.insert("strategy".into(), ParameterValue::Text("fine_tune".into()));
+            parameters.insert(
+                REPAIR_SNAPSHOT_ID_PARAMETER.into(),
+                ParameterValue::Text(self.id.to_string()),
+            );
+            parameters.insert(
+                REPAIR_SNAPSHOT_FINGERPRINT_PARAMETER.into(),
+                ParameterValue::Text(self.fingerprint.clone()),
+            );
+            parameters.insert(
+                REPAIR_SNAPSHOT_SPECIFICATION_PARAMETER.into(),
+                ParameterValue::Text(self.specification_fingerprint.clone()),
+            );
+            parameters.insert(
+                REPAIR_COMBINED_MEMBERSHIP_PARAMETER.into(),
+                ParameterValue::Text(self.combined_membership_fingerprint.clone()),
+            );
+            parameters.insert(
+                REPAIR_INPUTS_FINGERPRINT_PARAMETER.into(),
+                ParameterValue::Text(inputs_fingerprint.clone()),
+            );
+            parameters.insert(
+                REPAIR_SELECTION_ID_PARAMETER.into(),
+                ParameterValue::Text(self.selection.id.to_string()),
+            );
+            parameters.insert(
+                REPAIR_SELECTION_FINGERPRINT_PARAMETER.into(),
+                ParameterValue::Text(self.selection.fingerprint.clone()),
+            );
+            parameters.insert(
+                REPAIR_DELTA_KEY_PARAMETER.into(),
+                ParameterValue::Text(delta.key.clone()),
+            );
+            parameters.insert(
+                REPAIR_DELTA_BYTES_PARAMETER.into(),
+                ParameterValue::Integer(delta_bytes),
+            );
+            parameters.insert(
+                REPAIR_DELTA_FINGERPRINT_PARAMETER.into(),
+                ParameterValue::Text(delta.fingerprint.clone()),
+            );
+            for (key, count) in [
+                (REPAIR_BASE_ROWS_PARAMETER, self.base_rows),
+                (REPAIR_DELTA_ROWS_PARAMETER, self.delta_rows),
+                (REPAIR_TOTAL_ROWS_PARAMETER, self.total_rows),
+            ] {
+                parameters.insert(
+                    key.into(),
+                    ParameterValue::Integer(i64::try_from(count).map_err(|_| {
+                        EncoderRepairError::Validation(
+                            "repair training row count exceeds candidate range".into(),
+                        )
+                    })?),
+                );
+            }
+            let sequence = u32::try_from(index + 1).map_err(|_| {
+                EncoderRepairError::Validation("repair candidate sequence overflowed".into())
+            })?;
+            compiled.push(
+                TrainingCandidate::create(
+                    project,
+                    sequence,
+                    hypothesis.maximum_training_seconds,
+                    parameters,
+                )
+                .map_err(|error| EncoderRepairError::Experiment(error.to_string()))?,
+            );
+        }
+        if compiled.is_empty()
+            || compiled.len()
+                > usize::try_from(proposal.budget.maximum_candidates).map_err(|_| {
+                    EncoderRepairError::Validation(
+                        "repair candidate budget exceeds platform range".into(),
+                    )
+                })?
+        {
+            return Err(EncoderRepairError::Validation(
+                "repair proposal has no finite compilable training candidates".into(),
+            ));
+        }
+        Ok(compiled)
+    }
+
+    pub fn validate_integrity(&self) -> Result<(), EncoderRepairError> {
+        self.validate_fields()?;
+        if self.reproduce_fingerprint()? != self.fingerprint {
+            return Err(EncoderRepairError::Integrity(
+                "native repair training snapshot fingerprint changed".into(),
+            ));
+        }
+        Ok(())
     }
 
     fn validate_fields(&self) -> Result<(), EncoderRepairError> {

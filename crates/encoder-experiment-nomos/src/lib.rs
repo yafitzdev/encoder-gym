@@ -3,7 +3,7 @@
 mod repair_delta;
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{BufReader, Read},
     path::{Component, Path, PathBuf},
@@ -29,6 +29,15 @@ use encoder_repair_core::{
         BoxFuture as RepairBoxFuture, DevelopmentObservationBackend,
         DevelopmentObservationBackendError,
     },
+    training::{
+        REPAIR_BASE_ROWS_PARAMETER, REPAIR_COMBINED_MEMBERSHIP_PARAMETER,
+        REPAIR_DELTA_BYTES_PARAMETER, REPAIR_DELTA_FINGERPRINT_PARAMETER,
+        REPAIR_DELTA_KEY_PARAMETER, REPAIR_DELTA_ROWS_PARAMETER,
+        REPAIR_INPUTS_FINGERPRINT_PARAMETER, REPAIR_SELECTION_FINGERPRINT_PARAMETER,
+        REPAIR_SELECTION_ID_PARAMETER, REPAIR_SNAPSHOT_FINGERPRINT_PARAMETER,
+        REPAIR_SNAPSHOT_ID_PARAMETER, REPAIR_SNAPSHOT_SPECIFICATION_PARAMETER,
+        REPAIR_TOTAL_ROWS_PARAMETER,
+    },
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -50,6 +59,8 @@ const DEVELOPMENT_OBSERVER_NAME: &str = "nomos-development-observer";
 const DEVELOPMENT_OBSERVER_PROTOCOL: &str = "nomos-development-observations-v1";
 const DEVELOPMENT_OBSERVER_SCHEMA_VERSION: u32 = 1;
 const DENSE_TEXT_VERSION: &str = "dense-text.v3";
+const REPAIR_TRAINING_RECEIPT_SCHEMA: &str = "encoder-gym-nomos-repair-training-receipt.v1";
+const REPAIR_TRAINING_RECEIPT_NAME: &str = "encoder_gym_repair_training_receipt.json";
 const DEVELOPMENT_OBSERVER_SOURCES: [&str; 5] = [
     "tools/collect_encoder_gym_development_observations.py",
     "tools/evaluate_dense_router.py",
@@ -821,6 +832,156 @@ impl NomosBackend {
             .join(candidate.id.to_string())
     }
 
+    fn candidate_staging_output(&self, candidate: &TrainingCandidate) -> PathBuf {
+        self.root
+            .join("artifacts")
+            .join("encoder-gym-candidates")
+            .join(format!(".{}-staging", candidate.id))
+    }
+
+    fn candidate_staging_checkpoints(&self, candidate: &TrainingCandidate) -> PathBuf {
+        self.root
+            .join("artifacts")
+            .join("encoder-gym-candidates")
+            .join(format!("..{}-staging-checkpoints", candidate.id))
+    }
+
+    fn repair_training_output_root(&self) -> PathBuf {
+        self.root.join("artifacts").join("encoder-gym-candidates")
+    }
+
+    fn clear_repair_training_scratch(
+        &self,
+        candidate: &TrainingCandidate,
+    ) -> Result<(), EncoderTaskAdapterError> {
+        remove_exact_scratch_directory(
+            &self.candidate_staging_output(candidate),
+            &self.repair_training_output_root(),
+        )?;
+        self.clear_repair_training_checkpoints(candidate)
+    }
+
+    fn clear_repair_training_checkpoints(
+        &self,
+        candidate: &TrainingCandidate,
+    ) -> Result<(), EncoderTaskAdapterError> {
+        remove_exact_scratch_directory(
+            &self.candidate_staging_checkpoints(candidate),
+            &self.repair_training_output_root(),
+        )
+    }
+
+    fn finalize_repair_staging(
+        &self,
+        candidate: &TrainingCandidate,
+        staging: &Path,
+        output: &Path,
+    ) -> Result<(), EncoderTaskAdapterError> {
+        if staging != self.candidate_staging_output(candidate)
+            || output != self.candidate_output(candidate)
+            || staging.parent() != Some(self.repair_training_output_root().as_path())
+            || output.parent() != Some(self.repair_training_output_root().as_path())
+            || output.exists()
+        {
+            return Err(adapter_error(
+                "Nomos repair training staging paths are not the exact candidate targets",
+            ));
+        }
+        let metadata = staging.symlink_metadata().map_err(adapter_error)?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(adapter_error(
+                "Nomos repair training staging output is not a plain directory",
+            ));
+        }
+        fs::rename(staging, output).map_err(|error| {
+            adapter_error(format!(
+                "could not atomically publish Nomos repair candidate: {error}"
+            ))
+        })?;
+        self.clear_repair_training_checkpoints(candidate)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_or_validate_repair_training_receipt(
+        &self,
+        output: &Path,
+        logical_output_relative: &str,
+        native_output_relative: &str,
+        project: &ExternalProjectSnapshot,
+        candidate: &TrainingCandidate,
+        strategy: &NativeCandidateStrategy,
+        arguments: &[String],
+        native_manifest: &Value,
+    ) -> Result<Option<Value>, EncoderTaskAdapterError> {
+        let Some(binding) = strategy.repair_binding() else {
+            return Ok(None);
+        };
+        let expected = NativeRepairTrainingReceipt::create(
+            project,
+            candidate,
+            binding.clone(),
+            logical_output_relative,
+            native_output_relative,
+            arguments,
+            native_manifest,
+        )?;
+        let path = output.join(REPAIR_TRAINING_RECEIPT_NAME);
+        if path.exists() {
+            let actual: NativeRepairTrainingReceipt =
+                serde_json::from_value(read_json(&path)?).map_err(adapter_error)?;
+            actual.validate_against(&expected)?;
+            return serde_json::to_value(actual)
+                .map(Some)
+                .map_err(adapter_error);
+        }
+        let temporary = output.join(format!(".{REPAIR_TRAINING_RECEIPT_NAME}.tmp"));
+        remove_exact_scratch_file(&temporary, output)?;
+        let mut bytes = serde_json::to_vec_pretty(&expected).map_err(adapter_error)?;
+        bytes.push(b'\n');
+        fs::write(&temporary, bytes).map_err(adapter_error)?;
+        fs::rename(&temporary, &path).map_err(|error| {
+            adapter_error(format!(
+                "could not atomically persist Nomos repair training receipt: {error}"
+            ))
+        })?;
+        serde_json::to_value(expected)
+            .map(Some)
+            .map_err(adapter_error)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn read_and_validate_repair_training_receipt(
+        &self,
+        output: &Path,
+        logical_output_relative: &str,
+        native_output_relative: &str,
+        project: &ExternalProjectSnapshot,
+        candidate: &TrainingCandidate,
+        strategy: &NativeCandidateStrategy,
+        arguments: &[String],
+        native_manifest: &Value,
+    ) -> Result<Option<Value>, EncoderTaskAdapterError> {
+        let Some(binding) = strategy.repair_binding() else {
+            return Ok(None);
+        };
+        let expected = NativeRepairTrainingReceipt::create(
+            project,
+            candidate,
+            binding.clone(),
+            logical_output_relative,
+            native_output_relative,
+            arguments,
+            native_manifest,
+        )?;
+        let actual: NativeRepairTrainingReceipt =
+            serde_json::from_value(read_json(&output.join(REPAIR_TRAINING_RECEIPT_NAME))?)
+                .map_err(adapter_error)?;
+        actual.validate_against(&expected)?;
+        serde_json::to_value(actual)
+            .map(Some)
+            .map_err(adapter_error)
+    }
+
     fn model_path(
         &self,
         model: &ModelArtifactIdentity,
@@ -1019,18 +1180,36 @@ impl EncoderTaskBackend for NomosBackend {
             let configuration = Self::task_configuration(&project)?;
             configuration.validate()?;
             let strategy = NativeCandidateStrategy::parse(&candidate.parameters)?;
+            strategy.verify_training_inputs(self, &project, &configuration)?;
             let output = self.candidate_output(&candidate);
             let output_relative = output
                 .strip_prefix(&self.root)
                 .map_err(adapter_error)?
                 .to_string_lossy()
                 .replace('\\', "/");
+            let staging = strategy
+                .repair_binding()
+                .map(|_| self.candidate_staging_output(&candidate));
+            let native_output = staging.as_ref().unwrap_or(&output);
+            let native_output_relative = workspace_relative(&self.root, native_output)?;
+            let arguments =
+                strategy.arguments(&project, &configuration, &native_output_relative)?;
             if output.exists() {
                 let native_manifest = strategy.read_and_validate_manifest(
                     &output,
-                    &output_relative,
+                    &native_output_relative,
                     &project,
                     &configuration,
+                )?;
+                let repair_receipt = self.read_and_validate_repair_training_receipt(
+                    &output,
+                    &output_relative,
+                    &native_output_relative,
+                    &project,
+                    &candidate,
+                    &strategy,
+                    &arguments,
+                    &native_manifest,
                 )?;
                 let (bytes, digest) = tree_identity(&output)?;
                 return Ok(TrainOutput {
@@ -1048,19 +1227,89 @@ impl EncoderTaskBackend for NomosBackend {
                         "recovered_completed_output": true,
                         "strategy": strategy.name(),
                         "native_manifest": native_manifest,
+                        "repair_receipt": repair_receipt,
                     }),
                 });
             }
-            let arguments = strategy.arguments(&project, &configuration, &output_relative)?;
+            if let Some(staging) = &staging {
+                if staging.exists() {
+                    match strategy.read_and_validate_manifest(
+                        staging,
+                        &native_output_relative,
+                        &project,
+                        &configuration,
+                    ) {
+                        Ok(native_manifest) => {
+                            self.write_or_validate_repair_training_receipt(
+                                staging,
+                                &output_relative,
+                                &native_output_relative,
+                                &project,
+                                &candidate,
+                                &strategy,
+                                &arguments,
+                                &native_manifest,
+                            )?;
+                            self.finalize_repair_staging(&candidate, staging, &output)?;
+                            let receipt = self.read_and_validate_repair_training_receipt(
+                                &output,
+                                &output_relative,
+                                &native_output_relative,
+                                &project,
+                                &candidate,
+                                &strategy,
+                                &arguments,
+                                &native_manifest,
+                            )?;
+                            let (bytes, digest) = tree_identity(&output)?;
+                            return Ok(TrainOutput {
+                                model: ModelArtifactIdentity::new(
+                                    output_relative,
+                                    "sentence-transformers",
+                                    bytes,
+                                    prefixed(&digest),
+                                )
+                                .map_err(adapter_error)?,
+                                duration_seconds: candidate.maximum_training_seconds,
+                                metadata: json!({
+                                    "recovered_completed_staging": true,
+                                    "strategy": strategy.name(),
+                                    "native_manifest": native_manifest,
+                                    "repair_receipt": receipt,
+                                }),
+                            });
+                        }
+                        Err(_) => self.clear_repair_training_scratch(&candidate)?,
+                    }
+                } else {
+                    self.clear_repair_training_checkpoints(&candidate)?;
+                }
+            }
             let started = std::time::Instant::now();
             self.run_bounded(&arguments, candidate.maximum_training_seconds)
                 .await?;
             let native_manifest = strategy.read_and_validate_manifest(
-                &output,
-                &output_relative,
+                native_output,
+                &native_output_relative,
                 &project,
                 &configuration,
             )?;
+            let repair_receipt = if let Some(staging) = &staging {
+                let receipt = self.write_or_validate_repair_training_receipt(
+                    staging,
+                    &output_relative,
+                    &native_output_relative,
+                    &project,
+                    &candidate,
+                    &strategy,
+                    &arguments,
+                    &native_manifest,
+                )?;
+                self.finalize_repair_staging(&candidate, staging, &output)?;
+                receipt
+            } else {
+                None
+            };
             let (bytes, digest) = tree_identity(&output)?;
             let model = ModelArtifactIdentity::new(
                 output_relative,
@@ -1075,6 +1324,7 @@ impl EncoderTaskBackend for NomosBackend {
                 metadata: json!({
                     "strategy": strategy.name(),
                     "native_manifest": native_manifest,
+                    "repair_receipt": repair_receipt,
                 }),
             })
         })
@@ -2053,7 +2303,7 @@ struct SuiteConfiguration {
 
 #[derive(Debug)]
 enum NativeCandidateStrategy {
-    FineTune(NativeTrainingParameters),
+    FineTune(Box<NativeTrainingParameters>),
     LinearInterpolation {
         reference_model: String,
         specialist_weight: f64,
@@ -2063,7 +2313,9 @@ enum NativeCandidateStrategy {
 impl NativeCandidateStrategy {
     fn parse(values: &BTreeMap<String, ParameterValue>) -> Result<Self, EncoderTaskAdapterError> {
         match text_parameter(values, "strategy", "fine_tune")?.as_str() {
-            "fine_tune" => Ok(Self::FineTune(NativeTrainingParameters::parse(values)?)),
+            "fine_tune" => Ok(Self::FineTune(Box::new(NativeTrainingParameters::parse(
+                values,
+            )?))),
             "linear_interpolation" => {
                 let allowed = ["strategy", "reference_model", "specialist_weight"];
                 if values.keys().any(|key| !allowed.contains(&key.as_str())) {
@@ -2095,6 +2347,54 @@ impl NativeCandidateStrategy {
         }
     }
 
+    fn repair_binding(&self) -> Option<&NativeRepairTrainingBinding> {
+        match self {
+            Self::FineTune(parameters) => parameters.repair.as_ref(),
+            Self::LinearInterpolation { .. } => None,
+        }
+    }
+
+    fn verify_training_inputs(
+        &self,
+        backend: &NomosBackend,
+        project: &ExternalProjectSnapshot,
+        configuration: &TaskConfiguration,
+    ) -> Result<(), EncoderTaskAdapterError> {
+        let Some(repair) = self.repair_binding() else {
+            return Ok(());
+        };
+        repair.validate()?;
+        let project_training = project
+            .inputs
+            .iter()
+            .filter(|input| input.role == EvidenceRole::Training)
+            .map(|input| input.key.as_str())
+            .collect::<BTreeSet<_>>();
+        if configuration.training_inputs.len() != project_training.len()
+            || configuration
+                .training_inputs
+                .iter()
+                .any(|key| !project_training.contains(key.as_str()))
+            || project
+                .inputs
+                .iter()
+                .any(|input| input.key == repair.delta_key)
+        {
+            return Err(adapter_error(
+                "Nomos repair training inputs do not extend the exact project training population",
+            ));
+        }
+        let delta = backend.resolve_existing(&repair.delta_key)?;
+        verify_file(
+            &delta,
+            repair.delta_bytes,
+            repair
+                .delta_fingerprint
+                .strip_prefix("sha256:")
+                .ok_or_else(|| adapter_error("Nomos repair delta fingerprint is malformed"))?,
+        )
+    }
+
     fn arguments(
         &self,
         project: &ExternalProjectSnapshot,
@@ -2118,6 +2418,10 @@ impl NativeCandidateStrategy {
                     validate_relative(input)?;
                     arguments.push("--input".into());
                     arguments.push(input.clone());
+                }
+                if let Some(repair) = &parameters.repair {
+                    arguments.push("--input".into());
+                    arguments.push(repair.delta_key.clone());
                 }
                 arguments.extend([
                     "--output".into(),
@@ -2198,7 +2502,7 @@ impl NativeCandidateStrategy {
             ));
         }
         match self {
-            Self::FineTune(_) => {
+            Self::FineTune(parameters) => {
                 let native_base = native_manifest
                     .get("base_model")
                     .and_then(Value::as_str)
@@ -2207,6 +2511,14 @@ impl NativeCandidateStrategy {
                     return Err(adapter_error(
                         "Nomos fine-tune manifest references the wrong baseline",
                     ));
+                }
+                if let Some(repair) = &parameters.repair {
+                    validate_repair_training_manifest(
+                        &native_manifest,
+                        repair,
+                        parameters,
+                        configuration,
+                    )?;
                 }
             }
             Self::LinearInterpolation {
@@ -2256,6 +2568,206 @@ struct NativeTrainingParameters {
     positive_strategy: String,
     seed: u64,
     device: String,
+    repair: Option<NativeRepairTrainingBinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeRepairTrainingBinding {
+    snapshot_id: Uuid,
+    snapshot_fingerprint: String,
+    snapshot_specification_fingerprint: String,
+    combined_membership_fingerprint: String,
+    inputs_fingerprint: String,
+    selection_id: Uuid,
+    selection_fingerprint: String,
+    delta_key: String,
+    delta_bytes: u64,
+    delta_fingerprint: String,
+    base_rows: u64,
+    delta_rows: u64,
+    total_rows: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeRepairTrainingReceipt {
+    schema_version: String,
+    project_id: Uuid,
+    project_fingerprint: String,
+    candidate_id: Uuid,
+    candidate_fingerprint: String,
+    binding: NativeRepairTrainingBinding,
+    logical_output: String,
+    native_output: String,
+    arguments_fingerprint: String,
+    native_manifest_fingerprint: String,
+    fingerprint: String,
+}
+
+impl NativeRepairTrainingReceipt {
+    #[allow(clippy::too_many_arguments)]
+    fn create(
+        project: &ExternalProjectSnapshot,
+        candidate: &TrainingCandidate,
+        binding: NativeRepairTrainingBinding,
+        logical_output: &str,
+        native_output: &str,
+        arguments: &[String],
+        native_manifest: &Value,
+    ) -> Result<Self, EncoderTaskAdapterError> {
+        project.validate_integrity().map_err(adapter_error)?;
+        candidate
+            .validate_integrity(project)
+            .map_err(adapter_error)?;
+        binding.validate()?;
+        validate_relative(logical_output)?;
+        validate_relative(native_output)?;
+        let mut value = Self {
+            schema_version: REPAIR_TRAINING_RECEIPT_SCHEMA.into(),
+            project_id: project.id,
+            project_fingerprint: project.fingerprint.clone(),
+            candidate_id: candidate.id,
+            candidate_fingerprint: candidate.fingerprint.clone(),
+            binding,
+            logical_output: logical_output.into(),
+            native_output: native_output.into(),
+            arguments_fingerprint: artifact_core::fingerprint(&arguments).map_err(adapter_error)?,
+            native_manifest_fingerprint: artifact_core::fingerprint(native_manifest)
+                .map_err(adapter_error)?,
+            fingerprint: String::new(),
+        };
+        value.fingerprint = value.reproduce_fingerprint()?;
+        Ok(value)
+    }
+
+    fn validate_against(&self, expected: &Self) -> Result<(), EncoderTaskAdapterError> {
+        if self.schema_version != REPAIR_TRAINING_RECEIPT_SCHEMA
+            || !self
+                .project_fingerprint
+                .strip_prefix("sha256:")
+                .is_some_and(raw_sha256)
+            || !self
+                .candidate_fingerprint
+                .strip_prefix("sha256:")
+                .is_some_and(raw_sha256)
+            || !self
+                .arguments_fingerprint
+                .strip_prefix("sha256:")
+                .is_some_and(raw_sha256)
+            || !self
+                .native_manifest_fingerprint
+                .strip_prefix("sha256:")
+                .is_some_and(raw_sha256)
+            || self.reproduce_fingerprint()? != self.fingerprint
+            || self != expected
+        {
+            return Err(adapter_error(
+                "Nomos repair training receipt is stale, foreign, or changed",
+            ));
+        }
+        Ok(())
+    }
+
+    fn reproduce_fingerprint(&self) -> Result<String, EncoderTaskAdapterError> {
+        let mut value = self.clone();
+        value.fingerprint.clear();
+        artifact_core::fingerprint(&value).map_err(adapter_error)
+    }
+}
+
+impl NativeRepairTrainingBinding {
+    const PARAMETER_KEYS: [&'static str; 13] = [
+        REPAIR_SNAPSHOT_ID_PARAMETER,
+        REPAIR_SNAPSHOT_FINGERPRINT_PARAMETER,
+        REPAIR_SNAPSHOT_SPECIFICATION_PARAMETER,
+        REPAIR_COMBINED_MEMBERSHIP_PARAMETER,
+        REPAIR_INPUTS_FINGERPRINT_PARAMETER,
+        REPAIR_SELECTION_ID_PARAMETER,
+        REPAIR_SELECTION_FINGERPRINT_PARAMETER,
+        REPAIR_DELTA_KEY_PARAMETER,
+        REPAIR_DELTA_BYTES_PARAMETER,
+        REPAIR_DELTA_FINGERPRINT_PARAMETER,
+        REPAIR_BASE_ROWS_PARAMETER,
+        REPAIR_DELTA_ROWS_PARAMETER,
+        REPAIR_TOTAL_ROWS_PARAMETER,
+    ];
+
+    fn parse(
+        values: &BTreeMap<String, ParameterValue>,
+    ) -> Result<Option<Self>, EncoderTaskAdapterError> {
+        let present = Self::PARAMETER_KEYS
+            .iter()
+            .filter(|key| values.contains_key(**key))
+            .count();
+        if present == 0 {
+            return Ok(None);
+        }
+        if present != Self::PARAMETER_KEYS.len() {
+            return Err(adapter_error(
+                "Nomos repair training binding must be complete or absent",
+            ));
+        }
+        let value = Self {
+            snapshot_id: parse_uuid_parameter(values, REPAIR_SNAPSHOT_ID_PARAMETER)?,
+            snapshot_fingerprint: text_parameter(
+                values,
+                REPAIR_SNAPSHOT_FINGERPRINT_PARAMETER,
+                "",
+            )?,
+            snapshot_specification_fingerprint: text_parameter(
+                values,
+                REPAIR_SNAPSHOT_SPECIFICATION_PARAMETER,
+                "",
+            )?,
+            combined_membership_fingerprint: text_parameter(
+                values,
+                REPAIR_COMBINED_MEMBERSHIP_PARAMETER,
+                "",
+            )?,
+            inputs_fingerprint: text_parameter(values, REPAIR_INPUTS_FINGERPRINT_PARAMETER, "")?,
+            selection_id: parse_uuid_parameter(values, REPAIR_SELECTION_ID_PARAMETER)?,
+            selection_fingerprint: text_parameter(
+                values,
+                REPAIR_SELECTION_FINGERPRINT_PARAMETER,
+                "",
+            )?,
+            delta_key: text_parameter(values, REPAIR_DELTA_KEY_PARAMETER, "")?,
+            delta_bytes: integer_parameter(values, REPAIR_DELTA_BYTES_PARAMETER, 0)?,
+            delta_fingerprint: text_parameter(values, REPAIR_DELTA_FINGERPRINT_PARAMETER, "")?,
+            base_rows: integer_parameter(values, REPAIR_BASE_ROWS_PARAMETER, 0)?,
+            delta_rows: integer_parameter(values, REPAIR_DELTA_ROWS_PARAMETER, 0)?,
+            total_rows: integer_parameter(values, REPAIR_TOTAL_ROWS_PARAMETER, 0)?,
+        };
+        value.validate()?;
+        Ok(Some(value))
+    }
+
+    fn validate(&self) -> Result<(), EncoderTaskAdapterError> {
+        validate_relative(&self.delta_key)?;
+        if self.snapshot_id.is_nil()
+            || self.selection_id.is_nil()
+            || [
+                &self.snapshot_fingerprint,
+                &self.snapshot_specification_fingerprint,
+                &self.combined_membership_fingerprint,
+                &self.inputs_fingerprint,
+                &self.selection_fingerprint,
+                &self.delta_fingerprint,
+            ]
+            .iter()
+            .any(|value| !value.strip_prefix("sha256:").is_some_and(raw_sha256))
+            || self.delta_bytes == 0
+            || self.base_rows == 0
+            || self.delta_rows == 0
+            || self.total_rows != self.base_rows.checked_add(self.delta_rows).unwrap_or(0)
+        {
+            return Err(adapter_error(
+                "Nomos repair training binding is incomplete or contradictory",
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl NativeTrainingParameters {
@@ -2272,6 +2784,19 @@ impl NativeTrainingParameters {
             "positive_strategy",
             "seed",
             "device",
+            REPAIR_SNAPSHOT_ID_PARAMETER,
+            REPAIR_SNAPSHOT_FINGERPRINT_PARAMETER,
+            REPAIR_SNAPSHOT_SPECIFICATION_PARAMETER,
+            REPAIR_COMBINED_MEMBERSHIP_PARAMETER,
+            REPAIR_INPUTS_FINGERPRINT_PARAMETER,
+            REPAIR_SELECTION_ID_PARAMETER,
+            REPAIR_SELECTION_FINGERPRINT_PARAMETER,
+            REPAIR_DELTA_KEY_PARAMETER,
+            REPAIR_DELTA_BYTES_PARAMETER,
+            REPAIR_DELTA_FINGERPRINT_PARAMETER,
+            REPAIR_BASE_ROWS_PARAMETER,
+            REPAIR_DELTA_ROWS_PARAMETER,
+            REPAIR_TOTAL_ROWS_PARAMETER,
         ];
         if values.keys().any(|key| !allowed.contains(&key.as_str())) {
             return Err(adapter_error(
@@ -2289,6 +2814,7 @@ impl NativeTrainingParameters {
             positive_strategy: text_parameter(values, "positive_strategy", "best")?,
             seed: integer_parameter(values, "seed", 20_260_902)?,
             device: text_parameter(values, "device", "cuda")?,
+            repair: NativeRepairTrainingBinding::parse(values)?,
         };
         if text_parameter(values, "strategy", "fine_tune")? != "fine_tune"
             || !["triplet", "mnrl", "cached-mnrl"].contains(&result.loss.as_str())
@@ -2300,6 +2826,7 @@ impl NativeTrainingParameters {
             || !["full", "question"].contains(&result.query_strategy.as_str())
             || !["all", "best"].contains(&result.positive_strategy.as_str())
             || !["cpu", "cuda"].contains(&result.device.as_str())
+            || result.repair.is_some() && result.loss != "triplet"
         {
             return Err(adapter_error(
                 "Nomos candidate parameters are outside the safe adapter envelope",
@@ -2322,6 +2849,112 @@ impl NativeTrainingParameters {
         }
         Ok(result)
     }
+}
+
+fn validate_repair_training_manifest(
+    manifest: &Value,
+    repair: &NativeRepairTrainingBinding,
+    parameters: &NativeTrainingParameters,
+    configuration: &TaskConfiguration,
+) -> Result<(), EncoderTaskAdapterError> {
+    let expected_inputs = configuration
+        .training_inputs
+        .iter()
+        .cloned()
+        .chain(std::iter::once(repair.delta_key.clone()))
+        .map(|value| normalized_native_path(&value))
+        .collect::<Vec<_>>();
+    let observed_inputs = manifest
+        .get("inputs")
+        .and_then(Value::as_array)
+        .ok_or_else(|| adapter_error("Nomos repair manifest omitted its exact inputs"))?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(normalized_native_path)
+                .ok_or_else(|| adapter_error("Nomos repair manifest input is not text"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let input_rows = normalized_count_map(manifest, "input_row_counts")?;
+    let trainable_rows = normalized_count_map(manifest, "trainable_row_counts")?;
+    let input_total = input_rows.values().try_fold(0_u64, |total, value| {
+        total
+            .checked_add(*value)
+            .ok_or_else(|| adapter_error("Nomos repair manifest input count overflowed"))
+    })?;
+    let trainable_total = trainable_rows.values().try_fold(0_u64, |total, value| {
+        total
+            .checked_add(*value)
+            .ok_or_else(|| adapter_error("Nomos repair manifest trainable count overflowed"))
+    })?;
+    let delta_key = normalized_native_path(&repair.delta_key);
+    let expected_input_set = expected_inputs.iter().cloned().collect::<BTreeSet<_>>();
+    let checkpoint = manifest
+        .get("checkpoint_sha256")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let training_duration = manifest
+        .get("training_duration_seconds")
+        .and_then(Value::as_f64)
+        .unwrap_or(f64::NAN);
+    let training_loss = manifest
+        .get("training_loss")
+        .and_then(Value::as_f64)
+        .unwrap_or(f64::NAN);
+    if observed_inputs != expected_inputs
+        || input_rows.keys().cloned().collect::<BTreeSet<_>>() != expected_input_set
+        || trainable_rows.keys().cloned().collect::<BTreeSet<_>>() != expected_input_set
+        || input_rows.get(&delta_key) != Some(&repair.delta_rows)
+        || trainable_rows.get(&delta_key) != Some(&repair.delta_rows)
+        || input_total != repair.total_rows
+        || trainable_total != repair.total_rows
+        || manifest
+            .get("unique_trainable_rows")
+            .and_then(Value::as_u64)
+            != Some(repair.total_rows)
+        || manifest.get("training_triplets").and_then(Value::as_u64) != Some(repair.total_rows)
+        || manifest.get("epochs").and_then(Value::as_f64) != Some(parameters.epochs)
+        || manifest.get("batch_size").and_then(Value::as_u64) != Some(parameters.batch_size)
+        || manifest.get("learning_rate").and_then(Value::as_f64) != Some(parameters.learning_rate)
+        || manifest.get("margin").and_then(Value::as_f64) != Some(parameters.margin)
+        || manifest.get("query_strategy").and_then(Value::as_str)
+            != Some(parameters.query_strategy.as_str())
+        || manifest.get("positive_strategy").and_then(Value::as_str)
+            != Some(parameters.positive_strategy.as_str())
+        || manifest.get("seed").and_then(Value::as_u64) != Some(parameters.seed)
+        || manifest.get("device").and_then(Value::as_str) != Some(parameters.device.as_str())
+        || manifest.get("loss").and_then(Value::as_str) != Some("TripletLoss(COSINE)")
+        || manifest.get("training_script").and_then(Value::as_str)
+            != Some("tools.train_dense_triplet_router.v2")
+        || !raw_sha256(checkpoint)
+        || !training_duration.is_finite()
+        || training_duration < 0.0
+        || !training_loss.is_finite()
+    {
+        return Err(adapter_error(
+            "Nomos repair training manifest does not match the immutable candidate request",
+        ));
+    }
+    Ok(())
+}
+
+fn normalized_count_map(
+    manifest: &Value,
+    key: &str,
+) -> Result<BTreeMap<String, u64>, EncoderTaskAdapterError> {
+    manifest
+        .get(key)
+        .and_then(Value::as_object)
+        .ok_or_else(|| adapter_error(format!("Nomos repair manifest omitted {key}")))?
+        .iter()
+        .map(|(path, count)| {
+            count
+                .as_u64()
+                .map(|count| (normalized_native_path(path), count))
+                .ok_or_else(|| adapter_error(format!("Nomos repair manifest {key} is invalid")))
+        })
+        .collect()
 }
 
 #[derive(Debug, Deserialize)]
@@ -2533,6 +3166,24 @@ fn integer_parameter(
     }
 }
 
+fn parse_uuid_parameter(
+    values: &BTreeMap<String, ParameterValue>,
+    key: &str,
+) -> Result<Uuid, EncoderTaskAdapterError> {
+    let value = text_parameter(values, key, "")?;
+    Uuid::parse_str(&value)
+        .map_err(|_| adapter_error(format!("Nomos parameter {key} must be a canonical UUID")))
+        .and_then(|parsed| {
+            if parsed.is_nil() || parsed.to_string() != value {
+                Err(adapter_error(format!(
+                    "Nomos parameter {key} must be a canonical UUID"
+                )))
+            } else {
+                Ok(parsed)
+            }
+        })
+}
+
 fn validate_canonical_key(value: &str, kind: &str) -> Result<(), EncoderTaskAdapterError> {
     if value.trim() != value
         || value.is_empty()
@@ -2679,6 +3330,56 @@ fn verify_file(
         ));
     }
     Ok(())
+}
+
+fn remove_exact_scratch_directory(
+    path: &Path,
+    expected_parent: &Path,
+) -> Result<(), EncoderTaskAdapterError> {
+    if path.parent() != Some(expected_parent) {
+        return Err(adapter_error(
+            "Nomos scratch directory escaped the exact candidate output root",
+        ));
+    }
+    let metadata = match path.symlink_metadata() {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(adapter_error(error)),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(adapter_error(
+            "Nomos scratch target is not a plain directory",
+        ));
+    }
+    fs::remove_dir_all(path).map_err(|error| {
+        adapter_error(format!(
+            "could not clear exact incomplete Nomos repair scratch directory: {error}"
+        ))
+    })
+}
+
+fn remove_exact_scratch_file(
+    path: &Path,
+    expected_parent: &Path,
+) -> Result<(), EncoderTaskAdapterError> {
+    if path.parent() != Some(expected_parent) {
+        return Err(adapter_error(
+            "Nomos scratch file escaped the exact candidate staging directory",
+        ));
+    }
+    let metadata = match path.symlink_metadata() {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(adapter_error(error)),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(adapter_error("Nomos scratch target is not a plain file"));
+    }
+    fs::remove_file(path).map_err(|error| {
+        adapter_error(format!(
+            "could not clear exact incomplete Nomos repair scratch file: {error}"
+        ))
+    })
 }
 
 fn sha256_file(path: &Path) -> Result<String, EncoderTaskAdapterError> {
@@ -2949,6 +3650,142 @@ mod tests {
         .unwrap();
         assert_eq!(valid.loss, "triplet");
 
+        let mut repair = BTreeMap::from([
+            ("loss".into(), ParameterValue::Text("triplet".into())),
+            (
+                REPAIR_SNAPSHOT_ID_PARAMETER.into(),
+                ParameterValue::Text(Uuid::new_v4().to_string()),
+            ),
+            (
+                REPAIR_SNAPSHOT_FINGERPRINT_PARAMETER.into(),
+                ParameterValue::Text(prefixed(&"1".repeat(64))),
+            ),
+            (
+                REPAIR_SNAPSHOT_SPECIFICATION_PARAMETER.into(),
+                ParameterValue::Text(prefixed(&"2".repeat(64))),
+            ),
+            (
+                REPAIR_COMBINED_MEMBERSHIP_PARAMETER.into(),
+                ParameterValue::Text(prefixed(&"3".repeat(64))),
+            ),
+            (
+                REPAIR_INPUTS_FINGERPRINT_PARAMETER.into(),
+                ParameterValue::Text(prefixed(&"4".repeat(64))),
+            ),
+            (
+                REPAIR_SELECTION_ID_PARAMETER.into(),
+                ParameterValue::Text(Uuid::new_v4().to_string()),
+            ),
+            (
+                REPAIR_SELECTION_FINGERPRINT_PARAMETER.into(),
+                ParameterValue::Text(prefixed(&"5".repeat(64))),
+            ),
+            (
+                REPAIR_DELTA_KEY_PARAMETER.into(),
+                ParameterValue::Text("runs/repair/delta.jsonl".into()),
+            ),
+            (
+                REPAIR_DELTA_BYTES_PARAMETER.into(),
+                ParameterValue::Integer(12),
+            ),
+            (
+                REPAIR_DELTA_FINGERPRINT_PARAMETER.into(),
+                ParameterValue::Text(prefixed(&"6".repeat(64))),
+            ),
+            (
+                REPAIR_BASE_ROWS_PARAMETER.into(),
+                ParameterValue::Integer(10),
+            ),
+            (
+                REPAIR_DELTA_ROWS_PARAMETER.into(),
+                ParameterValue::Integer(2),
+            ),
+            (
+                REPAIR_TOTAL_ROWS_PARAMETER.into(),
+                ParameterValue::Integer(12),
+            ),
+        ]);
+        let parsed_repair = NativeTrainingParameters::parse(&repair).unwrap();
+        let binding = parsed_repair.repair.as_ref().unwrap();
+        let configuration = TaskConfiguration {
+            adapter_protocol: ADAPTER_PROTOCOL_VERSION.into(),
+            source_reference: json!({}),
+            baseline_evidence: json!({}),
+            training_inputs: vec!["base-a.jsonl".into(), "base-b.jsonl".into()],
+            reference_models: BTreeMap::new(),
+            agent_evaluation: AgentEvaluationConfiguration {
+                backend: "onnx".into(),
+                chat_model: AgentChatModelConfiguration {
+                    path: "chat".into(),
+                    format: "onnxruntime-genai".into(),
+                    bytes: 1,
+                    fingerprint: prefixed(&"7".repeat(64)),
+                    source: json!({}),
+                },
+                selector_strategy: "multiview".into(),
+                candidate_strategy: "multiview".into(),
+                nomos_top_k: 1,
+                max_attempts: 1,
+                development: AgentSuiteManifest {
+                    suite: "development".into(),
+                    sessions: 1,
+                    pairing: "cycle".into(),
+                    condition: "nomos".into(),
+                },
+                sealed: AgentSuiteManifest {
+                    suite: "promotion".into(),
+                    sessions: 1,
+                    pairing: "cycle".into(),
+                    condition: "nomos".into(),
+                },
+            },
+            suites: BTreeMap::new(),
+            benchmark_authority: None,
+        };
+        let manifest = json!({
+            "inputs": ["base-a.jsonl", "base-b.jsonl", "runs/repair/delta.jsonl"],
+            "input_row_counts": {
+                "base-a.jsonl": 5,
+                "base-b.jsonl": 5,
+                "runs/repair/delta.jsonl": 2,
+            },
+            "trainable_row_counts": {
+                "base-a.jsonl": 5,
+                "base-b.jsonl": 5,
+                "runs/repair/delta.jsonl": 2,
+            },
+            "unique_trainable_rows": 12,
+            "training_triplets": 12,
+            "epochs": 1.0,
+            "batch_size": 64,
+            "learning_rate": 0.000003,
+            "margin": 0.1,
+            "query_strategy": "full",
+            "positive_strategy": "best",
+            "seed": 20260902,
+            "device": "cuda",
+            "loss": "TripletLoss(COSINE)",
+            "training_script": "tools.train_dense_triplet_router.v2",
+            "checkpoint_sha256": "8".repeat(64),
+            "training_duration_seconds": 1.0,
+            "training_loss": 0.5,
+        });
+        validate_repair_training_manifest(&manifest, binding, &parsed_repair, &configuration)
+            .unwrap();
+        let mut changed_manifest = manifest;
+        changed_manifest["training_triplets"] = json!(11);
+        assert!(
+            validate_repair_training_manifest(
+                &changed_manifest,
+                binding,
+                &parsed_repair,
+                &configuration,
+            )
+            .is_err()
+        );
+        repair.remove(REPAIR_DELTA_FINGERPRINT_PARAMETER);
+        assert!(NativeTrainingParameters::parse(&repair).is_err());
+
         assert!(
             NativeTrainingParameters::parse(&BTreeMap::from([(
                 "shell_command".into(),
@@ -2984,6 +3821,23 @@ mod tests {
             ]))
             .is_err()
         );
+    }
+
+    #[test]
+    fn scratch_cleanup_is_fenced_to_one_exact_candidate_parent() {
+        let directory = tempfile::tempdir().unwrap();
+        let parent = directory.path().join("candidates");
+        fs::create_dir(&parent).unwrap();
+        let scratch = parent.join(".candidate-staging");
+        fs::create_dir(&scratch).unwrap();
+        fs::write(scratch.join("partial"), b"partial").unwrap();
+        remove_exact_scratch_directory(&scratch, &parent).unwrap();
+        assert!(!scratch.exists());
+
+        let outside = directory.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        assert!(remove_exact_scratch_directory(&outside, &parent).is_err());
+        assert!(outside.exists());
     }
 
     #[test]
