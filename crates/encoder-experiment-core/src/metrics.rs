@@ -367,6 +367,42 @@ pub struct CandidateAssessment {
     pub fingerprint: String,
 }
 
+impl CandidateAssessment {
+    pub fn validate_integrity(
+        &self,
+        project: &ExternalProjectSnapshot,
+        contract: &MetricContract,
+        baseline: &EvaluationReport,
+        candidate: &EvaluationReport,
+    ) -> Result<(), EncoderExperimentError> {
+        let mut expected =
+            assess_candidate(project, contract, baseline, candidate, self.created_at)?;
+        expected.id = self.id;
+        expected.fingerprint = expected.reproduce_fingerprint()?;
+        if expected != *self {
+            return Err(EncoderExperimentError::Integrity(
+                "candidate assessment changed or was not derived from its reports".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn reproduce_fingerprint(&self) -> Result<String, EncoderExperimentError> {
+        fingerprint(&serde_json::json!({
+            "id": self.id,
+            "project_snapshot_id": self.project_snapshot_id,
+            "baseline_report_id": self.baseline_report_id,
+            "candidate_report_id": self.candidate_report_id,
+            "evidence_role": self.evidence_role,
+            "primary_metric": self.primary_metric,
+            "primary_improvement": self.primary_improvement,
+            "gates": self.gates,
+            "verdict": self.verdict,
+            "created_at": self.created_at,
+        }))
+    }
+}
+
 pub fn assess_candidate(
     project: &ExternalProjectSnapshot,
     contract: &MetricContract,
@@ -407,8 +443,8 @@ pub fn assess_candidate(
         let baseline_value = baseline.metrics[&gate.key];
         let candidate_value = candidate.metrics[&gate.key];
         let improvement = match definition.direction {
-            MetricDirection::HigherIsBetter => candidate_value - baseline_value,
-            MetricDirection::LowerIsBetter => baseline_value - candidate_value,
+            MetricDirection::HigherIsBetter => stable_metric_delta(candidate_value, baseline_value),
+            MetricDirection::LowerIsBetter => stable_metric_delta(baseline_value, candidate_value),
         };
         let passed = match gate.condition {
             MetricGateCondition::AtLeast { value } => candidate_value >= value,
@@ -428,7 +464,10 @@ pub fn assess_candidate(
     let primary = contract
         .definition(&contract.primary_metric)
         .expect("primary metric was validated");
-    let raw_primary = candidate.metrics[&primary.key] - baseline.metrics[&primary.key];
+    let raw_primary = stable_metric_delta(
+        candidate.metrics[&primary.key],
+        baseline.metrics[&primary.key],
+    );
     let primary_improvement = match primary.direction {
         MetricDirection::HigherIsBetter => raw_primary,
         MetricDirection::LowerIsBetter => -raw_primary,
@@ -451,19 +490,13 @@ pub fn assess_candidate(
         created_at,
         fingerprint: String::new(),
     };
-    assessment.fingerprint = fingerprint(&serde_json::json!({
-        "id": assessment.id,
-        "project_snapshot_id": assessment.project_snapshot_id,
-        "baseline_report_id": assessment.baseline_report_id,
-        "candidate_report_id": assessment.candidate_report_id,
-        "evidence_role": assessment.evidence_role,
-        "primary_metric": assessment.primary_metric,
-        "primary_improvement": assessment.primary_improvement,
-        "gates": assessment.gates,
-        "verdict": assessment.verdict,
-        "created_at": assessment.created_at,
-    }))?;
+    assessment.fingerprint = assessment.reproduce_fingerprint()?;
     Ok(assessment)
+}
+
+fn stable_metric_delta(left: f64, right: f64) -> f64 {
+    const SCALE: f64 = 1_000_000_000_000.0;
+    ((left - right) * SCALE).round() / SCALE
 }
 
 pub fn select_development_candidate(
@@ -631,7 +664,7 @@ mod tests {
         let assessment =
             assess_candidate(&project, &contract, &baseline, &candidate, time(3)).unwrap();
         assert_eq!(assessment.verdict, CandidateVerdict::Passed);
-        assert_eq!(assessment.primary_improvement, 0.0040000000000000036);
+        assert_eq!(assessment.primary_improvement, 0.004);
     }
 
     #[test]

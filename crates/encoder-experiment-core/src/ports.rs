@@ -8,12 +8,17 @@ use crate::domain::{
     BackendIdentity, ExternalProjectSnapshot, ModelArtifactIdentity, TrainingCandidate,
 };
 use crate::metrics::{EvaluationReport, MetricContract};
+use crate::{journal::ExperimentEvent, protocol::ExperimentProtocol};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[error("encoder task adapter failed: {0}")]
 pub struct EncoderTaskAdapterError(pub String);
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[error("encoder experiment store failed: {0}")]
+pub struct ExperimentStoreError(pub String);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -58,4 +63,52 @@ pub trait EncoderTaskBackend: Send + Sync {
         suite_key: String,
         maximum_seconds: u64,
     ) -> BoxFuture<'_, Result<EvaluationReport, EncoderTaskAdapterError>>;
+}
+
+/// Append-only persistence for immutable experiment artifacts and event journals.
+pub trait ExperimentStore: Send + Sync {
+    fn create_project(
+        &self,
+        project: ExternalProjectSnapshot,
+    ) -> BoxFuture<'_, Result<(), ExperimentStoreError>>;
+
+    fn get_project(
+        &self,
+        id: uuid::Uuid,
+    ) -> BoxFuture<'_, Result<Option<ExternalProjectSnapshot>, ExperimentStoreError>>;
+
+    fn find_project_by_fingerprint(
+        &self,
+        fingerprint: String,
+    ) -> BoxFuture<'_, Result<Option<ExternalProjectSnapshot>, ExperimentStoreError>>;
+
+    fn find_project_by_source_fingerprint(
+        &self,
+        source_fingerprint: String,
+    ) -> BoxFuture<'_, Result<Option<ExternalProjectSnapshot>, ExperimentStoreError>>;
+
+    fn create_protocol(
+        &self,
+        protocol: ExperimentProtocol,
+    ) -> BoxFuture<'_, Result<(), ExperimentStoreError>>;
+
+    fn get_protocol(
+        &self,
+        id: uuid::Uuid,
+    ) -> BoxFuture<'_, Result<Option<ExperimentProtocol>, ExperimentStoreError>>;
+
+    fn create_run(
+        &self,
+        first_event: ExperimentEvent,
+    ) -> BoxFuture<'_, Result<(), ExperimentStoreError>>;
+
+    fn append_event(
+        &self,
+        event: ExperimentEvent,
+    ) -> BoxFuture<'_, Result<(), ExperimentStoreError>>;
+
+    fn load_events(
+        &self,
+        run_id: uuid::Uuid,
+    ) -> BoxFuture<'_, Result<Vec<ExperimentEvent>, ExperimentStoreError>>;
 }

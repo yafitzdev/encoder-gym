@@ -67,7 +67,7 @@ completion. Therefore Recall@k alone cannot authorize promotion.
 
 ```text
 verify isolated project and immutable inputs
-  -> reproduce baseline development report
+  -> reproduce baseline development and frozen sealed-reference reports
   -> materialize a finite candidate set
   -> train each candidate into its own output directory
   -> evaluate each candidate on development evidence
@@ -81,6 +81,13 @@ verify isolated project and immutable inputs
 Sealed rows, traces, disagreements, and diagnostics are never candidate inputs.
 A sealed report can decide final acceptance but is structurally rejected from
 candidate selection.
+
+The baseline sealed report is frozen into the immutable protocol before any
+candidate work begins and is never exposed to candidate selection. The run's
+sealed-use budget authorizes exactly one new report: the development-selected
+candidate. Every external action is first reserved in a hash-chained durable
+journal. Recovery may finish the same reserved local action, but it may not
+create another candidate or sealed-report identity.
 
 ## Initial Nomos candidate space
 

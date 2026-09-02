@@ -1,0 +1,20 @@
+[package]
+name = "encoder-experiment-runner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+chrono.workspace = true
+encoder-experiment-core.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+artifact-core.workspace = true
+encoder-experiment-sqlite.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

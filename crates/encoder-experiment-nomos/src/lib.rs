@@ -359,16 +359,40 @@ impl EncoderTaskBackend for NomosBackend {
             configuration.validate()?;
             let parameters = NativeTrainingParameters::parse(&candidate.parameters)?;
             let output = self.candidate_output(&candidate);
-            if output.exists() {
-                return Err(adapter_error(
-                    "Nomos candidate output already exists; immutable candidates are not overwritten",
-                ));
-            }
             let output_relative = output
                 .strip_prefix(&self.root)
                 .map_err(adapter_error)?
                 .to_string_lossy()
                 .replace('\\', "/");
+            if output.exists() {
+                let native_manifest = read_json(&output.join("nomos_training_manifest.json"))?;
+                let native_output = native_manifest
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .map(|value| value.replace('\\', "/"));
+                if native_output.as_deref() != Some(output_relative.as_str()) {
+                    return Err(adapter_error(
+                        "existing Nomos candidate output does not belong to this immutable candidate",
+                    ));
+                }
+                let (bytes, digest) = tree_identity(&output)?;
+                return Ok(TrainOutput {
+                    model: ModelArtifactIdentity::new(
+                        output_relative,
+                        "sentence-transformers",
+                        bytes,
+                        prefixed(&digest),
+                    )
+                    .map_err(adapter_error)?,
+                    // Recovery accounts the full reserved duration because the exact elapsed time
+                    // may have been lost between process completion and journal append.
+                    duration_seconds: candidate.maximum_training_seconds,
+                    metadata: json!({
+                        "recovered_completed_output": true,
+                        "native_manifest": native_manifest,
+                    }),
+                });
+            }
             let module = match parameters.loss.as_str() {
                 "triplet" => "tools.train_dense_triplet_router",
                 "mnrl" | "cached-mnrl" => "tools.train_dense_router",
@@ -460,11 +484,6 @@ impl EncoderTaskBackend for NomosBackend {
                 .join("encoder-gym-evaluations")
                 .join(model.id.to_string())
                 .join(format!("{suite_key}.json"));
-            if output.exists() {
-                return Err(adapter_error(
-                    "Nomos evaluation evidence already exists and cannot be overwritten",
-                ));
-            }
             let output_relative = output
                 .strip_prefix(&self.root)
                 .map_err(adapter_error)?
@@ -494,7 +513,11 @@ impl EncoderTaskBackend for NomosBackend {
                 "--output".into(),
                 output_relative,
             ];
-            let raw = self.run_bounded(&arguments, maximum_seconds).await?;
+            let raw = if output.exists() {
+                read_json(&output)?
+            } else {
+                self.run_bounded(&arguments, maximum_seconds).await?
+            };
             let native: NativeEvaluation = serde_json::from_value(raw).map_err(|error| {
                 adapter_error(format!("Nomos evaluation JSON is invalid: {error}"))
             })?;
@@ -942,6 +965,13 @@ fn sha256_file(path: &Path) -> Result<String, EncoderTaskAdapterError> {
         digest.update(&buffer[..read]);
     }
     Ok(format!("{:x}", digest.finalize()))
+}
+
+fn read_json(path: &Path) -> Result<Value, EncoderTaskAdapterError> {
+    let bytes = fs::read(path)
+        .map_err(|error| adapter_error(format!("could not read Nomos JSON evidence: {error}")))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| adapter_error(format!("Nomos JSON evidence is invalid: {error}")))
 }
 
 fn tree_identity(path: &Path) -> Result<(u64, String), EncoderTaskAdapterError> {

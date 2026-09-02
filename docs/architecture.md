@@ -38,6 +38,8 @@ generation-core ──────────> research-core (resolved authenti
 benchmark architect adapters / apps ─> benchmark-architect-core
 benchmark-architect-core ──> benchmark/evaluation and aggregate research contracts
 encoder-experiment adapters / apps ─> encoder-experiment-core
+encoder-experiment-runner ──────────> encoder-experiment-core
+encoder-experiment-sqlite ──────────> encoder-experiment-core
 dataset architect adapters / apps ─> dataset-architect-core
 dataset-architect-core ────> generation/allocation and governed evidence contracts
 quality evaluator adapters / apps ─> dataset-quality-core
@@ -95,6 +97,15 @@ statically composed task adapter owns native row parsing, training, prediction,
 and metric normalization. The core contains no paths, subprocesses, Python,
 CUDA, SQLite, or Nomos types. It extends production task coverage without
 rewriting or weakening the independent text-classification slices.
+
+`encoder-experiment-runner` reserves each external action in an append-only,
+hash-chained journal before invoking the compiled adapter. It derives status by
+replaying that journal, selects only from development assessments, and requires
+an explicit sealed authorization event. `encoder-experiment-sqlite` stores
+snapshots, protocols, and compare-and-append journal events in dedicated tables;
+it does not enter the existing synthetic-data persistence module. Adapter
+re-entry adopts only a complete output at the exact immutable candidate or
+evaluation path, allowing process recovery without overwriting artifacts.
 
 `dataset-quality-core` owns immutable source-set audit plans, explicit quality
 policies, normalized evaluator requests and assessments, deterministic verdicts,

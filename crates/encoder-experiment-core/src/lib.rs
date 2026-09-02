@@ -5,8 +5,10 @@
 //! comparison, and the development/sealed evidence boundary.
 
 pub mod domain;
+pub mod journal;
 pub mod metrics;
 pub mod ports;
+pub mod protocol;
 
 use thiserror::Error;
 
