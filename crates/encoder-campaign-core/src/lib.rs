@@ -6,6 +6,8 @@
 //! `encoder-experiment-core`. This crate only binds their immutable artifacts
 //! into a recoverable long-range campaign.
 
+pub mod optimization;
+
 use std::{collections::BTreeMap, future::Future, pin::Pin};
 
 use chrono::{DateTime, Utc};
@@ -440,10 +442,29 @@ impl ProductionCampaign {
         budget: CampaignBudget,
         created_at: DateTime<Utc>,
     ) -> Result<Self, CampaignError> {
+        Self::create_identified(
+            Uuid::new_v4(),
+            name,
+            project_snapshot_id,
+            project_snapshot_fingerprint,
+            budget,
+            created_at,
+        )
+    }
+
+    /// Construct the exact campaign identity reserved by a higher-level durable workflow.
+    pub fn create_identified(
+        id: Uuid,
+        name: impl Into<String>,
+        project_snapshot_id: Uuid,
+        project_snapshot_fingerprint: impl Into<String>,
+        budget: CampaignBudget,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, CampaignError> {
         budget.validate()?;
         let mut value = Self {
             schema_version: CAMPAIGN_SCHEMA_VERSION,
-            id: Uuid::new_v4(),
+            id,
             name: canonical_text(name, "campaign name")?,
             project_snapshot_id,
             project_snapshot_fingerprint: project_snapshot_fingerprint.into(),
@@ -1672,5 +1693,85 @@ mod tests {
             prepare_iteration_event(&campaign, &view, &protocol, time(4)),
             Err(CampaignError::BudgetExhausted)
         );
+    }
+
+    #[test]
+    fn production_optimization_launch_is_finite_hash_chained_and_cancellable() {
+        use crate::optimization::{
+            OptimizationArtifactBinding, OptimizationEventKind, OptimizationRunState,
+            ProductionOptimizationDefinition, ProductionOptimizationRun, first_optimization_event,
+            replay_optimization,
+        };
+
+        let project = project();
+        let protocol = protocol(&project);
+        let definition = ProductionOptimizationDefinition::create(
+            "bounded repair",
+            digest('0'),
+            &project,
+            OptimizationArtifactBinding::new(Uuid::new_v4(), digest('1')).unwrap(),
+            OptimizationArtifactBinding::new(Uuid::new_v4(), digest('2')).unwrap(),
+            OptimizationArtifactBinding::new(Uuid::new_v4(), digest('3')).unwrap(),
+            digest('4'),
+            binding(),
+            &protocol,
+            protocol.candidates.clone(),
+            CampaignBudget {
+                maximum_iterations: 1,
+                maximum_candidates: 1,
+                maximum_training_seconds: 60,
+                maximum_development_evaluations: 2,
+                maximum_sealed_evaluations: 1,
+                maximum_backend_operations: 4,
+            },
+            60,
+            time(2),
+        )
+        .unwrap();
+        definition.validate_integrity(&project, &protocol).unwrap();
+        let run = ProductionOptimizationRun::create(&definition, time(3)).unwrap();
+        let mut events = vec![first_optimization_event(&run, time(3)).unwrap()];
+        let mut view = replay_optimization(&run, &events).unwrap();
+        assert_eq!(view.state, OptimizationRunState::Planned);
+        events.push(
+            view.next_event(
+                &run,
+                OptimizationEventKind::CampaignAttached {
+                    campaign_fingerprint: digest('5'),
+                },
+                time(4),
+            )
+            .unwrap(),
+        );
+        view = replay_optimization(&run, &events).unwrap();
+        assert_eq!(view.state, OptimizationRunState::CampaignActive);
+        events.push(
+            view.next_event(
+                &run,
+                OptimizationEventKind::Cancelled {
+                    reason: "operator stopped before the next side effect".into(),
+                },
+                time(5),
+            )
+            .unwrap(),
+        );
+        view = replay_optimization(&run, &events).unwrap();
+        assert_eq!(view.state, OptimizationRunState::Cancelled);
+        assert!(
+            view.next_event(
+                &run,
+                OptimizationEventKind::Completed {
+                    decision: FinalDecision::RetainBaseline,
+                    campaign_head_fingerprint: digest('6'),
+                },
+                time(6),
+            )
+            .is_err()
+        );
+
+        let mut tampered = events;
+        tampered[1].previous_event_fingerprint = Some(digest('f'));
+        tampered[1].fingerprint = tampered[1].reproduce_fingerprint().unwrap();
+        assert!(replay_optimization(&run, &tampered).is_err());
     }
 }

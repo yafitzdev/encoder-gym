@@ -3,8 +3,13 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, TimeZone, Utc};
 use encoder_campaign_core::{
     CampaignBenchmarkBinding, CampaignBudget, CampaignStore, ProductionCampaign,
-    bind_generation_event, first_campaign_event, prepare_iteration_event, replay_campaign,
-    start_run_event,
+    bind_generation_event, first_campaign_event,
+    optimization::{
+        OptimizationArtifactBinding, OptimizationEventKind, OptimizationLaunchStore,
+        ProductionOptimizationDefinition, ProductionOptimizationRun, first_optimization_event,
+        replay_optimization,
+    },
+    prepare_iteration_event, replay_campaign, start_run_event,
 };
 use encoder_experiment_core::{
     domain::{
@@ -1117,6 +1122,101 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
             .unwrap(),
         training_snapshot
     );
+    let generation = fixture
+        .store
+        .get_benchmark_generation(fixture.generation_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let generation_events = fixture
+        .store
+        .list_benchmark_generation_events(generation.id)
+        .await
+        .unwrap();
+    let generation_view = replay_benchmark_generation(&generation, &generation_events).unwrap();
+    let benchmark =
+        CampaignBenchmarkBinding::from_active_generation(&generation, &generation_view, "sealed")
+            .unwrap();
+    let definition = ProductionOptimizationDefinition::create(
+        "bounded repair",
+        digest('e'),
+        &fixture.project,
+        OptimizationArtifactBinding::new(proposal.id, proposal.fingerprint.clone()).unwrap(),
+        OptimizationArtifactBinding::new(selection.id, selection.fingerprint.clone()).unwrap(),
+        OptimizationArtifactBinding::new(
+            training_snapshot.id,
+            training_snapshot.fingerprint.clone(),
+        )
+        .unwrap(),
+        training_snapshot.specification_fingerprint.clone(),
+        benchmark,
+        &fixture.protocol,
+        compiled_candidates,
+        CampaignBudget {
+            maximum_iterations: 1,
+            maximum_candidates: 1,
+            maximum_training_seconds: 30,
+            maximum_development_evaluations: 2,
+            maximum_sealed_evaluations: 1,
+            maximum_backend_operations: 4,
+        },
+        30,
+        time(18),
+    )
+    .unwrap();
+    let optimization_run = ProductionOptimizationRun::create(&definition, time(18)).unwrap();
+    let optimization_first = first_optimization_event(&optimization_run, time(18)).unwrap();
+    fixture
+        .store
+        .create_optimization(
+            definition.clone(),
+            optimization_run.clone(),
+            optimization_first,
+        )
+        .await
+        .unwrap();
+    let (reloaded_definition, reloaded_run) = fixture
+        .store
+        .find_optimization_by_manifest(digest('e'))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(reloaded_definition, definition);
+    assert_eq!(reloaded_run, optimization_run);
+    let events = fixture
+        .store
+        .list_optimization_events(optimization_run.id)
+        .await
+        .unwrap();
+    let view = replay_optimization(&optimization_run, &events).unwrap();
+    let attached = view
+        .next_event(
+            &optimization_run,
+            OptimizationEventKind::CampaignAttached {
+                campaign_fingerprint: digest('f'),
+            },
+            time(19),
+        )
+        .unwrap();
+    fixture
+        .store
+        .append_optimization_event(attached.clone())
+        .await
+        .unwrap();
+    assert!(
+        fixture
+            .store
+            .append_optimization_event(attached)
+            .await
+            .is_err(),
+        "the same journal reservation cannot be spent twice"
+    );
+    let events = fixture
+        .store
+        .list_optimization_events(optimization_run.id)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 2);
     assert!(
         sqlx::query(
             "UPDATE encoder_native_repair_training_snapshots SET fingerprint = ? WHERE id = ?",

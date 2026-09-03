@@ -3,6 +3,7 @@
 mod benchmark_generation;
 mod campaign;
 mod native_delta;
+mod optimization;
 mod repair;
 mod training_snapshot;
 
