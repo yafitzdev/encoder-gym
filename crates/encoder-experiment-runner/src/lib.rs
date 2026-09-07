@@ -465,9 +465,19 @@ where
         run_id: Uuid,
         authorized_by: impl Into<String>,
     ) -> Result<ExperimentView, ExperimentRunnerError> {
+        let authorized_by = authorized_by.into();
         let (_, protocol, events) = self.context(run_id).await?;
         let project = self.project(protocol.project_snapshot_id).await?;
         let view = replay_experiment(&project, &protocol, &events)?;
+        if let Some(original) = &view.sealed_authorized_by {
+            if original != authorized_by.trim() {
+                return Err(EncoderExperimentError::Validation(
+                    "sealed authorization is already frozen to a different authorizer".into(),
+                )
+                .into());
+            }
+            return Ok(view);
+        }
         let candidate_id = view.selected_candidate_id.ok_or_else(|| {
             EncoderExperimentError::Validation(
                 "experiment has no development-selected candidate".into(),
@@ -478,7 +488,7 @@ where
             &view,
             ExperimentEventKind::SealedAuthorized {
                 candidate_id,
-                authorized_by: authorized_by.into(),
+                authorized_by,
             },
         )
         .await?;
@@ -493,6 +503,12 @@ where
                 "experiment has no development-selected candidate".into(),
             )
         })?;
+        if view.state == ExperimentRunState::Completed {
+            return Ok(view);
+        }
+        if view.state == ExperimentRunState::SealedEvaluated {
+            return self.finalize_sealed(&protocol, &view).await;
+        }
         if view.state == ExperimentRunState::SealedAuthorized {
             self.append(
                 &protocol,
@@ -549,14 +565,26 @@ where
             ExperimentEventKind::SealedCompleted {
                 candidate_id,
                 report,
-                assessment: assessment.clone(),
+                assessment,
             },
         )
         .await?;
         view = self.status(run_id).await?;
+        self.finalize_sealed(&protocol, &view).await
+    }
+
+    /// Finish only from deeply replayed sealed evidence. This step never calls the backend.
+    async fn finalize_sealed(
+        &self,
+        protocol: &ExperimentProtocol,
+        view: &ExperimentView,
+    ) -> Result<ExperimentView, ExperimentRunnerError> {
+        let assessment = view.sealed_assessment.as_ref().ok_or_else(|| {
+            EncoderExperimentError::Validation("sealed assessment is not persisted".into())
+        })?;
         self.append(
-            &protocol,
-            &view,
+            protocol,
+            view,
             ExperimentEventKind::Finalized {
                 decision: if assessment.verdict == CandidateVerdict::Passed {
                     FinalDecision::PromoteCandidate
@@ -566,7 +594,7 @@ where
             },
         )
         .await?;
-        self.status(run_id).await
+        self.status(view.run_id).await
     }
 
     async fn append(

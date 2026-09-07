@@ -968,6 +968,7 @@ dependencies = [
  "encoder-experiment-core",
  "encoder-experiment-sqlite",
  "serde_json",
+ "sqlx",
  "thiserror 2.0.20",
  "tokio",
  "uuid",

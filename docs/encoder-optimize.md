@@ -59,6 +59,12 @@ a replacement sealed cohort. When no candidate passes every development suite,
 the run retains the baseline and leaves the sealed generation active and
 unused.
 
+The experiment runner reuses a persisted sealed authorization only for the
+same authorizer. If interrupted after saving the sealed report but before
+finalizing its decision, it finishes from that report without another backend
+evaluation. A completed sealed run is also safe to inspect through a repeated
+`experiment run-sealed` command.
+
 Other commands are:
 
 - `inspect`: immutable definition, reservations, and linked state;
