@@ -1,268 +1,221 @@
-# Long-Range Goal — Prove a Native, Non-Adopted Optimization Cycle
+# Goal — Build Encoder Gym as a Clear, Multi-Project Desktop App
 
-Run Encoder Gym's first genuinely new production-encoder optimization through
-the complete `synth encoder optimize` operator path, without adopting a
-previous experiment, and test one small conservative Nomos training hypothesis
-designed to avoid the regressions observed in the first genuine fine-tune.
+Make Encoder Gym easy to use, easy to understand, and sophisticated enough for
+serious encoder development. Preserve the existing architecture while rebuilding
+the presentation and navigation around the user's actual work.
 
-The product question is:
+This is an encoder-development application, not a Nomos dashboard. Nomos is one
+encoder we optimized as a test experiment. There will be many different encoder
+projects, and the application needs durable project "folders" for organizing them.
 
-> Can the reviewed Nomos repair signal be introduced without damaging either
-> independent development suite, while preserving sealed evidence until a
-> candidate is fully eligible?
+The main page **inside each project** must own that project's baseline encoder
+and compare it with all of that project's candidates.
 
-This is the highest-impact continuation because the platform has already proved
-that it can reject an unsafe candidate and productize the resulting evidence.
-The next proof must exercise fresh training and evaluation directly through the
-new durable parent. Do not add another agent, dashboard, data source, or broad
-optimization subsystem before this path is real.
+## Start from the current state
 
-Promotion is not required. A verified `retain_baseline` is a successful result.
+Read AGENTS.md, docs/platform-spec.md, docs/architecture.md,
+docs/development.md, the specifications relevant to the surfaces being changed,
+and the existing UI code before implementation. Inspect Git status and the
+running application; do not assume earlier screenshots or summaries represent
+the current product.
 
-## Required starting context
+There is already partially implemented GUI work. Assess it honestly: preserve
+useful behavior, improve what is unclear, and replace assumptions that conflict
+with this goal. Do not reset, delete, or indiscriminately commit existing changes.
 
-Read `AGENTS.md`, `docs/current-status.md`, `docs/platform-spec.md`,
-`docs/architecture.md`, `docs/development.md`,
-`docs/production-encoder-experiment-spec.md`, and `docs/encoder-optimize.md`
-before implementation.
+The previous goal in this file concerned running another native Nomos
+optimization experiment. That is not this task. This goal does not authorize
+training a model, starting an optimization run, consuming sealed evidence,
+downloading models, or making paid/external calls.
 
-Preserve these facts:
+## 1. Establish the product hierarchy
 
-- Encoder Gym begins from the documentation-handoff commit that follows
-  `118b3d7a279db5b5dd74faafc84db562539aa37d`.
-- The isolated Nomos experiment is
-  `C:\Users\yanfi\PycharmProjects\nomos-encoder-gym-experiment` at
-  `4450ab3f1de8a1fc64bcbe5d77c67d0fb0f99af9`, clean and with no remote.
-- The source Nomos repository
-  `C:\Users\yanfi\PycharmProjects\fitz-tool` is read-only. Its HEAD is
-  `14e0a1667431982ee00ee07108e7d82351fa28eb` and it starts with these existing
-  changes:
-  - modified `fitz_tool/coding_beta_v4_controls.py`;
-  - modified `tools/assemble_beta4_control_dataset.py`;
-  - modified `tools/audit_beta4_dataset.py`;
-  - modified `tools/diagnose_beta4_control_head.py`;
-  - untracked `fitz_tool/coding_beta_v4_live_contrasts.py`;
-  - untracked `tests/test_coding_beta_v4_live_contrasts.py`;
-  - untracked `tools/generate_beta4_live_contrasts.py`.
-- The unrelated untracked Encoder Gym `ui/` directory belongs to the deferred
-  GUI attempt. Do not modify, delete, or commit it.
-- Active successor benchmark generation
-  `10cba5de-e501-4169-a603-27f75c2abd37` is fresh, unused, and has zero
-  candidate exposures. Preserve it unless a new candidate passes every
-  development gate and the operator explicitly authorizes its exact sealed use.
-- The failed genuine candidate
-  `44b98240-6b63-49ca-a0c3-21bddba1d151` and optimization run
-  `2317e08b-5848-4773-9a9e-42499ee09815` are immutable historical evidence.
-  Never overwrite, reopen, or present them as successful.
+Separate application-level project organization from work inside one project.
 
-Record all three repositories' exact HEAD and status before and after work.
-Never place credentials, API keys, or remotes in the isolated copy.
+- **Project collection:** create or register project folders, open them, switch
+  between them, and find previously opened projects.
+- **Project home:** the selected project's baseline and candidate comparisons.
+- **Model detail:** one baseline or candidate, its artifact identity, how it was
+  produced, and its evaluation evidence.
+- **Run detail:** one experiment's configuration, execution, candidates,
+  recorded outcome, budgets, and provenance.
+- **Supporting project pages:** datasets, benchmarks/evaluations, and project
+  configuration, where existing capabilities support useful real workflows.
 
-## Why the previous candidate failed
+Do not mechanically reproduce backend slice names as navigation. Give each
+page a clear purpose and only expose controls with implemented behavior.
+Determine whether a project tree, a project library, or a compact project
+switcher best supports this hierarchy; do not build redundant navigation.
 
-The approved 192-row deterministic delta was task-valid and contamination-free,
-but one full-model CPU triplet fine-tune over the combined 6,992-row population
-regressed both suites:
+Before the next broad redesign, show the proposed page responsibilities and
+project-navigation structure to the user and get their direction. The user is
+actively steering this design. Respect corrections and requests to pause;
+an earlier instruction to work autonomously does not override them.
 
-- `generic_holdout`: MRR `-0.000026190476`, Recall@2 `-0.005`;
-- `retired_post_scaling`: MRR `-0.08103442021`, with Recall@1/2/3 regressions.
+## 2. Make projects real, independent containers
 
-Treat this as evidence about the complete data-plus-training mechanism. Do not
-assume the data is good merely because its structural audit passed, and do not
-assume the training recipe is solely responsible without testing that claim.
-Do not weaken the metric contract or repeatedly tune against these development
-numbers without predeclared bounded hypotheses.
+Each project needs a durable identity, a user-facing name, a local folder
+association, and its own baseline, candidates, runs, datasets, and evaluation
+context. Keep this organizational identity separate from immutable experiment
+snapshots and run IDs.
 
-## Milestone 1 — Audit and harden the fresh optimize path
+- Persist the project collection and selected project across app restarts.
+- Support multiple projects without replacing or forgetting the previous one
+  whenever a different folder is opened.
+- Support a genuinely empty project: no baseline yet, no candidates, and no
+  runs is a valid state, not a connection error.
+- Explain the next available setup action using existing platform contracts.
+  Adding a project folder must not silently start training or evaluation.
+- Handle missing or moved folders, duplicate registrations, unreadable data,
+  and unsupported evidence with understandable recovery paths.
+- Keep project switching isolated: no scores, selections, run links, filters,
+  or asynchronous responses may leak from one project into another.
+- If removing a project from the collection is implemented, distinguish that
+  clearly from deleting files. Do not delete project contents implicitly.
 
-Before spending another real training run, test the path used when the manifest
-does not contain `[existing_experiment]`.
+Nomos may appear as an explicitly identified example or an opened local
+project. Do not hard-code it into startup behavior, product identity, project
+names, baseline labels, filesystem paths, or generic metric explanations.
+Do not fabricate additional real projects to make the interface look populated.
 
-Add focused deterministic coverage for:
+## 3. Make the project home a useful comparison workspace
 
-- fresh protocol and run creation under the pre-reserved IDs;
-- duplicate `start` and `resume` without duplicate artifacts or budget spend;
-- process interruption before an adapter call, after native output appears, and
-  after output is returned but before the next parent event;
-- trainer and evaluator failure evidence;
-- cancellation from every externally side-effecting child state;
-- one candidate failing only one development suite;
-- missing suite evidence remaining ineligible;
-- full development success pausing for explicit sealed authorization;
-- mismatched and repeated sealed authorization;
-- atomic one-time sealed consumption and final decision persistence;
-- deterministic report and provenance output;
-- Doctor rejection of changed files, revisions, database envelopes, journals,
-  and foreign child artifacts;
-- append-only migration from the current `0007` database.
+A user should immediately understand:
 
-Prefer extracting a small application-level orchestration unit from the CLI
-module if that makes deterministic fake end-to-end testing possible. Keep CLI
-parsing and presentation out of the lifecycle logic. Do not create a broad
-framework or generic service module.
+1. Which project am I in?
+2. What is its baseline encoder?
+3. Which candidates exist, and how do they compare with that baseline?
+4. Which results are meaningful improvements, regressions, incomplete
+   evaluations, or failures to meet the recorded requirements?
+5. What should I open to understand a result?
 
-The ordinary test suite must require no Nomos checkout, model, Python, network,
-GPU, or credential. Retain one explicit opt-in isolated-Nomos integrity test.
+Make the baseline a stable reference and the candidate comparison the dominant
+content. Show all candidates through a usable collection, not only the most
+recent run or one selected candidate. Candidate identity and run identity are
+different; recovered attempts must retain their history without duplicating
+models or borrowing evidence from another attempt.
 
-## Milestone 2 — Define one conservative causal hypothesis
+Choose a small, meaningful set of summary metrics from the project's actual
+task and evaluation contract. Explain technical terms where needed. Nomos
+retrieval metrics must not become universal assumptions for every encoder.
 
-Use persisted development-only evidence and training receipts to specify the
-smallest credible alternative to the failed full-model fine-tune. Inspect the
-native trainer and model architecture before choosing it.
+Show candidate names, key changes relative to baseline, evaluation coverage,
+and concise recorded outcomes. Provide useful search/filtering and explicit
+side-by-side comparison where they help. Opening a candidate and returning
+should preserve the user's context.
 
-Good candidate mechanisms may include one or a very small combination of:
+Do not mix incomparable results. Match the baseline artifact, benchmark
+identity, metric contract, and relevant evaluation policy. If setups differ,
+group or separate them and explain why. Missing evidence is not a zero score.
+A positive delta is not proof that a gate passed or that a model was accepted.
 
-- freezing most encoder layers and training only a narrow upper portion;
-- a smaller learning rate or shorter schedule;
-- an explicit base-replay versus repair-row sampling ratio;
-- a regularization or anchoring term against the baseline representation;
-- deterministic checkpoint selection from training-internal evidence that is
-  separate from both named development suites.
+## 4. Give detail pages distinct jobs
 
-These are possibilities, not instructions to implement all of them. Choose one
-mechanism only after determining which can be expressed cleanly by the existing
-Nomos trainer and provider-neutral candidate parameter contract. State the
-causal hypothesis, expected benefit, main failure mode, and exact finite budget
-before viewing new candidate metrics.
+Project home answers **which model is worth inspecting**. Detail pages explain
+**why a result occurred and what produced it**.
 
-Use at most two genuine candidates, and only if the second isolates a specific
-mechanism. No search sweep, optimizer agent, reinforcement learning, bandit,
-adaptive gate change, or arbitrary hyperparameter exploration.
+- Candidate results compare with the exact recorded baseline and explain
+  failed requirements without forcing users to interpret raw journals.
+- Training and dataset details expose the configuration and immutable input
+  references that actually produced the candidate.
+- Run pages own stage history, execution failures, finite budgets, and
+  provenance. Completion and model acceptance are separate facts.
+- Benchmark pages explain what is measured and which comparisons are valid.
+- Technical identifiers, full metric tables, artifact paths, and inspection
+  commands remain accessible without dominating the overview.
 
-## Milestone 3 — Create new immutable authority
+Do not fill the project home with equal-weight cards for budgets, hashes,
+workflow stages, generic recommendations, and duplicate decision summaries.
+Avoid unsupported recommendations or vague "next safe action" prose.
 
-Historical proposal, delta, snapshot, protocol, run, and candidate artifacts
-must remain immutable. Create only the new authority required by the selected
-hypothesis:
+## 5. Design for comprehension, not decoration
 
-- a new reviewed repair/training proposal or explicit successor proposal;
-- a newly approved native delta selection if row membership or construction
-  changes;
-- a new logical training snapshot when inputs, membership, or training-visible
-  weighting facts change;
-- a strict optimize manifest with no `[existing_experiment]` block;
-- new content-addressed candidate identities and bounded budgets.
+Use a deliberate visual hierarchy, readable text, restrained color, consistent
+spacing, and clear interaction cues. A new user should know where to look
+without needing an annotated screenshot to navigate the product.
 
-If the same approved row membership is reused, record that honestly and ensure
-the new training hypothesis—not accidental UUID churn—is what changes identity.
-Do not duplicate large base datasets. Keep native row contents out of Encoder
-Gym's database, generic domain objects, reports, and provenance bundle.
+Keep baseline identity compact enough that candidate comparisons are visible
+at ordinary desktop window sizes. Use progressive disclosure for complexity,
+not tiny text or endless dashboard panels. Status must be understandable
+without relying on color alone.
 
-No network or paid generation call is authorized. If new data truly requires
-one, persist the exact bounded request and stop for explicit authorization.
+Every visible control must work or clearly explain why it is unavailable.
+Cover first use, empty collections, loading, partial evidence, errors, and
+recovery—not only a populated Nomos success path.
 
-## Milestone 4 — Run the new experiment through `encoder optimize`
+Verify keyboard access, focus behavior, navigation history, scrolling, narrow
+windows, and every supported theme in the actual renderer. Preserve useful
+desktop behavior and preferences. Do not add decorative charts, onboarding
+screens, themes, or navigation layers simply to make the app look elaborate.
 
-Use only the high-level operator family for the final proof:
+## 6. Preserve architecture and evidence boundaries
 
-```text
-synth encoder optimize preview --manifest <NEW_MANIFEST> --workspace <ISOLATED_NOMOS>
-synth encoder optimize start --manifest <NEW_MANIFEST> --workspace <ISOLATED_NOMOS>
-synth encoder optimize status <RUN_ID> --workspace <ISOLATED_NOMOS>
-synth encoder optimize resume <RUN_ID> --workspace <ISOLATED_NOMOS>
-```
+Keep the Electron shell, typed bridge, presentation, persistence adapters, and
+core domain responsibilities separate. The GUI must consume authoritative
+contracts rather than reimplement training, evaluation, gate decisions, or
+optimization policy.
 
-Advance one persisted stage at a time and inspect status after each boundary.
-The fresh run itself must create and use the reserved protocol and experiment
-run. It may discover and adopt only its own exact content-addressed output after
-an interruption; it may not adopt the prior completed experiment.
+Project organization may persist its own non-secret presentation metadata.
+Reading or refreshing experiment evidence must remain read-only. Preserve
+immutable historical artifacts, provenance, finite budgets, explicit approvals,
+and sealed-evidence isolation.
 
-Evaluate every candidate independently on both `generic_holdout` and
-`retired_post_scaling`. Any failed or missing suite makes a candidate
-ineligible. Do not average away a suite-specific regression.
+Do not expose sealed metrics, rows, predictions, or diagnostics as development
+feedback. Any permitted archival acceptance summary must remain clearly
+separate from candidate-development comparisons.
 
-If no candidate passes all development gates, complete with `retain_baseline`
-and prove that the successor sealed generation remains active and unused.
+Distinguish live local evidence, historical recordings, and test fixtures.
+Show source and freshness honestly; do not claim integrity verification,
+deployment, promotion, or current authority merely because a record loaded.
 
-If a candidate passes all gates, stop. Report its exact identity, every
-development result, journal head, and authorization fingerprint. Do not use
-sealed evidence until the user explicitly authorizes that exact candidate in
-the active session. After authorization, permit exactly one sealed evaluation
-and atomically persist `promote_candidate` or `retain_baseline` under the
-unchanged contract.
+Do not add cloud services, authentication, multi-user support, distributed
+workers, autonomous optimizer agents, or a new backend framework for this GUI
+task. If a real workflow needs a missing backend contract, identify that
+boundary and obtain direction rather than implementing a misleading frontend
+simulation or silently broadening the task.
 
-Never acquire another sealed cohort automatically and never expose a second
-candidate to the current one.
+## 7. Implement and verify in coherent stages
 
-## Milestone 5 — Finish the operator proof
+After the user has directed the hierarchy:
 
-For the terminal run:
+1. Record the starting state and make a scoped checkpoint before substantial
+   implementation, respecting existing changes.
+2. Implement project identity, folder organization, persistence, and empty
+   states before polishing more single-project screens.
+3. Build the baseline-centered project home and its real comparison behavior.
+4. Align detail pages and navigation with the same hierarchy.
+5. Exercise complete user journeys, fix the rough edges, and update
+   documentation to match the actual application.
 
-- repeated `start` returns the same optimization run;
-- repeated terminal `resume` changes nothing;
-- `status` is fast and explains the outcome and next command;
-- `report` states the hypothesis, actual data/training change, checkpoints,
-  every suite metric and failed gate, budget use, retries, sealed use, decision,
-  evidence limits, and next safe action;
-- `provenance` reproduces the same row-free bundle fingerprint twice;
-- `doctor` replays native files, the training snapshot, experiment/campaign/
-  optimization journals, and sealed-exposure facts;
-- a deliberate temporary tamper in a disposable copy is detected, then the
-  clean authoritative evidence is reverified;
-- the original Nomos repository is byte/status unchanged and the isolated copy
-  remains clean, remote-free, and credential-free.
+Commit coherent, working stages with clear messages. Never bundle unrelated
+changes. Follow AGENTS.md validation requirements, including cargo fmt-check,
+cargo check-all, cargo lint, and cargo test-all for implementation stages,
+alongside the UI's type checks, build, and focused tests.
 
-Update `docs/current-status.md`, `docs/encoder-optimize.md`, the production
-experiment spec, migration/recovery/provenance docs if contracts changed, and
-the checked-in example manifest. Do not leave completed work described as
-future work.
-
-## Engineering and execution rules
-
-- Keep domain contracts independent from SQLite, CLI, Python, paths, Nomos,
-  SDKs, and presentation.
-- Keep native training/evaluation and row parsing inside the compiled Nomos
-  adapter.
-- Keep orchestration thin: reserve/link/advance; never copy slice business
-  logic into the CLI.
-- Derive status, decisions, budgets, and reports from persisted facts.
-- Preserve append-only immutable history and compare-and-append journals.
-- Use deterministic fakes for ordinary tests.
-- Implement and commit coherent stages.
-- After each stage run `cargo fmt-check`, `cargo check-all`, `cargo lint`, and
-  `cargo test-all` with `CARGO_INCREMENTAL=0` where appropriate.
-- Run relevant isolated Nomos Python tests and the opt-in real adapter integrity
-  test before completion.
-- Never reset or overwrite unrelated user changes.
-
-## Explicit non-goals
-
-Do not add GUI/TUI, HTTP endpoints, cloud execution, distributed workers,
-authentication, multi-user support, arbitrary plugin loading, automatic web
-research, a research/prompt-repair agent, semantic deduplication, ModernBERT
-token relief, reinforcement learning, bandits, an endless loop, automatic gate
-changes, automatic approval, automatic sealed acquisition, or broad data
-generation.
-
-Do not modify the original Nomos repository. Do not use an LLM as metric,
-quality, candidate-selection, sealed-use, or promotion authority.
+Use deterministic local fixtures for ordinary testing. Tests must not require
+a Nomos checkout, model downloads, GPU, credentials, or external services.
+Keep any deliberate real-workspace integration checks separately opt-in.
 
 ## Completion criteria
 
-This goal is complete only when:
+Completion must be demonstrated, not inferred from an attractive screenshot:
 
-1. Fresh non-adopted optimize execution and recovery have deterministic
-   application-level coverage for both terminal paths.
-2. One conservative causal training hypothesis is documented and frozen before
-   its results are observed.
-3. All new inputs, parameters, artifacts, budgets, and approvals are immutable
-   and provenance-linked.
-4. At least one genuinely new candidate is trained by the high-level optimize
-   run rather than linked from historical evidence.
-5. Every new candidate has independent evidence for both development suites,
-   and strict eligibility is enforced.
-6. Sealed evidence is either demonstrably unused or used once only after exact
-   explicit authorization.
-7. A deterministic final decision, report, provenance bundle, and passing
-   Doctor exist for the new run.
-8. Idempotency, crash recovery, cancellation, staleness, migration, tamper, and
-   budget behavior are verified in proportion to the changed contracts.
-9. All Rust gates, relevant Python tests, isolated adapter verification, secret
-   scan, and three-repository isolation audit pass.
-10. Documentation and coherent commits leave a new Codex session with an exact,
-    truthful handoff.
+- At least two different encoder projects can be registered, switched between,
+  and reopened after restart without losing their identities or mixing data.
+- An empty project has a coherent setup state before any run exists.
+- Nomos is an ordinary example project, not a special case in the app shell.
+- Each project home identifies its baseline and exposes every candidate with
+  honest, appropriately matched comparisons.
+- Candidate and run detail pages explain results and preserve exact provenance.
+- Project switching, navigation, search, filters, comparison selection, and
+  recovery paths work with realistic populated, empty, missing, and failed data.
+- The key information is readable at normal desktop sizes; keyboard behavior
+  and supported narrow layouts/themes have been exercised in the real app.
+- Existing architecture, historical evidence, and governance remain intact.
+- Relevant automated checks pass, screenshots have been visually reviewed,
+  documentation is current, and coherent implementation stages are committed.
 
-Finish with a management summary separating platform hardening, the causal
-hypothesis, data changes, training changes, per-suite results, sealed result,
-production-baseline decision, evidence limitations, exact commits, and the next
-safe action.
+Finish with a short explanation of the product hierarchy, what changed,
+how to launch it, what was verified, commit references, and any remaining
+limitations. Do not claim the goal is finished while required workflows are
+still placeholders or only work for the Nomos fixture.

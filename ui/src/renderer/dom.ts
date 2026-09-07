@@ -22,6 +22,8 @@ export function h(tag: string, attrs: Record<string, unknown> = {}, ...children:
     else node.setAttribute(key, String(value));
   }
   appendChildren(node, children);
+  // Select values must be applied after their option children exist.
+  if (node instanceof HTMLSelectElement && attrs.value !== undefined) node.value = String(attrs.value);
   return node as HTMLElement;
 }
 

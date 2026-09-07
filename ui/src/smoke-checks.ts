@@ -1,0 +1,92 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { BrowserWindow } from "electron";
+
+/** Real renderer acceptance checks. No model execution, provider calls, or database writes. */
+export async function runSmokeChecks(window: BrowserWindow, output: string): Promise<void> {
+  mkdirSync(output, { recursive: true });
+  const web = window.webContents;
+  const evaluate = (code: string) => web.executeJavaScript(code, true);
+  const check = async (name: string, expression: string) => {
+    const result = await evaluate(expression);
+    if (!result) throw new Error(`Renderer check failed: ${name}`);
+    console.log(`PASS ${name}`);
+  };
+  const click = async (selector: string) => evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
+  const nav = async (label: string) => evaluate(`[...document.querySelectorAll('#project-nav button')].find(b => b.textContent.startsWith(${JSON.stringify(label)})).click()`);
+  const paint = async () => { await evaluate("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"); };
+  const screenshot = async (name: string, width = 1440, height = 960) => {
+    window.setContentSize(width, height); await paint();
+    writeFileSync(join(output, name + ".png"), (await web.capturePage()).toPNG());
+  };
+  await check("all 15 candidates appear", "document.querySelectorAll('[data-candidate-id]').length === 15");
+  await check("baseline is the first anchor", "document.querySelector('.baseline-name h2').textContent === 'Nomos encoder'");
+  await screenshot("models-dark");
+  await click(".candidate-link");
+  await check("repair candidate has 6 failed checks", "document.querySelectorAll('.evidence-table tbody tr').length === 6");
+  await screenshot("candidate-results");
+  await click("#failed-only");
+  await check("all 26 checks can be inspected", "document.querySelectorAll('.evidence-table tbody tr').length === 26");
+  await click("#tab-training");
+  await check("training configuration is present", "document.querySelector('#detail-panel').textContent.includes('6992')");
+  await screenshot("candidate-training");
+  await click("#tab-artifact");
+  await check("model fingerprint is present", "document.querySelector('#detail-panel').textContent.includes('36289478c89d50b3')");
+  await nav("Models");
+  await evaluate("document.getElementById('candidate-search').focus(); document.getElementById('candidate-search').value='repair'; document.getElementById('candidate-search').dispatchEvent(new Event('input', {bubbles:true}));");
+  await check("search filters without losing focus", "document.querySelectorAll('[data-candidate-id]').length === 1 && document.activeElement.id === 'candidate-search'");
+  await evaluate("document.getElementById('candidate-search').value='no-matching-encoder'; document.getElementById('candidate-search').dispatchEvent(new Event('input',{bubbles:true}));");
+  await check("empty search offers recovery", "document.querySelector('.empty-state').textContent.includes('Reset filters')");
+  await screenshot("empty-search");
+  await click(".empty-state button");
+  await click("[data-candidate-id] input");
+  await evaluate("document.querySelectorAll('[data-candidate-id] input')[1].click()");
+  await evaluate("document.querySelectorAll('[data-candidate-id] input')[2].click()");
+  await check("three candidates can be selected", "document.getElementById('compare-selected').textContent.includes('(3)')");
+  await evaluate("document.querySelectorAll('.comparison-group')[1].querySelector('[data-candidate-id] input').click()");
+  await check("different setups cannot be mixed", "document.querySelectorAll('[data-candidate-id] input:checked').length === 3 && document.getElementById('toast').textContent.includes('same evaluation setup')");
+  await click("#compare-selected");
+  await check("side by side comparison has both development suites", "document.querySelectorAll('.compare-matrix').length === 2 && document.querySelector('.comparison-matrix thead tr').children.length === 5");
+  await screenshot("compare-dark");
+  await nav("Runs");
+  await check("all nine run records available", "document.querySelectorAll('.run-list-item').length === 9");
+  await screenshot("runs-dark");
+  await click(".run-list-item");
+  await click("#tab-activity");
+  await check("activity is persisted events", "document.querySelectorAll('.activity-list li').length > 4");
+  await click("#tab-record");
+  await check("exact optimize identity and inspection command available", "document.getElementById('detail-panel').textContent.includes('2317e08b-5848-4773-9a9e-42499ee09815')");
+  await screenshot("run-record");
+  await nav("Runs");
+  await evaluate("[...document.querySelectorAll('.run-list-item')].at(-1).click()");
+  await click(".run-candidate button");
+  await check("historical failed attempt does not borrow recovered results", "document.querySelector('.result-banner').textContent.includes('Execution failed') && document.querySelectorAll('.evidence-table tbody tr').length === 0");
+  await nav("Benchmarks");
+  await check("benchmark authority is explained", "document.querySelectorAll('.benchmark-section').length > 1");
+  await nav("Project");
+  await check("source is explicit", "document.querySelector('.project-info').textContent.includes('15 candidates + 1 baseline')");
+  await nav("Models");
+  await click(".baseline-action button");
+  await check("baseline artifact fingerprints inspectable", "document.getElementById('page').textContent.includes('0c0f6a80a2e34c0')");
+  await nav("Models");
+  await click(".baseline-metric .metric-heading");
+  await check("metric help opens a native dialog", "document.querySelector('dialog[open] h2').textContent === 'Ranking score'");
+  await screenshot("metric-help");
+  await evaluate("document.querySelector('dialog').close()");
+  await click("#theme-toggle");
+  await screenshot("models-light");
+  await click("#theme-toggle");
+  for (const [width, height] of [[1280, 820], [1024, 768], [760, 800], [390, 844]]) {
+    await screenshot(`models-${width}`, width, height);
+    await check(`no page overflow at ${width}`, "document.getElementById('page').scrollWidth <= document.getElementById('page').clientWidth + 1 && document.documentElement.scrollWidth <= window.innerWidth");
+  }
+  window.setContentSize(1440, 960);
+  await nav("Project");
+  await check("Electron read-only evidence bridge returns 9 runs", "window.encoderGym.loadWorkspace().then(s => s.source === 'local' && s.runs.length === 9)");
+  await evaluate("document.querySelector('.project-info .primary').click()");
+  await evaluate("new Promise((resolve, reject) => { let n=0; const poll=()=>{ if(document.getElementById('source-state').textContent.includes('Local journals')) resolve(true); else if(n++ > 100) reject(new Error('Refresh timeout')); else setTimeout(poll,20); }; poll(); })");
+  await check("local reload updates visible source", "document.getElementById('source-state').textContent.includes('Local journals')");
+  await nav("Models");
+  await screenshot("models-connected");
+  console.log("Encoder Gym renderer acceptance checks passed.");
+}

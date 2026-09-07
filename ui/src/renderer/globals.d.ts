@@ -1,8 +1,4 @@
-export interface EncoderGymBridge {
-  windowAction(action: "minimize" | "maximize" | "close"): Promise<void>;
-  copyText(value: string): Promise<void>;
-  versions(): { electron: string; chrome: string; node: string };
-}
+import type { EncoderGymBridge } from "../preload.js";
 
 declare global {
   interface Window {
