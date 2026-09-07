@@ -332,3 +332,79 @@ async fn durable_runner_selects_on_development_and_uses_one_candidate_sealed_rep
         1
     );
 }
+
+#[tokio::test]
+async fn reserved_protocol_and_run_identities_are_recovered_idempotently() {
+    let store = SqliteExperimentStore::connect("sqlite::memory:")
+        .await
+        .unwrap();
+    let backend = FakeRankingBackend::new();
+    let runner = ExperimentRunner::new(&store, &backend);
+    let project = runner.register_project(project(&backend)).await.unwrap();
+    let candidate = TrainingCandidate::create(
+        &project,
+        1,
+        60,
+        BTreeMap::from([("learning_rate".into(), ParameterValue::Number(0.000_003))]),
+    )
+    .unwrap();
+    let protocol_id = uuid::Uuid::new_v4();
+    let run_id = uuid::Uuid::new_v4();
+    let request = || {
+        (
+            protocol_id,
+            project.id,
+            contract(),
+            OptimizationBudget {
+                maximum_candidates: 1,
+                maximum_training_seconds: 60,
+                maximum_development_evaluations: 2,
+                maximum_sealed_evaluations: 1,
+            },
+            60,
+            vec!["development_a".into(), "development_b".into()],
+            "sealed",
+            vec![candidate.clone()],
+        )
+    };
+    let first_request = request();
+    let protocol = runner
+        .prepare_multi_protocol_identified(
+            first_request.0,
+            first_request.1,
+            first_request.2,
+            first_request.3,
+            first_request.4,
+            first_request.5,
+            first_request.6,
+            first_request.7,
+        )
+        .await
+        .unwrap();
+    let second_request = request();
+    let recovered = runner
+        .prepare_multi_protocol_identified(
+            second_request.0,
+            second_request.1,
+            second_request.2,
+            second_request.3,
+            second_request.4,
+            second_request.5,
+            second_request.6,
+            second_request.7,
+        )
+        .await
+        .unwrap();
+    assert_eq!(protocol, recovered);
+
+    let first = runner
+        .create_run_identified(protocol_id, run_id)
+        .await
+        .unwrap();
+    let recovered = runner
+        .create_run_identified(protocol_id, run_id)
+        .await
+        .unwrap();
+    assert_eq!(first, recovered);
+    assert_eq!(first.run_id, run_id);
+}

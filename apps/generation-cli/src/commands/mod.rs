@@ -12,6 +12,7 @@ mod contamination;
 mod dataset;
 mod doctor;
 mod encoder;
+pub(crate) mod encoder_optimize;
 mod evaluation;
 pub(crate) mod experiment;
 mod export;

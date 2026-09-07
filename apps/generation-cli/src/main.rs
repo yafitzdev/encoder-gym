@@ -6,7 +6,7 @@ mod training_examples;
 
 use anyhow::Context;
 use clap::Parser;
-use cli::{Cli, Command};
+use cli::{Cli, Command, EncoderCommand};
 use recovery_core::RecoveryStore;
 use synthetic_data_sqlite::SqliteStore;
 use tracing_subscriber::EnvFilter;
@@ -60,6 +60,11 @@ async fn run() -> anyhow::Result<()> {
                 &database_url,
             ))
             .await;
+        }
+        Command::Encoder {
+            command: EncoderCommand::Optimize { command },
+        } => {
+            return Box::pin(commands::encoder_optimize::execute(*command, &database_url)).await;
         }
         command => command,
     };

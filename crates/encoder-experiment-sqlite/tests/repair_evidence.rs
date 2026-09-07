@@ -1217,6 +1217,58 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
         .await
         .unwrap();
     assert_eq!(events.len(), 2);
+    let generation_events = fixture
+        .store
+        .list_benchmark_generation_events(generation.id)
+        .await
+        .unwrap();
+    let generation_view = replay_benchmark_generation(&generation, &generation_events).unwrap();
+    let exhausted = generation_view
+        .next_event(
+            &generation,
+            BenchmarkGenerationEventKind::Exhausted {
+                reason: "test the immutable optimization after terminal generation state".into(),
+            },
+            time(19),
+        )
+        .unwrap();
+    fixture
+        .store
+        .append_benchmark_generation_event(&exhausted)
+        .await
+        .unwrap();
+    assert!(
+        fixture
+            .store
+            .get_optimization_run(optimization_run.id)
+            .await
+            .unwrap()
+            .is_some(),
+        "terminal generation state must not make historical optimization evidence unreadable"
+    );
+    assert!(
+        sqlx::query(
+            "UPDATE encoder_production_optimization_definitions SET fingerprint = ? WHERE id = ?",
+        )
+        .bind(digest('0'))
+        .bind(definition.id)
+        .execute(fixture.store.pool())
+        .await
+        .is_err(),
+        "optimization definitions must be immutable"
+    );
+    assert!(
+        sqlx::query(
+            "UPDATE encoder_production_optimization_events SET fingerprint = ? \
+             WHERE run_id = ? AND sequence = 1",
+        )
+        .bind(digest('0'))
+        .bind(optimization_run.id)
+        .execute(fixture.store.pool())
+        .await
+        .is_err(),
+        "optimization journals must be append-only"
+    );
     assert!(
         sqlx::query(
             "UPDATE encoder_native_repair_training_snapshots SET fingerprint = ? WHERE id = ?",
@@ -1308,4 +1360,23 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
     .await
     .unwrap();
     assert!(fixture.store.get_diagnosis(persisted.id).await.is_err());
+    sqlx::query("DROP TRIGGER encoder_production_optimization_definitions_no_update")
+        .execute(fixture.store.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE encoder_production_optimization_definitions SET artifact_json = '{}' WHERE id = ?",
+    )
+    .bind(definition.id)
+    .execute(fixture.store.pool())
+    .await
+    .unwrap();
+    assert!(
+        fixture
+            .store
+            .get_optimization_run(optimization_run.id)
+            .await
+            .is_err(),
+        "optimization storage-envelope tampering must fail closed"
+    );
 }

@@ -267,6 +267,81 @@ impl OptimizationLaunchStore for SqliteExperimentStore {
 }
 
 impl SqliteExperimentStore {
+    async fn validate_definition_shallow(
+        &self,
+        definition: &ProductionOptimizationDefinition,
+    ) -> Result<(), OptimizationStoreError> {
+        let project = self
+            .get_project(definition.project.id)
+            .await
+            .map_err(store_error)?
+            .ok_or_else(|| OptimizationStoreError("optimization project does not exist".into()))?;
+        let protocol = self
+            .get_protocol(definition.metric_source_protocol.id)
+            .await
+            .map_err(store_error)?
+            .ok_or_else(|| {
+                OptimizationStoreError("optimization metric source does not exist".into())
+            })?;
+        let snapshot = self
+            .get_native_repair_training_snapshot_shallow(definition.training_snapshot.id)
+            .await
+            .map_err(store_error)?
+            .ok_or_else(|| {
+                OptimizationStoreError("optimization training snapshot does not exist".into())
+            })?;
+        if snapshot.fingerprint != definition.training_snapshot.fingerprint
+            || snapshot.specification_fingerprint
+                != definition.training_snapshot_specification_fingerprint
+            || snapshot.proposal.id != definition.proposal.id
+            || snapshot.proposal.fingerprint != definition.proposal.fingerprint
+            || snapshot.selection.id != definition.delta_selection.id
+            || snapshot.selection.fingerprint != definition.delta_selection.fingerprint
+            || snapshot.execution_project.id != definition.project.id
+            || snapshot.execution_project.fingerprint != definition.project.fingerprint
+        {
+            return Err(OptimizationStoreError(
+                "optimization repair lineage differs from its immutable definition".into(),
+            ));
+        }
+        let generation = self
+            .get_benchmark_generation(definition.benchmark.generation_id)
+            .await
+            .map_err(store_error)?
+            .ok_or_else(|| {
+                OptimizationStoreError("optimization benchmark generation does not exist".into())
+            })?;
+        definition
+            .benchmark
+            .validate_integrity()
+            .map_err(store_error)?;
+        let observed_development: std::collections::BTreeMap<_, _> = generation
+            .development_suites
+            .iter()
+            .map(|authority| {
+                (
+                    authority.suite_key.clone(),
+                    authority.bundle.development_suite_fingerprint.clone(),
+                )
+            })
+            .collect();
+        if generation.fingerprint != definition.benchmark.generation_fingerprint
+            || generation.predecessor_id != definition.benchmark.predecessor_generation_id
+            || generation.predecessor_fingerprint
+                != definition.benchmark.predecessor_generation_fingerprint
+            || observed_development != definition.benchmark.development_suite_fingerprints
+            || generation.sealed_suite_id != definition.benchmark.sealed_suite_id
+            || generation.sealed_suite_fingerprint != definition.benchmark.sealed_suite_fingerprint
+        {
+            return Err(OptimizationStoreError(
+                "optimization benchmark authority differs from persistence".into(),
+            ));
+        }
+        definition
+            .validate_integrity(&project, &protocol)
+            .map_err(store_error)
+    }
+
     async fn validate_definition(
         &self,
         definition: &ProductionOptimizationDefinition,
@@ -363,7 +438,7 @@ impl SqliteExperimentStore {
                 "production optimization definition storage envelope changed".into(),
             ));
         }
-        self.validate_definition(&definition).await?;
+        self.validate_definition_shallow(&definition).await?;
         let stored_run: RunRow = sqlx::query_as(
             "SELECT id, definition_id, fingerprint, reserved_campaign_id, artifact_json, \
              last_sequence, last_event_fingerprint, created_at, updated_at \

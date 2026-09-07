@@ -529,17 +529,17 @@ async fn delta_select(
     presentation::print(&selection)
 }
 
-struct ApprovedDeltaContext {
-    project: encoder_experiment_core::domain::ExternalProjectSnapshot,
-    proposal: RepairProposal,
-    candidate_set: NativeDeltaCandidateSet,
-    report: NativeDeltaQualityReport,
-    approval: NativeDeltaReview,
-    approval_predecessor: Option<NativeDeltaReview>,
-    selection: ApprovedNativeDeltaSelection,
+pub(crate) struct ApprovedDeltaContext {
+    pub(crate) project: encoder_experiment_core::domain::ExternalProjectSnapshot,
+    pub(crate) proposal: RepairProposal,
+    pub(crate) candidate_set: NativeDeltaCandidateSet,
+    pub(crate) report: NativeDeltaQualityReport,
+    pub(crate) approval: NativeDeltaReview,
+    pub(crate) approval_predecessor: Option<NativeDeltaReview>,
+    pub(crate) selection: ApprovedNativeDeltaSelection,
 }
 
-async fn load_approved_delta_context(
+pub(crate) async fn load_approved_delta_context(
     store: &SqliteExperimentStore,
     backend: &NomosBackend,
     selection_id: Uuid,
@@ -549,7 +549,9 @@ async fn load_approved_delta_context(
         .get_native_delta_selection(selection_id)
         .await?
         .with_context(|| format!("native repair delta selection {selection_id} does not exist"))?;
-    let proposal = load_verified_proposal(store, backend, selection.proposal.id, true).await?;
+    let proposal =
+        load_verified_proposal(store, backend, selection.proposal.id, require_native_replay)
+            .await?;
     let project = store
         .get_project(proposal.context.execution_project.id)
         .await?

@@ -1,0 +1,18 @@
+schema_version = 1
+name = "bounded Nomos repair experiment"
+adapter = "nomos"
+project_source_revision = "4450ab3f1de8a1fc64bcbe5d77c67d0fb0f99af9"
+training_snapshot_id = "2602ef88-db56-4591-8a4c-2581c5613726"
+training_snapshot_fingerprint = "sha256:87ba8323e40e43ef1a43ff39d4601e9cf5e4e24032a8786819d770e3dd6585da"
+training_snapshot_specification_fingerprint = "sha256:983f76b25e17cabdce524af3bb2c9257729ce22f512bdfc5b815e1cc1e580376"
+benchmark_generation_id = "10cba5de-e501-4169-a603-27f75c2abd37"
+benchmark_generation_fingerprint = "sha256:86feff574220c9071dd3e0d1450b4edbb3ada7c02896dabccd9b368e4bcab063"
+approval_mode = "explicit_sealed_use"
+selection_policy = "maximize_worst_suite_then_mean"
+final_decision_policy = "strict_metric_contract"
+
+[existing_experiment]
+protocol_id = "79d7d8b6-76ad-4b5b-9fa7-7cf11eb2c549"
+protocol_fingerprint = "sha256:1d1c73120a222655cff27ebadcf3eeba187de723e152c27f2a686b44085288ac"
+run_id = "a986c15f-eb45-4a88-9f9f-1fad798e3961"
+run_head_fingerprint = "sha256:6f21a612fa1786be53ccea7a6f34f14464b237fbc8dc572e6a7707a61e6f12c7"

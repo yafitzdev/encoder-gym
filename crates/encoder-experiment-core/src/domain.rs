@@ -328,8 +328,25 @@ impl TrainingCandidate {
         maximum_training_seconds: u64,
         parameters: BTreeMap<String, ParameterValue>,
     ) -> Result<Self, EncoderExperimentError> {
+        Self::create_identified(
+            Uuid::new_v4(),
+            project,
+            sequence,
+            maximum_training_seconds,
+            parameters,
+        )
+    }
+
+    /// Construct an exact candidate identity reserved by a durable parent workflow.
+    pub fn create_identified(
+        id: Uuid,
+        project: &ExternalProjectSnapshot,
+        sequence: u32,
+        maximum_training_seconds: u64,
+        parameters: BTreeMap<String, ParameterValue>,
+    ) -> Result<Self, EncoderExperimentError> {
         project.validate_integrity()?;
-        if sequence == 0 || maximum_training_seconds == 0 || parameters.is_empty() {
+        if id.is_nil() || sequence == 0 || maximum_training_seconds == 0 || parameters.is_empty() {
             return Err(EncoderExperimentError::Validation(
                 "training candidate requires a positive sequence, time limit, and parameters"
                     .into(),
@@ -344,7 +361,7 @@ impl TrainingCandidate {
             value.validate()?;
         }
         let mut candidate = Self {
-            id: Uuid::new_v4(),
+            id,
             project_snapshot_id: project.id,
             project_snapshot_fingerprint: project.fingerprint.clone(),
             sequence,

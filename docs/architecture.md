@@ -194,6 +194,20 @@ append-only and deeply replays all of its dependencies. `training-snapshot-build
 boundary; build and doctor also require the native content-addressed delta to
 reproduce from the current isolated project.
 
+`encoder-campaign-core::optimization` is the thin durable parent contract for
+one post-review improvement cycle. Its immutable definition binds the exact
+project, proposal, native-delta selection, training snapshot, renewable
+benchmark authority, metric source, finite budget, selection rule, and
+candidate set. Its small hash-chained journal reserves campaign, protocol, and
+experiment-run identities before execution. `encoder-experiment-sqlite` stores
+that definition and lifecycle append-only. Routine status validates immutable
+storage envelopes; launch, native side effects, and Doctor retain the deeper
+dependency and checkout checks. `synth encoder optimize` is the CLI composition
+root. It advances only one reserved stage per invocation, treats sealed use as
+an explicit pause, and derives reports and row-free provenance from persisted
+facts. Existing production-repair, experiment, benchmark-generation, and
+production-campaign commands remain independently useful.
+
 `dataset-quality-core` owns immutable source-set audit plans, explicit quality
 policies, normalized evaluator requests and assessments, deterministic verdicts,
 append-only row/manifest reviews, curation proposals, and approved manifests.

@@ -69,34 +69,9 @@ impl NativeRepairTrainingStore for SqliteExperimentStore {
         id: Uuid,
     ) -> BoxFuture<'_, Result<Option<NativeRepairTrainingSnapshot>, RepairEvidenceStoreError>> {
         Box::pin(async move {
-            let stored: Option<TrainingSnapshotStorageRow> = sqlx::query_as(
-                "SELECT specification_fingerprint, fingerprint, proposal_id, selection_id, \
-                 execution_project_snapshot_id AS execution_project_id, \
-                 combined_membership_fingerprint, artifact_json, created_at \
-                 FROM encoder_native_repair_training_snapshots WHERE id = ?",
-            )
-            .bind(id)
-            .fetch_optional(self.pool())
-            .await
-            .map_err(store_error)?;
-            let Some(stored) = stored else {
+            let Some(value) = self.get_native_repair_training_snapshot_shallow(id).await? else {
                 return Ok(None);
             };
-            let value: NativeRepairTrainingSnapshot =
-                serde_json::from_str(&stored.artifact_json).map_err(store_error)?;
-            if value.id != id
-                || value.specification_fingerprint != stored.specification_fingerprint
-                || value.fingerprint != stored.fingerprint
-                || value.proposal.id != stored.proposal_id
-                || value.selection.id != stored.selection_id
-                || value.execution_project.id != stored.execution_project_id
-                || value.combined_membership_fingerprint != stored.combined_membership_fingerprint
-                || value.created_at != stored.created_at
-            {
-                return Err(RepairEvidenceStoreError(
-                    "native repair training snapshot storage envelope changed".into(),
-                ));
-            }
             self.validate_training_snapshot(&value).await?;
             Ok(Some(value))
         })
@@ -123,6 +98,45 @@ impl NativeRepairTrainingStore for SqliteExperimentStore {
 }
 
 impl SqliteExperimentStore {
+    /// Verify the immutable snapshot and storage envelope without recursively loading every
+    /// linked repair artifact. Parent workflow status uses this cheap path; creation, doctor,
+    /// and native side-effect boundaries retain the full graph validation above.
+    pub(crate) async fn get_native_repair_training_snapshot_shallow(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<NativeRepairTrainingSnapshot>, RepairEvidenceStoreError> {
+        let stored: Option<TrainingSnapshotStorageRow> = sqlx::query_as(
+            "SELECT specification_fingerprint, fingerprint, proposal_id, selection_id, \
+             execution_project_snapshot_id AS execution_project_id, \
+             combined_membership_fingerprint, artifact_json, created_at \
+             FROM encoder_native_repair_training_snapshots WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(store_error)?;
+        let Some(stored) = stored else {
+            return Ok(None);
+        };
+        let value: NativeRepairTrainingSnapshot =
+            serde_json::from_str(&stored.artifact_json).map_err(store_error)?;
+        if value.id != id
+            || value.specification_fingerprint != stored.specification_fingerprint
+            || value.fingerprint != stored.fingerprint
+            || value.proposal.id != stored.proposal_id
+            || value.selection.id != stored.selection_id
+            || value.execution_project.id != stored.execution_project_id
+            || value.combined_membership_fingerprint != stored.combined_membership_fingerprint
+            || value.created_at != stored.created_at
+        {
+            return Err(RepairEvidenceStoreError(
+                "native repair training snapshot storage envelope changed".into(),
+            ));
+        }
+        value.validate_integrity().map_err(store_error)?;
+        Ok(Some(value))
+    }
+
     async fn validate_training_snapshot(
         &self,
         snapshot: &NativeRepairTrainingSnapshot,

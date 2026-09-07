@@ -129,6 +129,31 @@ where
         metric_contract: MetricContract,
         budget: OptimizationBudget,
         maximum_evaluation_seconds: u64,
+        development_suite_keys: Vec<String>,
+        sealed_suite_key: impl Into<String>,
+        candidates: Vec<TrainingCandidate>,
+    ) -> Result<ExperimentProtocol, ExperimentRunnerError> {
+        self.prepare_multi_protocol_identified(
+            Uuid::new_v4(),
+            project_id,
+            metric_contract,
+            budget,
+            maximum_evaluation_seconds,
+            development_suite_keys,
+            sealed_suite_key,
+            candidates,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn prepare_multi_protocol_identified(
+        &self,
+        protocol_id: Uuid,
+        project_id: Uuid,
+        metric_contract: MetricContract,
+        budget: OptimizationBudget,
+        maximum_evaluation_seconds: u64,
         mut development_suite_keys: Vec<String>,
         sealed_suite_key: impl Into<String>,
         candidates: Vec<TrainingCandidate>,
@@ -147,6 +172,25 @@ where
             .into());
         }
         let sealed_suite_key = sealed_suite_key.into();
+        if let Some(existing) = self.store.get_protocol(protocol_id).await? {
+            existing.validate_integrity(&project)?;
+            if existing.project_snapshot_id != project_id
+                || existing.metric_contract != metric_contract
+                || existing.budget != budget
+                || existing.maximum_evaluation_seconds != maximum_evaluation_seconds
+                || existing.development_suite_keys() != development_suite_keys
+                || existing.sealed_suite_key != sealed_suite_key
+                || existing.candidates != candidates
+                || existing.development_selection_rule
+                    != Some(DevelopmentSelectionRule::MaximizeWorstSuiteThenMean)
+            {
+                return Err(EncoderExperimentError::Integrity(
+                    "reserved experiment protocol belongs to a different request".into(),
+                )
+                .into());
+            }
+            return Ok(existing);
+        }
         let mut baseline_development_reports = Vec::with_capacity(development_suite_keys.len());
         for suite_key in development_suite_keys {
             baseline_development_reports.push(
@@ -173,7 +217,8 @@ where
                 maximum_evaluation_seconds,
             )
             .await?;
-        let protocol = ExperimentProtocol::create_multi(
+        let protocol = ExperimentProtocol::create_multi_identified(
+            protocol_id,
             &project,
             metric_contract,
             baseline_development_reports,
@@ -193,11 +238,29 @@ where
         &self,
         protocol_id: Uuid,
     ) -> Result<ExperimentView, ExperimentRunnerError> {
+        self.create_run_identified(protocol_id, Uuid::new_v4())
+            .await
+    }
+
+    pub async fn create_run_identified(
+        &self,
+        protocol_id: Uuid,
+        run_id: Uuid,
+    ) -> Result<ExperimentView, ExperimentRunnerError> {
         let protocol = self.protocol(protocol_id).await?;
         let project = self.project(protocol.project_snapshot_id).await?;
         protocol.validate_integrity(&project)?;
-        let first = first_event(&protocol, Uuid::new_v4(), Utc::now())?;
-        let run_id = first.run_id;
+        let existing = self.store.load_events(run_id).await?;
+        if !existing.is_empty() {
+            if existing[0].protocol_id != protocol_id {
+                return Err(EncoderExperimentError::Integrity(
+                    "reserved experiment run belongs to another protocol".into(),
+                )
+                .into());
+            }
+            return Ok(replay_experiment(&project, &protocol, &existing)?);
+        }
+        let first = first_event(&protocol, run_id, Utc::now())?;
         self.store.create_run(first).await?;
         self.status(run_id).await
     }

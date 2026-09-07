@@ -64,6 +64,7 @@ pub struct ProductionOptimizationDefinition {
     pub id: Uuid,
     pub name: String,
     pub manifest_fingerprint: String,
+    pub specification_fingerprint: String,
     pub project: OptimizationArtifactBinding,
     pub proposal: OptimizationArtifactBinding,
     pub delta_selection: OptimizationArtifactBinding,
@@ -108,6 +109,7 @@ impl ProductionOptimizationDefinition {
             id: Uuid::new_v4(),
             name: name.into(),
             manifest_fingerprint: manifest_fingerprint.into(),
+            specification_fingerprint: String::new(),
             project: OptimizationArtifactBinding::new(project.id, project.fingerprint.clone())?,
             proposal,
             delta_selection,
@@ -132,6 +134,7 @@ impl ProductionOptimizationDefinition {
         };
         value.development_suite_keys.sort();
         value.validate_fields(project, metric_source_protocol)?;
+        value.specification_fingerprint = value.reproduce_specification_fingerprint()?;
         value.fingerprint = value.reproduce_fingerprint()?;
         Ok(value)
     }
@@ -155,6 +158,30 @@ impl ProductionOptimizationDefinition {
         value.fingerprint.clear();
         artifact_core::fingerprint(&value)
             .map_err(|error| OptimizationError::Integrity(error.to_string()))
+    }
+
+    pub fn reproduce_specification_fingerprint(&self) -> Result<String, OptimizationError> {
+        artifact_core::fingerprint(&serde_json::json!({
+            "schema_version": self.schema_version,
+            "name": self.name,
+            "manifest_fingerprint": self.manifest_fingerprint,
+            "project": self.project,
+            "proposal": self.proposal,
+            "delta_selection": self.delta_selection,
+            "training_snapshot": self.training_snapshot,
+            "training_snapshot_specification_fingerprint": self.training_snapshot_specification_fingerprint,
+            "benchmark": self.benchmark,
+            "metric_source_protocol": self.metric_source_protocol,
+            "metric_contract": self.metric_contract,
+            "development_suite_keys": self.development_suite_keys,
+            "sealed_suite_key": self.sealed_suite_key,
+            "candidates": self.candidates,
+            "campaign_budget": self.campaign_budget,
+            "maximum_evaluation_seconds": self.maximum_evaluation_seconds,
+            "approval_mode": self.approval_mode,
+            "selection_rule": self.selection_rule,
+        }))
+        .map_err(|error| OptimizationError::Integrity(error.to_string()))
     }
 
     fn validate_fields(
@@ -182,6 +209,8 @@ impl ProductionOptimizationDefinition {
             || self.name.trim() != self.name
             || self.name.is_empty()
             || !canonical_fingerprint(&self.manifest_fingerprint)
+            || !self.specification_fingerprint.is_empty()
+                && !canonical_fingerprint(&self.specification_fingerprint)
             || self.project.id != project.id
             || self.project.fingerprint != project.fingerprint
             || self.metric_source_protocol.id != metric_source_protocol.id
@@ -238,6 +267,13 @@ impl ProductionOptimizationDefinition {
                 "production optimization benchmark authority differs from its metric source".into(),
             ));
         }
+        if !self.specification_fingerprint.is_empty()
+            && self.reproduce_specification_fingerprint()? != self.specification_fingerprint
+        {
+            return Err(OptimizationError::Integrity(
+                "production optimization specification fingerprint changed".into(),
+            ));
+        }
         Ok(())
     }
 }
@@ -250,6 +286,8 @@ pub struct ProductionOptimizationRun {
     pub definition_id: Uuid,
     pub definition_fingerprint: String,
     pub reserved_campaign_id: Uuid,
+    pub reserved_protocol_id: Uuid,
+    pub reserved_experiment_run_id: Uuid,
     pub created_at: DateTime<Utc>,
     pub fingerprint: String,
 }
@@ -259,12 +297,32 @@ impl ProductionOptimizationRun {
         definition: &ProductionOptimizationDefinition,
         created_at: DateTime<Utc>,
     ) -> Result<Self, OptimizationError> {
+        Self::create_with_reservations(
+            definition,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            created_at,
+        )
+    }
+
+    /// Reserve every downstream identity before a side effect can start. Existing exact
+    /// protocol/run identities may be supplied when adopting a previously proven experiment.
+    pub fn create_with_reservations(
+        definition: &ProductionOptimizationDefinition,
+        reserved_campaign_id: Uuid,
+        reserved_protocol_id: Uuid,
+        reserved_experiment_run_id: Uuid,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, OptimizationError> {
         let mut value = Self {
             schema_version: OPTIMIZATION_RUN_SCHEMA_VERSION,
             id: Uuid::new_v4(),
             definition_id: definition.id,
             definition_fingerprint: definition.fingerprint.clone(),
-            reserved_campaign_id: Uuid::new_v4(),
+            reserved_campaign_id,
+            reserved_protocol_id,
+            reserved_experiment_run_id,
             created_at,
             fingerprint: String::new(),
         };
@@ -280,6 +338,8 @@ impl ProductionOptimizationRun {
         if self.schema_version != OPTIMIZATION_RUN_SCHEMA_VERSION
             || self.id.is_nil()
             || self.reserved_campaign_id.is_nil()
+            || self.reserved_protocol_id.is_nil()
+            || self.reserved_experiment_run_id.is_nil()
             || self.definition_id != definition.id
             || self.definition_fingerprint != definition.fingerprint
             || !canonical_fingerprint(&self.fingerprint)
@@ -299,6 +359,8 @@ impl ProductionOptimizationRun {
             "definition_id": self.definition_id,
             "definition_fingerprint": self.definition_fingerprint,
             "reserved_campaign_id": self.reserved_campaign_id,
+            "reserved_protocol_id": self.reserved_protocol_id,
+            "reserved_experiment_run_id": self.reserved_experiment_run_id,
             "created_at": self.created_at,
         }))
         .map_err(|error| OptimizationError::Integrity(error.to_string()))

@@ -87,6 +87,35 @@ impl ExperimentProtocol {
     pub fn create_multi(
         project: &ExternalProjectSnapshot,
         metric_contract: MetricContract,
+        baseline_development_reports: Vec<EvaluationReport>,
+        baseline_sealed_report: EvaluationReport,
+        budget: OptimizationBudget,
+        maximum_evaluation_seconds: u64,
+        sealed_suite_key: impl Into<String>,
+        candidates: Vec<TrainingCandidate>,
+        selection_rule: DevelopmentSelectionRule,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, EncoderExperimentError> {
+        Self::create_multi_identified(
+            Uuid::new_v4(),
+            project,
+            metric_contract,
+            baseline_development_reports,
+            baseline_sealed_report,
+            budget,
+            maximum_evaluation_seconds,
+            sealed_suite_key,
+            candidates,
+            selection_rule,
+            created_at,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_multi_identified(
+        id: Uuid,
+        project: &ExternalProjectSnapshot,
+        metric_contract: MetricContract,
         mut baseline_development_reports: Vec<EvaluationReport>,
         baseline_sealed_report: EvaluationReport,
         budget: OptimizationBudget,
@@ -109,7 +138,7 @@ impl ExperimentProtocol {
             baseline_development_reports.into_iter().skip(1).collect();
         let mut value = Self {
             schema_version: EXPERIMENT_PROTOCOL_SCHEMA_VERSION,
-            id: Uuid::new_v4(),
+            id,
             project_snapshot_id: project.id,
             project_snapshot_fingerprint: project.fingerprint.clone(),
             metric_contract,

@@ -545,6 +545,12 @@ pub enum CampaignEventKind {
         iteration: u32,
         run_id: Uuid,
     },
+    /// Link an exact, already-completed experiment while productizing a previously proven path.
+    RunAdopted {
+        iteration: u32,
+        run_id: Uuid,
+        experiment_head_fingerprint: String,
+    },
     DevelopmentCompleted {
         iteration: u32,
         run_id: Uuid,
@@ -794,6 +800,33 @@ pub fn start_run_event(
         CampaignEventKind::RunStarted {
             iteration: view.current_iteration,
             run_id: experiment.run_id,
+        },
+        created_at,
+    )
+}
+
+pub fn adopt_run_event(
+    campaign: &ProductionCampaign,
+    view: &CampaignView,
+    experiment: &ExperimentView,
+    created_at: DateTime<Utc>,
+) -> Result<CampaignEvent, CampaignError> {
+    if view.state != CampaignState::ReadyToStart
+        || !matches!(
+            experiment.state,
+            ExperimentRunState::AwaitingSealedAuthorization | ExperimentRunState::Completed
+        )
+        || Some(experiment.protocol_id) != view.protocol_id
+        || !canonical_fingerprint(&experiment.last_event_fingerprint)
+    {
+        return Err(CampaignError::ExperimentMismatch);
+    }
+    view.next_event(
+        campaign,
+        CampaignEventKind::RunAdopted {
+            iteration: view.current_iteration,
+            run_id: experiment.run_id,
+            experiment_head_fingerprint: experiment.last_event_fingerprint.clone(),
         },
         created_at,
     )
@@ -1099,6 +1132,21 @@ fn apply_event(
             if view.state != CampaignState::ReadyToStart
                 || *iteration != view.current_iteration
                 || run_id.is_nil()
+            {
+                return Err(CampaignError::IllegalTransition);
+            }
+            view.run_id = Some(*run_id);
+            view.state = CampaignState::RunningDevelopment;
+        }
+        CampaignEventKind::RunAdopted {
+            iteration,
+            run_id,
+            experiment_head_fingerprint,
+        } => {
+            if view.state != CampaignState::ReadyToStart
+                || *iteration != view.current_iteration
+                || run_id.is_nil()
+                || !canonical_fingerprint(experiment_head_fingerprint)
             {
                 return Err(CampaignError::IllegalTransition);
             }
@@ -1675,6 +1723,39 @@ mod tests {
         events.push(finalized);
         view = replay_campaign(&campaign, &events).unwrap();
         assert_eq!(view.state, CampaignState::Completed);
+    }
+
+    #[test]
+    fn completed_proven_run_can_be_adopted_without_claiming_a_new_start() {
+        let project = project();
+        let protocol = protocol(&project);
+        let campaign = campaign(&project);
+        let mut events = vec![first_campaign_event(&campaign, time(2)).unwrap()];
+        let mut view = replay_campaign(&campaign, &events).unwrap();
+        events.push(bind_generation_event(&campaign, &view, binding(), time(3)).unwrap());
+        view = replay_campaign(&campaign, &events).unwrap();
+        events.push(prepare_iteration_event(&campaign, &view, &protocol, time(4)).unwrap());
+        view = replay_campaign(&campaign, &events).unwrap();
+        let completed = experiment_view(
+            &protocol,
+            Uuid::new_v4(),
+            ExperimentRunState::Completed,
+            None,
+            Some(FinalDecision::RetainBaseline),
+            7,
+        );
+        let adopted = adopt_run_event(&campaign, &view, &completed, time(5)).unwrap();
+        assert!(matches!(
+            adopted.event,
+            CampaignEventKind::RunAdopted {
+                ref experiment_head_fingerprint,
+                ..
+            } if experiment_head_fingerprint == &completed.last_event_fingerprint
+        ));
+        events.push(adopted);
+        view = replay_campaign(&campaign, &events).unwrap();
+        assert_eq!(view.state, CampaignState::RunningDevelopment);
+        assert_eq!(view.run_id, Some(completed.run_id));
     }
 
     #[test]

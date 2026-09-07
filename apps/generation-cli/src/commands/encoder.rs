@@ -33,5 +33,8 @@ pub async fn execute(command: EncoderCommand, store: &SqliteStore) -> anyhow::Re
                 "verified": true,
             }))
         }
+        EncoderCommand::Optimize { .. } => {
+            unreachable!("encoder optimization commands use the experiment database dispatcher")
+        }
     }
 }

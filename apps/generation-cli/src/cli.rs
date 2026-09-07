@@ -1444,6 +1444,75 @@ pub enum EncoderCommand {
     Show { id: Uuid },
     /// Revalidate a registered encoder against the files currently at its path.
     Verify { id: Uuid },
+    /// Run one finite, resumable post-review production improvement cycle.
+    Optimize {
+        #[command(subcommand)]
+        command: Box<EncoderOptimizeCommand>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EncoderOptimizeCommand {
+    /// Resolve and verify a strict manifest without persisting or calling a backend.
+    Preview(EncoderOptimizeManifestArgs),
+    /// Persist one idempotent launch and reserve all downstream identities.
+    Start(EncoderOptimizeManifestArgs),
+    /// Show concise lifecycle state and the exact next operator action.
+    Status(EncoderOptimizeRunArgs),
+    /// Inspect the immutable definition, reservations, and linked lifecycle state.
+    Inspect(EncoderOptimizeRunArgs),
+    /// Verify the already-frozen repair proposal approval used by this run.
+    ReviewRepair(EncoderOptimizeRunArgs),
+    /// Verify the already-frozen native-delta approval used by this run.
+    ReviewDelta(EncoderOptimizeRunArgs),
+    /// Execute at most one reserved side-effecting stage and then stop.
+    Resume(EncoderOptimizeRunArgs),
+    /// Inspect or authorize a specifically reserved external call, if one exists.
+    AuthorizeExternal(EncoderOptimizeAuthorizeArgs),
+    /// Authorize exactly one selected candidate to use the sealed suite.
+    AuthorizeSealed(EncoderOptimizeAuthorizeArgs),
+    /// Cancel before another stage starts; running native work stops at its stage boundary.
+    Cancel(EncoderOptimizeCancelArgs),
+    /// Deeply verify the complete optimization, campaign, experiment, and evidence chain.
+    Doctor(EncoderOptimizeRunArgs),
+    /// Print a row-free, machine-verifiable provenance bundle.
+    Provenance(EncoderOptimizeRunArgs),
+    /// Print a deterministic operator report from persisted facts.
+    Report(EncoderOptimizeRunArgs),
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct EncoderOptimizeManifestArgs {
+    /// Strict TOML optimization manifest.
+    #[arg(long)]
+    pub manifest: PathBuf,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct EncoderOptimizeRunArgs {
+    pub run_id: Uuid,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct EncoderOptimizeAuthorizeArgs {
+    pub run_id: Uuid,
+    #[arg(long, default_value = "local-operator")]
+    pub authorized_by: String,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct EncoderOptimizeCancelArgs {
+    pub run_id: Uuid,
+    #[arg(long)]
+    pub reason: String,
+    #[command(flatten)]
+    pub backend: NomosWorkspaceArgs,
 }
 
 #[derive(Debug, Subcommand)]

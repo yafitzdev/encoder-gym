@@ -433,14 +433,14 @@ pub async fn execute_campaign(
     }
 }
 
-struct CampaignContext {
-    campaign: ProductionCampaign,
-    view: CampaignView,
-    generation: Option<(BenchmarkGeneration, BenchmarkGenerationView)>,
-    experiment: Option<ExperimentView>,
+pub(crate) struct CampaignContext {
+    pub(crate) campaign: ProductionCampaign,
+    pub(crate) view: CampaignView,
+    pub(crate) generation: Option<(BenchmarkGeneration, BenchmarkGenerationView)>,
+    pub(crate) experiment: Option<ExperimentView>,
 }
 
-async fn campaign_provenance(
+pub(crate) async fn campaign_provenance(
     store: &SqliteExperimentStore,
     backend: &NomosBackend,
     campaign_id: Uuid,
@@ -604,7 +604,7 @@ async fn campaign_provenance(
     }))
 }
 
-async fn load_campaign_context(
+pub(crate) async fn load_campaign_context(
     store: &SqliteExperimentStore,
     backend: &NomosBackend,
     campaign_id: Uuid,
@@ -646,7 +646,7 @@ async fn load_campaign_context(
     })
 }
 
-async fn load_generation(
+pub(crate) async fn load_generation(
     store: &SqliteExperimentStore,
     generation_id: Uuid,
 ) -> anyhow::Result<(BenchmarkGeneration, BenchmarkGenerationView)> {
@@ -704,7 +704,7 @@ async fn start_campaign_iteration(
     Ok(())
 }
 
-async fn advance_campaign(
+pub(crate) async fn advance_campaign(
     store: &SqliteExperimentStore,
     backend: &NomosBackend,
     runner: &ExperimentRunner<'_, SqliteExperimentStore, NomosBackend>,
@@ -768,7 +768,7 @@ async fn advance_campaign(
     anyhow::bail!("campaign advance exceeded its deterministic transition bound")
 }
 
-async fn finalize_campaign_iteration(
+pub(crate) async fn finalize_campaign_iteration(
     store: &SqliteExperimentStore,
     context: &CampaignContext,
     experiment: &ExperimentView,
