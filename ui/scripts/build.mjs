@@ -4,6 +4,17 @@ import { fileURLToPath } from "node:url";
 
 const root = new URL("../", import.meta.url);
 
+await build({
+  entryPoints: [fileURLToPath(new URL("../src/evidence/read-workspace.ts", import.meta.url))],
+  outfile: fileURLToPath(new URL("../dist/evidence/read-workspace.js", import.meta.url)),
+  bundle: true, platform: "node", format: "esm", logLevel: "info",
+});
+await build({
+  entryPoints: [fileURLToPath(new URL("../src/renderer/catalog.ts", import.meta.url))],
+  outfile: fileURLToPath(new URL("../dist/evidence/catalog.js", import.meta.url)),
+  bundle: true, platform: "node", format: "esm", logLevel: "info",
+});
+
 // Electron main process -> ESM bundle (electron stays external; bootstrap.cjs imports it).
 await build({
   entryPoints: [fileURLToPath(new URL("../src/main.ts", import.meta.url))],
