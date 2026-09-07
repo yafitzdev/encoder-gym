@@ -5,7 +5,6 @@ import {
   type EvaluationResult,
   type Project,
   type Recipe,
-  type RecipeStatus,
   type RunStage,
 } from "./data.js";
 import { h, type Child } from "./dom.js";
@@ -15,13 +14,6 @@ export interface ViewActions {
   openProject: (id: string) => void;
   copyText: (text: string) => void;
 }
-
-const statusLabel: Record<RecipeStatus, string> = {
-  queued: "Queued",
-  running: "Running",
-  completed: "Completed",
-  failed: "Failed",
-};
 
 /* ------------------------------ sidebar ------------------------------ */
 
@@ -180,8 +172,8 @@ function renderEvaluationTable(results: EvaluationResult[]): HTMLElement {
         h("th", { scope: "col" }, "Gate"),
       )),
       h("tbody", {}, ...results.map((result) =>
-        h("tr", {},
-          h("td", {}, h("strong", {}, result.suite), h("small", {}, result.metric)),
+        h("tr", { class: "evidence-role-" + result.role },
+          h("td", {}, h("strong", {}, result.suite), h("small", {}, result.metric + " · " + result.role)),
           h("td", { class: "numeric" }, result.baseline),
           h("td", { class: "numeric" }, result.candidate),
           h("td", { class: "numeric delta " + result.gate }, result.delta),
@@ -206,43 +198,107 @@ function shortId(value: string): string {
   return value.length > 18 ? value.slice(0, 8) + "…" + value.slice(-6) : value;
 }
 
-/** Recipe detail: A) dataset snapshots, B) instructions/configs, C) model snapshots. */
+/** Recipe detail: one immutable optimization run and its decision evidence. */
 export function renderRecipePage(recipe: Recipe, actions: ViewActions): HTMLElement {
+  const project = projects.find((item) => item.id === recipe.projectId);
   return h("div", { class: "page-pad" },
     h("div", { class: "detail-nav" },
-      h("button", { class: "quiet-button", type: "button", onClick: () => actions.openProject(recipe.projectId) }, "← Back to project"),
+      h("button", { class: "quiet-button breadcrumb-back", type: "button", onClick: () => actions.openProject(recipe.projectId) }, "← Project overview"),
     ),
-    h("div", { class: "badge-row" }, statusPill(recipe.status)),
-    h("h1", { class: "page-heading" }, recipe.name),
-    h("p", { class: "page-lede" }, recipe.description),
-    h("div", { class: "bucket-grid" },
-      bucket("A", "Dataset snapshots", recipe.datasetSnapshots.map((snap) =>
-        h("div", { class: "bucket-item" }, h("strong", {}, snap.name), h("small", {}, snap.note)),
-      )),
-      bucket("B", "Instructions / configs", recipe.instructions.map((ins) =>
-        h("div", { class: "bucket-item" }, h("strong", {}, ins.label), h("small", {}, ins.value)),
-      )),
-      bucket("C", "Model snapshots", recipe.modelSnapshots.map((ms) =>
-        h("div", { class: "bucket-item" }, h("strong", {}, ms.name), h("small", {}, ms.checksum)),
-      )),
+    h("header", { class: "run-heading" },
+      h("div", { class: "overline" }, "Optimization run · immutable"),
+      h("div", { class: "run-title-row" }, h("h1", { class: "page-heading" }, recipe.name), outcomePill(recipe)),
+      h("p", { class: "page-lede" }, recipe.description),
+      h("div", { class: "run-identity mono" }, h("span", {}, "RUN"), recipe.runId),
     ),
-    h("div", { class: "card section-gap" },
-      h("div", { class: "card-header" },
-        h("h2", {}, "Commands"),
-        h("button", { class: "quiet-button", type: "button", onClick: () => actions.copyText(recipe.commands) }, "Copy"),
+    h("section", { class: "run-decision " + recipe.outcome },
+      h("div", { class: "decision-icon", "aria-hidden": "true" }, outcomeIcon()),
+      h("div", { class: "decision-copy" },
+        h("span", { class: "overline" }, "Deterministic decision"),
+        h("h2", {}, recipe.outcomeLabel),
+        h("p", {}, recipe.outcomeSummary),
       ),
-      h("div", { class: "card-body" }, h("pre", { class: "code" }, recipe.commands)),
+      h("div", { class: "baseline-state" },
+        h("span", { class: "overline" }, "Production baseline"),
+        h("strong", {}, recipe.outcome === "promote-candidate" ? "Changed" : "Unchanged"),
+      ),
+    ),
+    h("section", { class: "stage-section run-stage-section", "aria-label": "Run progression" },
+      sectionHeader("Run progression", "Reserved and append-only"),
+      renderStageRail(recipe.stages),
+    ),
+    h("div", { class: "run-grid" },
+      h("section", { class: "control-surface evaluation-surface" },
+        sectionHeader("Evaluation evidence", recipe.evaluations.length + " decisive metrics"),
+        renderEvaluationTable(recipe.evaluations),
+      ),
+      h("div", { class: "control-stack" },
+        h("section", { class: "control-surface next-action" },
+          h("span", { class: "overline" }, "Next safe action"),
+          h("p", {}, recipe.nextAction),
+        ),
+        h("section", { class: "control-surface authority-panel" },
+          sectionHeader("Budget ledger", "Used / authorized"),
+          ...recipe.budgets.map((budget) => budgetRow(budget.label, budget.used, budget.limit, budget.unit)),
+        ),
+      ),
+    ),
+    h("section", { class: "artifact-section" },
+      h("div", { class: "artifact-section-heading" },
+        h("div", {}, h("span", { class: "overline" }, "Immutable run graph"), h("h2", {}, "Inputs, policy and outputs")),
+        h("span", { class: "section-caption" }, "Every artifact retains its source identity"),
+      ),
+      h("div", { class: "artifact-grid" },
+        artifactPanel("Training authority", "Input", recipe.datasetSnapshots.map((snapshot) =>
+          artifactItem(snapshot.name, snapshot.note, snapshot.id),
+        )),
+        artifactPanel("Training policy", "Config", recipe.instructions.map((instruction) =>
+          artifactItem(instruction.label, instruction.value),
+        )),
+        artifactPanel("Candidate outputs", "Model", recipe.modelSnapshots.map((model) =>
+          artifactItem(model.name, model.checksum, model.id),
+        )),
+      ),
+    ),
+    h("div", { class: "evidence-grid" },
+      h("section", { class: "control-surface provenance-panel" },
+        sectionHeader("Provenance", "Row-free evidence"),
+        h("dl", { class: "provenance-list" }, ...recipe.provenance.map((entry) =>
+          h("div", {}, h("dt", {}, entry.label), h("dd", { class: "mono" }, entry.value)),
+        )),
+      ),
+      h("section", { class: "control-surface context-panel" },
+        sectionHeader("Run context", "Bound at start"),
+        h("dl", { class: "provenance-list" },
+          h("div", {}, h("dt", {}, "Project"), h("dd", {}, project?.name ?? recipe.projectId)),
+          h("div", {}, h("dt", {}, "Hypothesis"), h("dd", {}, recipe.hypothesis)),
+          h("div", {}, h("dt", {}, "Sealed evidence"), h("dd", { class: "sealed-value " + recipe.sealedState }, recipe.sealedState)),
+        ),
+      ),
+    ),
+    h("section", { class: "control-surface commands-panel" },
+      sectionHeader("Operator commands", "Read-only inspection and verification"),
+      h("div", { class: "command-toolbar" },
+        h("span", {}, "Use the CLI for authoritative operations."),
+        h("button", { class: "quiet-button copy-button", type: "button", onClick: () => actions.copyText(recipe.commands) }, "Copy commands"),
+      ),
+      h("pre", { class: "code" }, recipe.commands),
     ),
   );
 }
 
-function bucket(letter: string, title: string, items: Child[]): HTMLElement {
-  return h("section", { class: "card bucket" },
-    h("div", { class: "card-header" },
-      h("h2", {}, title),
-      h("span", { class: "bucket-letter" }, letter),
-    ),
-    h("div", { class: "card-body" }, items.length ? items : h("div", { class: "tree-empty" }, "None.")),
+function artifactPanel(title: string, role: string, items: Child[]): HTMLElement {
+  return h("section", { class: "artifact-panel" },
+    h("div", { class: "artifact-panel-header" }, h("h3", {}, title), h("span", {}, role)),
+    h("div", { class: "artifact-items" }, items.length ? items : h("div", { class: "tree-empty" }, "None.")),
+  );
+}
+
+function artifactItem(title: string, detail: string, identity?: string): HTMLElement {
+  return h("div", { class: "artifact-item" },
+    h("strong", {}, title),
+    h("span", {}, detail),
+    identity ? h("code", {}, shortId(identity)) : null,
   );
 }
 
@@ -257,10 +313,6 @@ function recipeListRow(recipe: Recipe, actions: ViewActions): HTMLElement {
 
 function outcomePill(recipe: Recipe): HTMLElement {
   return h("span", { class: "outcome-pill " + recipe.outcome }, recipe.outcomeLabel);
-}
-
-function statusPill(status: RecipeStatus): HTMLElement {
-  return h("span", { class: "status-pill " + status }, statusLabel[status]);
 }
 
 function fact(label: string, value: string): HTMLElement {

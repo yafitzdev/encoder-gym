@@ -18,7 +18,6 @@ interface ShellElements {
   sidebarMenu: HTMLButtonElement;
   resizer: HTMLElement;
   workspaceState: HTMLElement;
-  newProjectButton: HTMLButtonElement;
 }
 
 export function mount(): void {
@@ -43,8 +42,8 @@ export function mount(): void {
     elements.projectsNav.replaceChildren(renderProjectTree(projectId, recipeId, actions));
 
     if (location.view === "recipe") {
-      elements.pageTitle.textContent = recipe?.name ?? "Recipe";
-      elements.pageSubtitle.textContent = project?.name ?? "";
+      elements.pageTitle.textContent = project?.name ?? "Project";
+      elements.pageSubtitle.textContent = recipe ? "Runs / " + recipe.name : "Run";
       elements.pageSubtitle.hidden = false;
     } else {
       elements.pageTitle.textContent = project?.name ?? "Project";
@@ -96,15 +95,8 @@ export function mount(): void {
     });
   }
 
-  // New project is intentionally inert in this skeleton: the create-project
-  // flow (folder mapping, project buckets) is designed next.
-  elements.newProjectButton.addEventListener("click", () => {
-    elements.workspaceState.textContent = "create-project coming next";
-    window.setTimeout(() => { elements.workspaceState.textContent = "local · mock data"; }, 1600);
-  });
-
   elements.workspaceState.classList.add("online");
-  elements.workspaceState.textContent = "local · mock data";
+  elements.workspaceState.textContent = "local · evidence preview";
 
   navigate({ view: "project", projectId: activeProjectId });
 }
@@ -146,7 +138,8 @@ function wireResizer(resizer: HTMLElement, appShell: HTMLElement): void {
   resizer.addEventListener("mousedown", (event) => {
     dragging = true;
     startX = (event as MouseEvent).clientX;
-    startWidth = appShell.getBoundingClientRect().width;
+    const configuredWidth = Number.parseFloat(window.getComputedStyle(appShell).getPropertyValue("--sidebar-width"));
+    startWidth = Number.isFinite(configuredWidth) ? configuredWidth : 272;
     resizer.classList.add("dragging");
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
@@ -186,7 +179,6 @@ function collectElements(): ShellElements {
     sidebarMenu: required("sidebar-menu") as HTMLButtonElement,
     resizer: required("sidebar-resizer"),
     workspaceState: required("workspace-state"),
-    newProjectButton: required("new-project") as HTMLButtonElement,
   };
 }
 

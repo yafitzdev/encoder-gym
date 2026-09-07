@@ -2,29 +2,32 @@
 
 A frameless Electron desktop app for the Encoder Gym platform.
 
-> Status: **minimal skeleton + project/recipe model**. Only the single active
-> **Nomos repair** project is shown. The app is shaped around a deliberate
-> domain model being refined with the user.
+> Status: **read-only control-plane presentation prototype**. Only the single
+> active **Nomos repair** project is shown, using static evidence copied from
+> the repository's documented optimization outcomes.
 
 ## Domain model (current)
 
-- A **project** maps to a local folder and owns a shared **evaluation suite** (D).
-- A project contains **recipes** that compete against each other.
+- A **project** maps to a local folder and owns shared benchmark authority.
+- A project contains immutable optimization **recipes/runs**.
 - Each **recipe** carries:
-  - **A) dataset snapshots**
-  - **B) instructions / configs**
-  - **C) model snapshots**
+  - dataset and model snapshots;
+  - a bounded training policy;
+  - persisted stage progression;
+  - development and sealed evaluation evidence;
+  - finite budget usage, a deterministic decision, and row-free provenance.
 
 ## Views
 
-- **Sidebar** — brand, inert **New project** placeholder, Projects tree
-  (project → its recipes).
-- **Project page** (click project) — task/folder/evaluation-suite facts,
-  recipe list, and an *Evaluation results* card (deferred).
-- **Recipe page** (click a recipe) — A/B/C buckets + commands.
+- **Sidebar** — local control-plane identity and Projects tree
+  (project → its immutable runs).
+- **Project page** — latest decision, stage progression, development gates,
+  finite budgets, optimization history, and project authority.
+- **Recipe page** — full run decision, evaluation evidence, run graph,
+  provenance, budget ledger, and read-only operator commands.
 
-No Overview, All runs, Workflows, or New run — removed pending product
-decisions.
+The renderer remains intentionally read-only. Authoritative mutations stay in
+the CLI until the persistence and command boundaries are designed explicitly.
 
 ## What is kept
 
