@@ -27,7 +27,9 @@ export class ProjectSelection {
     const revision = this.invalidate(id);
     try {
       const result = await read(id);
-      return this.revision === revision && result.project.id === id ? result : undefined;
+      if (this.revision !== revision) return undefined;
+      if (result.project.id !== id) throw new Error("Loaded project identity does not match the selected folder.");
+      return result;
     } catch (error) {
       if (this.revision === revision) throw error;
       return undefined;

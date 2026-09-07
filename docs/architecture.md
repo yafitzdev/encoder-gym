@@ -727,7 +727,22 @@ untrusted advisory evidence.
 
 ## UI strategy
 
-The existing graphical UI covers Slice 1 only. Slices 2–6 and cross-slice
-workflow orchestration remain CLI-only until
-the user explicitly starts a separate UI phase. Any future UI communicates only
-with an API and never imports or reimplements core rules.
+The original HTTP graphical surface covers Slice 1. The separately authorized
+Encoder Gym desktop phase lives in `ui/`: a hardened Electron shell, typed IPC
+bridge, read-only experiment-journal adapter, and vanilla TypeScript renderer.
+It organizes persistent local project folders and presents baseline/candidate
+comparisons, run history, benchmark context, and project settings.
+
+The app's organizational project IDs and folder metadata are separate from
+immutable domain snapshots. Only that app-owned metadata is writable; evidence
+reads use read-only SQLite connections. The renderer receives a row-free
+development projection, never native payloads or sealed scores. Core training,
+evaluation, gate decisions, and optimization policy remain owned by their Rust
+contracts; the adapter projects their recorded outcomes rather than recomputing
+them. Report binding checks are not a replacement for native Doctor verification.
+
+The desktop does not expose execution mutations or all platform slice formats.
+The current experiment CLI is composed with the Nomos adapter; generic folder
+organization does not add another execution backend. Training, evaluation,
+approval, and orchestration continue through explicit CLI workflows. See
+`ui/README.md` for supported evidence, integration boundaries, and tests.

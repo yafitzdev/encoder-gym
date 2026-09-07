@@ -30,9 +30,9 @@ export function pageHeader(title: string, description: string, action?: Child): 
 }
 export function sectionHeader(title: string, extra?: Child): HTMLElement { return h("div", { class: "section-heading" }, h("h2", {}, title), extra ?? null); }
 export function empty(title: string, description: string, action?: Child): HTMLElement { return h("div", { class: "empty-state" }, icon("search"), h("h2", {}, title), h("p", {}, description), action ?? null); }
-export function metricHeader(key: string, help: (key: string) => void): HTMLElement {
+export function metricHeader(key: string, help: (key: string) => void, direction?: string): HTMLElement {
   const info = metricInfo(key);
-  return h("button", { type: "button", class: "metric-heading", onClick: () => help(key), "aria-label": `About ${info.label}` }, info.label, h("span", { class: "metric-subtitle" }, info.short + " ↑"));
+  return h("button", { type: "button", class: "metric-heading", onClick: () => help(key), "aria-label": `About ${info.label}` }, info.label, h("span", { class: "metric-subtitle" }, info.short + (direction === "lower_is_better" ? " ↓" : direction === "higher_is_better" ? " ↑" : "")));
 }
 export function scoreStack(value: number | undefined, baseline: number | undefined, key: string, direction = "higher_is_better"): HTMLElement {
   const diff = value !== undefined && baseline !== undefined ? value - baseline : undefined;

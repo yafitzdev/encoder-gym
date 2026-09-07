@@ -36,7 +36,7 @@ function development(value: unknown): DevelopmentReport {
 // never credential-like fields, nested native payload, or free-form long text.
 function parameters(value: unknown): CandidateAttempt["parameters"] {
   return Object.fromEntries(Object.entries(object(value, "candidate parameters")).filter(([key, v]) =>
-    !/(secret|password|credential|api.?key|access.?token|auth.?token|authorization|prompt|payload|row.?text)/i.test(key) &&
+    !/(secret|password|credential|api.?key|token|authorization|prompt|payload|row.?text)/i.test(key) &&
     (typeof v === "boolean" || typeof v === "number" && Number.isFinite(v) || typeof v === "string" && v.length <= 500)
   )) as CandidateAttempt["parameters"];
 }
@@ -63,6 +63,13 @@ function result(event: Json, baselines: DevelopmentReport[]): DevelopmentResult 
 export function projectRun(protocol: Json, project: Json, events: Json[], sourceDatabase: string): RunRecord {
   if (!events.length) throw new Error("Experiment has no journal events.");
   const first = events[0]!;
+  const directions: RunRecord["directions"] = {};
+  for (const definition of protocol.metric_contract.definitions) {
+    const key = string(definition.key);
+    if (Object.hasOwn(directions, key) || !["higher_is_better", "lower_is_better"].includes(definition.direction)) throw new Error("Invalid metric definition in the recorded contract.");
+    Object.defineProperty(directions, key, { value: definition.direction, enumerable: true });
+  }
+  if (protocol.metric_contract.primary_metric && !Object.hasOwn(directions, protocol.metric_contract.primary_metric)) throw new Error("The primary metric is missing from the recorded contract.");
   if (protocol.project_snapshot_id !== project.id || protocol.project_snapshot_fingerprint !== project.fingerprint) throw new Error("Project does not match protocol.");
   for (let i = 0; i < events.length; i++) {
     const e = events[i]!;
@@ -86,7 +93,7 @@ export function projectRun(protocol: Json, project: Json, events: Json[], source
     const reports = ce.filter(e => ["candidate_development_completed", "candidate_development_suite_completed"].includes(e.kind));
     for (const e of reports) {
       validateReport(e.report);
-      if (trained && e.report.model.fingerprint !== trained.output.model.fingerprint) throw new Error("Candidate evaluation belongs to a different model.");
+      if (trained && (e.report.model.fingerprint !== trained.output.model.fingerprint || e.report.model.id !== trained.output.model.id)) throw new Error("Candidate evaluation belongs to a different model.");
     }
     if (new Set(reports.map(e => e.report.suite_key)).size !== reports.length) throw new Error("Duplicate development report.");
     return {
@@ -106,7 +113,7 @@ export function projectRun(protocol: Json, project: Json, events: Json[], source
     id: string(first.run_id), protocolId: string(protocol.id), protocolFingerprint: string(protocol.fingerprint),
     projectId: string(project.id), revision: string(project.source_revision), createdAt: string(first.created_at),
     updatedAt: string(events.at(-1)!.created_at), sourceDatabase, baseline, baselines,
-    directions: Object.fromEntries(protocol.metric_contract.definitions.map((m: Json) => [m.key, m.direction])),
+    directions,
     ...(protocol.metric_contract.primary_metric ? { primaryMetric: string(protocol.metric_contract.primary_metric) } : {}),
     ...(typeof project.task === "string" ? { task: project.task } : {}),
     ...(typeof project.task_configuration?.agent_evaluation?.nomos_top_k === "number" ? { agentTopK: project.task_configuration.agent_evaluation.nomos_top_k } : {}),
@@ -176,11 +183,13 @@ export function readWorkspace(folder: string): WorkspaceSnapshot {
   if (!projects.size) throw new EmptyWorkspaceError(databases);
   const newest = ordered[0];
   for (const run of ordered) run.optimizationId = optimizations.get(run.id);
-  const project = newest ? projects.get(newest.projectId)! : [...projects.values()].sort((a, b) => string(b.created_at).localeCompare(string(a.created_at)))[0]!;
+  const project = [...projects.values()].sort((a, b) => string(b.created_at).localeCompare(string(a.created_at)) || Number(b.id === newest?.projectId) - Number(a.id === newest?.projectId))[0]!;
+  const baseline = model(project.baseline_model);
+  const baselineRun = ordered.find(run => run.baseline.fingerprint === baseline.fingerprint);
   const onnx = project.task_configuration?.baseline_evidence?.onnx;
   return { schemaVersion: 1, capturedAt: new Date().toISOString(), source: "local", folder: root,
     name: typeof project.name === "string" ? project.name : basename(root), task: string(project.task),
-    baseline: newest?.baseline ?? model(project.baseline_model), baselineEvaluations: newest?.baselines ?? [],
+    baseline, baselineEvaluations: baselineRun?.baselines ?? [],
     ...(onnx ? { deployment: { key: string(onnx.path), fingerprint: string(onnx.fingerprint), bytes: number(onnx.bytes) } } : {}),
     runs: ordered, databases };
 }

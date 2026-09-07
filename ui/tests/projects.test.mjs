@@ -77,4 +77,5 @@ test("out-of-order project responses and errors cannot leak across a selection",
   selection.invalidate(null);
   fail(new Error("Old folder unreadable"));
   assert.equal(await old, undefined);
+  await assert.rejects(() => selection.open("b", async () => ({ project: { id: "a" } })), /does not match/);
 });

@@ -1,21 +1,50 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readWorkspace } from "./evidence/read-workspace.js";
-import recorded from "./evidence/nomos-snapshot.json";
+import { readProjectContent } from "./evidence/read-workspace.js";
+import { example, readExample } from "./evidence/examples.js";
+import { ProjectRegistry } from "./project-registry.js";
+import type { OpenedProject } from "./projects.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { runSmokeChecks } from "./smoke-checks.js";
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const smokeTest = process.argv.includes("--smoke-test");
-let workspaceFolder = recorded.folder;
-ipcMain.handle("encoder-gym:load-workspace", () => readWorkspace(workspaceFolder));
-ipcMain.handle("encoder-gym:choose-workspace", async () => {
-  const selected = await dialog.showOpenDialog({ title: "Open an Encoder Gym experiment workspace", defaultPath: workspaceFolder, properties: ["openDirectory"] });
-  if (selected.canceled || !selected.filePaths[0]) return null;
-  const snapshot = readWorkspace(selected.filePaths[0]);
-  workspaceFolder = selected.filePaths[0];
-  return snapshot;
+if (smokeTest) app.setPath("userData", process.env.ENCODER_GYM_SMOKE_PROFILE ?? mkdtempSync(join(tmpdir(), "encoder-gym-renderer-")));
+const registry = new ProjectRegistry(join(app.getPath("userData"), "projects.json"));
+let smokeFolderChoice: string | undefined;
+async function pickFolder(title: string, defaultPath?: string): Promise<string | undefined> {
+  if (smokeTest) { const choice = smokeFolderChoice; smokeFolderChoice = undefined; return choice; }
+  const selected = await dialog.showOpenDialog({ title, defaultPath, properties: ["openDirectory", "createDirectory"] });
+  return selected.canceled ? undefined : selected.filePaths[0];
+}
+const projectId = (value: unknown): string => { if (typeof value !== "string" || !value) throw new Error("A project identity is required."); return value; };
+ipcMain.handle("encoder-gym:get-projects", () => registry.read());
+ipcMain.handle("encoder-gym:add-project-folder", async () => {
+  const selected = await pickFolder("Add an encoder project folder");
+  return selected ? registry.addFolder(selected) : null;
 });
+ipcMain.handle("encoder-gym:open-example", () => registry.addExample(example.key, example.name));
+ipcMain.handle("encoder-gym:select-project", (_event, value: unknown): OpenedProject => {
+  const id = projectId(value);
+  registry.select(id);
+  const project = registry.get(id);
+  if (project.source.kind === "folder") return { project, content: readProjectContent(project.source.path) };
+  try { return { project, content: { state: "ready", workspace: readExample(project.source.key) } }; }
+  catch (error) { return { project, content: { state: "error", message: error instanceof Error ? error.message : "Example unavailable." } }; }
+});
+ipcMain.handle("encoder-gym:rename-project", (_event, id: unknown, name: unknown) => {
+  if (typeof name !== "string") throw new Error("A project name is required.");
+  return registry.rename(projectId(id), name);
+});
+ipcMain.handle("encoder-gym:relocate-project", async (_event, value: unknown) => {
+  const id = projectId(value), project = registry.get(id);
+  if (project.source.kind !== "folder") throw new Error("Recorded examples do not have a connected folder.");
+  const selected = await pickFolder(`Reconnect ${project.name}`, project.source.path);
+  return selected ? registry.relocate(id, selected) : null;
+});
+ipcMain.handle("encoder-gym:forget-project", (_event, value: unknown) => registry.remove(projectId(value)));
 
 ipcMain.handle("encoder-gym:window-action", (event, action: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender);
@@ -72,7 +101,7 @@ if (smokeTest) {
     });
     try {
       await window.loadFile(join(directory, "renderer", "index.html"));
-      await runSmokeChecks(window, join(directory, "..", "qa"));
+      await runSmokeChecks(window, join(directory, "..", "qa"), { registry, chooseFolder: path => { smokeFolderChoice = path; }, restart: process.argv.includes("--smoke-restart") });
       window.destroy(); app.quit();
     } catch (error) { console.error(error); window.destroy(); app.exit(1); }
   });
@@ -87,6 +116,10 @@ if (smokeTest) {
       app.on("activate", () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();
       });
+    });
+    app.on("second-instance", () => {
+      const window = BrowserWindow.getAllWindows()[0];
+      if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); }
     });
     app.on("window-all-closed", () => {
       if (process.platform !== "darwin") app.quit();

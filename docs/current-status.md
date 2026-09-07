@@ -70,8 +70,7 @@ the reproducible row-free bundle fingerprint is
 
 ## Repository state
 
-The documentation handoff commit is the current Encoder Gym HEAD. The completed
-implementation immediately before this handoff is:
+The completed experiment implementation at this historical handoff was:
 
 - `598d302db81d5bc3669f0b290e6dc96c5c4ddb11` — productize finite encoder
   optimization;
@@ -84,9 +83,14 @@ no remote. The original Nomos repository remains at
 and untracked file set recorded in `goal.md` history; it was not changed by the
 experiment.
 
-The Encoder Gym worktree has an unrelated untracked `ui/` directory from the
-deferred GUI attempt. Preserve it. Do not include, delete, or refactor it unless
-the user explicitly reopens the UI phase.
+The user subsequently reopened the GUI phase. The tracked `ui/` desktop now
+provides persistent independent project folders, a baseline/candidate comparison
+home, model and run details, benchmark context, and project settings. Nomos is an
+opt-in recorded example rather than startup identity. App folder metadata is
+mutable; experiment evidence remains read-only. See `../ui/README.md` for launch,
+verification, and the boundary between generic presentation and the existing
+adapter-specific experiment CLI. No new optimization experiment was started
+as part of this GUI phase.
 
 ## Verification completed
 

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src 'none'">
     <meta name="description" content="Encoder Gym — compare your baseline encoder and every candidate.">
-    <title>Models · Encoder Gym</title>
+    <title>Encoder Gym</title>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
@@ -26,9 +26,8 @@
     <div class="app-shell" id="app-shell">
       <aside class="sidebar" aria-label="Workspace navigation">
         <div class="brand"><span class="brand-mark" aria-hidden="true">e<span>g</span></span><strong>Encoder Gym</strong></div>
-        <div class="workspace-picker"><span class="project-monogram" aria-hidden="true">N</span><div><strong id="workspace-name">Nomos repair</strong><span id="workspace-mode">Evidence preview</span></div></div>
-        <div class="nav-label">WORKSPACE</div>
-        <nav id="project-nav" aria-label="Project pages"></nav>
+        <div class="project-collection-heading"><span class="nav-label">PROJECTS</span><button id="add-project" class="icon-button" type="button" aria-label="Add project folder">+</button></div>
+        <nav id="project-nav" aria-label="Project folders"></nav>
         <div class="sidebar-bottom">
           <button id="open-guide" class="nav-item" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20M9 8a3 3 0 1 1 4 3c-1 1-1 2-1 3M12 17h.01"/></svg>Reading guide</button>
           <div class="sidebar-footer"><span>Local · single user</span><button id="theme-toggle" class="icon-button" type="button" aria-label="Use light theme"></button></div>
@@ -36,11 +35,12 @@
       </aside>
       <div id="sidebar-resizer" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" tabindex="0"></div>
       <div class="workspace">
-        <header class="workspace-header"><span id="breadcrumb">Nomos repair / Models</span><div class="source-controls"><div id="source-state"></div><button id="reload-evidence" class="icon-button" type="button" aria-label="Reload workspace evidence"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12 0l2 5M4 12l2 5a7 7 0 0 0 12 0"/></svg></button></div></header>
+        <header class="workspace-header"><span id="breadcrumb">Encoder Gym</span><div class="source-controls"><div id="source-state"></div><button id="reload-evidence" class="icon-button" type="button" aria-label="Reload project evidence"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12 0l2 5M4 12l2 5a7 7 0 0 0 12 0"/></svg></button></div></header>
         <main id="page" tabindex="-1" aria-label="Workspace content"></main>
       </div>
     </div>
     <dialog id="help-dialog" aria-labelledby="help-title"></dialog>
+    <dialog id="project-dialog" aria-labelledby="project-dialog-title"></dialog>
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
     <script type="module" src="app.js"></script>
   </body>

@@ -37,6 +37,19 @@ test("non-Nomos task, model identity, primary metric and safe parameters come fr
   assert.ok(!JSON.stringify(result).includes("DO-NOT-PROJECT"));
   assert.deepEqual(readFileSync(file), before, "reading evidence must leave its database unchanged");
 });
+
+test("a newer registered baseline is visible before its first run without relabelling older results", () => {
+  const root = folder(), previous = experimentFixture("previous"), prepared = experimentFixture("new");
+  prepared.project.created_at = "2026-09-03T12:00:00Z";
+  prepared.project.baseline_model.fingerprint = "new-reference";
+  writeExperimentDatabase(join(root, "previous.db"), previous);
+  writeExperimentDatabase(join(root, "prepared.db"), prepared, false);
+  const result = readWorkspace(root);
+  assert.equal(result.baseline.key, "models/new-encoder");
+  assert.deepEqual(result.baselineEvaluations, []);
+  assert.equal(result.runs.length, 1);
+  assert.equal(result.runs[0].baseline.key, "models/previous-encoder");
+});
 test("missing, corrupt and unsupported folders are distinguishable from an empty project", () => {
   const root = folder();
   assert.match(readProjectContent(join(root, "missing")).message, /no longer available/);

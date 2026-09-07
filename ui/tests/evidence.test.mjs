@@ -44,6 +44,8 @@ test("foreign baseline, suite, role, and journal identities fail closed", () => 
     f => f.protocol.project_snapshot_fingerprint = "foreign",
     f => f.events[1].event.report.project_snapshot_id = "foreign",
     f => f.events[1].event.assessment.gates[0].candidate = 0.1,
+    f => f.protocol.metric_contract.definitions[0].direction = "guess",
+    f => f.protocol.metric_contract.primary_metric = "unknown",
   ]) {
     const f = fixture(); tamper(f);
     assert.throws(() => projectRun(f.protocol, f.project, f.events, "test.sqlite"));

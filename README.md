@@ -19,6 +19,19 @@ criteria.
 The fake backend is deterministic and requires no credentials. It is the best
 way to verify a local installation.
 
+## Encoder Gym desktop
+
+The separately requested desktop phase provides persistent local project
+folders and read-only baseline/candidate comparisons. From the repository root,
+run `cd ui`, `npm ci`, then `npm start` (Node.js 22.19+). Start by adding a
+folder, or explicitly open the historical example. No training or evaluation
+starts when a folder is added.
+
+See [`ui/README.md`](ui/README.md) for page responsibilities, supported journal
+formats, recovery, and tests. Folder organization and presentation are generic;
+the existing experiment execution CLI remains adapter-specific. Other platform
+slice records are not yet exposed through this desktop reader.
+
 ## Use the CLI
 
 Inspect all commands with:
