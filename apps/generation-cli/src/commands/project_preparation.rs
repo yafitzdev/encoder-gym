@@ -15,7 +15,7 @@ use crate::cli::ProjectCommand;
 pub async fn execute(command: ProjectCommand, store: &SqliteStore) -> anyhow::Result<()> {
     match command {
         ProjectCommand::BootstrapPreview { manifest } => {
-            super::project_bootstrap::preview(&manifest, store).await
+            super::project_bootstrap::preview(&manifest)
         }
         ProjectCommand::Bootstrap { manifest } => {
             super::project_bootstrap::create(&manifest, store).await

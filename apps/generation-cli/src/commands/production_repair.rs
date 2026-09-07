@@ -88,7 +88,7 @@ struct NativeRepairQualityPolicyInput {
 pub async fn execute(command: ProductionRepairCommand, database_url: &str) -> anyhow::Result<()> {
     let backend_args = backend_args(&command);
     ensure_database_belongs_to_workspace(database_url, &backend_args.workspace)?;
-    let store = SqliteExperimentStore::connect(database_url).await?;
+    let store = command.database_access().production(database_url).await?;
     let backend = NomosBackend::open(&backend_args.workspace, backend_args.python.clone())?;
 
     match command {

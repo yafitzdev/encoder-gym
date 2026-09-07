@@ -1,12 +1,15 @@
 mod cli;
 mod commands;
+mod database_access;
 mod document;
 mod presentation;
 mod training_examples;
 
 use anyhow::Context;
 use clap::Parser;
-use cli::{Cli, Command, EncoderCommand};
+use cli::{Cli, Command, DatabaseCommand, DatabaseKind, EncoderCommand, RecoveryCommand};
+use database_access::DatabaseAccess;
+use encoder_experiment_sqlite::SqliteExperimentStore;
 use recovery_core::RecoveryStore;
 use synthetic_data_sqlite::SqliteStore;
 use tracing_subscriber::EnvFilter;
@@ -34,7 +37,31 @@ async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     presentation::set_output(cli.output)?;
     let database_url = cli.database_url();
+    if let Some(result) = commands::execute_without_store(&cli.command) {
+        return result;
+    }
     let command = match cli.command {
+        Command::Database {
+            command: DatabaseCommand::Migrate { kind },
+        } => {
+            match kind {
+                DatabaseKind::Classification => {
+                    SqliteStore::connect(&database_url)
+                        .await?
+                        .pool()
+                        .close()
+                        .await
+                }
+                DatabaseKind::Production => {
+                    SqliteExperimentStore::connect(&database_url)
+                        .await?
+                        .pool()
+                        .close()
+                        .await
+                }
+            }
+            return presentation::print(&serde_json::json!({"migrated": true}));
+        }
         Command::Experiment { command } => {
             // Keep the experiment handler's aggregate future off the small Windows
             // main-thread stack, just like the ordinary command dispatcher below.
@@ -68,15 +95,26 @@ async fn run() -> anyhow::Result<()> {
         }
         command => command,
     };
-    let store = SqliteStore::connect(&database_url)
+    let access = command.database_access();
+    let store = access
+        .classification(&database_url)
         .await
         .with_context(|| format!("could not open database at {database_url}"))?;
-    let interrupted = store.detect_interrupted_workflows().await?;
-    if !interrupted.is_empty() {
-        eprintln!(
-            "detected {} interrupted workflow(s); inspect them with `synth recovery list`",
-            interrupted.len()
-        );
+    if access == DatabaseAccess::ReadWrite
+        && !matches!(
+            command,
+            Command::Recovery {
+                command: RecoveryCommand::Scan
+            }
+        )
+    {
+        let interrupted = store.detect_interrupted_workflows().await?;
+        if !interrupted.is_empty() {
+            eprintln!(
+                "detected {} interrupted workflow(s); inspect them with `synth recovery list`",
+                interrupted.len()
+            );
+        }
     }
     commands::execute(command, store).await
 }

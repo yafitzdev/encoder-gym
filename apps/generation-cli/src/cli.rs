@@ -38,6 +38,11 @@ impl Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Explicitly initialize or upgrade one database schema.
+    Database {
+        #[command(subcommand)]
+        command: DatabaseCommand,
+    },
     /// Check local database, configuration, artifacts, and optional backend connectivity.
     Doctor(DoctorArgs),
     /// Validate, resolve, and initialize declarative project configuration.
@@ -209,6 +214,21 @@ pub enum Command {
     Rows(RowsArgs),
     /// Export accepted rows.
     Export(ExportArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DatabaseCommand {
+    /// Create a missing database or apply pending migrations. Does not run recovery.
+    Migrate {
+        #[arg(long, value_enum, default_value_t = DatabaseKind::Classification)]
+        kind: DatabaseKind,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum DatabaseKind {
+    Classification,
+    Production,
 }
 
 #[derive(Debug, Subcommand)]

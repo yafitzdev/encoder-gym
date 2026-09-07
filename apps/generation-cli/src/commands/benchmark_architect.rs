@@ -300,7 +300,7 @@ struct BenchmarkArchitectBriefFile {
     draft: BenchmarkArchitectBriefDraft,
 }
 
-fn resolve_brief(path: &Path) -> anyhow::Result<ResolvedBenchmarkArchitectBrief> {
+pub(super) fn resolve_brief(path: &Path) -> anyhow::Result<ResolvedBenchmarkArchitectBrief> {
     let input: BenchmarkArchitectBriefFile = document::read(path)?;
     ensure!(
         input.schema_version == BENCHMARK_ARCHITECT_BRIEF_SCHEMA_VERSION,

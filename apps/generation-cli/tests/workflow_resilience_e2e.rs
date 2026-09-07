@@ -762,7 +762,7 @@ fn interrupted_workflow_resumes_once_and_then_stays_idempotent() {
     let run_id = string_at(&initialized, "/run/id");
     assert_eq!(initialized["attempt"]["stage"], "initial_allocation");
 
-    let recovery = run_json(fixture.database_url(), ["recovery", "list"]);
+    let recovery = run_json(fixture.database_url(), ["recovery", "scan"]);
     assert!(
         recovery
             .as_array()
@@ -1102,7 +1102,7 @@ fn interrupted_generation_resumes_the_exact_reserved_child_identity() {
     process.wait().expect("killed workflow process exits");
     server.release.store(true, Ordering::Release);
 
-    let recovery = run_json(fixture.database_url(), ["recovery", "list"]);
+    let recovery = run_json(fixture.database_url(), ["recovery", "scan"]);
     assert!(
         recovery
             .as_array()

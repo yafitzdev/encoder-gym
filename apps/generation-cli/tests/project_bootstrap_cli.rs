@@ -24,6 +24,11 @@ fn local_sources_bootstrap_idempotently_and_run_the_complete_offline_workflow() 
     assert_eq!(preview["sources"][0]["accepted_rows"], 16);
     assert_eq!(preview["sources"][1]["accepted_rows"], 10);
     let initial_fingerprint = string_at(&preview, "/bootstrap_fingerprint");
+    assert!(
+        !fixture.directory().join("pilot.db").exists(),
+        "bootstrap preview must not create a database"
+    );
+    run_json(fixture.database_url(), ["database", "migrate"]);
     assert_eq!(
         run_json(fixture.database_url(), ["project", "bootstrap-list"]),
         serde_json::json!([]),

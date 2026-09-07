@@ -2,9 +2,11 @@
 
 Generation, training, evaluation, and the governed encoder workflow are
 foreground local workflows. Before a runner starts, the CLI persists an
-execution lease with its PID and OS process start time. On every CLI startup,
-SQLite reconciles `running` records with live processes. This avoids both
-timeout guessing and PID-reuse errors.
+execution lease with its PID and OS process start time. Before ordinary write
+commands, and when explicitly requested with `recovery scan`, SQLite reconciles
+`running` records with live processes. Passive inspection and previews do not
+change run states or recovery records. This avoids both timeout guessing and
+PID-reuse errors.
 
 ```text
 synth recovery scan

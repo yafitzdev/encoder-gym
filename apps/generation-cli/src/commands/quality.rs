@@ -71,7 +71,7 @@ pub async fn execute(command: QualityCommand, store: &SqliteStore) -> anyhow::Re
     }
 }
 
-fn compile_policy(args: &QualityPolicyArgs) -> anyhow::Result<QualityPolicy> {
+pub(super) fn compile_policy(args: &QualityPolicyArgs) -> anyhow::Result<QualityPolicy> {
     let preset = match args.preset {
         QualityPresetArg::Fast => QualityPreset::Fast,
         QualityPresetArg::Balanced => QualityPreset::Balanced,

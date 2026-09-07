@@ -15,6 +15,28 @@ stderr. Inspecting that same historical run with a status/list command succeeds
 normally. Tracing diagnostics, including dependency logs enabled by `RUST_LOG`,
 always go to stderr.
 
+Pure configuration validation, resolution and construction previews, bootstrap
+previews, quality policy previews, and benchmark architect brief validation do
+not open a database. Database-backed previews, status, lists, reports, Doctor,
+exports, and import dry runs open an existing database read-only. They do not
+create databases, apply migrations, change journal mode, or reconcile interrupted
+work. Exports still write the explicitly requested output file. Explicit backend
+checks and native artifact verification retain their documented adapter work.
+Dataset architect brief validation remains an audited operation: when it uses
+protected evidence, it records the required exposure.
+
+Initialize or upgrade a database explicitly when needed:
+
+```text
+synth database migrate
+synth --database-url sqlite://path/to/experiments.db database migrate --kind production
+```
+
+Classification and production use separate schemas. Passive readers reject
+missing, outdated, newer, or modified migration history without attempting
+repairs. Ordinary write commands still initialize/upgrade their schema and run
+startup recovery; `database migrate` only performs schema maintenance.
+
 File-producing commands use `--file` so global `--output` is unambiguous:
 
 ```text
@@ -84,8 +106,9 @@ are retained for inspection, not treated as executable authority.
 Run one local workflow process at a time. `workflow start` and `resume` hold a
 process-identity lease and reject concurrent drivers. Use `workflow status` for
 persisted attempts, usage, generation jobs, and coverage, or `workflow watch`
-from another terminal. Ctrl+C may interrupt the process; startup reconciliation
-then exposes the run through `recovery list`, and `workflow resume` continues
+from another terminal. Ctrl+C may interrupt the process; `recovery scan` explicitly
+reconciles dead owners and returns newly detected interruptions. A subsequent
+`recovery list` reads the recorded facts, and `workflow resume` continues
 from durable facts. `workflow cancel` is the durable cancellation path and
 forwards cancellation to an active generation job between bounded batches.
 
