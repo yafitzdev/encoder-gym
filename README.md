@@ -222,6 +222,14 @@ The complete development loop requires adaptation-eligible `row_content`
 disclosure; sealed evidence remains aggregate-only and non-adaptive. Legacy
 pre-bundle workflows remain inspectable but cannot be resumed.
 
+For a reviewed production-repair snapshot, `synth encoder optimize` provides
+the thinner one-cycle operator path used by the real Nomos experiment. It
+reserves all child identities up front, advances one durable stage per
+`resume`, stops before sealed evidence, and finishes with either
+`promote_candidate` or `retain_baseline`. See
+[`docs/encoder-optimize.md`](docs/encoder-optimize.md) for the strict manifest,
+command family, recovery rules, and verified negative outcome.
+
 `plan create --targets <FILE>` accepts explicit per-cell targets when an equal
 distribution is not appropriate. This is the underlying plan model used by
 both the CLI and browser application.

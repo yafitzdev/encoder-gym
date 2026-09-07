@@ -167,6 +167,11 @@ Git-status unchanged.
 Ordinary tests use a deterministic fake adapter. The real Nomos process test is
 local, explicit, and uses only the isolated copy.
 
+The proven post-review path is exposed as the finite `synth encoder optimize`
+workflow described in [`encoder-optimize.md`](encoder-optimize.md). That layer
+owns only lifecycle, reservations, approvals, budgets, recovery, and links to
+the existing repair, experiment, campaign, and renewable-benchmark contracts.
+
 Development-only repair diagnosis is a separate post-experiment operation. It
 uses complete native row observations for every baseline/candidate and
 development-suite pair, reproduces normalized retrieval metrics within an

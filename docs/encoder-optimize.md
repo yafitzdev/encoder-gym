@@ -89,6 +89,17 @@ by `-0.08103442021`, with additional recall regressions. Encoder Gym correctly
 retained the baseline, selected no candidate, and did not expose the candidate
 to sealed evidence.
 
+The productized replay is optimization run
+`2317e08b-5848-4773-9a9e-42499ee09815`. It completed with journal head
+`sha256:37d6e0a16516da7a7edf79773b4e3a68dab84338eabbb4097523a9817e6ed691`.
+Repeated `start` and terminal `resume` calls returned that same run without new
+artifacts or budget spend. Repeated provenance reconstruction produced the
+same row-free bundle fingerprint
+`sha256:19d30e96ebe62da73836cd285364208fa57d20f9662f34bd95d5409e70850eb4`,
+and `doctor` passed native delta replay plus campaign and journal verification.
+The successor benchmark generation remained active with zero sealed
+exposures.
+
 This is a successful safety outcome, not a promotion. A future experiment must
 use a new reviewed hypothesis and immutable training snapshot; it must not
 weaken the gates or reuse this run as evidence of improvement.
