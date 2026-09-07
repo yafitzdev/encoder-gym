@@ -1,8 +1,19 @@
 # Encoder Gym interface contract
 
-The project is the home of one baseline encoder and every candidate created
-against it. Models is the default page. It answers: what is the baseline, how
-does each candidate compare, and which result should I inspect?
+Encoder Gym owns a persistent collection of independent encoder project
+folders. The user approved persistent folders in the sidebar on 2026-09-08.
+Selecting a project opens its baseline and every candidate created against it.
+Models is that project's default page, not an application-wide singleton.
+It answers: what is the baseline, how does each candidate compare, and which
+result should I inspect?
+
+App-owned project IDs, names, folder associations, and the selected project are
+separate from immutable experiment snapshot IDs. Atomic local metadata writes
+never modify model files or experiment databases. A project may be empty, have
+only a registered baseline, or contain completed and incomplete experiments.
+Missing folders remain registered so the user can reconnect them. Forgetting
+an entry never deletes its folder. A recorded example is opt-in, not startup
+identity or a live connection.
 
 ## Information architecture
 
@@ -16,6 +27,9 @@ does each candidate compare, and which result should I inspect?
   which comparisons are meaningful and keep final acceptance separate.
 - Project: workspace, data source, recorded baseline artifacts, and source
   revision. A reading guide explains baseline, candidate, run, and checks.
+
+Switching projects isolates navigation, filters, selections, and asynchronous
+responses. Only the active project's pages expand below its sidebar folder.
 
 ## Evidence contract
 

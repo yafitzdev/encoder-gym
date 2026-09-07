@@ -55,6 +55,8 @@ export interface RunRecord {
   baseline: ModelArtifact;
   baselines: DevelopmentReport[];
   directions: Record<string, "higher_is_better" | "lower_is_better">;
+  primaryMetric?: string;
+  task?: string;
   agentTopK?: number;
   candidates: CandidateAttempt[];
   decision?: string;
@@ -75,6 +77,7 @@ export interface WorkspaceSnapshot {
   name: string;
   task: string;
   baseline: ModelArtifact;
+  baselineEvaluations?: DevelopmentReport[];
   deployment?: { key: string; fingerprint: string; bytes: number };
   runs: RunRecord[];
   databases: string[];

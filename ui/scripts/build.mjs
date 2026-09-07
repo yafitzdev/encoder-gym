@@ -4,6 +4,12 @@ import { fileURLToPath } from "node:url";
 
 const root = new URL("../", import.meta.url);
 
+for (const module of ["projects", "project-registry"]) await build({
+  entryPoints: [fileURLToPath(new URL(`../src/${module}.ts`, import.meta.url))],
+  outfile: fileURLToPath(new URL(`../dist/evidence/${module}.js`, import.meta.url)),
+  bundle: true, platform: "node", format: "esm", logLevel: "info",
+});
+
 await build({
   entryPoints: [fileURLToPath(new URL("../src/evidence/read-workspace.ts", import.meta.url))],
   outfile: fileURLToPath(new URL("../dist/evidence/read-workspace.js", import.meta.url)),
