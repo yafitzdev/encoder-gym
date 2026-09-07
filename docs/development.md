@@ -121,6 +121,11 @@ cargo lint
 cargo test-all
 ```
 
+The Pi sidecar also runs `npm run check` from `adapters/research-agent-pi`.
+Its tracked Git attributes enforce LF for text files on every platform, including
+Windows with `core.autocrlf=true`. An existing checkout with CRLF files can run
+`npm run format` once; fresh checkouts already have the formatter's line endings.
+
 Run the CLI during development with:
 
 ```text
