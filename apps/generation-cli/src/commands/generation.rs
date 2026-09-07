@@ -481,7 +481,18 @@ async fn run_job(
             )
             .await?;
     }
-    crate::presentation::print(&completed)
+    crate::presentation::print(&completed)?;
+    anyhow::ensure!(
+        completed.state == JobState::Completed,
+        "generation job {} ended {:?}: {}",
+        completed.id,
+        completed.state,
+        completed
+            .error_message
+            .as_deref()
+            .unwrap_or("execution did not complete"),
+    );
+    Ok(())
 }
 
 #[derive(Debug)]

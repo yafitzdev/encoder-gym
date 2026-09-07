@@ -7,6 +7,14 @@ JSON mode writes exactly one JSON value to stdout for scripting. Progress,
 cancellation notices, and startup recovery notices use stderr. Failures return
 a non-zero exit code.
 
+For foreground `generate`, `recovery resume-generation`, `training run`,
+`training continue`, and `evaluation run`, success means the persisted run
+completed. Failed or cancelled execution still prints its normal structured
+result, including the run identity, then exits nonzero with a diagnostic on
+stderr. Inspecting that same historical run with a status/list command succeeds
+normally. Tracing diagnostics, including dependency logs enabled by `RUST_LOG`,
+always go to stderr.
+
 File-producing commands use `--file` so global `--output` is unambiguous:
 
 ```text
