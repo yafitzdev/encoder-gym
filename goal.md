@@ -1,4 +1,26 @@
-# Goal — Build Encoder Gym as a Clear, Multi-Project Desktop App
+# Active goal — Local-model onboarding and Gym-owned workspaces
+
+Implement the managed project workflow end to end, with Hugging Face deferred.
+Encoder Gym creates a standardized project folder from a local checkpoint;
+users reopen Gym projects rather than register arbitrary source repositories.
+Preserve the architecture and persistent multi-project navigation. Provide
+real baseline ownership, local dataset import and provenance, and honest
+empty/setup states through the CLI and desktop UI.
+
+Then onboard Nomos from `C:\Users\yanfi\PycharmProjects\fitz-tool` into a
+separate Gym-managed folder and backfill the final-stage training inputs named
+by its retained checkpoint. Preserve the source, native dataset structure,
+immutable identities, and held-out evidence boundaries. Do not start training,
+evaluation, downloads, or external calls. See
+`docs/managed-workspaces-spec.md` for contracts and completion evidence.
+
+Checkpoint before implementation, verify and commit coherent stages. The goal
+is not complete until the actual Nomos workspace opens in the app and copied
+artifacts/data have been verified against their sources.
+
+## Previous presentation goal (retained context)
+
+# Build Encoder Gym as a Clear, Multi-Project Desktop App
 
 Make Encoder Gym easy to use, easy to understand, and sophisticated enough for
 serious encoder development. Preserve the existing architecture while rebuilding
