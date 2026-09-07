@@ -147,6 +147,28 @@ Progress is emitted on stderr, so JSON stdout stays composable. Ctrl+C requests
 cancellation between bounded batches. See `docs/transformer-training.md` for
 the exact supported bundle and configuration.
 
+## Production encoder optimization
+
+Use a dedicated SQLite database inside a clean, remote-free isolated task
+checkout. Preview and start from one strict manifest, then follow the exact next
+command printed by status:
+
+```text
+synth encoder optimize preview --manifest optimize.toml --workspace <COPY>
+synth encoder optimize start --manifest optimize.toml --workspace <COPY>
+synth encoder optimize status <RUN_ID> --workspace <COPY>
+synth encoder optimize resume <RUN_ID> --workspace <COPY>
+synth encoder optimize report <RUN_ID> --workspace <COPY>
+synth encoder optimize provenance <RUN_ID> --workspace <COPY>
+synth encoder optimize doctor <RUN_ID> --workspace <COPY>
+```
+
+Each `resume` performs at most one stage. Do not script repeated resume without
+checking status, because an eligible candidate deliberately pauses for
+`authorize-sealed`. Routine status uses shallow immutable-envelope checks;
+Doctor is slower because it replays native data and project artifacts. See
+`docs/encoder-optimize.md` and `docs/current-status.md`.
+
 ## Provenance
 
 ```text

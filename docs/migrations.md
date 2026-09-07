@@ -210,8 +210,20 @@ journal may live in a dedicated production-experiment database:
 - `0003_repair_evidence`: append-only complete development observation sets,
   comparative diagnoses, and exact normalized diagnosis-to-observation
   bindings. Stable evidence and derivation fingerprints make collection and
-  diagnosis retries idempotent without rewriting campaign history.
+  diagnosis retries idempotent without rewriting campaign history;
+- `0004_repair_proposals`: immutable finite repair proposals, append-only human
+  reviews, and idempotent application reservations;
+- `0005_native_repair_delta_quality`: payload-free native candidate-set,
+  assessment, contamination, review, and approved-selection evidence;
+- `0006_native_repair_training_snapshots`: immutable logical combined-training
+  manifests binding base inputs, the approved delta, membership, and provenance;
+- `0007_production_optimizations`: immutable optimization definitions and runs
+  plus a compare-and-append lifecycle journal with pre-reserved campaign,
+  protocol, and experiment identities.
 
 The repair migration upgrades a completed renewable campaign database in place.
 Reads deeply reproduce artifact fingerprints, campaign/run scope, persisted
-development-report authority, normalized bindings, and diagnosis derivation.
+development-report authority, normalized bindings, diagnosis derivation,
+approved native data, logical snapshots, and optimization journals. Historical
+terminal optimizations remain readable after their benchmark generation is no
+longer active; creating or advancing a new run still requires current authority.

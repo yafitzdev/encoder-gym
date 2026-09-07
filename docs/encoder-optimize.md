@@ -103,3 +103,7 @@ exposures.
 This is a successful safety outcome, not a promotion. A future experiment must
 use a new reviewed hypothesis and immutable training snapshot; it must not
 weaken the gates or reuse this run as evidence of improvement.
+
+The verified repository and experiment handoff is in
+[`current-status.md`](current-status.md). The next bounded non-adopted
+experiment is specified in the repository's [`goal.md`](../goal.md).

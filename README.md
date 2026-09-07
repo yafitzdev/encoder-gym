@@ -5,7 +5,9 @@ analyzing, and improving text-classification datasets and encoders. Slices 1–6
 are implemented through explicit immutable artifact and backend contracts.
 
 See [`docs/platform-spec.md`](docs/platform-spec.md) for the full platform and
-the linked per-slice completion criteria.
+[`docs/current-status.md`](docs/current-status.md) for the current verified
+handoff state. The platform specification links each slice's completion
+criteria.
 
 ## Prerequisites
 

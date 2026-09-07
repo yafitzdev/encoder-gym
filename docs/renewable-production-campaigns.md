@@ -61,6 +61,17 @@ the two cohorts must remain independent.
 The verified provenance fingerprint for this run is
 `sha256:152797c4cdba1045baaf1a0adba74c535a1eb58964ec1fb7c12d206d2110029d`.
 
+The subsequent genuine repair-training experiment is stored in
+`encoder-gym-repair.sqlite`. Productized optimization run
+`2317e08b-5848-4773-9a9e-42499ee09815` adopted the already completed exact
+protocol/run into reserved campaign
+`48b9b0b0-4425-4d63-b3cf-b465aadd1b57`. Both development suites failed, so it
+again retained the baseline without sealed use. Its row-free optimize bundle
+fingerprint is
+`sha256:19d30e96ebe62da73836cd285364208fa57d20f9662f34bd95d5409e70850eb4`.
+Adoption was used only to productize already-spent evidence; a new experiment
+must omit the manifest's `[existing_experiment]` section.
+
 ## Remaining evidence boundary
 
 The successor sealed cohort remains available for a future bounded campaign,

@@ -249,3 +249,27 @@ budget. The revealed sealed cohort may not be used to try the runner-up or tune
 another interpolation weight. A subsequent adaptive loop requires a declared
 successor acceptance cohort; the old cohort can enter development only after
 that replacement is frozen and its role change is explicit.
+
+## First genuine repair-training loop
+
+A later development-only repair cycle used the clean isolated revision
+`4450ab3f1de8a1fc64bcbe5d77c67d0fb0f99af9`, 6,800 immutable base rows, and
+192 reviewed deterministic repair rows. The delta targeted retired
+`bounded_change_preflight` routing while preserving generic near-neighbor,
+`finalize_selection`, and top-two behavior. All 192 rows were task-valid and
+the exact, normalized, source, group, and lineage contamination counts were
+zero. The logical training snapshot is
+`2602ef88-db56-4591-8a4c-2581c5613726`.
+
+One real CPU triplet fine-tune produced candidate
+`44b98240-6b63-49ca-a0c3-21bddba1d151`. It did not improve the encoder:
+generic MRR changed by `-0.000026190476` and Recall@2 by `-0.005`; retired MRR
+changed by `-0.08103442021`, with Recall@1/2/3 regressions. The unchanged
+per-suite gates therefore rejected it before sealed use. The productized
+optimization run `2317e08b-5848-4773-9a9e-42499ee09815` persisted
+`retain_baseline`; its successor generation remained active and unexposed.
+
+This result suggests that the reviewed data hypothesis was not sufficient to
+make a full-model fine-tune safe. It does not justify weakening a gate. The next
+experiment must use new immutable authority, a predeclared conservative
+training hypothesis, and the non-adoption optimize path.

@@ -91,3 +91,18 @@ record or no record; rerun the explicit creation/link command after inspecting
 `doctor`. Optimization has no execution lease because it never runs a model or
 workflow. Recovery never approves, applies, rebases, links, assesses, resumes,
 or schedules an optimization decision automatically.
+
+`synth encoder optimize` is a different, explicitly executable finite parent.
+Its definition reserves campaign, protocol, and experiment-run IDs before any
+child side effect. Each `resume` performs at most one legal durable stage and
+then returns. If the process exits, run `status` first and invoke the printed
+next command; re-entry adopts only the exact reserved child or its complete
+content-addressed output. It cannot mint a replacement child or spend a budget
+twice. `cancel` closes the parent before another stage begins, while
+`authorize-sealed` remains a separate immutable human action. Use `doctor` for
+the expensive native replay and `provenance` for the row-free evidence bundle.
+
+V1 stages are synchronous local calls. Cancellation is observed between stages,
+not by terminating an already-running Python trainer. A crash after a native
+checkpoint is fully materialized is recovered through the same candidate's
+staging receipt and identity; a partial or foreign output fails closed.

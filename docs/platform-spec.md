@@ -205,3 +205,12 @@ normalized metrics, evidence roles, comparison, and promotion; the adapter owns
 native rows, training, prediction, and metric normalization. The first such
 pilot is Nomos retrieval ranking. See
 [Production Encoder Experiments](production-encoder-experiment-spec.md).
+
+The first post-review production cycle is now composed by a separate finite
+optimization parent. It binds one approved repair delta and logical training
+snapshot to one renewable benchmark generation, reserves every downstream
+identity before execution, advances one stage per operator command, and emits
+either `promote_candidate` or `retain_baseline`. The proven Nomos cycle retained
+the baseline without sealed exposure. See
+[Finite Encoder Optimization](encoder-optimize.md) and
+[Current Project Status](current-status.md).

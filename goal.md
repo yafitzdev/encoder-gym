@@ -1,436 +1,268 @@
-# Long-Range Goal — Prove and Productize One Real Encoder Improvement Loop
-
-Finish one honest, bounded improvement experiment against the isolated Nomos
-encoder project, and then turn that exact proven path into Encoder Gym's first
-cohesive, resumable `optimize` workflow.
-
-The product promise is:
-
-> Given a verified encoder project, immutable training inputs, development
-> benchmarks, a baseline checkpoint, and separately governed sealed evidence,
-> an operator can run one finite optimization cycle and receive a reproducible
-> `promote_candidate` or `retain_baseline` decision with a complete provenance
-> chain.
-
-This is the next highest-impact goal because Encoder Gym already has many of
-the individual slices. What it has not yet proved is that they can improve—or
-correctly decline to replace—a real production encoder without leakage,
-hand-waving, or manual UUID plumbing.
-
-Do not add another speculative smart subsystem. Close the loop already in
-progress.
-
-## Current verified starting point
-
-Preserve the work that already exists.
-
-- The authoritative completed Nomos campaign is
-  `8a6e1004-a9df-4b3c-a127-42b121ed337c` in
-  `C:\Users\yanfi\PycharmProjects\nomos-encoder-gym-experiment\encoder-gym-final.sqlite`.
-- It honestly retained the baseline: the 2.5% interpolation candidate preserved
-  generic behavior but did not improve the retired suite enough; the 5%
-  candidate improved the retired suite but regressed generic Recall@2.
-- Successor benchmark generation
-  `10cba5de-e501-4169-a603-27f75c2abd37` remains active, fresh, unused, and
-  has zero candidate exposures. Do not consume it until a candidate passes
-  every development gate and the operator explicitly authorizes sealed use.
-- Persisted development-only repair diagnosis
-  `7accb2d5-37a7-4fb8-ae87-943bd25032b5` identifies the main repair target as
-  retired `bounded_change_preflight` / text behavior while preserving generic
-  near-neighbor, `finalize_selection`, and top-2 retrieval behavior.
-- Immutable, stale-safe repair proposals, append-only reviews, idempotent
-  application reservations, and CLI inspection already exist.
-- Native repair-delta quality contracts and SQLite persistence are currently
-  being implemented in the working tree. Inspect and finish those changes;
-  do not discard, reset, or duplicate them.
-
-The original Nomos repository at
-`C:\Users\yanfi\PycharmProjects\fitz-tool` is read-only for this experiment.
-Record its exact HEAD and working-tree state before and after all work and prove
-that they are identical. All experiment changes belong only in
-`C:\Users\yanfi\PycharmProjects\nomos-encoder-gym-experiment` and Encoder Gym.
-The isolated copy must have no remote and contain no credential or API key.
-
-## Required end-to-end journey
-
-Build and prove this exact finite flow:
-
-```text
-verify immutable project and baseline inputs
-  -> load complete development-only observations
-  -> replay deterministic diagnosis
-  -> review one exact repair proposal
-  -> create a small targeted training delta
-  -> prove task validity, uniqueness, and non-contamination
-  -> approve an immutable delta selection
-  -> construct an immutable combined training snapshot
-  -> genuinely train a deliberately small candidate set
-  -> evaluate every candidate on every development suite
-  -> reject candidates that fail any suite
-  -> select at most one fully eligible candidate
-  -> stop for explicit sealed-use authorization
-  -> evaluate that candidate exactly once on sealed evidence
-  -> deterministically promote or retain the baseline
-  -> emit a human report and machine-verifiable evidence bundle
-```
-
-First make this low-level path work against the real isolated Nomos project.
-Only then wrap the proven contracts in the convenience workflow. Do not design
-the orchestration around hypothetical behavior.
-
-## Milestone 1 — Finish native repair-delta qualification
-
-Complete the in-progress provider-neutral quality boundary. It must support
-retrieval/task-native rows without pretending that they are ordinary global
-classification labels.
-
-It must persist, replay, and deeply verify:
-
-- payload-free candidate-row identity;
-- task-adapter validation evidence and concrete reasons;
-- exact and normalized duplicate counts;
-- source, group, and lineage contamination counts;
-- deterministic include/exclude decisions;
-- the exact quality policy and thresholds;
-- append-only human reviews;
-- one immutable approved selection manifest.
-
-Every candidate row must be assessed exactly once. Reports with missing,
-foreign, duplicated, or reordered assessments must fail verification. An
-ineligible report cannot be approved. Repeating the same creation or approval
-request must return the same artifact rather than append duplicates.
-
-Keep this contract task-neutral and row-free. Native content may be processed
-inside the trusted Nomos adapter, but it must not leak into the core database,
-diagnosis, CLI output, or portable evidence bundle.
-
-Add migration and tamper tests before moving on. Upgrade existing production
-databases append-only; never rewrite historical campaign evidence.
-
-## Milestone 2 — Build the smallest real Nomos repair delta
-
-Implement a deterministic, inspectable Nomos recipe for the diagnosed weakness.
-The delta should be deliberately small and causal, not a broad synthetic-data
-campaign.
-
-Target both sides of the observed trade-off:
-
-1. improve retired `bounded_change_preflight` text routing and its important
-   distinctions from publish, delete, finalize, and unrelated actions;
-2. preserve generic near-neighbor, `finalize_selection`, modality constraint,
-   and top-2 retrieval behavior.
-
-Generate deterministic fields with code wherever possible. Use fresh training
-recipes, wording, identifiers, seeds, groups, and lineage. Do not derive or
-paraphrase development or sealed rows. Each row must retain:
-
-- proposal and target-group identity;
-- recipe and generator fingerprint;
-- deterministic seed;
-- project revision;
-- content and normalized-content fingerprint;
-- source, group, and lineage fingerprint;
-- task-validation outcome;
-- final include/exclude decision.
-
-Audit the delta against itself, all base training inputs, both development
-suites, and the active sealed cohort. A trusted contamination checker may
-inspect sealed identities internally, but adaptive code receives only the
-permitted aggregate clean/blocked result. No sealed text, label behavior,
-score, or example may influence generation, diagnosis, or candidate choice.
-
-Produce an immutable delta snapshot and combined candidate-training snapshot
-without mutating the base training population or silently changing the project
-manifest.
-
-No network or paid model call is authorized. If the deterministic/local recipe
-is genuinely insufficient, persist the exact bounded external request and stop
-for explicit authorization instead of making the call.
-
-## Milestone 3 — Genuinely retrain bounded candidates
-
-At least one candidate must be genuinely trained from the exact approved delta
-and combined snapshot. Weight interpolation may be included only as an
-explicit control; it cannot be the sole candidate mechanism.
-
-Extend generic training contracts only where a provider-neutral concept is
-missing. Keep Nomos Python modules, model layouts, device settings, and native
-parameters inside the trusted Nomos adapter.
-
-Every training attempt must pin:
-
-- baseline checkpoint and base training population;
-- approved proposal and delta selection;
-- delta and combined snapshot;
-- backend and implementation revision;
-- all behavior-affecting parameters and seeds;
-- finite time/resource budgets and observed usage;
-- attempt/resume identity;
-- produced checkpoint files and content fingerprints.
-
-Use a small predeclared candidate set that tests clear hypotheses—for example
-one conservative genuine fine-tune plus, only if useful, one interpolation
-control. Do not launch a search sweep. Do not rewrite gates or hypotheses after
-seeing results. A negative result is a valid outcome.
-
-Training must be resumable without creating a second logical candidate or
-spending the same reservation twice. Test crashes before and after checkpoint
-creation.
-
-## Milestone 4 — Evaluate and decide under unchanged evidence rules
-
-Evaluate every candidate independently on both development suites:
-
-- `generic_holdout`;
-- `retired_post_scaling`.
-
-A candidate is ineligible when any required suite is missing or any strict
-suite gate fails. Do not average away a cohort-specific regression. Persist
-separate reports, assessments, metric deltas, gate failures, and artifact
-fingerprints.
-
-If no candidate passes both suites:
-
-- retain the baseline;
-- leave the sealed generation unused;
-- finish the run honestly;
-- report which hypotheses failed and what remains uncertain.
-
-If exactly one or more candidates pass both suites:
-
-- select at most one by the predeclared deterministic policy;
-- stop for explicit sealed-use authorization;
-- verify the authorization against the exact candidate, reports, generation,
-  journal head, and policy fingerprint;
-- evaluate that candidate exactly once;
-- atomically consume the generation and persist `promote_candidate` or
-  `retain_baseline` under unchanged gates.
-
-Never acquire a replacement sealed cohort automatically. Never retry sealed
-evaluation as a new exposure. Recovery may complete the same reserved attempt
-only.
-
-## Milestone 5 — Productize the proven path as `encoder optimize`
-
-After the real low-level experiment works, introduce the smallest thin,
-durable application contract that composes the existing slices. It owns stage
-lifecycle, links, reservations, approvals, budgets, and recovery—not copied
-generation, quality, training, evaluation, analysis, or selection logic.
-
-Provide one strict Nomos optimization manifest that resolves:
-
-- trusted project and adapter identity;
-- immutable baseline and training-input authority;
-- development suites and strict per-suite gates;
-- optional sealed generation authority;
-- diagnosis and repair policies;
-- candidate, training, evaluation, provider, and sealed-use budgets;
-- approval mode;
-- deterministic selection and final-decision policy.
-
-Persist a finite lifecycle with precise durable states such as:
-
-```text
-planned
-awaiting_repair_review
-applying_repair
-awaiting_delta_review
-training
-evaluating_development
-awaiting_sealed_authorization
-evaluating_sealed
-completed
-failed
-cancelled
-```
-
-Each side-effecting stage must reserve its exact child artifact before doing
-work. SQLite and immutable files are the source of truth. Resume may continue
-only the reserved action; it may not silently create replacements or spend a
-budget twice.
-
-Expose a cohesive CLI family equivalent to:
-
-```text
-encoder optimize preview --manifest <FILE>
-encoder optimize start --manifest <FILE>
-encoder optimize status <RUN_ID>
-encoder optimize inspect <RUN_ID>
-encoder optimize review-repair <RUN_ID> ...
-encoder optimize review-delta <RUN_ID> ...
-encoder optimize resume <RUN_ID>
-encoder optimize authorize-external <RUN_ID> ...
-encoder optimize authorize-sealed <RUN_ID> ...
-encoder optimize cancel <RUN_ID>
-encoder optimize doctor <RUN_ID>
-encoder optimize provenance <RUN_ID>
-encoder optimize report <RUN_ID>
-```
-
-`preview` is read-only and resolves a complete fingerprinted definition.
-`start` is idempotent. `resume` performs only the next legal reserved action.
-Approval commands append immutable decisions and reject stale artifacts. The
-operator should not have to manually copy internal artifact IDs when the run
-can resolve them unambiguously.
-
-At every pause, status must explain in plain language:
-
-- what completed;
-- what failed or remains uncertain;
-- which immutable artifacts were created;
-- which budgets remain;
-- why execution stopped;
-- whether human authorization is required;
-- the exact safe next command.
-
-Keep all lower-level slice commands available for independent use and
-debugging.
-
-## Milestone 6 — Reports, evidence, and recovery proof
-
-Produce a deterministic final management report and a machine-readable,
-row-free evidence bundle.
-
-The report must explain:
-
-- baseline and exact project revision;
-- diagnosed weaknesses and their development evidence;
-- approved repair hypothesis;
-- data and training changes actually made;
-- candidate checkpoints created;
-- per-suite baseline and candidate results;
-- why every candidate passed or failed;
-- whether sealed evidence was used and exactly once;
-- final promotion/retention decision;
-- budget use, interruptions, retries, and approvals;
-- known evidence limits and the next safe action.
-
-The evidence bundle contains immutable identities, fingerprints, policies,
-decisions, and relative artifact references—not raw training, development, or
-sealed content. Verification on the same trusted checkout must detect missing
-files, changed revisions, tampered database records, foreign artifacts,
-incomplete journals, and reordered evidence.
-
-Add deterministic offline tests for at least:
-
-- sealed evidence rejected from adaptive diagnosis and delta construction;
-- incomplete and tampered native row assessments;
-- exact, normalized, source, group, and lineage contamination;
-- stale reviews, proposals, delta selections, and run definitions;
-- duplicate apply/start/resume requests;
-- trainer crashes before and after checkpoint creation;
-- evaluator crashes before and after report creation;
-- cancellation at every side-effecting stage;
-- retry without duplicate artifacts or budget spend;
-- a candidate failing only one development suite;
+# Long-Range Goal — Prove a Native, Non-Adopted Optimization Cycle
+
+Run Encoder Gym's first genuinely new production-encoder optimization through
+the complete `synth encoder optimize` operator path, without adopting a
+previous experiment, and test one small conservative Nomos training hypothesis
+designed to avoid the regressions observed in the first genuine fine-tune.
+
+The product question is:
+
+> Can the reviewed Nomos repair signal be introduced without damaging either
+> independent development suite, while preserving sealed evidence until a
+> candidate is fully eligible?
+
+This is the highest-impact continuation because the platform has already proved
+that it can reject an unsafe candidate and productize the resulting evidence.
+The next proof must exercise fresh training and evaluation directly through the
+new durable parent. Do not add another agent, dashboard, data source, or broad
+optimization subsystem before this path is real.
+
+Promotion is not required. A verified `retain_baseline` is a successful result.
+
+## Required starting context
+
+Read `AGENTS.md`, `docs/current-status.md`, `docs/platform-spec.md`,
+`docs/architecture.md`, `docs/development.md`,
+`docs/production-encoder-experiment-spec.md`, and `docs/encoder-optimize.md`
+before implementation.
+
+Preserve these facts:
+
+- Encoder Gym begins from the documentation-handoff commit that follows
+  `118b3d7a279db5b5dd74faafc84db562539aa37d`.
+- The isolated Nomos experiment is
+  `C:\Users\yanfi\PycharmProjects\nomos-encoder-gym-experiment` at
+  `4450ab3f1de8a1fc64bcbe5d77c67d0fb0f99af9`, clean and with no remote.
+- The source Nomos repository
+  `C:\Users\yanfi\PycharmProjects\fitz-tool` is read-only. Its HEAD is
+  `14e0a1667431982ee00ee07108e7d82351fa28eb` and it starts with these existing
+  changes:
+  - modified `fitz_tool/coding_beta_v4_controls.py`;
+  - modified `tools/assemble_beta4_control_dataset.py`;
+  - modified `tools/audit_beta4_dataset.py`;
+  - modified `tools/diagnose_beta4_control_head.py`;
+  - untracked `fitz_tool/coding_beta_v4_live_contrasts.py`;
+  - untracked `tests/test_coding_beta_v4_live_contrasts.py`;
+  - untracked `tools/generate_beta4_live_contrasts.py`.
+- The unrelated untracked Encoder Gym `ui/` directory belongs to the deferred
+  GUI attempt. Do not modify, delete, or commit it.
+- Active successor benchmark generation
+  `10cba5de-e501-4169-a603-27f75c2abd37` is fresh, unused, and has zero
+  candidate exposures. Preserve it unless a new candidate passes every
+  development gate and the operator explicitly authorizes its exact sealed use.
+- The failed genuine candidate
+  `44b98240-6b63-49ca-a0c3-21bddba1d151` and optimization run
+  `2317e08b-5848-4773-9a9e-42499ee09815` are immutable historical evidence.
+  Never overwrite, reopen, or present them as successful.
+
+Record all three repositories' exact HEAD and status before and after work.
+Never place credentials, API keys, or remotes in the isolated copy.
+
+## Why the previous candidate failed
+
+The approved 192-row deterministic delta was task-valid and contamination-free,
+but one full-model CPU triplet fine-tune over the combined 6,992-row population
+regressed both suites:
+
+- `generic_holdout`: MRR `-0.000026190476`, Recall@2 `-0.005`;
+- `retired_post_scaling`: MRR `-0.08103442021`, with Recall@1/2/3 regressions.
+
+Treat this as evidence about the complete data-plus-training mechanism. Do not
+assume the data is good merely because its structural audit passed, and do not
+assume the training recipe is solely responsible without testing that claim.
+Do not weaken the metric contract or repeatedly tune against these development
+numbers without predeclared bounded hypotheses.
+
+## Milestone 1 — Audit and harden the fresh optimize path
+
+Before spending another real training run, test the path used when the manifest
+does not contain `[existing_experiment]`.
+
+Add focused deterministic coverage for:
+
+- fresh protocol and run creation under the pre-reserved IDs;
+- duplicate `start` and `resume` without duplicate artifacts or budget spend;
+- process interruption before an adapter call, after native output appears, and
+  after output is returned but before the next parent event;
+- trainer and evaluator failure evidence;
+- cancellation from every externally side-effecting child state;
+- one candidate failing only one development suite;
 - missing suite evidence remaining ineligible;
-- sealed authorization mismatch and repeated authorization;
-- atomic sealed consumption and decision persistence;
-- migration from the current production database schema;
-- Doctor and evidence-bundle tamper detection;
-- reproducible final report output.
+- full development success pausing for explicit sealed authorization;
+- mismatched and repeated sealed authorization;
+- atomic one-time sealed consumption and final decision persistence;
+- deterministic report and provenance output;
+- Doctor rejection of changed files, revisions, database envelopes, journals,
+  and foreign child artifacts;
+- append-only migration from the current `0007` database.
 
-Include CLI end-to-end tests with deterministic fake adapters for both terminal
-paths:
+Prefer extracting a small application-level orchestration unit from the CLI
+module if that makes deterministic fake end-to-end testing possible. Keep CLI
+parsing and presentation out of the lifecycle logic. Do not create a broad
+framework or generic service module.
 
-1. development failure produces `retain_baseline` without sealed use;
-2. all development gates pass, explicit sealed authorization occurs, and a
-   deterministic final decision is persisted.
+The ordinary test suite must require no Nomos checkout, model, Python, network,
+GPU, or credential. Retain one explicit opt-in isolated-Nomos integrity test.
 
-Then run the same workflow through the real Nomos operator surface.
+## Milestone 2 — Define one conservative causal hypothesis
 
-## Architecture and execution rules
+Use persisted development-only evidence and training receipts to specify the
+smallest credible alternative to the failed full-model fine-tune. Inspect the
+native trainer and model architecture before choosing it.
 
-- Read the required platform, architecture, development, and active slice
-  specifications before changing implementation.
-- Inspect current uncommitted native-delta work first and preserve valid work.
-- Map missing ownership to existing crates before adding a crate.
-- Add a new core crate only when no existing owner can express the missing
-  provider-neutral lifecycle without reversing dependencies.
-- Keep domain code independent from SQLite, CLI, Python, Nomos, SDKs, and
-  presentation.
-- Keep adapters, persistence, orchestration, and presentation separate.
-- Keep all evidence append-only, fingerprinted, and deeply replayable.
-- Derive status, metrics, decisions, and reports from persisted facts.
-- Do not put business logic in `main.rs`, a generic `services.rs`, or a generic
-  `utils.rs`.
-- Use deterministic fakes in ordinary tests. Ordinary tests must not require
-  Nomos, network, downloads, GPU, credentials, or paid providers.
-- Work in coherent stages. After each stage run `cargo fmt-check`,
-  `cargo check-all`, `cargo lint`, and `cargo test-all`, review dependency
-  direction, and commit the working change.
-- Set `CARGO_INCREMENTAL=0` for the Rust gates to avoid rebuilding the previous
-  oversized incremental cache.
+Good candidate mechanisms may include one or a very small combination of:
+
+- freezing most encoder layers and training only a narrow upper portion;
+- a smaller learning rate or shorter schedule;
+- an explicit base-replay versus repair-row sampling ratio;
+- a regularization or anchoring term against the baseline representation;
+- deterministic checkpoint selection from training-internal evidence that is
+  separate from both named development suites.
+
+These are possibilities, not instructions to implement all of them. Choose one
+mechanism only after determining which can be expressed cleanly by the existing
+Nomos trainer and provider-neutral candidate parameter contract. State the
+causal hypothesis, expected benefit, main failure mode, and exact finite budget
+before viewing new candidate metrics.
+
+Use at most two genuine candidates, and only if the second isolates a specific
+mechanism. No search sweep, optimizer agent, reinforcement learning, bandit,
+adaptive gate change, or arbitrary hyperparameter exploration.
+
+## Milestone 3 — Create new immutable authority
+
+Historical proposal, delta, snapshot, protocol, run, and candidate artifacts
+must remain immutable. Create only the new authority required by the selected
+hypothesis:
+
+- a new reviewed repair/training proposal or explicit successor proposal;
+- a newly approved native delta selection if row membership or construction
+  changes;
+- a new logical training snapshot when inputs, membership, or training-visible
+  weighting facts change;
+- a strict optimize manifest with no `[existing_experiment]` block;
+- new content-addressed candidate identities and bounded budgets.
+
+If the same approved row membership is reused, record that honestly and ensure
+the new training hypothesis—not accidental UUID churn—is what changes identity.
+Do not duplicate large base datasets. Keep native row contents out of Encoder
+Gym's database, generic domain objects, reports, and provenance bundle.
+
+No network or paid generation call is authorized. If new data truly requires
+one, persist the exact bounded request and stop for explicit authorization.
+
+## Milestone 4 — Run the new experiment through `encoder optimize`
+
+Use only the high-level operator family for the final proof:
+
+```text
+synth encoder optimize preview --manifest <NEW_MANIFEST> --workspace <ISOLATED_NOMOS>
+synth encoder optimize start --manifest <NEW_MANIFEST> --workspace <ISOLATED_NOMOS>
+synth encoder optimize status <RUN_ID> --workspace <ISOLATED_NOMOS>
+synth encoder optimize resume <RUN_ID> --workspace <ISOLATED_NOMOS>
+```
+
+Advance one persisted stage at a time and inspect status after each boundary.
+The fresh run itself must create and use the reserved protocol and experiment
+run. It may discover and adopt only its own exact content-addressed output after
+an interruption; it may not adopt the prior completed experiment.
+
+Evaluate every candidate independently on both `generic_holdout` and
+`retired_post_scaling`. Any failed or missing suite makes a candidate
+ineligible. Do not average away a suite-specific regression.
+
+If no candidate passes all development gates, complete with `retain_baseline`
+and prove that the successor sealed generation remains active and unused.
+
+If a candidate passes all gates, stop. Report its exact identity, every
+development result, journal head, and authorization fingerprint. Do not use
+sealed evidence until the user explicitly authorizes that exact candidate in
+the active session. After authorization, permit exactly one sealed evaluation
+and atomically persist `promote_candidate` or `retain_baseline` under the
+unchanged contract.
+
+Never acquire another sealed cohort automatically and never expose a second
+candidate to the current one.
+
+## Milestone 5 — Finish the operator proof
+
+For the terminal run:
+
+- repeated `start` returns the same optimization run;
+- repeated terminal `resume` changes nothing;
+- `status` is fast and explains the outcome and next command;
+- `report` states the hypothesis, actual data/training change, checkpoints,
+  every suite metric and failed gate, budget use, retries, sealed use, decision,
+  evidence limits, and next safe action;
+- `provenance` reproduces the same row-free bundle fingerprint twice;
+- `doctor` replays native files, the training snapshot, experiment/campaign/
+  optimization journals, and sealed-exposure facts;
+- a deliberate temporary tamper in a disposable copy is detected, then the
+  clean authoritative evidence is reverified;
+- the original Nomos repository is byte/status unchanged and the isolated copy
+  remains clean, remote-free, and credential-free.
+
+Update `docs/current-status.md`, `docs/encoder-optimize.md`, the production
+experiment spec, migration/recovery/provenance docs if contracts changed, and
+the checked-in example manifest. Do not leave completed work described as
+future work.
+
+## Engineering and execution rules
+
+- Keep domain contracts independent from SQLite, CLI, Python, paths, Nomos,
+  SDKs, and presentation.
+- Keep native training/evaluation and row parsing inside the compiled Nomos
+  adapter.
+- Keep orchestration thin: reserve/link/advance; never copy slice business
+  logic into the CLI.
+- Derive status, decisions, budgets, and reports from persisted facts.
+- Preserve append-only immutable history and compare-and-append journals.
+- Use deterministic fakes for ordinary tests.
+- Implement and commit coherent stages.
+- After each stage run `cargo fmt-check`, `cargo check-all`, `cargo lint`, and
+  `cargo test-all` with `CARGO_INCREMENTAL=0` where appropriate.
+- Run relevant isolated Nomos Python tests and the opt-in real adapter integrity
+  test before completion.
 - Never reset or overwrite unrelated user changes.
-
-Recommended order:
-
-1. Finish and commit native repair-delta quality core, persistence, migration,
-   tests, and inspection surfaces.
-2. Implement and commit the deterministic isolated-Nomos repair recipe and
-   contamination audit.
-3. Create, qualify, review, and freeze the real delta and combined snapshot.
-4. Add genuine training from exact approved inputs and recovery semantics.
-5. Train the bounded real candidate set.
-6. Evaluate both development suites and reach the correct pre-sealed outcome.
-7. If eligible, stop for explicit sealed authorization and then finish exactly
-   one governed assessment.
-8. Productize the proven flow as the durable `optimize` contract and CLI.
-9. Add fake end-to-end, recovery, migration, and tamper tests.
-10. Re-run the real flow through the operator surface.
-11. Verify repository isolation, secrets absence, provenance, and every gate.
-12. Update documentation and finish with exact staged commits.
 
 ## Explicit non-goals
 
-Do not add GUI/TUI, HTTP endpoints, cloud deployment, distributed workers,
-authentication, multi-user support, an open plugin loader, arbitrary shell
-execution, automatic benchmark acquisition, an endless autonomous loop,
-reinforcement learning, bandits, automatic gate changes, automatic approval,
-semantic deduplication, or token-saving encoder fleets.
+Do not add GUI/TUI, HTTP endpoints, cloud execution, distributed workers,
+authentication, multi-user support, arbitrary plugin loading, automatic web
+research, a research/prompt-repair agent, semantic deduplication, ModernBERT
+token relief, reinforcement learning, bandits, an endless loop, automatic gate
+changes, automatic approval, automatic sealed acquisition, or broad data
+generation.
 
-Do not make an LLM authoritative for metrics, quality acceptance, candidate
-selection, sealed use, or promotion. Do not add a research or prompt-repair
-agent to this goal. Do not broaden the experiment because a candidate fails.
-
-Promotion is not required. A deeply verified `retain_baseline` decision is a
-successful result.
+Do not modify the original Nomos repository. Do not use an LLM as metric,
+quality, candidate-selection, sealed-use, or promotion authority.
 
 ## Completion criteria
 
-This long-range goal is complete only when:
+This goal is complete only when:
 
-1. The native repair-delta quality boundary is complete, persisted,
-   migration-safe, payload-free, and deeply verifiable.
-2. A reviewed, contamination-free targeted Nomos delta and immutable combined
-   snapshot exist without changing base data.
-3. At least one genuinely trained Nomos checkpoint derives from those exact
-   approved inputs with complete provenance and bounded recovery semantics.
-4. Every candidate has independent results for both development suites, and a
-   failure in either suite makes it ineligible before sealed use.
-5. The real experiment reaches a correct, deeply verified
-   `promote_candidate` or `retain_baseline` decision under unchanged rules.
-6. One manifest and one cohesive CLI command family can reproduce the proven
-   journey without manual low-level UUID wiring.
-7. Idempotency, staleness, budgets, cancellation, crash recovery,
-   contamination, migration, sealed isolation, tamper detection, Doctor,
-   reporting, and both fake terminal paths have deterministic offline tests.
-8. The original Nomos repository has exactly its initial HEAD and working-tree
-   state; the isolated copy has no remote and no credential.
-9. `cargo fmt-check`, `cargo check-all`, `cargo lint`, `cargo test-all`, the
-   isolated Nomos integrity checks, and relevant Python audit tests all pass.
-10. Every coherent stage is committed, and documentation describes both the
-    low-level contracts and the operator workflow.
+1. Fresh non-adopted optimize execution and recovery have deterministic
+   application-level coverage for both terminal paths.
+2. One conservative causal training hypothesis is documented and frozen before
+   its results are observed.
+3. All new inputs, parameters, artifacts, budgets, and approvals are immutable
+   and provenance-linked.
+4. At least one genuinely new candidate is trained by the high-level optimize
+   run rather than linked from historical evidence.
+5. Every new candidate has independent evidence for both development suites,
+   and strict eligibility is enforced.
+6. Sealed evidence is either demonstrably unused or used once only after exact
+   explicit authorization.
+7. A deterministic final decision, report, provenance bundle, and passing
+   Doctor exist for the new run.
+8. Idempotency, crash recovery, cancellation, staleness, migration, tamper, and
+   budget behavior are verified in proportion to the changed contracts.
+9. All Rust gates, relevant Python tests, isolated adapter verification, secret
+   scan, and three-repository isolation audit pass.
+10. Documentation and coherent commits leave a new Codex session with an exact,
+    truthful handoff.
 
-Finish with a concise management summary separating:
-
-- reusable platform capabilities added;
-- operator workflow improvements;
-- real Nomos repair hypothesis and approved delta;
-- training changes actually tested;
-- per-development-suite results;
-- sealed result, if legitimately obtained;
-- whether the production baseline changed;
-- remaining evidence limitations;
-- exact Encoder Gym and isolated Nomos commits;
-- the next safe action.
+Finish with a management summary separating platform hardening, the causal
+hypothesis, data changes, training changes, per-suite results, sealed result,
+production-baseline decision, evidence limitations, exact commits, and the next
+safe action.

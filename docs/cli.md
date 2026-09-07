@@ -19,6 +19,27 @@ Transformer-specific command groups are:
 progress is written to stderr; JSON results remain a single value on stdout.
 There is no interactive TUI, graphical UI, or new HTTP endpoint for this work.
 
+Production encoder optimization commands are nested under `encoder`:
+
+- `synth encoder optimize preview --manifest FILE --workspace DIR` validates
+  and fingerprints a complete launch without writing;
+- `start` idempotently persists the definition/run and reserves campaign,
+  protocol, and experiment identities;
+- `status|inspect` show the cheap persisted lifecycle and exact child links;
+- `review-repair|review-delta` verify the already frozen approval boundaries;
+- `resume` performs at most one next legal durable stage;
+- `authorize-external` and `authorize-sealed` expose separate bounded human
+  authorization points;
+- `cancel` closes a nonterminal parent before another stage begins;
+- `doctor` performs expensive native and provenance replay;
+- `provenance` emits a row-free fingerprinted evidence bundle; and
+- `report` emits the deterministic management result and per-suite gates.
+
+Start from `docs/examples/nomos-proven-optimize.toml` and read
+`encoder-optimize.md`. Its `[existing_experiment]` block documents adoption of
+the exact proven historical run; remove that block for a genuinely new training
+and evaluation execution.
+
 OpenAI-compatible backend commands are:
 
 - `synth backend configure --base-url URL --model MODEL` to persist non-secret

@@ -92,6 +92,14 @@ handoff, provenance/Doctor, then an offline CLI journey. The handoff must not
 create benchmark authority or bypass import, contamination, qualification, or
 approval.
 
+Production encoder optimization follows the same pattern: task-neutral repair
+and experiment contracts, adapter-owned native artifacts, append-only SQLite
+authority, a thin CLI composition root, one-stage-at-a-time resume, explicit
+sealed authorization, deterministic fake terminal paths, an opt-in real adapter
+test, Doctor/provenance replay, and a bounded real experiment. A new experiment
+must omit `[existing_experiment]`; that section is only for honestly adopting a
+previously completed exact run.
+
 ## Component loop
 
 For each component:
@@ -196,3 +204,13 @@ or CI, and never persist its credential.
 registration, verification, bounded CPU training, checkpoint prediction,
 explicit continuation, evaluation, provenance, and doctor with the tiny local
 fixture.
+
+Production encoder tests are layered because native Nomos payloads may not enter
+ordinary fixtures. `encoder-experiment-runner/tests/offline.rs` covers both
+development rejection without sealed use and the successful development plus
+explicit sealed path with a deterministic fake adapter. Campaign-core tests
+cover finite budgets, adoption, cancellation, and sealed-free retention;
+SQLite tests cover migrations, idempotency, immutability, and tamper rejection.
+The ignored `encoder-experiment-nomos/tests/isolated_local.rs` test verifies the
+actual isolated checkout and large model artifacts when
+`NOMOS_ENCODER_GYM_EXPERIMENT` is explicitly set.

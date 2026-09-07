@@ -148,6 +148,27 @@ show which development evidence was consumed for diagnosis, advising,
 optimization, and comparison, and which sealed aggregate was disclosed for
 acceptance.
 
+The production encoder path has an independent row-free chain:
+
+```text
+production optimization run
+  -> immutable optimization definition
+    -> approved repair proposal and native-delta selection
+    -> logical combined-training snapshot
+    -> renewable benchmark generation
+    -> metric-source protocol and finite candidate set
+  -> reserved production campaign
+    -> exact experiment protocol and run
+      -> checkpoint and per-development-suite reports/assessments
+      -> optional one-candidate sealed authorization/report
+    -> deterministic final decision
+```
+
+Inspect it with `synth encoder optimize provenance <RUN_ID>`. The command emits
+the normalized bundle and its SHA-256 fingerprint without native rows. `doctor`
+adds checkout, file, native-delta, snapshot, journal, and sealed-exposure replay.
+The proven Nomos bundle fingerprint is recorded in `encoder-optimize.md`.
+
 Inspect a chain with:
 
 ```text
