@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.electron-cache/
+.npm-cache/
+*.log
+.env
+.env.*
+!.env.example
+smoke-ok.txt

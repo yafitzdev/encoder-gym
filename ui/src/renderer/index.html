@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src data: https: http:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src data: blob: https: http:">
+    <meta name="description" content="Encoder Gym — local encoder development workspace.">
+    <title>Encoder Gym</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="app-titlebar drag-region">
+      <div class="titlebar-navigation no-drag">
+        <button id="sidebar-menu" class="titlebar-icon" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 3v18"></path></svg>
+        </button>
+        <button id="navigate-back" class="titlebar-icon titlebar-history" type="button" aria-label="Go back">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12.5 4.5-5.5 5.5 5.5 5.5"></path></svg>
+        </button>
+        <button id="navigate-forward" class="titlebar-icon titlebar-history" type="button" aria-label="Go forward">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 5.5 5.5-5.5 5.5"></path></svg>
+        </button>
+      </div>
+      <div class="window-controls no-drag">
+        <button type="button" data-window-action="minimize" aria-label="Minimize"><svg viewBox="0 0 20 20"><path d="M5 10h10"></path></svg></button>
+        <button type="button" data-window-action="maximize" aria-label="Maximize"><svg viewBox="0 0 20 20"><rect x="5" y="5" width="10" height="10" rx="1"></rect></svg></button>
+        <button class="window-close" type="button" data-window-action="close" aria-label="Close"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"></path></svg></button>
+      </div>
+    </header>
+
+    <div class="app-shell" id="app-shell">
+      <aside class="sidebar" id="sidebar" aria-label="Workspace navigation">
+        <div class="sidebar-scroll-region">
+          <div class="sidebar-brand" aria-label="Encoder Gym">
+            <svg class="sidebar-brand-logo" viewBox="0 0 48 48" aria-hidden="true">
+              <defs>
+                <clipPath id="gym-ripple-clip"><circle cx="24" cy="24" r="19"></circle></clipPath>
+              </defs>
+              <g clip-path="url(#gym-ripple-clip)">
+                <path d="M1 7C11 1 17 13 24 7S37 1 47 7"></path>
+                <path d="M1 12C11 6 17 18 24 12S37 6 47 12"></path>
+                <path d="M1 17C11 11 17 23 24 17S37 11 47 17"></path>
+                <path d="M1 22C11 16 17 28 24 22S37 16 47 22"></path>
+                <path d="M1 27C11 21 17 33 24 27S37 21 47 27"></path>
+                <path d="M1 32C11 26 17 38 24 32S37 26 47 32"></path>
+                <path d="M1 37C11 31 17 43 24 37S37 31 47 37"></path>
+                <path d="M1 42C11 36 17 48 24 42S37 36 47 42"></path>
+              </g>
+            </svg>
+            <span>Encoder Gym</span>
+          </div>
+
+          <button id="new-project" class="nav-action" type="button">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"></path></svg>
+            <span>New project</span>
+          </button>
+
+          <div class="sidebar-content-divider" aria-hidden="true"></div>
+
+          <div class="sidebar-section projects-section">
+            <div class="section-heading projects-heading"><span>Projects</span></div>
+            <nav id="projects" class="project-tree" aria-label="Projects"></nav>
+          </div>
+        </div>
+
+        <div class="sidebar-footer">
+          <div class="sidebar-content-divider" aria-hidden="true"></div>
+          <div class="sidebar-hosting" aria-label="Workspace status">
+            <em class="sidebar-hosting-title">Workspace</em>
+            <span id="workspace-state" class="workspace-state">offline</span>
+          </div>
+        </div>
+      </aside>
+
+      <div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" tabindex="0"></div>
+
+      <main class="workspace">
+        <header class="workspace-header">
+          <div class="workspace-title">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+            <strong id="page-title">Nomos repair</strong>
+            <span id="page-subtitle" hidden></span>
+          </div>
+        </header>
+
+        <section id="page-project" class="page-section" aria-label="Project"></section>
+        <section id="page-recipe" class="page-section" aria-label="Recipe detail" hidden></section>
+      </main>
+    </div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "name": "@encoder-gym/ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Encoder Gym local desktop shell. Blank Electron scaffold; UI being designed from scratch.",
+  "type": "module",
+  "main": "dist/bootstrap.cjs",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "npm run build && electron .",
+    "smoke": "npm run build && electron . --smoke-test",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "npm run typecheck && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.0",
+    "electron": "43.2.0",
+    "esbuild": "^0.25.0",
+    "typescript": "7.0.2"
+  }
+}
