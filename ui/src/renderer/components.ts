@@ -7,6 +7,8 @@ const paths: Record<string, string[]> = {
   runs: ["M8 3v4M16 3v4M4 11h16", "M5 5h14v16H5z", "m9 16 2 2 4-4"],
   benchmark: ["M4 20h16M7 16v-5M12 16V5M17 16V8"],
   project: ["M3 6h7l2 3h9v11H3z"],
+  dataset: ["M4 4h16v16H4z", "M4 9h16M9 9v11M4 14h16"],
+  settings: ["M4 6h16M4 12h16M4 18h16", "M8 3v6M16 9v6M10 15v6"],
   arrow: ["M5 12h14m-5-5 5 5-5 5"],
   back: ["M19 12H5m5-5-5 5 5 5"],
   search: ["M15 15l5 5", "M10.5 3a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15"],
@@ -40,7 +42,12 @@ export function scoreStack(value: number | undefined, baseline: number | undefin
   const tone = diff === undefined || Math.abs(diff) < 1e-12 ? "muted" : (direction === "lower_is_better" ? -diff : diff) > 0 ? "success" : "danger";
   return h("div", { class: "score-stack" }, h("span", { class: "score" }, score(value, key)), h("small", { class: tone }, delta(diff, key)));
 }
-export function facts(entries: [string, Child][]): HTMLElement { return h("dl", { class: "facts" }, ...entries.map(([key, value]) => h("div", {}, h("dt", {}, key), h("dd", {}, value)))); }
+export function facts(entries: [string, Child][]): HTMLElement {
+  return h("dl", { class: "facts" }, ...entries.map(([key, value]) => {
+    if (value instanceof HTMLElement && value.classList.contains("copy-field")) value.querySelector("button")?.setAttribute("aria-label", "Copy " + key.toLowerCase());
+    return h("div", {}, h("dt", {}, key), h("dd", {}, value));
+  }));
+}
 export function copyField(value: string, copy: (value: string) => void): HTMLElement { return h("div", { class: "copy-field" }, h("code", {}, value), button("Copy", () => copy(value), "ghost small", "copy")); }
 export function details(title: string, content: Child, open = false): HTMLElement { return h("details", { class: "disclosure", open }, h("summary", {}, title), h("div", { class: "disclosure-content" }, content)); }
 export function failureNotice(error: unknown): HTMLElement {

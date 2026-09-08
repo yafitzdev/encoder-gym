@@ -15,8 +15,7 @@ export function renderBenchmarks(workspace: WorkspaceSnapshot, actions: Actions)
   if (!groups.length) return h("div", { class: "page-content" }, pageHeader("Benchmarks", "The tests used to measure baseline and candidate quality."),
     empty("No run evaluations recorded yet", workspace.managed ? "Importing a model or dataset does not create evaluation results. Running evaluations and linking their evidence to this managed project are not available in the desktop yet." : "No comparison setup has been recorded in this folder. Reload after a compatible experiment produces evaluation evidence.", button("Back to models", () => actions.navigate({ page: "models" }))));
   return h("div", { class: "page-content" }, pageHeader("Benchmarks", "What each evaluation measures, and which candidate comparisons are valid."),
-    h("div", { class: "reading-note" }, h("h2", {}, "Compare within the same evaluation setup"), h("p", {}, "A setup pins the baseline artifact, benchmark identities, metric requirements, and evaluation policy. Different setups are kept separate even when they use the same metric names.")),
-    !groups.length ? empty("No run evaluations recorded yet", "Baseline and candidate benchmark results will appear with recorded experiment evidence.") : null,
+    h("p", { class: "section-note" }, "Compare candidates within a group: they share the same baseline, tests, and scoring rules. Identical metric names alone do not make different groups comparable."),
     ...groups.map((group, i) => {
       const primary = primaryMetric(group.run);
       return h("section", { class: "benchmark-section" }, sectionHeader(group.label, tag(i === 0 ? "Latest recorded setup" : "Historical setup")),
@@ -39,7 +38,7 @@ export function renderBaseline(workspace: WorkspaceSnapshot, actions: Actions): 
     const body = h("tbody", {}, ...g.run.baselines.map(b => h("tr", {}, h("th", { scope: "row" }, suiteName(b.suite)), ...keys.map(k => h("td", { class: "numeric score" }, score(b.metrics[k], k))))));
     return h("section", { class: "baseline-evaluation" }, h("h3", {}, setupName(g.run)), h("div", { class: "table-scroll", tabindex: "0", "aria-label": "Baseline evaluations" }, h("table", { class: "evidence-table" }, head, body)));
   });
-  return h("div", { class: "page-content" }, button("All models", () => actions.navigate({ page: "models" }), "back-link", "back"),
+  return h("div", { class: "page-content detail-page" }, button("All models", () => actions.backTo("models"), "back-link", "back"),
     pageHeader("Baseline encoder", "The reference artifact recorded for this project.", tag("Baseline", "accent")),
     h("div", { class: "detail-columns" }, h("section", {}, sectionHeader("Reference artifact"), facts([["Format", workspace.baseline.format], ["Size", bytesLabel(workspace.baseline.bytes)], ["Artifact", copyField(workspace.baseline.key, actions.copy)], ["Fingerprint", copyField(workspace.baseline.fingerprint, actions.copy)]])),
       workspace.deployment ? h("section", {}, sectionHeader("Recorded inference export"), h("p", { class: "section-note" }, "This ONNX export was recorded alongside the reference checkpoint. Its presence does not establish that it is currently deployed."), facts([["Format", "FP32 ONNX"], ["Size", bytesLabel(workspace.deployment.bytes)], ["Artifact", copyField(workspace.deployment.key, actions.copy)], ["Fingerprint", copyField(workspace.deployment.fingerprint, actions.copy)]])) : null),

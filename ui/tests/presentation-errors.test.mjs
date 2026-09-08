@@ -26,3 +26,11 @@ test("missing folders differ from unknown failures and wrong project identity", 
   assert.match(unknown.recovery, /technical details/i);
   assert.match(unknown.detail, /Unexpected native failure/);
 });
+
+test("name and library errors have specific recovery without erasing the cause", () => {
+  assert.equal(describeFailure("Invalid dataset name.").title, "Choose a valid dataset name");
+  assert.match(describeFailure("Use a single new folder name, not a path.").recovery, /Choose location/);
+  const raw = "Cannot read project collection at C:\\profile\\projects.json: invalid format";
+  assert.equal(describeFailure(raw).detail, raw);
+  assert.match(describeFailure(raw).recovery, /not been overwritten/);
+});

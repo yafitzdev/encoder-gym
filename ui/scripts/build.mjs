@@ -15,9 +15,9 @@ await build({
   outfile: fileURLToPath(new URL("../dist/evidence/read-workspace.js", import.meta.url)),
   bundle: true, platform: "node", format: "esm", logLevel: "info",
 });
-await build({
-  entryPoints: [fileURLToPath(new URL("../src/renderer/catalog.ts", import.meta.url))],
-  outfile: fileURLToPath(new URL("../dist/evidence/catalog.js", import.meta.url)),
+for (const [source, name] of [["catalog", "catalog"], ["state", "navigation"]]) await build({
+  entryPoints: [fileURLToPath(new URL(`../src/renderer/${source}.ts`, import.meta.url))],
+  outfile: fileURLToPath(new URL(`../dist/evidence/${name}.js`, import.meta.url)),
   bundle: true, platform: "node", format: "esm", logLevel: "info",
 });
 

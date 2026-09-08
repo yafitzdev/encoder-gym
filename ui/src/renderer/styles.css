@@ -98,6 +98,7 @@ code { font-size: 12px; overflow-wrap: anywhere; }
 * { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .page-content { max-width: 1440px; margin: 0 auto; padding: 26px clamp(20px, 2.6vw, 42px) 64px; }
 .page-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 22px; }
+.page-heading > div { min-width: 0; overflow-wrap: anywhere; }
 .page-heading p { color: var(--muted); margin-top: 8px; font-size: 14px; }
 .page-heading > .button { flex-shrink: 0; }
 .eyebrow { color: var(--accent); font-size: 10px; letter-spacing: 1.2px; font-weight: 600; text-transform: uppercase; }
@@ -143,10 +144,11 @@ code { font-size: 12px; overflow-wrap: anywhere; }
 /* Candidate catalog */
 .candidate-section { margin-top: 22px; }
 .section-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
+.section-heading h2 { min-width: 0; overflow-wrap: anywhere; }
 .section-tools { display: flex; gap: 10px; align-items: center; font-size: 12px; }
 .comparison-toolbar { display: flex; align-items: center; gap: 10px; }
-.comparison-toolbar .select-control { display: flex; align-items: center; gap: 7px; }
-.comparison-toolbar .select-control > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+.comparison-toolbar .select-control { display: grid; gap: 5px; }
+.comparison-toolbar { align-items: end; }
 .search-control { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); padding: 0 9px; min-width: 165px; max-width: 330px; flex: 1; height: 35px; }
 .search-control svg { width: 14px; height: 14px; color: var(--subtle); }
 .search-control input { border: 0; min-width: 0; width: 100%; outline: 0; background: transparent; color: var(--text); font-size: 12px; padding: 7px 0; }
@@ -198,6 +200,11 @@ input::placeholder { color: var(--subtle); opacity: 1; }
 
 /* Details, evidence, and run history */
 .detail-context { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; margin: -10px 0 24px; }
+.detail-page .back-link { margin-bottom: 14px; }
+.detail-page .page-heading { margin-bottom: 18px; }
+.detail-page .detail-context { margin-bottom: 14px; }
+.detail-page .tabs { margin-bottom: 20px; }
+.detail-page .result-banner { margin-bottom: 22px; }
 .tabs { display: flex; gap: 25px; border-bottom: 1px solid var(--line); margin-bottom: 26px; }
 .tabs button { background: transparent; color: var(--muted); padding: 12px 0; border-bottom: 2px solid transparent; margin-bottom: -1px; font-size: 13px; }
 .tabs button.active { color: var(--text); border-color: var(--accent); }
@@ -304,7 +311,7 @@ dialog::backdrop { background: #0008; }
   .comparison-toolbar { flex-wrap: wrap; }
   .search-control { min-width: 200px; max-width: none; }
   .select-control select { max-width: 230px; }
-  .selection-hint { display: none; }
+  .selection-hint { max-width: 140px; }
   .detail-columns { gap: 25px; }
   .run-list-item { grid-template-columns: 52px minmax(190px,1fr) 130px; gap: 12px; }
   .run-list-item time { grid-column: 2; text-align: left; }
@@ -367,7 +374,7 @@ dialog::backdrop { background: #0008; }
 /* Projects are first-class folders, with only the active project's pages expanded. */
 .project-collection-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; padding-right: 3px; }
 .project-collection-heading .nav-label { margin: 0; }
-#add-project { font-size: 22px; font-weight: 400; }
+#add-project { width: auto; padding-inline: 7px; font-size: 12px; font-weight: 500; }
 .project-folder { min-width: 0; margin-bottom: 6px; }
 .project-folder-button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 10px 9px; border-radius: 6px; background: transparent; text-align: left; color: var(--muted); font-size: 13px; }
 .project-folder-button:hover { background: var(--surface); color: var(--text); }
@@ -435,6 +442,11 @@ dialog::backdrop { background: #0008; }
 .failure-notice > p { color: var(--muted); margin-top: 5px; font-size: 12px; }
 .failure-notice .disclosure { padding: 7px 0 0; margin-top: 7px; }
 .failure-notice pre { font: 11px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); margin: 0; }
+.operation-failure { margin-bottom: 24px; border: 1px solid var(--line); border-radius: 6px; padding: 12px; }
+.operation-failure > .button { margin-top: 8px; }
+.workspace-progress { padding: 12px 28px; border-bottom: 1px solid var(--line); color: var(--accent); background: var(--surface); font-size: 13px; }
+.project-recovery { max-width: 750px; }
+.project-recovery > .inline-group { margin-top: 22px; }
 .onboarding-section { min-width: 0; border-top: 1px solid var(--line); padding-top: 18px; }
 .onboarding-section h3 { font-size: 13px; margin-bottom: 9px; }
 .onboarding-section > p { color: var(--muted); font-size: 12px; margin-bottom: 12px; }

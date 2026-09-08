@@ -4,6 +4,7 @@ export type Page = "models" | "datasets" | "runs" | "benchmarks" | "project" | "
 export interface Location { page: Page; id?: string; tab?: string; runId?: string; candidateIds?: string[] }
 export interface Actions {
   navigate(location: Location): void;
+  backTo(page: Page): void;
   render(): void;
   copy(text: string): void;
   help(metric?: string): void;

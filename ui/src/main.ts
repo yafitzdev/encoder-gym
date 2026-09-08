@@ -150,7 +150,7 @@ if (smokeTest || verifyCurrent) {
     try {
       await window.loadFile(join(directory, "renderer", "index.html"));
       if (verifyCurrent) await checkCurrentManaged(window, join(directory, "..", "qa"), registry, backend);
-      else await (process.argv.includes("--smoke-managed") ? runManagedSmokeChecks : runSmokeChecks)(window, join(directory, "..", "qa"), { registry, chooseFolder: path => { smokeFolderChoice = path; }, restart: process.argv.includes("--smoke-restart") });
+      else await (process.argv.includes("--smoke-managed") ? runManagedSmokeChecks : runSmokeChecks)(window, join(directory, "..", "qa"), { registry, backend, chooseFolder: path => { smokeFolderChoice = path; }, restart: process.argv.includes("--smoke-restart") });
       window.destroy(); app.quit();
     } catch (error) { console.error(error); window.destroy(); app.exit(1); }
   });

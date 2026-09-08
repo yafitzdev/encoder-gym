@@ -65,8 +65,8 @@ export function renderCandidate(workspace: WorkspaceSnapshot, id: string, tab: s
   if (row && exactRun && exactCandidate) row = { ...row, run: exactRun, candidate: exactCandidate };
   if (!row) return empty("Candidate not found", "This candidate is not in the loaded workspace.", button("Back to models", () => actions.navigate({ page: "models" })));
   const c = row.candidate;
-  return h("div", { class: "page-content" },
-    button("All models", () => actions.navigate({ page: "models" }), "back-link", "back"),
+  return h("div", { class: "page-content detail-page" },
+    button("All models", () => actions.backTo("models"), "back-link", "back"),
     pageHeader(candidateName(c), candidateDescription(c), button(`Open ${runLabel(row.run, workspace)}`, () => actions.navigate({ page: "run", id: row.run.id }), "secondary", "arrow")),
     h("div", { class: "detail-context" }, tag("Candidate"), h("span", {}, setupName(row.run)), h("span", {}, dateLabel(row.run.createdAt))),
     tabs([["results", "Results"], ["training", "Training & data"], ["artifact", "Model & history"]], tab, value => actions.navigate({ page: "candidate", id, tab: value, runId })),
@@ -77,8 +77,8 @@ export function renderCandidate(workspace: WorkspaceSnapshot, id: string, tab: s
 
 export function runListItem(run: RunRecord, workspace: WorkspaceSnapshot, actions: Actions): HTMLElement {
   const failed = run.candidates.filter(c => c.failure).length;
-  return h("button", { type: "button", class: "run-list-item", onClick: () => actions.navigate({ page: "run", id: run.id }) },
-    h("span", { class: "run-number" }, runLabel(run, workspace)), h("span", { class: "run-list-name" }, h("strong", {}, runName(run)), h("small", {}, `${run.candidates.length} candidates · ${setupName(run)}`)),
+  return h("button", { type: "button", id: "run-" + run.id, class: "run-list-item", onClick: () => actions.navigate({ page: "run", id: run.id }) },
+    h("span", { class: "run-number" }, runLabel(run, workspace)), h("span", { class: "run-list-name" }, h("strong", {}, runName(run)), h("small", {}, `${run.candidates.length} ${run.candidates.length === 1 ? "candidate" : "candidates"} · ${setupName(run)}`)),
     h("span", {}, status(failed ? "Execution errors" : run.decision === "retain_baseline" ? "Baseline kept" : run.decision === "promote_candidate" ? "Candidate promoted" : "No final decision", failed ? "danger" : "neutral")),
     h("time", {}, dateLabel(run.createdAt)),
   );
@@ -100,8 +100,8 @@ export function renderRun(workspace: WorkspaceSnapshot, id: string, tab: string,
   const failures = run.candidates.filter(c => c.failure);
   const usedSealed = ["passed", "failed"].includes(run.acceptance.state);
   const changeTab = (t: string) => actions.navigate({ page: "run", id, tab: t });
-  return h("div", { class: "page-content" }, button("All runs", () => actions.navigate({ page: "runs" }), "back-link", "back"),
-    pageHeader(runName(run), `${runLabel(run, workspace)} · ${dateLabel(run.createdAt)} · ${timeLabel(run.createdAt)}`, tag(run.decision === "retain_baseline" ? "Baseline kept" : run.decision ?? "In progress")),
+  return h("div", { class: "page-content detail-page" }, button("All runs", () => actions.backTo("runs"), "back-link", "back"),
+    pageHeader(runName(run), `${runLabel(run, workspace)} · ${dateLabel(run.createdAt)} · ${timeLabel(run.createdAt)}`),
     tabs([["overview", "Overview"], ["activity", "Activity"], ["record", "Budget & record"]], tab, changeTab),
     h("div", { id: "detail-panel", role: "tabpanel", "aria-labelledby": `tab-${tab}` },
       tab === "activity" ? h("ol", { class: "activity-list" }, ...run.activity.map(e => h("li", {}, h("span", { class: "activity-sequence" }, e.sequence), h("div", {}, h("strong", {}, eventLabel(e.kind)), e.candidateId ? h("span", {}, run.candidates.find(c => c.id === e.candidateId) ? candidateName(run.candidates.find(c => c.id === e.candidateId)!) : e.candidateId) : null), h("time", {}, timeLabel(e.at))))) : tab === "record" ? runRecord(run, workspace, actions) : h("div", {},
@@ -128,7 +128,7 @@ export function renderCompare(workspace: WorkspaceSnapshot, rows: CandidateRow[]
   if (!rows.length) return empty("Choose candidates to compare", "Select up to 3 models from one evaluation setup.", button("Choose models", () => actions.navigate({ page: "models" })));
   if (rows.some(row => setupId(row.run) !== setupId(rows[0]!.run))) return empty("Comparison setup changed", "These candidates no longer share one evaluation setup. Choose a compatible selection from Models.", button("Choose models", () => actions.navigate({ page: "models" })));
   const reference = rows[0]!.run;
-  return h("div", { class: "page-content" }, button("All models", () => actions.navigate({ page: "models" }), "back-link", "back"),
+  return h("div", { class: "page-content" }, button("All models", () => actions.backTo("models"), "back-link", "back"),
     pageHeader("Compare models", `${rows.length} candidates against the baseline · ${setupName(reference)}`),
     ...reference.baselines.map(base => h("section", { class: "compare-matrix" }, sectionHeader(suiteName(base.suite)),
       h("div", { class: "table-scroll", tabindex: "0", "aria-label": "Side-by-side model comparison" }, h("table", { class: "comparison-matrix" },

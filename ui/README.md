@@ -35,12 +35,15 @@ Arbitrary repositories are not accepted. Earlier read-only journal folders
 remain available under **Earlier experiment folders → Connect legacy journals**.
 They are labelled Legacy and are not silently converted into managed projects.
 
-- **Project folders:** persistent entries in the sidebar. Selecting a folder
-  opens its Models page. Previously registered folders remain available.
+- **Project folders:** persistent entries in the sidebar. A newly opened project
+  starts on Models. Switching projects resumes each project's last page during
+  the session; clicking the already-active folder returns to Models.
 - **Models:** the baseline reference and all unique candidate identities,
   grouped by compatible baseline, benchmarks, metric contract, and evaluation
   policy. Search and filter, select a benchmark, sort by its primary score,
   or compare up to three candidates from one setup.
+  **All models** returns from details to the list's previous scroll position
+  and originating model control. Back/forward also preserve that context.
 - **Candidate detail:** exact development checks, training configuration and
   immutable input references, model artifact, and historical attempts.
 - **Datasets (managed projects):** import native JSONL with an explicit purpose,
@@ -69,6 +72,10 @@ Theme and sidebar width also persist. Search, filters, comparison selection,
 and page history are isolated per project during the session; those view
 settings are not persisted across app restarts. A corrupt collection is
 reported without overwriting the original file.
+Opening/locating failures stay on the page until dismissed or another folder
+operation begins. Technical diagnostics are expandable. During file verification,
+the current page's actions are unavailable, but switching projects is allowed;
+a late verification result cannot overwrite a newer read of the same project.
 
 ## Local models, imported datasets, and legacy evidence
 
@@ -165,7 +172,11 @@ itself is not automated. Experiment database bytes are checked unchanged.
 Managed checks exercise New, checkpoint preview/cancel, copied baselines,
 dataset preview/import and held-out rejection, two-project isolation, invalid
 Open, moved-folder recovery with identity checks, verification, forget/reopen,
-and responsive dialogs/dataset pages. Tiny custody-format model fixtures never
+and responsive dialogs/dataset pages. Additional checks cover 760×560 dialog
+actions and errors, Enter/Tab/Escape using hidden Chromium input, slow-import
+duplicate/dismissal guards, long project names, persistent Open failures, and
+revision-fenced verification after switching away and back.
+Tiny custody-format model fixtures never
 claim to be trained or executable encoders.
 
 For an explicitly requested real-project read-only check, select a managed

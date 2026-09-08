@@ -95,5 +95,89 @@ Interface review: no domain, persistence, native-file or IPC contracts changed.
 The new pure error-description helper only maps existing diagnostics to display
 copy; the backend still makes every validation and custody decision.
 
-Stage 2 and the final requirement-by-requirement audit remain pending. Stage 1
-checks do not establish completion of the full usability goal.
+Stage 1 commit: `4d9a729`. Audit checkpoint: `e33aa59`.
+
+### Stage 2 — Navigation, feedback, and evidence refinement
+
+Project switching now resumes that project's page and scroll position. Clicking
+the already-selected folder still returns to Models. All models / All runs links
+restore collection position and the originating control across detail tabs.
+Stable control identities preserve keyboard focus through renderer refreshes.
+Navigation history remains renderer-owned, with independent instances per project.
+
+Folder-operation failures persist above the current page until dismissed or
+superseded, with actionable wording and collapsed exact diagnostics. Missing
+managed projects retain their identity and recovery controls; their settings no
+longer describe them as legacy journals. Loading has visible progress and inert
+content, and folder operations, rename, and removal reject duplicate submission.
+Verification now uses the existing revision-fenced selection reader: a delayed
+response cannot overwrite a newer read after switching A → B → A.
+
+Comparison filters have visible labels and disabled comparison explains the
+selection requirement at narrow widths too. Model/run detail spacing is tighter;
+the run header no longer duplicates its outcome. Benchmark copy describes exact
+comparison groups concisely. Copy controls have field-specific accessible names.
+Long project headings wrap without pushing actions or paths outside the page.
+
+Final verification on 2026-09-08:
+
+- `npm run check`: Rust CLI build, TypeScript, renderer build, all 33 Node tests.
+- `npm run smoke`: both legacy and managed journeys and independent restarts
+  passed in four actual Electron processes. Added regression checks cover
+  collection scroll/focus, per-project route restoration, persistent Open errors,
+  invalid-rename correction, delayed verification, and identity-safe recovery.
+- New-dialog Enter, Tab order/trapping, and Escape restoration use Chromium
+  keyboard input in hidden windows, without taking OS focus. A deliberately
+  delayed real dataset import rejects Escape and a second submit; only one
+  backend call occurs, then the normal custody operation completes.
+- Creation, import error, and busy-import controls remain visible at 760×560.
+  Fields scroll separately from feedback/actions. Long names and paths fit at
+  760px and 390px. Standard page coverage also includes 1024, 1280, and 1440px.
+- `cargo fmt-check`, `cargo check-all`, `cargo lint`, and full `cargo test-all`
+  passed for this implementation stage, with `RUST_TEST_THREADS=1` for tests.
+  No Rust code or dependency changes were made.
+- `npm run verify:current` passed after the final renderer changes. Real Nomos
+  retains project ID `0dd64b24-47d2-4cfb-9523-6c0b65dc4a46`, the same baseline
+  fingerprint, two datasets / 6,800 records, and byte-identical saved library.
+
+The keyboard harness initially used OS-focus-dependent input, which cannot work
+in hidden windows; it now uses Chromium input with focus emulation. An earlier
+reopen assertion clicked while the newly selected project was still loading;
+the test now waits for that read. Neither issue required bypassing product guards
+or weakening evidence assertions.
+
+### Stage 3 — Final acceptance audit
+
+Reviewed actual-renderer screenshots against the starting captures: managed
+Models, Datasets, Settings, creation/import dialogs, failure/progress states,
+populated legacy comparison and candidate/run details, benchmarks, narrow pages,
+and long names. Removed repeated explanations and metadata from the initial scan
+without hiding custody details. The minimum-size dialog review confirmed that
+errors and busy feedback do not obscure the action footer. Light/dark collection
+and welcome views remain readable. Representative token contrast checks exceed
+4.5:1 for subtle text on raised/sidebar surfaces and for error text; this is not
+a claim of a comprehensive accessibility certification.
+
+| Goal acceptance area | Delivered evidence |
+| --- | --- |
+| New versus Open, baseline state, real next step | Distinct welcome/sidebar actions; real fixture checkpoint copies; managed Models links to the project's dataset page, not unsupported execution. |
+| Generic multi-project isolation and restart | Two managed identities plus generic classification/similarity legacy fixtures; separate metrics, filters, selected candidates, routes, move/reopen and restart checks. |
+| Dataset journey and readiness | Selection/preview, held-out rejection, source drift, retained input, fixed feedback, slow-operation guard, successful custody copy, source-vs-snapshot wording, no row payload in renderer. |
+| Comparison and detail responsibilities | All 15 archival model identities, 26 checks, failed/recovered attempts, matched baseline/setup assertions, result versus acceptance distinction, separate model/run tabs, restored collection focus. |
+| Empty/error/keyboard/window states | Empty and baseline-only fixtures, unsupported/corrupt reader tests, missing/wrong folder recovery, persistent errors, actual keyboard input, 760×560 dialogs, narrow layouts and both themes. |
+| Nomos and architecture | Opt-in read-only verification above; no source-checkout writes. No scientific contracts, IPC/preload permissions, persistence schema, training, evaluation, network calls or downloads added. |
+| Complete bounded pass | All eight audit priorities addressed; stages implemented and verified, not merely proposed. Working changes committed with this audit and updated UI documentation. |
+
+Boundary review: the only main-process change passes the existing backend to the
+test harness for delayed-response tests. Runtime native pickers, fixed CLI
+adapter, typed bridge, domain ownership, exact comparison identities, and sealed
+evidence projection remain unchanged. Tests use temporary fixtures; no historical
+Nomos runs were attached to its managed identity. Generated QA images stay ignored.
+
+Remaining product limits are explicit, not unfinished GUI actions: local
+checkpoint custody supports the existing safe-format contract, not arbitrary
+trainer compatibility; dataset preparation and scientific execution remain CLI
+workflows; this desktop does not launch them or link their history automatically.
+Hugging Face onboarding remains deferred. The OS file-picker shell is not driven
+by acceptance tests (its chosen paths are injected). These findings are an
+engineering/visual review, not measured novice-user research.

@@ -15,6 +15,7 @@ export function renderModels(workspace: WorkspaceSnapshot, state: ModelPageState
   const compare = button(`Compare${selectedRows.length ? ` (${selectedRows.length})` : " selected"}`, () => actions.compare(selectedRows), "primary", "models");
   compare.disabled = !selectedRows.length;
   compare.id = "compare-selected";
+  if (!selectedRows.length) compare.setAttribute("aria-describedby", "compare-selection-hint");
   const filterChange = (key: keyof CatalogFilter, value: string) => { state.filter[key] = value; actions.render(); };
   const selectedSetup = selectedRows[0] ? setupId(selectedRows[0].run) : undefined;
   return h("div", { class: "page-content" },
@@ -33,7 +34,7 @@ export function renderModels(workspace: WorkspaceSnapshot, state: ModelPageState
         selectControl("status-filter", "Result", [["all", "All results"], ["rejected", "Below requirements"], ["passed", "Passed development"], ["incomplete", "Incomplete evidence"], ["failed", "Execution failed"]], state.filter.status, v => filterChange("status", v)),
       ) : null,
       allRows.length ? h("div", { class: "comparison-subtoolbar" }, h("div", { class: "inline-group" }, h("span", { class: "muted" }, `${shown} of ${allRows.length} candidates`), selectControl("sort-order", "Order", [["newest", "Newest first"], ["primary", "Best primary score"]], state.filter.sort, v => filterChange("sort", v))),
-        h("div", { class: "inline-group" }, state.selected.size ? button("Clear selection", () => { state.selected.clear(); actions.render(); }, "ghost small") : h("span", { class: "selection-hint" }, "Select up to 3 to compare"), compare)) : null,
+        h("div", { class: "inline-group" }, state.selected.size ? button("Clear selection", () => { state.selected.clear(); actions.render(); }, "ghost small") : h("span", { id: "compare-selection-hint", class: "selection-hint" }, "Select 1–3 candidates to compare"), compare)) : null,
       ...groups.map((group, gi) => {
         const suite = group.run.baselines[Math.min(state.suiteIndex, group.run.baselines.length - 1)]!;
         const keys = summaryMetrics(group.run, suite);
@@ -60,7 +61,7 @@ export function renderModels(workspace: WorkspaceSnapshot, state: ModelPageState
                       else state.selected.add(c.id);
                       actions.render();
                     } })),
-                  h("th", { scope: "row" }, h("div", { class: "encoder-cell" }, h("button", { class: "candidate-link", type: "button", onClick: () => actions.navigate({ page: "candidate", id: c.id }) }, candidateName(c), icon("arrow")),
+                  h("th", { scope: "row" }, h("div", { class: "encoder-cell" }, h("button", { id: "candidate-" + c.id, class: "candidate-link", type: "button", onClick: () => actions.navigate({ page: "candidate", id: c.id }) }, candidateName(c), icon("arrow")),
                     h("small", {}, candidateDescription(c)), h("button", { class: "run-link", type: "button", onClick: () => actions.navigate({ page: "run", id: row.run.id }) }, `${runLabel(row.run, workspace)} · ${dateLabel(row.run.createdAt)}`))),
                   ...keys.map(k => h("td", { class: "numeric" }, scoreStack(result?.report.metrics[k], result?.baseline.metrics[k], k, row.run.directions[k]))),
                   h("td", {}, h("div", { class: "result-cell" }, status(s.label, s.tone), h("small", {}, s.detail))),

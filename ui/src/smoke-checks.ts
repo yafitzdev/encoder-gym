@@ -18,7 +18,7 @@ export async function runSmokeChecks(window: BrowserWindow, output: string, harn
     }
     console.log("PASS " + name);
   };
-  const click = async (selector: string) => evaluate("document.querySelector(" + JSON.stringify(selector) + ").click()");
+  const click = async (selector: string) => evaluate("(()=>{const control=document.querySelector(" + JSON.stringify(selector) + ");control.focus();control.click()})()");
   const textButton = async (text: string) => evaluate("[...document.querySelectorAll('#page button, dialog[open] button')].find(b=>b.textContent === " + JSON.stringify(text) + ").click()");
   const nav = async (page: string) => click('[data-page="' + page + '"]');
   const type = async (id: string, value: string) => evaluate("document.getElementById(" + JSON.stringify(id) + ").value=" + JSON.stringify(value) + ";document.getElementById(" + JSON.stringify(id) + ").dispatchEvent(new Event('input',{bubbles:true}));");
@@ -44,6 +44,7 @@ export async function runSmokeChecks(window: BrowserWindow, output: string, harn
   const exampleId = harness.registry.read().selectedId!;
   await check("example opens only after an explicit request", "document.getElementById('source-state').textContent.includes('Recorded example')");
   await screenshot("models-dark");
+  await evaluate("document.getElementById('page').scrollTop=180");
   await click(".candidate-link");
   await check("repair candidate shows six failed checks", "document.querySelectorAll('.evidence-table tbody tr').length === 6");
   await screenshot("candidate-results");
@@ -54,6 +55,8 @@ export async function runSmokeChecks(window: BrowserWindow, output: string, harn
   await screenshot("candidate-training");
   await evaluate("document.getElementById('tab-training').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))");
   await check("keyboard tabs change panel and move focus", "document.activeElement.id === 'tab-artifact' && document.getElementById('detail-panel').textContent.includes('36289478c89d50b3')");
+  await textButton("All models");
+  await check("All models restores list position and the originating candidate focus", "document.getElementById('page').scrollTop === 180 && document.activeElement.classList.contains('candidate-link')");
   await nav("models");
   await evaluate("document.getElementById('candidate-search').focus()");
   await type("candidate-search", "repair");
@@ -82,9 +85,10 @@ export async function runSmokeChecks(window: BrowserWindow, output: string, harn
   await check("run activity comes from journal events", "document.querySelectorAll('.activity-list li').length > 4");
   await click("#tab-record");
   await check("immutable optimization identity remains inspectable", "document.getElementById('detail-panel').textContent.includes('2317e08b-5848-4773-9a9e-42499ee09815')");
+  await screenshot("run-record");
   await nav("runs"); await evaluate("[...document.querySelectorAll('.run-list-item')].at(-1).click()"); await click(".run-candidate button");
   await check("failed historical attempt never borrows a recovered model's results", "document.querySelector('.result-banner').textContent.includes('Execution failed') && document.querySelectorAll('.evidence-table tbody tr').length === 0");
-  await nav("benchmarks"); await check("benchmark setups remain separate", "document.querySelectorAll('.benchmark-section').length > 1");
+  await nav("benchmarks"); await check("benchmark setups remain separate", "document.querySelectorAll('.benchmark-section').length > 1"); await screenshot("benchmarks");
   await nav("models"); await click(".baseline-action button");
   await check("baseline artifact identity is available", "document.getElementById('page').textContent.includes('0c0f6a80a2e34c0')");
   await nav("models"); await click(".candidate-table .metric-heading");
@@ -143,18 +147,24 @@ export async function runSmokeChecks(window: BrowserWindow, output: string, harn
   await screenshot("similarity-project");
   await open(supportId);
   await check("returning restores this project's own comparison context", "document.getElementById('candidate-search').value === 'fine' && document.querySelectorAll('[data-candidate-id] input:checked').length === 1");
-  await nav("project"); await textButton("Rename project"); await type("project-name-input", "Support encoder"); await textButton("Save name");
+  await nav("project"); await textButton("Rename project"); await type("project-name-input", "   "); await textButton("Save name");
+  await until("document.querySelector('dialog .form-error strong')?.textContent === 'Choose a valid project name'");
+  await check("invalid rename preserves input and restores focus for correction", "document.getElementById('project-name-input').value === '   ' && document.activeElement.id === 'project-name-input'");
+  await type("project-name-input", "Support encoder"); await textButton("Save name");
   await until("!document.querySelector('#project-dialog[open]') && document.getElementById('breadcrumb').textContent.includes('Support encoder')");
   await check("renaming preserves project identity and folder", "document.querySelector('[data-project-id=" + JSON.stringify(supportId) + "]').textContent.includes('Support encoder')");
+  await check("successful rename returns focus to the page", "document.activeElement === document.querySelector('#page h1')");
+  await open(draftId); await open(supportId);
+  await check("returning to a project retains its settings page", "document.querySelector('#nav-project').getAttribute('aria-current') === 'page'");
   await open(draftId);
   writeExperimentDatabase(join(draft, "prepared.db"), experimentFixture("draft"), false);
-  await click("#reload-evidence"); await loaded();
+  await click("#reload-evidence"); await loaded(); await nav("models");
   await check("baseline-only project has a useful no-candidates state", "document.querySelector('.baseline-name') && document.getElementById('page').textContent.includes('No candidates recorded yet') && document.querySelectorAll('[data-candidate-id]').length === 0");
   await screenshot("baseline-only");
   await open(semanticId);
   const moved = join(root, "semantic-moved"); renameSync(semantic, moved);
   await click("#reload-evidence"); await loaded();
-  await check("missing folder never displays another project's scores", "document.querySelector('.empty-state').textContent.includes('no longer available') && document.querySelectorAll('[data-candidate-id]').length === 0");
+  await check("missing folder never displays another project's scores", "document.querySelector('.project-recovery').textContent.includes('no longer available') && document.querySelectorAll('[data-candidate-id]').length === 0");
   await screenshot("missing-folder");
   harness.chooseFolder(moved); await textButton("Locate folder"); await until("document.querySelectorAll('[data-candidate-id]').length === 1"); await loaded();
   await check("reconnection keeps identity and restores exact model", "document.querySelectorAll('[data-candidate-id]').length === 1 && document.querySelector('.baseline-name').textContent.includes('semantic-encoder')");
@@ -166,7 +176,8 @@ export async function runSmokeChecks(window: BrowserWindow, output: string, harn
   await check("removal only forgets the chosen project entry", "document.querySelectorAll('[data-project-id]').length === 3");
   await open(exampleId); await nav("project"); await textButton("Remove project entry…"); await textButton("Remove entry");
   await until("!document.querySelector('#project-dialog[open]')"); await loaded();
-  await open(supportId); await type("candidate-search", ""); await textButton("Clear selection");
+  await open(supportId);
+  await nav("models"); await type("candidate-search", ""); await textButton("Clear selection");
   if (!before.equals(readFileSync(join(support, "experiment.db")))) throw new Error("A UI operation modified experiment evidence");
   console.log("PASS all project UI operations preserve experiment database bytes");
   await screenshot("project-folders");
