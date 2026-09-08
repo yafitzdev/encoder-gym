@@ -8,8 +8,8 @@ use std::{fs, path::Path};
 use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use project_workspace_core::{
-    BASELINE, DATABASE, DIRECTORIES, DatasetImport, LocalModel, MANIFEST, ProjectManifest,
-    validate_name,
+    BASELINE, BaselineChange, BaselineRevision, DATABASE, DIRECTORIES, DatasetImport, LocalModel,
+    MANIFEST, ModelArtifact, ModelCatalog, ModelOrigin, ProjectManifest, validate_name,
 };
 use serde::Serialize;
 use sqlx::{Connection, Row, SqliteConnection, sqlite::SqliteConnectOptions};
@@ -25,6 +25,9 @@ pub struct ManagedWorkspace {
     pub folder: String,
     pub manifest: ProjectManifest,
     pub datasets: Vec<DatasetImport>,
+    /// Absent only when an older workspace requires an explicit registry upgrade.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_catalog: Option<ModelCatalog>,
     pub verified: bool,
 }
 
@@ -87,6 +90,7 @@ pub async fn create_workspace(
         .bind(hash(&staging.path().join(MANIFEST), MANIFEST)?.fingerprint)
         .execute(&mut database)
         .await?;
+    initialize_model_catalog(&mut database, &manifest).await?;
     database.close().await?;
     // Reserve an absent destination without replacing an existing file or folder.
     // Publish the manifest last: an interrupted publication is never openable.
@@ -216,6 +220,7 @@ pub async fn open_workspace(folder: &Path, verify: bool) -> Result<ManagedWorksp
         }
         datasets.push(dataset);
     }
+    let model_catalog = load_model_catalog(&mut database, &manifest).await?;
     database.close().await?;
     for file in &manifest.baseline.files {
         let mut identity = file.clone();
@@ -232,8 +237,217 @@ pub async fn open_workspace(folder: &Path, verify: bool) -> Result<ManagedWorksp
         folder: root.to_string_lossy().into_owned(),
         manifest,
         datasets,
+        model_catalog,
         verified: verify,
     })
+}
+
+/// Apply project-registry migrations and initialize the imported baseline catalog.
+/// Scientific stores and the immutable manifest are not changed.
+pub async fn upgrade_workspace(folder: &Path) -> Result<ManagedWorkspace> {
+    let root = canonical_plain(folder)?;
+    let manifest_path = contained(&root, MANIFEST)
+        .context("This is not an Encoder Gym workspace. Open a managed project folder.")?;
+    let manifest: ProjectManifest = json(&manifest_path)?;
+    manifest.validate()?;
+    let mut database = connect(&root, false, false).await?;
+    let binding =
+        sqlx::query("SELECT project_id, manifest_sha256 FROM workspace_identity WHERE singleton=1")
+            .fetch_one(&mut database)
+            .await
+            .context("Invalid workspace database.")?;
+    ensure!(
+        binding.get::<String, _>("project_id") == manifest.id.to_string()
+            && binding.get::<String, _>("manifest_sha256")
+                == hash(&manifest_path, MANIFEST)?.fingerprint,
+        "Project manifest and database do not match. Restore the matching project files."
+    );
+    sqlx::migrate!("./migrations").run(&mut database).await?;
+    initialize_model_catalog(&mut database, &manifest).await?;
+    database.close().await?;
+    open_workspace(&root, true).await
+}
+
+async fn initialize_model_catalog(
+    database: &mut SqliteConnection,
+    manifest: &ProjectManifest,
+) -> Result<()> {
+    if sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM model_catalog_state")
+        .fetch_one(&mut *database)
+        .await?
+        > 0
+    {
+        return Ok(());
+    }
+    let artifact = ModelArtifact::imported_baseline(
+        manifest.id,
+        Uuid::new_v4(),
+        format!("{} baseline", manifest.name),
+        &manifest.baseline,
+        manifest.created_at,
+    )?;
+    let catalog = ModelCatalog::initialize(
+        manifest.id,
+        artifact,
+        Uuid::new_v4(),
+        manifest.baseline.fingerprint.clone(),
+        manifest.created_at,
+    )?;
+    let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
+    let artifact = &catalog.artifacts[0];
+    sqlx::query(
+        "INSERT INTO model_artifacts \
+         (id, project_id, content_fingerprint, origin, metadata_json) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(artifact.id.to_string())
+    .bind(artifact.project_id.to_string())
+    .bind(&artifact.fingerprint)
+    .bind(model_origin(artifact.origin))
+    .bind(serde_json::to_string(artifact)?)
+    .execute(&mut *transaction)
+    .await?;
+    let revision = &catalog.baseline_revisions[0];
+    sqlx::query(
+        "INSERT INTO baseline_revisions \
+         (id, project_id, sequence, model_artifact_id, previous_revision_id, change_kind, fingerprint, metadata_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(revision.id.to_string())
+    .bind(revision.project_id.to_string())
+    .bind(i64::try_from(revision.sequence)?)
+    .bind(revision.model_artifact_id.to_string())
+    .bind(Option::<String>::None)
+    .bind(baseline_change(&revision.change))
+    .bind(&revision.fingerprint)
+    .bind(serde_json::to_string(revision)?)
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO model_catalog_state \
+         (singleton, project_id, active_baseline_revision_id) VALUES (1, ?, ?)",
+    )
+    .bind(manifest.id.to_string())
+    .bind(revision.id.to_string())
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    Ok(())
+}
+
+async fn load_model_catalog(
+    database: &mut SqliteConnection,
+    manifest: &ProjectManifest,
+) -> Result<Option<ModelCatalog>> {
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='model_catalog_state'",
+    )
+    .fetch_one(&mut *database)
+    .await?
+        == 1;
+    if !exists {
+        return Ok(None);
+    }
+    let Some(state) = sqlx::query(
+        "SELECT project_id, active_baseline_revision_id FROM model_catalog_state WHERE singleton=1",
+    )
+    .fetch_optional(&mut *database)
+    .await?
+    else {
+        return Ok(None);
+    };
+    ensure!(
+        state.get::<String, _>("project_id") == manifest.id.to_string(),
+        "Model catalog belongs to another project."
+    );
+    let active_baseline_revision_id =
+        Uuid::parse_str(&state.get::<String, _>("active_baseline_revision_id"))?;
+    let mut artifacts = Vec::new();
+    for row in sqlx::query(
+        "SELECT id, project_id, content_fingerprint, origin, metadata_json \
+         FROM model_artifacts ORDER BY rowid",
+    )
+    .fetch_all(&mut *database)
+    .await?
+    {
+        let artifact: ModelArtifact = serde_json::from_str(&row.get::<String, _>("metadata_json"))?;
+        artifact.validate()?;
+        ensure!(
+            row.get::<String, _>("id") == artifact.id.to_string()
+                && row.get::<String, _>("project_id") == artifact.project_id.to_string()
+                && row.get::<String, _>("content_fingerprint") == artifact.fingerprint
+                && row.get::<String, _>("origin") == model_origin(artifact.origin),
+            "Model artifact projection does not match its immutable record."
+        );
+        artifacts.push(artifact);
+    }
+    let mut baseline_revisions = Vec::new();
+    for row in sqlx::query(
+        "SELECT id, project_id, sequence, model_artifact_id, previous_revision_id, \
+         change_kind, fingerprint, metadata_json FROM baseline_revisions ORDER BY sequence",
+    )
+    .fetch_all(&mut *database)
+    .await?
+    {
+        let revision: BaselineRevision =
+            serde_json::from_str(&row.get::<String, _>("metadata_json"))?;
+        revision.validate()?;
+        let sequence = u64::try_from(row.get::<i64, _>("sequence"))?;
+        let previous = row
+            .get::<Option<String>, _>("previous_revision_id")
+            .map(|value| Uuid::parse_str(&value))
+            .transpose()?;
+        ensure!(
+            row.get::<String, _>("id") == revision.id.to_string()
+                && row.get::<String, _>("project_id") == revision.project_id.to_string()
+                && sequence == revision.sequence
+                && row.get::<String, _>("model_artifact_id")
+                    == revision.model_artifact_id.to_string()
+                && previous == revision.previous_revision_id
+                && row.get::<String, _>("change_kind") == baseline_change(&revision.change)
+                && row.get::<String, _>("fingerprint") == revision.fingerprint,
+            "Baseline revision projection does not match its immutable record."
+        );
+        baseline_revisions.push(revision);
+    }
+    let catalog = ModelCatalog {
+        project_id: manifest.id,
+        artifacts,
+        baseline_revisions,
+        active_baseline_revision_id,
+    };
+    catalog.validate()?;
+    let initial = &catalog.baseline_revisions[0];
+    ensure!(
+        catalog.artifacts.iter().any(|artifact| {
+            artifact.id == initial.model_artifact_id
+                && artifact.origin == ModelOrigin::Imported
+                && artifact.path == BASELINE
+                && artifact.fingerprint == manifest.baseline.fingerprint
+                && matches!(
+                    &initial.change,
+                    BaselineChange::Initialization { source_fingerprint }
+                        if source_fingerprint == &manifest.baseline.fingerprint
+                )
+        }),
+        "Initial model catalog baseline does not match the immutable workspace manifest."
+    );
+    Ok(Some(catalog))
+}
+
+fn model_origin(origin: ModelOrigin) -> &'static str {
+    match origin {
+        ModelOrigin::Imported => "imported",
+        ModelOrigin::Trained => "trained",
+        ModelOrigin::Transformed => "transformed",
+    }
+}
+
+fn baseline_change(change: &BaselineChange) -> &'static str {
+    match change {
+        BaselineChange::Initialization { .. } => "initialization",
+        BaselineChange::Promotion { .. } => "promotion",
+        BaselineChange::Restoration { .. } => "restoration",
+    }
 }
 
 fn verify_file(

@@ -6,6 +6,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+mod models;
+
+pub use models::{
+    BaselineChange, BaselineRevision, BoundIdentity, ModelArtifact, ModelCatalog, ModelOrigin,
+};
+
 pub const MANIFEST: &str = "encoder-gym.json";
 pub const DATABASE: &str = "project.sqlite";
 pub const BASELINE: &str = "models/baseline";
@@ -22,7 +28,7 @@ pub const DIRECTORIES: &[&str] = &[
 #[error("{0}")]
 pub struct Invalid(pub String);
 
-fn require(ok: bool, message: &str) -> Result<(), Invalid> {
+pub(crate) fn require(ok: bool, message: &str) -> Result<(), Invalid> {
     if ok {
         Ok(())
     } else {

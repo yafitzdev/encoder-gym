@@ -40,6 +40,8 @@ pub enum WorkspaceCommand {
     Open { folder: PathBuf },
     /// Rehash every baseline and dataset artifact and validate dataset counts.
     Verify { folder: PathBuf },
+    /// Upgrade the project registry and initialize missing baseline history.
+    Upgrade { folder: PathBuf },
     /// Preview local JSONL data without altering its native structure.
     InspectDataset {
         source: PathBuf,

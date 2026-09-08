@@ -51,6 +51,15 @@ fn local_onboarding_import_and_portable_reopen_are_real_cli_operations() {
     );
     assert_ne!(first["manifest"]["id"], second["manifest"]["id"]);
     assert_eq!(first["datasets"], serde_json::json!([]));
+    assert_eq!(
+        first["modelCatalog"]["artifacts"][0]["fingerprint"],
+        first["manifest"]["baseline"]["fingerprint"]
+    );
+    let upgraded = run(root, &["upgrade", "project-one"]);
+    assert_eq!(
+        upgraded["modelCatalog"]["activeBaselineRevisionId"],
+        first["modelCatalog"]["activeBaselineRevisionId"]
+    );
     fs::write(root.join("local.jsonl"), "{\"text\":\"offline fixture\"}\n").unwrap();
     let data = run(
         root,

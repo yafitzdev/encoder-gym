@@ -1,7 +1,7 @@
 use project_workspace_core::{DatasetPurpose, MANIFEST};
 use project_workspace_local::{
     backfill_nomos, create_workspace, import_dataset, inspect_dataset, inspect_model,
-    open_workspace,
+    open_workspace, upgrade_workspace,
 };
 use serde_json::json;
 use std::fs;
@@ -29,6 +29,9 @@ async fn create_import_move_and_verify_without_original_sources() {
     .await
     .unwrap();
     assert_eq!(created.manifest.baseline, preview);
+    let catalog = created.model_catalog.as_ref().unwrap();
+    assert_eq!(catalog.active_model().fingerprint, preview.fingerprint);
+    assert_eq!(catalog.baseline_revisions.len(), 1);
     assert!(created.datasets.is_empty());
     assert!(created.verified);
     assert!(
@@ -80,6 +83,70 @@ async fn create_import_move_and_verify_without_original_sources() {
     let artifact = moved.join(&reopened.datasets[0].artifact.path);
     fs::write(&artifact, "{\"text\":\"third\"}\n{\"text\":\"second\"}\n").unwrap();
     assert!(open_workspace(&moved, true).await.is_err());
+}
+
+#[tokio::test]
+async fn old_workspace_requires_and_survives_an_explicit_idempotent_catalog_upgrade() {
+    use sqlx::{Connection, SqliteConnection};
+
+    let temp = TempDir::new().unwrap();
+    let source = model(temp.path());
+    let preview = inspect_model(&source).unwrap();
+    let destination = temp.path().join("managed");
+    let created = create_workspace(
+        &destination,
+        "Upgrade fixture",
+        &source,
+        &preview.fingerprint,
+        None,
+    )
+    .await
+    .unwrap();
+    let first_catalog = created.model_catalog.unwrap();
+    let url = format!("sqlite://{}", destination.join("project.sqlite").display());
+    let mut database = SqliteConnection::connect(&url).await.unwrap();
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut database)
+        .await
+        .unwrap();
+    for table in [
+        "model_catalog_state",
+        "baseline_revisions",
+        "model_artifacts",
+    ] {
+        sqlx::query(&format!("DROP TABLE {table}"))
+            .execute(&mut database)
+            .await
+            .unwrap();
+    }
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 2")
+        .execute(&mut database)
+        .await
+        .unwrap();
+    database.close().await.unwrap();
+
+    assert!(
+        open_workspace(&destination, false)
+            .await
+            .unwrap()
+            .model_catalog
+            .is_none()
+    );
+    let upgraded = upgrade_workspace(&destination).await.unwrap();
+    let catalog = upgraded.model_catalog.unwrap();
+    assert_eq!(catalog.active_model().fingerprint, preview.fingerprint);
+    assert_ne!(
+        catalog.active_baseline_revision_id,
+        first_catalog.active_baseline_revision_id
+    );
+    assert_eq!(
+        upgrade_workspace(&destination)
+            .await
+            .unwrap()
+            .model_catalog
+            .unwrap(),
+        catalog
+    );
 }
 
 #[tokio::test]

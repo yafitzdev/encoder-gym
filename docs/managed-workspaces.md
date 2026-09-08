@@ -12,6 +12,7 @@ synth --output json workspace inspect-model C:\models\my-encoder
 synth workspace create C:\EncoderGym\Projects\my-encoder --name "My encoder" --model C:\models\my-encoder --expected-fingerprint "sha256:…" --task "Tool routing"
 synth workspace open C:\EncoderGym\Projects\my-encoder
 synth workspace verify C:\EncoderGym\Projects\my-encoder
+synth workspace upgrade C:\EncoderGym\Projects\my-encoder
 ```
 
 The destination must not exist; its parent must exist. Supported local bundles
@@ -71,3 +72,10 @@ retain their own stores and migration histories; do not pass this registry as
 the legacy CLI's `--database-url`. Slice-owned run stores and artifacts can
 live beneath the project's `runs/`, `models/candidates/`, and evaluation/data
 directories when explicitly configured through those slice contracts.
+
+Workspaces created before the managed model catalog was introduced continue to
+open without mutation and report no catalog. `workspace upgrade` applies the
+versioned registry migrations and records the already-verified imported model
+as the first immutable model artifact and active baseline revision. It is
+idempotent and does not edit `encoder-gym.json`, copy artifacts, or initialize a
+scientific run database.

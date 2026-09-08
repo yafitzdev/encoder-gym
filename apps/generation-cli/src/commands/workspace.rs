@@ -1,7 +1,7 @@
 use crate::{cli::WorkspaceCommand, presentation::print};
 use project_workspace_local::{
     backfill_nomos, create_workspace, import_dataset, inspect_dataset, inspect_model,
-    open_workspace,
+    open_workspace, upgrade_workspace,
 };
 
 pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
@@ -21,6 +21,10 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
         }
         WorkspaceCommand::Open { folder } => print(&open_workspace(&folder, false).await?),
         WorkspaceCommand::Verify { folder } => print(&open_workspace(&folder, true).await?),
+        WorkspaceCommand::Upgrade { folder } => {
+            eprintln!("Upgrading the project registry; model and dataset artifacts are unchanged.");
+            print(&upgrade_workspace(&folder).await?)
+        }
         WorkspaceCommand::InspectDataset { source, purpose } => {
             print(&inspect_dataset(&source, purpose.into())?)
         }
