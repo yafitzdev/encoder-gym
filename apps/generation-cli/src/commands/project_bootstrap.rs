@@ -28,7 +28,7 @@ use crate::cli::PageArgs;
 
 use super::ingestion::open_reader;
 
-pub async fn preview(path: &Path, _store: &SqliteStore) -> anyhow::Result<()> {
+pub fn preview(path: &Path) -> anyhow::Result<()> {
     let (manifest, root) = load_manifest(path)?;
     let sources = load_sources(&manifest, &root)?;
     crate::presentation::print(&preview_bootstrap(&manifest, &sources)?)

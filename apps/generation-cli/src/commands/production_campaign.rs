@@ -54,7 +54,7 @@ pub async fn execute_generation(
 ) -> anyhow::Result<()> {
     let backend = generation_backend_args(&command);
     ensure_database_belongs_to_workspace(database_url, &backend.workspace)?;
-    let store = SqliteExperimentStore::connect(database_url).await?;
+    let store = command.database_access().production(database_url).await?;
     match command {
         BenchmarkGenerationCommand::NomosBuildAuthority(args) => {
             if args.valid_days <= 0 || args.valid_days > 365 {
@@ -301,7 +301,7 @@ pub async fn execute_campaign(
 ) -> anyhow::Result<()> {
     let backend_args = campaign_backend_args(&command);
     ensure_database_belongs_to_workspace(database_url, &backend_args.workspace)?;
-    let store = SqliteExperimentStore::connect(database_url).await?;
+    let store = command.database_access().production(database_url).await?;
     let backend = NomosBackend::open(&backend_args.workspace, backend_args.python.clone())?;
     let runner = ExperimentRunner::new(&store, &backend);
 
@@ -442,7 +442,7 @@ pub(crate) struct CampaignContext {
 
 pub(crate) async fn campaign_provenance(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
+    backend: &impl EncoderTaskBackend,
     campaign_id: Uuid,
 ) -> anyhow::Result<serde_json::Value> {
     let context = load_campaign_context(store, backend, campaign_id).await?;
@@ -606,7 +606,7 @@ pub(crate) async fn campaign_provenance(
 
 pub(crate) async fn load_campaign_context(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
+    backend: &impl EncoderTaskBackend,
     campaign_id: Uuid,
 ) -> anyhow::Result<CampaignContext> {
     let campaign = store

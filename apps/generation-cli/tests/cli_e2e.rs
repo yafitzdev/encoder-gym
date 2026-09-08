@@ -31,6 +31,7 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
     )
     .expect("write optimization protocol");
 
+    run_json(&database_url, ["database", "migrate"]);
     let doctor = run_json(
         &database_url,
         ["doctor", "--config", path(&config_path), "--check-backend"],
@@ -577,6 +578,7 @@ fn complete_local_cli_workflow_is_scriptable_and_deterministic() {
         run_json(&database_url, ["workflow", "status", &workflow_id])["attempt_count"],
         1
     );
+    run_json(&database_url, ["recovery", "scan"]);
     let interrupted_workflows = run_json(&database_url, ["recovery", "list"]);
     assert!(
         interrupted_workflows

@@ -189,7 +189,7 @@ async fn run(args: TrainingRunArgs, store: SqliteStore) -> anyhow::Result<()> {
         training_request(&store, training_run.id, args.snapshot_id, configuration).await?;
     let completed =
         execute_training(training_run, request, backend, artifact_root, None, store).await?;
-    print_json(&completed)
+    print_completed(&completed)
 }
 
 async fn continue_run(args: TrainingContinueArgs, store: SqliteStore) -> anyhow::Result<()> {
@@ -262,7 +262,23 @@ async fn continue_run(args: TrainingContinueArgs, store: SqliteStore) -> anyhow:
         )
     });
     let completed = execute_training(run, request, backend, artifact_root, None, store).await?;
-    print_json(&completed)
+    print_completed(&completed)
+}
+
+fn print_completed(completed: &CompletedTraining) -> anyhow::Result<()> {
+    print_json(completed)?;
+    anyhow::ensure!(
+        completed.run.state == TrainingRunState::Completed,
+        "training run {} ended {:?}: {}",
+        completed.run.id,
+        completed.run.state,
+        completed
+            .run
+            .error_message
+            .as_deref()
+            .unwrap_or("execution did not complete"),
+    );
+    Ok(())
 }
 
 #[derive(Debug, serde::Serialize)]

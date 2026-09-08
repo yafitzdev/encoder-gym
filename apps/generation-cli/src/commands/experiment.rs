@@ -45,24 +45,18 @@ pub(crate) struct CandidateInput {
 
 pub async fn execute(command: ExperimentCommand, database_url: &str) -> anyhow::Result<()> {
     let backend_args = backend_args(&command);
+    if matches!(command, ExperimentCommand::NomosVerify(_)) {
+        let backend = NomosBackend::open(&backend_args.workspace, backend_args.python.clone())?;
+        return verify_workspace(&backend).await;
+    }
     ensure_database_belongs_to_workspace(database_url, &backend_args.workspace)?;
-    let store = SqliteExperimentStore::connect(database_url).await?;
+    let store = command.database_access().production(database_url).await?;
     let backend = NomosBackend::open(&backend_args.workspace, backend_args.python.clone())?;
     let runner = ExperimentRunner::new(&store, &backend);
 
     match command {
         ExperimentCommand::NomosVerify(_) => {
-            let project = backend.project_snapshot()?;
-            let inspection = backend.inspect(project.clone()).await?;
-            presentation::print(&serde_json::json!({
-                "verified": true,
-                "project_name": project.name,
-                "source_revision": project.source_revision,
-                "source_fingerprint": project.source_fingerprint,
-                "baseline_model_fingerprint": project.baseline_model.fingerprint,
-                "immutable_inputs": inspection.verified_artifact_keys,
-                "adapter": project.backend,
-            }))
+            unreachable!("workspace verification does not need a database")
         }
         ExperimentCommand::NomosRegister(_) => {
             let project = runner.register_project(backend.project_snapshot()?).await?;
@@ -101,6 +95,20 @@ pub async fn execute(command: ExperimentCommand, database_url: &str) -> anyhow::
             presentation::print(&view)
         }
     }
+}
+
+async fn verify_workspace(backend: &NomosBackend) -> anyhow::Result<()> {
+    let project = backend.project_snapshot()?;
+    let inspection = backend.inspect(project.clone()).await?;
+    presentation::print(&serde_json::json!({
+        "verified": true,
+        "project_name": project.name,
+        "source_revision": project.source_revision,
+        "source_fingerprint": project.source_fingerprint,
+        "baseline_model_fingerprint": project.baseline_model.fingerprint,
+        "immutable_inputs": inspection.verified_artifact_keys,
+        "adapter": project.backend,
+    }))
 }
 
 async fn prepare(
@@ -196,6 +204,25 @@ async fn load_verified_view(
     store: &SqliteExperimentStore,
     backend: &NomosBackend,
 ) -> anyhow::Result<ExperimentView> {
+    let (project, view) = load_persisted_context(run_id, store).await?;
+    backend.inspect(project).await?;
+    Ok(view)
+}
+
+pub(crate) async fn load_persisted_view(
+    run_id: uuid::Uuid,
+    store: &SqliteExperimentStore,
+) -> anyhow::Result<ExperimentView> {
+    Ok(load_persisted_context(run_id, store).await?.1)
+}
+
+async fn load_persisted_context(
+    run_id: uuid::Uuid,
+    store: &SqliteExperimentStore,
+) -> anyhow::Result<(
+    encoder_experiment_core::domain::ExternalProjectSnapshot,
+    ExperimentView,
+)> {
     let events = store.load_events(run_id).await?;
     let first = events
         .first()
@@ -208,8 +235,12 @@ async fn load_verified_view(
         .get_project(protocol.project_snapshot_id)
         .await?
         .context("experiment project does not exist")?;
-    backend.inspect(project.clone()).await?;
-    Ok(replay_experiment(&project, &protocol, &events)?)
+    let view = replay_experiment(&project, &protocol, &events)?;
+    anyhow::ensure!(
+        view.run_id == run_id,
+        "experiment journal identity does not match the request"
+    );
+    Ok((project, view))
 }
 
 pub(crate) fn read_protocol_input(path: &Path) -> anyhow::Result<ProtocolInput> {

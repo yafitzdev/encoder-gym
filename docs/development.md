@@ -100,6 +100,22 @@ test, Doctor/provenance replay, and a bounded real experiment. A new experiment
 must omit `[existing_experiment]`; that section is only for honestly adopting a
 previously completed exact run.
 
+The `synthetic-data-cli/test-fixtures` feature builds `synth-optimize-fixture`,
+a test-only composition of the ordinary CLI parser, optimization handlers,
+SQLite stores, and a deterministic implementation of `EncoderTaskBackend`.
+The production `synth` executable has no runtime fake override. The standard
+`cargo test-all` alias enables these process tests. To run them alone:
+
+```text
+cargo test -p synthetic-data-cli --features test-fixtures --test encoder_optimize_cli
+```
+
+The fixture uses the same persisted repair approval contracts as the SQLite
+tests. SQLite triggers inject failures between durable child creation and parent
+journal linking; retries must preserve child identities and backend call counts.
+No Nomos checkout, Python, model download, GPU, provider key, or paid service is
+required for this acceptance path.
+
 ## Component loop
 
 For each component:
@@ -120,6 +136,11 @@ cargo check-all
 cargo lint
 cargo test-all
 ```
+
+The Pi sidecar also runs `npm run check` from `adapters/research-agent-pi`.
+Its tracked Git attributes enforce LF for text files on every platform, including
+Windows with `core.autocrlf=true`. An existing checkout with CRLF files can run
+`npm run format` once; fresh checkouts already have the formatter's line endings.
 
 Run the CLI during development with:
 

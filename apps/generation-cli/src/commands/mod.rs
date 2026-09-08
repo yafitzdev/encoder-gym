@@ -41,6 +41,28 @@ use crate::cli::Command;
 use std::{future::Future, pin::Pin};
 use synthetic_data_sqlite::SqliteStore;
 
+pub fn execute_without_store(command: &Command) -> Option<anyhow::Result<()>> {
+    use crate::cli::{BenchmarkArchitectCommand, ProjectCommand, QualityCommand};
+    match command {
+        Command::Config { command } => config::execute_without_store(command),
+        Command::Project {
+            command: ProjectCommand::BootstrapPreview { manifest },
+        } => Some(project_bootstrap::preview(manifest)),
+        Command::Quality {
+            command: QualityCommand::PolicyPreview(args),
+        } => Some(
+            quality::compile_policy(args).and_then(|policy| crate::presentation::print(&policy)),
+        ),
+        Command::BenchmarkArchitect {
+            command: BenchmarkArchitectCommand::BriefValidate { file },
+        } => Some(
+            benchmark_architect::resolve_brief(file)
+                .and_then(|brief| crate::presentation::print(&brief)),
+        ),
+        _ => None,
+    }
+}
+
 /// Keep the aggregate command-dispatch future off the comparatively small
 /// Windows main-thread stack. Individual feature handlers remain independent,
 /// while adding a large handler cannot inflate every unrelated CLI command's
@@ -53,6 +75,9 @@ pub fn execute(
         match command {
             Command::Workspace { .. } => {
                 unreachable!("workspace commands use only their own project database")
+            }
+            Command::Database { .. } => {
+                unreachable!("database maintenance is dispatched before startup")
             }
             Command::Doctor(args) => doctor::execute(args, &store).await,
             Command::Config { command } => config::execute(command, &store).await,

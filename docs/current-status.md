@@ -1,7 +1,8 @@
 # Current project status and session handoff
 
-Updated 2026-09-07 after completing the first real repair-training optimization
-cycle and productizing it as `synth encoder optimize`.
+Updated 2026-09-08 after integrating the tracked GUI work and backend
+stabilization on `main`. The first real repair-training optimization cycle below
+is a historical record from 2026-09-07; it was not rerun during stabilization.
 
 ## What Encoder Gym can do now
 
@@ -24,7 +25,7 @@ idempotent launch, one-stage resume, approval pauses, cancellation, status,
 inspection, Doctor, provenance, and deterministic reporting. Lower-level
 repair, experiment, benchmark-generation, and campaign commands remain usable.
 
-## Real Nomos evidence
+## Recorded real Nomos evidence (2026-09-07)
 
 Repositories:
 
@@ -59,8 +60,8 @@ It failed both unchanged development contracts:
 Optimization run `2317e08b-5848-4773-9a9e-42499ee09815` therefore completed
 with `retain_baseline`. No candidate was selected, the production baseline did
 not change, and successor benchmark generation
-`10cba5de-e501-4169-a603-27f75c2abd37` remains active with zero candidate
-exposures.
+`10cba5de-e501-4169-a603-27f75c2abd37` was active with zero candidate exposures
+at the recorded handoff.
 
 Doctor passed native replay and complete campaign/journal verification. The
 optimization head is
@@ -70,20 +71,20 @@ the reproducible row-free bundle fingerprint is
 
 ## Repository state
 
-The completed experiment implementation at this historical handoff was:
+The initial production optimization implementation and real-run record are:
 
 - `598d302db81d5bc3669f0b290e6dc96c5c4ddb11` — productize finite encoder
   optimization;
 - `118b3d7a279db5b5dd74faafc84db562539aa37d` — record the proven outcome.
 
-The isolated Nomos HEAD is
-`4450ab3f1de8a1fc64bcbe5d77c67d0fb0f99af9`, its worktree is clean, and it has
-no remote. The original Nomos repository remains at
-`14e0a1667431982ee00ee07108e7d82351fa28eb` with the exact pre-existing modified
-and untracked file set recorded in `goal.md` history; it was not changed by the
-experiment.
+At the 2026-09-07 handoff, the isolated Nomos HEAD was
+`4450ab3f1de8a1fc64bcbe5d77c67d0fb0f99af9`, with a clean worktree and no remote.
+The original Nomos repository was at
+`14e0a1667431982ee00ee07108e7d82351fa28eb`; the experiment preserved its
+pre-existing changes. Those external repository states were not rechecked by
+the backend stabilization workstream.
 
-The user subsequently reopened the GUI phase. The tracked `ui/` desktop now
+The tracked `ui/` desktop now
 provides persistent independent project folders, a baseline/candidate comparison
 home, model and run details, benchmark context, and project settings. Nomos is an
 opt-in recorded example rather than startup identity. App folder metadata is
@@ -91,8 +92,10 @@ mutable; experiment evidence remains read-only. See `../ui/README.md` for launch
 verification, and the boundary between generic presentation and the existing
 adapter-specific experiment CLI. No new optimization experiment was started
 as part of this GUI phase.
+The backend stabilization findings, resolutions, verification, and CLI
+integration notes are in [`backend-stabilization.md`](backend-stabilization.md).
 
-## Verification completed
+## Verification recorded for the real experiment (2026-09-07)
 
 - `cargo fmt-check`
 - `cargo check-all`
@@ -105,8 +108,10 @@ as part of this GUI phase.
 - real `encoder optimize report`, `provenance`, and `doctor`
 - tracked-file credential scans and repository isolation checks
 
-Ordinary live-provider smoke tests remain intentionally ignored and were not
-needed. No network, paid model call, or sealed evaluation occurred.
+Ordinary live-provider smoke tests were intentionally ignored. No network,
+paid model call, or sealed evaluation occurred during that recorded experiment.
+The separate stabilization checks are listed in
+[`backend-stabilization.md`](backend-stabilization.md).
 
 ## Start the next Codex session
 
@@ -119,10 +124,12 @@ Read, in order:
 5. `docs/development.md`
 6. `docs/production-encoder-experiment-spec.md`
 7. `docs/encoder-optimize.md`
-8. `goal.md`
+8. `docs/backend-stabilization.md`
 
-Then inspect Git status in all three repositories before making changes. Use
-the next `goal.md` as the long-range Codex goal. The highest-value continuation
-is to prove a genuinely new, non-adopted optimize execution with a conservative
-training hypothesis—not to add another smart subsystem or weaken evidence
-gates.
+Inspect Git status in the checkout being used before making changes. Read the
+specification for the component being changed and follow the current user's
+task; `goal.md` may belong to the parallel GUI workstream. Deterministic process
+tests now cover new, non-adopted optimization runs and interruption recovery.
+Any further real Nomos experiment needs its own reviewed hypothesis, immutable
+training snapshot, finite budget, and manifest. Check the external repositories
+again before operating on them; the revisions above are historical evidence.

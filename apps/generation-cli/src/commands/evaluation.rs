@@ -85,7 +85,19 @@ pub async fn execute(command: EvaluationCommand, store: SqliteStore) -> anyhow::
                 store,
             )
             .await?;
-            print_json(&completed)
+            print_json(&completed)?;
+            anyhow::ensure!(
+                completed.run.state == EvaluationRunState::Completed,
+                "evaluation run {} ended {:?}: {}",
+                completed.run.id,
+                completed.run.state,
+                completed
+                    .run
+                    .error_message
+                    .as_deref()
+                    .unwrap_or("execution did not complete"),
+            );
+            Ok(())
         }
         EvaluationCommand::List {
             checkpoint_id,

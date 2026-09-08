@@ -59,6 +59,12 @@ a replacement sealed cohort. When no candidate passes every development suite,
 the run retains the baseline and leaves the sealed generation active and
 unused.
 
+The experiment runner reuses a persisted sealed authorization only for the
+same authorizer. If interrupted after saving the sealed report but before
+finalizing its decision, it finishes from that report without another backend
+evaluation. A completed sealed run is also safe to inspect through a repeated
+`experiment run-sealed` command.
+
 Other commands are:
 
 - `inspect`: immutable definition, reservations, and linked state;
@@ -71,9 +77,12 @@ Other commands are:
 - `report`: deterministic management report with hypotheses, data changes,
   checkpoints, suite results, gates, approvals, usage, and limitations.
 
-`status` is intentionally cheap. It verifies immutable storage envelopes and
-hash-chained journals without reconstructing the full native delta. `start`
-performs a full graph check, every native side-effect re-inspects the trusted
+`status` verifies immutable storage envelopes and hash-chained journals.
+Preview, launch validation, routine inspection, and reporting load persisted
+facts without opening the native backend. Reports are available before protocol
+creation and after cancellation, and their evidence limits reflect the run's
+actual results. Terminal `resume` also works without native adapter files.
+`start` performs a full graph check, every native side-effect re-inspects the trusted
 project, and `doctor` reconstructs the native evidence again.
 
 Cancellation is observed between synchronous local stages. V1 does not claim
@@ -104,6 +113,10 @@ This is a successful safety outcome, not a promotion. A future experiment must
 use a new reviewed hypothesis and immutable training snapshot; it must not
 weaken the gates or reuse this run as evidence of improvement.
 
-The verified repository and experiment handoff is in
-[`current-status.md`](current-status.md). The next bounded non-adopted
-experiment is specified in the repository's [`goal.md`](../goal.md).
+The recorded experiment handoff is in [`current-status.md`](current-status.md).
+Ordinary process coverage now exercises new non-adopted runs, child-to-parent
+interruption recovery, approval retries, cancellation, development rejection,
+sealed rejection, promotion, training failure, and reports. See
+[`development.md`](development.md) for the deterministic test composition.
+Further real experiments require their own reviewed manifest and immutable
+training snapshot.

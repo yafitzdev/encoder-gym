@@ -9,21 +9,10 @@ use synthetic_data_sqlite::SqliteStore;
 use crate::cli::{ConfigCommand, ConfigResolveArgs, ConstructionPreviewArgs, SnapshotSplitArg};
 
 pub async fn execute(command: ConfigCommand, store: &SqliteStore) -> anyhow::Result<()> {
+    if let Some(result) = execute_without_store(&command) {
+        return result;
+    }
     match command {
-        ConfigCommand::Validate { file } => {
-            load(&file)?.resolve(ProjectOverrides::default())?;
-            print_json(&serde_json::json!({
-                "valid": true,
-                "file": canonical_display(&file)?,
-            }))
-        }
-        ConfigCommand::Show(args) => {
-            let resolved = resolve(&args)?;
-            print_json(&serde_json::json!({
-                "fingerprint": resolved.fingerprint()?,
-                "resolved_configuration": resolved,
-            }))
-        }
         ConfigCommand::Init(args) => {
             let resolved = resolve(&args)?;
             let dataset = resolved.dataset_definition()?;
@@ -41,11 +30,34 @@ pub async fn execute(command: ConfigCommand, store: &SqliteStore) -> anyhow::Res
                 "resolved_configuration": resolved,
             }))
         }
-        ConfigCommand::ConstructionPreview(args) => construction_preview(args),
+        ConfigCommand::Validate { .. }
+        | ConfigCommand::Show(_)
+        | ConfigCommand::ConstructionPreview(_) => unreachable!("pure configuration handled above"),
     }
 }
 
-fn construction_preview(args: ConstructionPreviewArgs) -> anyhow::Result<()> {
+pub fn execute_without_store(command: &ConfigCommand) -> Option<anyhow::Result<()>> {
+    Some(match command {
+        ConfigCommand::Init(_) => return None,
+        ConfigCommand::Validate { file } => (|| {
+            load(file)?.resolve(ProjectOverrides::default())?;
+            print_json(&serde_json::json!({
+                "valid": true,
+                "file": canonical_display(file)?,
+            }))
+        })(),
+        ConfigCommand::Show(args) => (|| {
+            let resolved = resolve(args)?;
+            print_json(&serde_json::json!({
+                "fingerprint": resolved.fingerprint()?,
+                "resolved_configuration": resolved,
+            }))
+        })(),
+        ConfigCommand::ConstructionPreview(args) => construction_preview(args),
+    })
+}
+
+fn construction_preview(args: &ConstructionPreviewArgs) -> anyhow::Result<()> {
     let resolved = load(&args.file)?.resolve(ProjectOverrides::default())?;
     let dataset = resolved.dataset_definition()?;
     anyhow::ensure!(
@@ -54,7 +66,7 @@ fn construction_preview(args: ConstructionPreviewArgs) -> anyhow::Result<()> {
         args.label,
         dataset.labels
     );
-    let dimensions = parse_dimensions(args.dimensions)?;
+    let dimensions = parse_dimensions(args.dimensions.clone())?;
     let expected = dataset
         .dimensions
         .iter()
@@ -80,7 +92,7 @@ fn construction_preview(args: ConstructionPreviewArgs) -> anyhow::Result<()> {
     let construction = resolved.row_construction_plan()?.compile()?;
     let prepared = construction.prepare(
         GenerationCell {
-            label: args.label,
+            label: args.label.clone(),
             dimensions,
         },
         args.start_index,

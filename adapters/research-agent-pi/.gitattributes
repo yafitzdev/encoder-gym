@@ -1,0 +1,2 @@
+# Biome expects LF, including on Windows checkouts with core.autocrlf=true.
+* text=auto eol=lf

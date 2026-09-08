@@ -26,6 +26,127 @@ use encoder_experiment_runner::ExperimentRunner;
 use encoder_experiment_sqlite::SqliteExperimentStore;
 use serde_json::json;
 
+async fn development_selected_run(
+    store: &SqliteExperimentStore,
+    backend: &FakeRankingBackend,
+) -> uuid::Uuid {
+    let runner = ExperimentRunner::new(store, backend);
+    let project = runner.register_project(project(backend)).await.unwrap();
+    let candidate = TrainingCandidate::create(
+        &project,
+        1,
+        60,
+        BTreeMap::from([("loss".into(), ParameterValue::Text("triplet".into()))]),
+    )
+    .unwrap();
+    let protocol = runner
+        .prepare_protocol(
+            project.id,
+            contract(),
+            OptimizationBudget {
+                maximum_candidates: 1,
+                maximum_training_seconds: 60,
+                maximum_development_evaluations: 1,
+                maximum_sealed_evaluations: 1,
+            },
+            60,
+            "development",
+            "sealed",
+            vec![candidate],
+        )
+        .await
+        .unwrap();
+    let run = runner.create_run(protocol.id).await.unwrap();
+    let selected = runner.run_development(run.run_id).await.unwrap();
+    assert_eq!(
+        selected.state,
+        ExperimentRunState::AwaitingSealedAuthorization
+    );
+    run.run_id
+}
+
+#[tokio::test]
+async fn sealed_authorization_retries_preserve_the_original_actor_and_journal() {
+    let store = SqliteExperimentStore::connect("sqlite::memory:")
+        .await
+        .unwrap();
+    let backend = FakeRankingBackend::new();
+    let run_id = development_selected_run(&store, &backend).await;
+    let runner = ExperimentRunner::new(&store, &backend);
+    let authorized = runner
+        .authorize_sealed(run_id, "original-operator")
+        .await
+        .unwrap();
+    let repeated = runner
+        .authorize_sealed(run_id, "original-operator")
+        .await
+        .unwrap();
+    assert_eq!(authorized, repeated);
+    assert!(
+        runner
+            .authorize_sealed(run_id, "different-operator")
+            .await
+            .is_err()
+    );
+    assert_eq!(runner.status(run_id).await.unwrap(), authorized);
+    assert_eq!(
+        backend
+            .selected_candidate_sealed_calls
+            .load(Ordering::SeqCst),
+        0
+    );
+}
+
+#[tokio::test]
+async fn sealed_finalization_recovers_without_evaluating_again() {
+    let store = SqliteExperimentStore::connect("sqlite::memory:")
+        .await
+        .unwrap();
+    let backend = FakeRankingBackend::new();
+    let run_id = development_selected_run(&store, &backend).await;
+    let runner = ExperimentRunner::new(&store, &backend);
+    runner.authorize_sealed(run_id, "operator").await.unwrap();
+    sqlx::query(
+        "CREATE TRIGGER interrupt_finalization BEFORE INSERT ON encoder_experiment_events \
+         WHEN json_extract(NEW.artifact_json, '$.event.kind') = 'finalized' \
+         BEGIN SELECT RAISE(ABORT, 'injected interruption after sealed evidence'); END",
+    )
+    .execute(store.pool())
+    .await
+    .unwrap();
+    assert!(runner.run_sealed(run_id).await.is_err());
+    let interrupted = runner.status(run_id).await.unwrap();
+    assert_eq!(interrupted.state, ExperimentRunState::SealedEvaluated);
+    assert!(interrupted.sealed_report.is_some());
+    assert_eq!(
+        backend
+            .selected_candidate_sealed_calls
+            .load(Ordering::SeqCst),
+        1
+    );
+    sqlx::query("DROP TRIGGER interrupt_finalization")
+        .execute(store.pool())
+        .await
+        .unwrap();
+    let resumed = ExperimentRunner::new(&store, &backend)
+        .run_sealed(run_id)
+        .await
+        .unwrap();
+    assert_eq!(resumed.state, ExperimentRunState::Completed);
+    assert_eq!(
+        resumed.final_decision,
+        Some(FinalDecision::PromoteCandidate)
+    );
+    assert_eq!(resumed.sealed_report, interrupted.sealed_report);
+    assert_eq!(runner.run_sealed(run_id).await.unwrap(), resumed);
+    assert_eq!(
+        backend
+            .selected_candidate_sealed_calls
+            .load(Ordering::SeqCst),
+        1
+    );
+}
+
 fn digest(character: char) -> String {
     format!("sha256:{}", character.to_string().repeat(64))
 }

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use uuid::Uuid;
+#[path = "cli/workspace.rs"]
 mod workspace;
 pub use workspace::WorkspaceCommand;
 
@@ -44,6 +45,11 @@ pub enum Command {
     Workspace {
         #[command(subcommand)]
         command: WorkspaceCommand,
+    },
+    /// Explicitly initialize or upgrade one database schema.
+    Database {
+        #[command(subcommand)]
+        command: DatabaseCommand,
     },
     /// Check local database, configuration, artifacts, and optional backend connectivity.
     Doctor(DoctorArgs),
@@ -216,6 +222,21 @@ pub enum Command {
     Rows(RowsArgs),
     /// Export accepted rows.
     Export(ExportArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DatabaseCommand {
+    /// Create a missing database or apply pending migrations. Does not run recovery.
+    Migrate {
+        #[arg(long, value_enum, default_value_t = DatabaseKind::Classification)]
+        kind: DatabaseKind,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum DatabaseKind {
+    Classification,
+    Production,
 }
 
 #[derive(Debug, Subcommand)]
