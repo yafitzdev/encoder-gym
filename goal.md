@@ -1,215 +1,324 @@
-# Goal — Make Encoder Gym clear, cohesive, and genuinely usable
+# Goal — Make managed projects ready to launch real encoder optimization runs
 
-Autonomously assess, redesign where necessary, and improve the existing desktop
-GUI. Preserve the architecture and working capabilities, but take responsibility
-for the presentation, information hierarchy, navigation, language, and interaction
-quality. Deliver implemented, verified improvements—not just a design proposal.
+Implement the complete, honest desktop journey required to prepare, start,
+supervise, recover, inspect, and finish a real bounded encoder optimization run.
+Use Nomos as the first real task adapter and integration target, while keeping
+the project, artifact, evaluation, and workflow concepts generic enough for
+other encoder projects.
 
-The problem is not that the interface lacks styling. It can look good while still
-feeling confusing: too many things compete for attention, backend terminology
-obscures meaning, and users cannot tell where to look or what to do next. Optimize
-for understanding and confident use, not a more elaborate dashboard.
+This is a vertical product-integration goal, not another visual-polish pass.
+The platform already contains independently useful generation, dataset,
+training, evaluation, analysis, optimization, and controlled-workflow
+contracts. Preserve their ownership and connect them to managed projects and
+the desktop application without copying their business logic into the GUI.
 
-## Product foundations already decided
+The user must not need to copy opaque IDs, edit TOML manifests, choose SQLite
+URLs, or assemble CLI commands to run the normal workflow. The application must
+make scientific readiness, costs, authorization, progress, evidence, and the
+next safe action understandable before execution begins.
 
-Encoder Gym is a local, multi-project encoder-development application. Nomos is
-one ordinary project, not the product's identity or a universal task template.
+## Starting reality
 
-- Persistent project folders belong in the sidebar. Selecting one scopes its
-  pages, models, datasets, runs, and settings to that project.
-- New project creates a Gym-owned workspace from a local checkpoint. Open project
-  reopens an existing Gym workspace. Arbitrary source repositories are not the
-  primary onboarding model; legacy experiment folders remain explicitly distinct.
-- Gym owns imported copies and records their provenance without altering sources.
-- The project home identifies the baseline and supports inspecting candidates
-  against it. Supporting pages and deeper model/run details have distinct jobs.
-- Hugging Face onboarding remains deferred. This goal does not introduce model
-  downloads, training/evaluation launch features, or new optimization capabilities.
+Preserve the managed-workspace, local dataset-import, project-navigation, and
+real Nomos onboarding work already delivered.
 
-Managed workspace creation, local dataset import, and Nomos onboarding have
-already been implemented. Do not repeat them or replace them with mock flows.
-Improve their usability and how the application explains their actual state.
+Do not confuse custody with readiness:
 
-## Work autonomously, within scope
+- The managed Nomos workspace has a verified imported baseline and two imported
+  source files containing approximately 6,800 rows.
+- It does not yet have managed candidates, managed optimization runs, approved
+  training snapshots, managed evaluation evidence, or an explicit binding to
+  the scientific stores that own those artifacts.
+- Existing historical Nomos experiments are separate evidence. Do not silently
+  attach them to the managed project or use them to declare the project ready.
+- The current desktop application cannot yet launch the scientific workflow.
 
-Make ordinary design and implementation decisions yourself. Do not ask the user
-to approve every layout, label, hierarchy refinement, or component. Investigate,
-choose a coherent direction, implement it, and refine it after using the result.
-Briefly explain material decisions and keep the user informed as work progresses.
+Treat these as product facts to resolve or explain, not presentation details to
+hide behind optimistic status text.
 
-You may substantially change existing screens where that improves comprehension.
-Do not redesign for novelty, introduce redundant navigation, or add settings and
-features simply to fill space. Preserve useful behavior and user preferences.
+## Product model to establish
 
-Ask only when a decision requires new authority, risks user data, or materially
-changes the agreed product scope. Respect subsequent user steering. Autonomous
-design work does not authorize autonomous agents or execution inside the product.
+### Project
 
-## 1. Establish the current reality
+A project is the durable scope for developing one encoder family. It owns the
+human-readable identity, workspace custody, task adapter selection, provider
+configuration, active baseline reference, candidate history, dataset sources,
+snapshot history, evaluation policy, and optimization runs.
 
-Read AGENTS.md, docs/platform-spec.md, docs/architecture.md, docs/development.md,
-docs/managed-workspaces-spec.md, docs/managed-workspaces.md, ui/README.md, and the
-specifications relevant to any affected slice before implementation. Read
-docs/nomos-managed-onboarding.md for the real workspace's provenance and limits.
+Define an explicit project-to-scientific-store binding. Keep the managed
+`project.sqlite` custody database distinct from the scientific stores owned by
+the existing slices. Never infer a legacy database merely because it exists
+near a source repository.
 
-Inspect Git status, the current implementation, and the running application.
-Earlier screenshots and summaries are context, not proof of today's behavior.
-Record the starting commit and preserve unrelated work. Make a scoped checkpoint
-before substantial changes where needed; do not indiscriminately commit a dirty
-worktree or manufacture an empty checkpoint when the starting state is committed.
+### Model artifact
 
-Walk through first use, project creation/opening, switching projects, dataset
-import, model comparison, details, and recovery. Inspect both managed projects
-and existing legacy evidence. Identify the highest-impact points of confusion.
+A model artifact is an immutable checkpoint plus the provenance needed to
+understand and reproduce it. At minimum, record:
 
-Keep a concise audit and implementation plan in docs/gui-usability-pass.md:
-observed problems, page responsibilities, priorities, and intended improvements.
-Use it to drive implementation, not as a substitute for implementation. Separate
-observed friction and design judgments from claims of user-tested usability.
+- checkpoint identity, format, location, integrity, and compatibility status;
+- origin: imported, trained, or transformed;
+- parent model and producing run when applicable;
+- exact dataset snapshot used for training when applicable;
+- trainer/backend identity, effective configuration, tokenizer or processor
+  identity, code revision, and relevant environment facts;
+- evaluation references without embedding evaluation results into the model.
 
-## 2. Give every page a clear job
+An imported baseline may legitimately have no proven historical training
+snapshot. Represent that as unknown provenance, not a fabricated association.
 
-Make it easy to answer: Where am I? What am I looking at? What matters here?
-What can I actually do next? What should I open for more detail?
+### Baseline, candidate, and promotion
 
-- Application-level navigation owns creating, opening, finding, and switching
-  projects. Project identity must remain obvious without dominating the screen.
-- Project home owns the baseline and candidate overview. A project with no
-  candidates should explain its state and offer an available next step without
-  presenting a failed experiment or a mostly empty dashboard.
-- Model details explain one model's identity, origin, and recorded evaluation
-  evidence. Candidate comparisons use the exact applicable baseline and setup.
-- Datasets own imported data, its purpose and preparation state, and import
-  actions. Detailed lineage and verification information stay accessible nearby.
-- Runs own execution history and recorded outcomes; run details own stages,
-  configuration, failures, budgets, and provenance.
-- Benchmark/evaluation pages explain what was measured and which results can be
-  compared. Project settings own configuration and workspace management.
+Baseline and candidate are project relationships to immutable model artifacts,
+not mutable flags stored inside the artifact.
 
-Refine labels and layouts based on the actual workflows. Do not mechanically map
-backend modules onto navigation or display unsupported destinations as promises.
-Preserve context when opening details, going back, or switching projects.
+- A project has exactly one active baseline revision once it is initialized.
+- A candidate is interpreted against the exact baseline and run that produced
+  or assessed it.
+- Promotion atomically advances the project's active-baseline pointer and
+  records an immutable, auditable revision with the accepted evidence.
+- The previous baseline remains historical; do not automatically relabel it as
+  a candidate. Restoring it creates a new audited baseline revision.
+- Demotion of the active baseline is not an ordinary standalone action because
+  it would leave the project without a reference. If an administrative override
+  is needed, make it explicit, exceptional, and safe.
 
-## 3. Build a strong, restrained information hierarchy
+### Dataset, snapshot, suite, evaluation, and assessment
 
-Give each screen an unmistakable starting point and a clear primary task or
-question. Establish consistent typography, spacing, alignment, density, control
-behavior, and status language across the application.
+Keep these concepts distinct:
 
-Replace equal-weight card piles, repeated summaries, oversized empty states,
-decorative progress bars, and vague policy prose where they obscure the work.
-Prefer useful collections and concise explanations over dashboard decoration.
-Use plain language first, with precise technical detail available on demand.
+- A dataset import is a Gym-owned copy of source data with provenance.
+- A dataset snapshot is an immutable, reviewed training or evaluation cohort.
+- An evaluation suite or protocol defines how a model is measured.
+- An evaluation run applies one model to one immutable cohort under one exact
+  protocol and persists predictions, observations, metrics, and comparisons.
+- JSON or JSONL may be an import/export representation; it is not the definition
+  of an evaluation.
+- An assessment applies acceptance policy to comparable evidence and produces a
+  decision. A completed evaluation is not automatically a passing candidate.
 
-Keep model identity, meaningful comparisons, dataset summaries, and actionable
-status easy to scan. Move long paths, hashes, raw configuration, and extended
-provenance into clearly labelled details with useful copy actions. Do not hide
-important warnings or make required information discoverable only through hover.
-Color must reinforce meaning, not carry it alone.
+Nomos requires a real task adapter with composite native evidence: retrieval
+metrics such as MRR, Recall, and margin behavior, plus deterministic agent/tool
+outcome checks where the accepted Nomos contract requires them. Do not reduce
+Nomos to generic classification or impose Nomos metrics on every future project.
 
-Explain domain distinctions at the moment they matter, without repeating a
-compliance essay on every page. In particular:
+## 1. Write the integration design before broad implementation
 
-- Importing a checkpoint does not prove trainer compatibility or readiness.
-- Importing a dataset does not create an approved training snapshot.
-- No evidence, a zero score, a failed evaluation, and a rejected candidate are
-  different states. Completing a run does not imply accepting its candidate.
-- A positive metric delta alone does not establish an accepted improvement.
+Read the required platform, architecture, development, slice, managed-workspace,
+controlled-workflow, and Nomos documents. Inspect the current domain objects,
+stores, CLI commands, Electron boundary, fixtures, and the real managed Nomos
+workspace in read-only mode.
 
-Keep comparison groups faithful to model, benchmark, metric, and policy identity.
-Do not impose Nomos retrieval metrics on every encoder project.
+Create and maintain `docs/managed-optimization-integration.md` as the concise
+implementation contract. It must document:
 
-## 4. Make complete interactions feel reliable
+- the cross-slice object and provenance map;
+- which existing slice owns every fact and transition;
+- project-to-store binding and migration behavior;
+- model catalog, active baseline, candidate, and promotion semantics;
+- readiness requirements and how each is derived;
+- desktop-to-workflow IPC and process lifecycle;
+- credential, authorization, budget, and sealed-evidence handling;
+- failure, cancellation, restart, resume, and idempotency behavior;
+- the final page responsibilities and end-to-end user journey.
 
-Improve the full journey, not just each screen in isolation. Forms and dialogs
-must make required inputs, validation, consequences, progress, and completion
-clear. Users should always know whether an operation is still working, succeeded,
-failed, or needs input.
+Resolve contradictions in existing docs explicitly. Do not use the design
+document to invent a second workflow beside `synth encoder optimize`.
 
-Every control must work or explain its unavailability. Prevent duplicate
-submissions and stale async results from affecting a different project. Preserve
-safe user input on recoverable failures. Provide concise actionable errors, with
-raw diagnostic details separate from the main message.
+## 2. Make a managed project scientifically ready
 
-Exercise empty, populated, loading, long-running, partial, unsupported, missing,
-and failed states. Verify focus order and restoration, keyboard activation,
-dialog scrolling, visible actions, readable contrast, long names and paths,
-supported themes, and practical desktop window sizes including narrow layouts.
-Do not require a maximized window to complete onboarding or import a dataset.
+Add a persisted, derived readiness model for a managed project. It must explain
+what is ready, what is missing, what is stale, and what the user can do about it.
+At minimum, establish or verify:
 
-Removing a project from the library must remain distinct from deleting files.
-Opening, refreshing, browsing, and verifying existing evidence must not silently
-modify scientific artifacts or start execution.
+- active baseline identity, integrity, and backend compatibility;
+- task adapter and source/code revision;
+- imported data qualification versus mere custody;
+- reviewed and approved training snapshot;
+- development and sealed evaluation suites or benchmark generation;
+- contamination and membership constraints;
+- finite candidates, iterations, external calls, and sealed-exposure budgets;
+- required human reviews, approvals, and staleness rules;
+- configured providers and the availability—not the value—of required secrets;
+- recoverable scientific-store and workflow state.
 
-## 5. Preserve architecture, facts, and custody
+Every missing requirement shown in the application must have a real action or a
+plain explanation. Do not provide bypass buttons that fabricate readiness.
+Readiness must be recomputed from persisted facts and the currently selected
+baseline revision, not cached presentation state.
 
-Keep Electron main, typed IPC/preload, renderer, adapters, persistence, and domain
-logic separate. Reuse the established components and contracts. Small supporting
-read-model or IPC changes are in scope when necessary for correct existing GUI
-behavior; new scientific workflows or backend frameworks are not.
+Use the established successor-authority rules. A revealed or exhausted sealed
+generation, stale proposal, or superseded baseline must not be reusable merely
+because its records still exist.
 
-Derive metrics and state from persisted facts. Preserve immutable identities,
-source custody, finite budgets, explicit approvals, and sealed-evidence isolation.
-Do not expose raw dataset rows or sealed diagnostics through this usability pass.
-Keep permitted archival summaries separate from development feedback.
+## 3. Add safe provider and credential setup
 
-Never fabricate candidates, results, readiness, recommendations, integrity checks,
-or success to make a screen look complete. Keep live managed data, legacy
-recordings, and test fixtures distinguishable. Do not attach historical Nomos
-runs to its new managed identity without an explicitly defined import contract.
+Support separate credentials for separate authorities:
 
-Use temporary fixtures for writes during testing. The real managed Nomos project
-at C:\Users\yanfi\EncoderGym\Projects\Nomos is available for opt-in read-only
-verification. Do not alter its artifacts or the source checkout at
-C:\Users\yanfi\PycharmProjects\fitz-tool. Do not duplicate its onboarding.
+- a data-generation provider key;
+- an advisor or agentic-work provider key;
+- an evaluator key only if the selected evaluator requires one.
 
-Do not start training, evaluation, external calls, paid services, or downloads.
-Do not add cloud deployment, authentication, multi-user collaboration, distributed
-execution, or autonomous optimization. Explain missing capabilities honestly
-instead of disguising them with frontend simulations.
+Persist non-secret provider choices, model names, endpoints, and bounded default
+settings. Never persist raw keys in project manifests, SQLite, logs, renderer
+state, reports, fixtures, screenshots, or Git.
 
-## 6. Implement, verify, and commit in coherent stages
+Prefer the operating system's credential facility for desktop-managed secrets,
+with documented environment-variable fallback compatible with the existing
+`SYNTH_OPENAI_API_KEY`, `SYNTH_ADVISOR_API_KEY`, and evaluator selection.
+The renderer may submit or replace a secret and show whether it is available,
+but it must never read the secret back.
 
-Prioritize the highest-impact usability problems and deliver a bounded, cohesive
-pass. Improve shared hierarchy and interaction patterns, then apply them to the
-key journeys, then use the actual renderer to find and fix remaining friction.
-Do not stop after changing CSS or producing an audit.
+Ordinary readiness checks must not make paid or external calls. If a live
+provider probe is useful, make it an explicit user action and clearly describe
+its network and possible cost implications.
 
-Follow AGENTS.md validation requirements for implementation stages: cargo
-fmt-check, cargo check-all, cargo lint, and cargo test-all, alongside the UI's
-checks, build, and relevant tests. Use deterministic offline fixtures; ordinary
-tests must not depend on Nomos, credentials, downloads, a GPU, or external APIs.
+## 4. Launch the real bounded optimization workflow
 
-Exercise actual Electron interactions and restart persistence, not just mocked
-render output. Add focused regression coverage for changed behavior. Review
-before/after screenshots of representative states, including dialogs and narrow
-windows; inspect them visually and iterate. Do not weaken evidence assertions
-or bless confusing behavior merely to make tests pass.
+Expose the existing controlled workflow through a typed, fixed application
+boundary. The renderer must never supply arbitrary commands, executable paths,
+SQL, or shell fragments. The main process or a dedicated adapter owns process
+creation, argument construction, validation, redaction, lifecycle, and recovery.
 
-Commit coherent, verified stages with clear messages. Update user-facing docs to
-match the delivered behavior. Record the rationale and verification evidence in
-docs/gui-usability-pass.md, keeping generated QA artifacts out of source control
-unless the repository's conventions explicitly call for them.
+From a managed project, the user must be able to:
+
+1. Select **Start optimization** and see the exact baseline, hypothesis,
+   snapshot, development suites, sealed suite, candidate space, finite budgets,
+   providers, and missing requirements.
+2. Complete real missing prerequisites through their owning slice.
+3. Preview the immutable run definition and its expected external-call limits.
+4. Explicitly authorize external work within those limits and start exactly one
+   run without entering IDs or using a terminal.
+5. Observe stage progress, persisted transitions, elapsed work, consumed and
+   remaining budgets, safe logs, and redacted diagnostics.
+6. Cancel where the underlying stage supports cancellation, resume recoverable
+   work, and recover the truthful state after closing or restarting the app.
+7. Authorize sealed evaluation only when a selected candidate is eligible.
+8. Inspect the terminal outcome and all artifact, snapshot, evaluation,
+   analysis, and decision provenance.
+9. Promote a valid accepted result and immediately see the new active baseline
+   revision throughout the project.
+
+Represent synchronous or non-preemptible backend stages honestly. Never show a
+fake cancel, fake percentage, or fake success. Prevent duplicate starts, stale
+renderer updates, cross-project event leakage, and re-use of expired authority.
+
+## 5. Present the domain without duplicate pages
+
+Choose and implement the final navigation based on user questions, not backend
+crate names. Merge or remove destinations whose responsibilities duplicate
+another page. At minimum:
+
+- **Models** answers: What is the active baseline? What model artifacts exist?
+  Which candidates are comparable to it? What evidence supports promotion?
+- **Data** answers: What sources are in custody? Which immutable snapshots exist?
+  Which are reviewed, approved, or used by which model/run?
+- **Runs** answers: What is running or finished? What stage is it in? What did it
+  consume and produce? What action is safe now?
+- **Evaluation** answers: What suites exist? Which exact model/snapshot/protocol
+  combinations were measured? Are comparisons valid and what did policy decide?
+- **Project settings** owns task adapter, store binding, providers, secret
+  availability, budget defaults, workspace location, and integrity diagnostics.
+
+Do not show dataset inventory as filler on the Models page. For Nomos today, the
+truthful model state is **one baseline, no candidates**. The primary action should
+be **Start optimization** or a precise readiness action explaining why it cannot
+start yet.
+
+Model and evaluation detail views must make immutable identities and provenance
+inspectable without leading with hashes and database terminology.
+
+## 6. Preserve compatibility, evidence, and safety
+
+Use versioned, crash-safe migrations. Existing managed projects must reopen
+without recreation. Legacy experiments remain separate unless a later explicit
+evidence-import contract validates and imports them.
+
+Preserve:
+
+- immutable source snapshots and derived artifacts;
+- append-only decisions and baseline-revision history;
+- deterministic acceptance and comparison compatibility;
+- external-call, candidate, iteration, and sealed-exposure budgets;
+- sealed-evidence isolation from generation, training, adaptive analysis, and
+  advisor components;
+- slice ownership and replaceable ports.
+
+Do not add cloud deployment, authentication, multi-user collaboration,
+distributed workers, arbitrary-code execution, autonomous agents, bandits,
+reinforcement learning, semantic deduplication, or Hugging Face onboarding
+unless a later specification explicitly authorizes it.
+
+## 7. Verify with fixtures first and Nomos safely
+
+Build deterministic offline fixtures that exercise the whole vertical path:
+
+- managed-project migration and scientific-store binding;
+- model import, integrity, catalog, and single-baseline invariants;
+- dataset import through reviewed immutable snapshot;
+- suite/protocol creation and evaluation persistence;
+- optimization preview and start;
+- development rejection without sealed exposure;
+- eligible candidate, sealed rejection, and accepted promotion paths;
+- atomic active-baseline revision and historical evidence;
+- provider failure, stage failure, cancellation, restart, resume, and duplicate
+  event/start idempotency;
+- cross-project and stale-baseline isolation;
+- credential redaction through logs, errors, IPC, reports, and screenshots;
+- at least two generic project types without Nomos assumptions;
+- actual Electron interaction for the critical journey.
+
+Use the real managed Nomos project only for read-only inspection and an explicit
+preflight that performs no training, external calls, sealed evaluation, spending,
+or scientific mutation. Do not start a paid or destructive real run without the
+user's explicit authorization after showing the final preview. Completion should
+leave Nomos in the state where the user can confidently press **Start**.
+
+## 8. Implement and commit in coherent stages
+
+Follow the repository's required dependency direction:
+
+1. domain objects and pure invariants;
+2. persistence, migrations, and adapters;
+3. CLI compatibility and orchestration integration;
+4. typed IPC/main-process lifecycle;
+5. renderer journeys and presentation.
+
+For every coherent component, run the required `cargo fmt-check`,
+`cargo check-all`, `cargo lint`, and `cargo test-all` checks, plus the UI
+checks, build, focused tests, and real-renderer verification appropriate to the
+change. Most tests must be deterministic and require no credentials, downloads,
+GPU, external API, or paid service.
+
+Commit each coherent working stage with a clear message. Preserve unrelated
+changes and record important decisions and verification evidence in the
+integration document.
 
 ## Done means
 
-- A new user can distinguish New from Open, create or reopen a managed project,
-  understand its baseline and dataset state, and identify a real next action.
-- At least two generic projects can be switched and reopened after restart
-  without mixed evidence, stale state, lost identity, or dependence on Nomos.
-- Local dataset import is understandable from selection through preview,
-  confirmation, progress, result, and recovery; custody is not confused with
-  training readiness.
-- Populated model comparisons and model/run details have distinct purposes,
-  explain recorded outcomes accurately, and preserve navigation context.
-- Empty and error states are useful; primary actions remain reachable; key
-  journeys work with keyboard input and supported window sizes/themes.
-- The real Nomos workspace remains intact and displays correctly in read-only
-  verification. Architecture and evidence boundaries remain intact.
-- The selected pass's high-impact usability issues are resolved, relevant
-  checks pass, actual-renderer QA is complete, and working stages are committed.
+- Opening any managed project shows a truthful readiness result with actionable
+  prerequisites and no conflation of imported data with runnable data.
+- The user can configure separate generation and advisor credentials without
+  exposing or committing them.
+- The user can prepare or select a reviewed snapshot, evaluation suites,
+  hypothesis, providers, and finite budgets through the desktop application.
+- The user can preview and start a real Nomos optimization run without copying
+  IDs, editing TOML, choosing databases, or using the CLI.
+- The app truthfully survives restart, prevents duplicate execution, enforces
+  authorization and budgets, and exposes recoverable failure information.
+- Model artifacts remain immutable and link to their producing run and training
+  snapshot; evaluations remain separate, comparable evidence.
+- Exactly one active project baseline exists, and valid promotion advances it
+  atomically with an auditable revision.
+- The Models page no longer treats imported datasets as model content or implies
+  that candidates exist when they do not.
+- Deterministic end-to-end coverage proves rejection, sealed isolation,
+  acceptance, promotion, recovery, redaction, and multi-project isolation.
+- The real Nomos workspace is unchanged by verification, and its final preflight
+  states exactly what will run, call externally, cost or consume, and persist.
+- Documentation and committed stages match the delivered behavior, and no
+  product or integration blocker remains between the user and a supported run.
 
-Finish with a concise account of what became easier, the important design
-decisions, how to launch the app, verification results, commit references, and
-any genuine limitations. Distinguish unimplemented backend capabilities from
-unfinished GUI work. Do not claim completion based on visual polish alone.
+Do not claim success because a Start button exists or a mock run animates. The
+goal is complete only when that button launches the real bounded workflow using
+persisted, reviewable scientific artifacts and the user can understand what will
+happen before authorizing it.
