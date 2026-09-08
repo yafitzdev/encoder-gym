@@ -26,7 +26,6 @@ fn external_quality_audit_runs_through_a_loopback_openai_compatible_process() {
     listener
         .set_nonblocking(true)
         .expect("nonblocking provider listener");
-    let provider = thread::spawn(move || serve_one_quality_response(listener));
 
     let directory = tempfile::tempdir().expect("temporary directory");
     let database = directory.path().join("loopback-quality-cli.db");
@@ -82,6 +81,9 @@ fn external_quality_audit_runs_through_a_loopback_openai_compatible_process() {
         ],
     );
     let run_id = string_at(&audit, "/audit_run/id");
+    // Start the provider deadline only after the independent CLI setup. A busy
+    // workstation must not exhaust the connection window while creating data.
+    let provider = thread::spawn(move || serve_one_quality_response(listener));
     let outcome = run_json(
         &database_url,
         [
@@ -92,7 +94,11 @@ fn external_quality_audit_runs_through_a_loopback_openai_compatible_process() {
             "_ENCODER_GYM_TEST_MISSING_QUALITY_API_KEY",
         ],
     );
-    assert_eq!(outcome["run"]["state"], "completed");
+    provider
+        .join()
+        .expect("loopback provider thread")
+        .unwrap_or_else(|error| panic!("loopback provider response: {error}; audit: {outcome}"));
+    assert_eq!(outcome["run"]["state"], "completed", "audit: {outcome}");
     assert_eq!(outcome["run"]["progress"]["assessed_rows"], 2);
     assert_eq!(outcome["report"]["row_count"], 2);
     assert!(outcome["report"].get("rows").is_none());
@@ -103,10 +109,6 @@ fn external_quality_audit_runs_through_a_loopback_openai_compatible_process() {
             .len(),
         2
     );
-    provider
-        .join()
-        .expect("loopback provider thread")
-        .expect("loopback provider response");
 }
 
 #[test]
@@ -119,7 +121,6 @@ fn assessment_less_invalid_report_rows_can_be_explicitly_included_or_excluded() 
     listener
         .set_nonblocking(true)
         .expect("nonblocking provider listener");
-    let provider = thread::spawn(move || serve_invalid_quality_responses(listener));
 
     let directory = tempfile::tempdir().expect("temporary directory");
     let database = directory.path().join("invalid-quality-row-review.db");
@@ -178,6 +179,7 @@ fn assessment_less_invalid_report_rows_can_be_explicitly_included_or_excluded() 
         ],
     );
     let run_id = string_at(&audit, "/audit_run/id");
+    let provider = thread::spawn(move || serve_invalid_quality_responses(listener));
     let outcome = run_json(
         &database_url,
         [

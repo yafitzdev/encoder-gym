@@ -9,6 +9,15 @@ publish = false
 name = "synth"
 path = "src/main.rs"
 
+[features]
+test-fixtures = []
+
+[[bin]]
+name = "synth-optimize-fixture"
+path = "tests/fixtures/encoder_optimize_driver.rs"
+required-features = ["test-fixtures"]
+test = false
+
 [dependencies]
 anyhow.workspace = true
 advisor-fake.workspace = true

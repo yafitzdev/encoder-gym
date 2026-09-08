@@ -204,6 +204,25 @@ async fn load_verified_view(
     store: &SqliteExperimentStore,
     backend: &NomosBackend,
 ) -> anyhow::Result<ExperimentView> {
+    let (project, view) = load_persisted_context(run_id, store).await?;
+    backend.inspect(project).await?;
+    Ok(view)
+}
+
+pub(crate) async fn load_persisted_view(
+    run_id: uuid::Uuid,
+    store: &SqliteExperimentStore,
+) -> anyhow::Result<ExperimentView> {
+    Ok(load_persisted_context(run_id, store).await?.1)
+}
+
+async fn load_persisted_context(
+    run_id: uuid::Uuid,
+    store: &SqliteExperimentStore,
+) -> anyhow::Result<(
+    encoder_experiment_core::domain::ExternalProjectSnapshot,
+    ExperimentView,
+)> {
     let events = store.load_events(run_id).await?;
     let first = events
         .first()
@@ -216,8 +235,12 @@ async fn load_verified_view(
         .get_project(protocol.project_snapshot_id)
         .await?
         .context("experiment project does not exist")?;
-    backend.inspect(project.clone()).await?;
-    Ok(replay_experiment(&project, &protocol, &events)?)
+    let view = replay_experiment(&project, &protocol, &events)?;
+    anyhow::ensure!(
+        view.run_id == run_id,
+        "experiment journal identity does not match the request"
+    );
+    Ok((project, view))
 }
 
 pub(crate) fn read_protocol_input(path: &Path) -> anyhow::Result<ProtocolInput> {

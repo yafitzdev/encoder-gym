@@ -442,7 +442,7 @@ pub(crate) struct CampaignContext {
 
 pub(crate) async fn campaign_provenance(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
+    backend: &impl EncoderTaskBackend,
     campaign_id: Uuid,
 ) -> anyhow::Result<serde_json::Value> {
     let context = load_campaign_context(store, backend, campaign_id).await?;
@@ -606,7 +606,7 @@ pub(crate) async fn campaign_provenance(
 
 pub(crate) async fn load_campaign_context(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
+    backend: &impl EncoderTaskBackend,
     campaign_id: Uuid,
 ) -> anyhow::Result<CampaignContext> {
     let campaign = store

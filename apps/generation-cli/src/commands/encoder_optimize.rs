@@ -1,3 +1,5 @@
+mod report;
+
 use std::{fs, path::Path};
 
 use anyhow::Context;
@@ -15,17 +17,14 @@ use encoder_campaign_core::{
 };
 use encoder_experiment_core::{
     domain::{OptimizationBudget, TrainingCandidate},
-    journal::{ExperimentEventKind, ExperimentRunState},
+    journal::ExperimentRunState,
     ports::{EncoderTaskBackend, ExperimentStore},
     protocol::{DevelopmentSelectionRule, ExperimentProtocol},
 };
 use encoder_experiment_nomos::NomosBackend;
 use encoder_experiment_runner::ExperimentRunner;
 use encoder_experiment_sqlite::SqliteExperimentStore;
-use encoder_repair_core::{
-    ports::{NativeRepairTrainingStore, RepairEvidenceStore},
-    proposal::RepairProposal,
-};
+use encoder_repair_core::{ports::NativeRepairTrainingStore, proposal::RepairProposal};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -37,11 +36,11 @@ use crate::{
         EncoderOptimizeManifestArgs, EncoderOptimizeRunArgs, NomosWorkspaceArgs,
     },
     commands::{
-        experiment::ensure_database_belongs_to_workspace,
+        experiment::{ensure_database_belongs_to_workspace, load_persisted_view},
         production_campaign::{
             CampaignContext, campaign_provenance, finalize_campaign_iteration, load_generation,
         },
-        production_repair::load_approved_delta_context,
+        production_repair::{load_approved_delta_context, load_approved_delta_facts},
     },
     presentation,
 };
@@ -112,42 +111,62 @@ struct LaunchContext {
 }
 
 pub async fn execute(command: EncoderOptimizeCommand, database_url: &str) -> anyhow::Result<()> {
-    let backend_args = backend_args(&command);
-    ensure_database_belongs_to_workspace(database_url, &backend_args.workspace)?;
+    let args = backend_args(&command);
+    ensure_database_belongs_to_workspace(database_url, &args.workspace)?;
+    let workspace = args.workspace.clone();
+    let python = args.python.clone();
     let store = command.database_access().production(database_url).await?;
-    let backend = NomosBackend::open(&backend_args.workspace, backend_args.python.clone())?;
-
     match command {
-        EncoderOptimizeCommand::Preview(args) => preview(&store, &backend, args).await,
-        EncoderOptimizeCommand::Start(args) => start(&store, &backend, args).await,
-        EncoderOptimizeCommand::Status(args) => status(&store, &backend, args).await,
-        EncoderOptimizeCommand::Inspect(args) => inspect(&store, &backend, args).await,
-        EncoderOptimizeCommand::ReviewRepair(args) => {
-            review_facts(&store, &backend, args, false).await
+        EncoderOptimizeCommand::Doctor(args) => {
+            let backend = NomosBackend::open(&workspace, python)?;
+            doctor(&store, &backend, args).await
         }
-        EncoderOptimizeCommand::ReviewDelta(args) => {
-            review_facts(&store, &backend, args, true).await
+        command => {
+            execute_lifecycle(command, &store, || {
+                NomosBackend::open(&workspace, python).map_err(Into::into)
+            })
+            .await
         }
-        EncoderOptimizeCommand::Resume(args) => resume(&store, &backend, args).await,
-        EncoderOptimizeCommand::AuthorizeExternal(args) => {
-            authorize_external(&store, &backend, args).await
-        }
+    }
+}
+
+/// The compiled composition root supplies a task adapter only for native stages.
+/// Passive commands and launch validation consume the same persisted slice contracts.
+pub(crate) async fn execute_lifecycle<B: EncoderTaskBackend>(
+    command: EncoderOptimizeCommand,
+    store: &SqliteExperimentStore,
+    backend_factory: impl FnOnce() -> anyhow::Result<B>,
+) -> anyhow::Result<()> {
+    match command {
+        EncoderOptimizeCommand::Preview(args) => preview(store, args).await,
+        EncoderOptimizeCommand::Start(args) => start(store, args).await,
+        EncoderOptimizeCommand::Status(args) => status(store, args).await,
+        EncoderOptimizeCommand::Inspect(args) => inspect(store, args).await,
+        EncoderOptimizeCommand::ReviewRepair(args) => review_facts(store, args, false).await,
+        EncoderOptimizeCommand::ReviewDelta(args) => review_facts(store, args, true).await,
+        EncoderOptimizeCommand::Resume(args) => resume(store, backend_factory, args).await,
+        EncoderOptimizeCommand::AuthorizeExternal(args) => authorize_external(store, args).await,
         EncoderOptimizeCommand::AuthorizeSealed(args) => {
-            authorize_sealed(&store, &backend, args).await
+            let backend = backend_factory()?;
+            authorize_sealed(store, &backend, args).await
         }
-        EncoderOptimizeCommand::Cancel(args) => cancel(&store, &backend, args).await,
-        EncoderOptimizeCommand::Doctor(args) => doctor(&store, &backend, args).await,
-        EncoderOptimizeCommand::Provenance(args) => provenance(&store, &backend, args).await,
-        EncoderOptimizeCommand::Report(args) => report(&store, &backend, args).await,
+        EncoderOptimizeCommand::Cancel(args) => cancel(store, args).await,
+        EncoderOptimizeCommand::Provenance(args) => {
+            let backend = backend_factory()?;
+            provenance(store, &backend, args).await
+        }
+        EncoderOptimizeCommand::Report(args) => report::execute(store, args).await,
+        EncoderOptimizeCommand::Doctor(_) => {
+            anyhow::bail!("native Doctor is handled by the adapter composition root")
+        }
     }
 }
 
 async fn preview(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
     args: EncoderOptimizeManifestArgs,
 ) -> anyhow::Result<()> {
-    let resolved = resolve_manifest(store, backend, &args.manifest).await?;
+    let resolved = resolve_manifest(store, &args.manifest).await?;
     presentation::print(&serde_json::json!({
         "persisted": false,
         "external_calls": 0,
@@ -177,7 +196,6 @@ async fn preview(
 
 async fn start(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
     args: EncoderOptimizeManifestArgs,
 ) -> anyhow::Result<()> {
     let manifest = read_manifest(&args.manifest)?;
@@ -187,10 +205,10 @@ async fn start(
         .find_optimization_by_manifest(manifest_fingerprint)
         .await?
     {
-        let context = load_launch(store, backend, run.id).await?;
-        return print_current_status(store, backend, &context, true).await;
+        let context = load_launch(store, run.id).await?;
+        return print_current_status(store, &context, true).await;
     }
-    let resolved = resolve_manifest(store, backend, &args.manifest).await?;
+    let resolved = resolve_manifest(store, &args.manifest).await?;
     if let Some((definition, run)) = store
         .find_optimization_by_manifest(resolved.manifest_fingerprint.clone())
         .await?
@@ -198,8 +216,8 @@ async fn start(
         if definition.specification_fingerprint != resolved.definition.specification_fingerprint {
             anyhow::bail!("manifest identity already belongs to a different resolved optimization");
         }
-        let context = load_launch(store, backend, run.id).await?;
-        return print_current_status(store, backend, &context, true).await;
+        let context = load_launch(store, run.id).await?;
+        return print_current_status(store, &context, true).await;
     }
     let now = Utc::now();
     let run = ProductionOptimizationRun::create_with_reservations(
@@ -213,26 +231,21 @@ async fn start(
     store
         .create_optimization(resolved.definition, run.clone(), first)
         .await?;
-    let context = load_launch(store, backend, run.id).await?;
-    print_current_status(store, backend, &context, false).await
+    let context = load_launch(store, run.id).await?;
+    print_current_status(store, &context, false).await
 }
 
-async fn status(
-    store: &SqliteExperimentStore,
-    backend: &NomosBackend,
-    args: EncoderOptimizeRunArgs,
-) -> anyhow::Result<()> {
-    let context = load_launch(store, backend, args.run_id).await?;
-    print_current_status(store, backend, &context, true).await
+async fn status(store: &SqliteExperimentStore, args: EncoderOptimizeRunArgs) -> anyhow::Result<()> {
+    let context = load_launch(store, args.run_id).await?;
+    print_current_status(store, &context, true).await
 }
 
 async fn inspect(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
     args: EncoderOptimizeRunArgs,
 ) -> anyhow::Result<()> {
-    let context = load_launch(store, backend, args.run_id).await?;
-    let campaign = load_optional_campaign(store, backend, &context).await?;
+    let context = load_launch(store, args.run_id).await?;
+    let campaign = load_optional_campaign(store, &context).await?;
     presentation::print(&serde_json::json!({
         "definition": context.definition,
         "run": context.run,
@@ -245,17 +258,15 @@ async fn inspect(
 
 async fn review_facts(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
     args: EncoderOptimizeRunArgs,
     delta: bool,
 ) -> anyhow::Result<()> {
-    let context = load_launch(store, backend, args.run_id).await?;
+    let context = load_launch(store, args.run_id).await?;
     let snapshot = store
         .get_native_repair_training_snapshot(context.definition.training_snapshot.id)
         .await?
         .context("optimization training snapshot does not exist")?;
-    let approved =
-        load_approved_delta_context(store, backend, snapshot.selection.id, false).await?;
+    let approved = load_approved_delta_facts(store, snapshot.selection.id).await?;
     let value = if delta {
         serde_json::json!({
             "boundary": "native_delta_review",
@@ -281,24 +292,21 @@ async fn review_facts(
     presentation::print(&value)
 }
 
-async fn resume(
+async fn resume<B: EncoderTaskBackend>(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
+    backend_factory: impl FnOnce() -> anyhow::Result<B>,
     args: EncoderOptimizeRunArgs,
 ) -> anyhow::Result<()> {
-    let context = load_launch(store, backend, args.run_id).await?;
+    let context = load_launch(store, args.run_id).await?;
     if context.view.state != OptimizationRunState::Planned
         && context.view.state != OptimizationRunState::CampaignActive
     {
-        return print_current_status(store, backend, &context, true).await;
+        return print_current_status(store, &context, true).await;
     }
-    let runner = ExperimentRunner::new(store, backend);
-
     if context.view.state == OptimizationRunState::Planned {
-        attach_campaign(store, backend, &context).await?;
+        attach_campaign(store, &context).await?;
         return status(
             store,
-            backend,
             EncoderOptimizeRunArgs {
                 run_id: args.run_id,
                 backend: args.backend,
@@ -307,8 +315,7 @@ async fn resume(
         .await;
     }
 
-    let campaign =
-        load_optimization_campaign(store, backend, context.run.reserved_campaign_id).await?;
+    let campaign = load_optimization_campaign(store, context.run.reserved_campaign_id).await?;
     match campaign.view.state {
         CampaignState::AwaitingGeneration => {
             ensure_generation_current(store, &context.definition).await?;
@@ -322,6 +329,8 @@ async fn resume(
         }
         CampaignState::ReadyToPrepare => {
             ensure_generation_current(store, &context.definition).await?;
+            let backend = backend_factory()?;
+            let runner = ExperimentRunner::new(store, &backend);
             let protocol = runner
                 .prepare_multi_protocol_identified(
                     context.run.reserved_protocol_id,
@@ -340,6 +349,8 @@ async fn resume(
         }
         CampaignState::ReadyToStart => {
             ensure_generation_current(store, &context.definition).await?;
+            let backend = backend_factory()?;
+            let runner = ExperimentRunner::new(store, &backend);
             let experiment = runner
                 .create_run_identified(
                     context.run.reserved_protocol_id,
@@ -364,7 +375,8 @@ async fn resume(
             ) {
                 current
             } else {
-                runner
+                let backend = backend_factory()?;
+                ExperimentRunner::new(store, &backend)
                     .run_development(context.run.reserved_experiment_run_id)
                     .await?
             };
@@ -391,7 +403,8 @@ async fn resume(
             let experiment = match campaign.experiment.as_ref() {
                 Some(value) if value.state == ExperimentRunState::Completed => value.clone(),
                 _ => {
-                    runner
+                    let backend = backend_factory()?;
+                    ExperimentRunner::new(store, &backend)
                         .run_sealed(context.run.reserved_experiment_run_id)
                         .await?
                 }
@@ -426,7 +439,6 @@ async fn resume(
     }
     status(
         store,
-        backend,
         EncoderOptimizeRunArgs {
             run_id: args.run_id,
             backend: args.backend,
@@ -437,16 +449,18 @@ async fn resume(
 
 async fn authorize_sealed(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
+    backend: &impl EncoderTaskBackend,
     args: EncoderOptimizeAuthorizeArgs,
 ) -> anyhow::Result<()> {
-    let context = load_launch(store, backend, args.run_id).await?;
+    let context = load_launch(store, args.run_id).await?;
     if context.view.state != OptimizationRunState::CampaignActive {
         anyhow::bail!("optimization is not active");
     }
-    let campaign =
-        load_optimization_campaign(store, backend, context.run.reserved_campaign_id).await?;
-    if campaign.view.state != CampaignState::AwaitingSealedAuthorization {
+    let campaign = load_optimization_campaign(store, context.run.reserved_campaign_id).await?;
+    if !matches!(
+        campaign.view.state,
+        CampaignState::AwaitingSealedAuthorization | CampaignState::SealedAuthorized
+    ) {
         anyhow::bail!("optimization is not waiting for sealed-use authorization");
     }
     ensure_generation_current(store, &context.definition).await?;
@@ -454,6 +468,9 @@ async fn authorize_sealed(
     let experiment = runner
         .authorize_sealed(context.run.reserved_experiment_run_id, &args.authorized_by)
         .await?;
+    if campaign.view.state == CampaignState::SealedAuthorized {
+        return print_current_status(store, &context, true).await;
+    }
     let event = record_sealed_authorization_event(
         &campaign.campaign,
         &campaign.view,
@@ -462,22 +479,20 @@ async fn authorize_sealed(
         Utc::now(),
     )?;
     store.append_campaign_event(&event).await?;
-    let updated = load_launch(store, backend, args.run_id).await?;
-    print_current_status(store, backend, &updated, true).await
+    let updated = load_launch(store, args.run_id).await?;
+    print_current_status(store, &updated, true).await
 }
 
 async fn authorize_external(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
     args: EncoderOptimizeAuthorizeArgs,
 ) -> anyhow::Result<()> {
-    let context = load_launch(store, backend, args.run_id).await?;
+    let context = load_launch(store, args.run_id).await?;
     let snapshot = store
         .get_native_repair_training_snapshot(context.definition.training_snapshot.id)
         .await?
         .context("optimization training snapshot does not exist")?;
-    let approved =
-        load_approved_delta_context(store, backend, snapshot.selection.id, false).await?;
+    let approved = load_approved_delta_facts(store, snapshot.selection.id).await?;
     if approved.proposal.budget.maximum_external_calls == 0 {
         return presentation::print(&serde_json::json!({
             "run_id": context.run.id,
@@ -496,15 +511,14 @@ async fn authorize_external(
 
 async fn cancel(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
     args: EncoderOptimizeCancelArgs,
 ) -> anyhow::Result<()> {
-    let context = load_launch(store, backend, args.run_id).await?;
+    let context = load_launch(store, args.run_id).await?;
     if !matches!(
         context.view.state,
         OptimizationRunState::Planned | OptimizationRunState::CampaignActive
     ) {
-        return print_current_status(store, backend, &context, true).await;
+        return print_current_status(store, &context, true).await;
     }
     let event = context.view.next_event(
         &context.run,
@@ -514,8 +528,8 @@ async fn cancel(
         Utc::now(),
     )?;
     store.append_optimization_event(event).await?;
-    let updated = load_launch(store, backend, args.run_id).await?;
-    print_current_status(store, backend, &updated, true).await
+    let updated = load_launch(store, args.run_id).await?;
+    print_current_status(store, &updated, true).await
 }
 
 async fn doctor(
@@ -523,7 +537,7 @@ async fn doctor(
     backend: &NomosBackend,
     args: EncoderOptimizeRunArgs,
 ) -> anyhow::Result<()> {
-    let context = load_launch(store, backend, args.run_id).await?;
+    let context = load_launch(store, args.run_id).await?;
     let snapshot = store
         .get_native_repair_training_snapshot(context.definition.training_snapshot.id)
         .await?
@@ -563,10 +577,10 @@ async fn doctor(
 
 async fn provenance(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
+    backend: &impl EncoderTaskBackend,
     args: EncoderOptimizeRunArgs,
 ) -> anyhow::Result<()> {
-    let context = load_launch(store, backend, args.run_id).await?;
+    let context = load_launch(store, args.run_id).await?;
     let campaign = if store
         .get_campaign(context.run.reserved_campaign_id)
         .await?
@@ -589,196 +603,8 @@ async fn provenance(
     }))
 }
 
-async fn report(
-    store: &SqliteExperimentStore,
-    backend: &NomosBackend,
-    args: EncoderOptimizeRunArgs,
-) -> anyhow::Result<()> {
-    let context = load_launch(store, backend, args.run_id).await?;
-    let campaign = load_optional_campaign(store, backend, &context).await?;
-    let experiment = campaign
-        .as_ref()
-        .and_then(|value| value.experiment.as_ref());
-    let project = store
-        .get_project(context.definition.project.id)
-        .await?
-        .context("optimization project does not exist")?;
-    let protocol = store
-        .get_protocol(context.run.reserved_protocol_id)
-        .await?
-        .context("optimization experiment protocol does not exist")?;
-    let snapshot = store
-        .get_native_repair_training_snapshot(context.definition.training_snapshot.id)
-        .await?
-        .context("optimization training snapshot does not exist")?;
-    let approved =
-        load_approved_delta_context(store, backend, snapshot.selection.id, false).await?;
-    let diagnosis = store
-        .get_diagnosis(approved.proposal.context.diagnosis.id)
-        .await?
-        .context("optimization repair diagnosis does not exist")?;
-    let experiment_events = store
-        .load_events(context.run.reserved_experiment_run_id)
-        .await?;
-    let campaign_events = store
-        .list_campaign_events(context.run.reserved_campaign_id)
-        .await?;
-    let optimization_events = store.list_optimization_events(context.run.id).await?;
-    let baseline_by_suite = protocol
-        .baseline_development_reports()
-        .into_iter()
-        .map(|value| (value.suite_key.as_str(), value))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let candidate_results = experiment
-        .map(|value| {
-            value
-                .candidates
-                .iter()
-                .map(|(id, execution)| {
-                    let development = execution
-                        .development_assessments
-                        .iter()
-                        .map(|(suite, assessment)| {
-                            let baseline = baseline_by_suite
-                                .get(suite.as_str())
-                                .expect("deep replay requires a baseline development suite");
-                            let candidate = execution
-                                .development_reports
-                                .get(suite)
-                                .expect("deep replay requires a candidate development report");
-                            serde_json::json!({
-                                "suite": suite,
-                                "baseline_report_id": baseline.id,
-                                "baseline_metrics": baseline.metrics,
-                                "candidate_report_id": candidate.id,
-                                "candidate_metrics": candidate.metrics,
-                                "assessment_id": assessment.id,
-                                "verdict": assessment.verdict,
-                                "primary_improvement": assessment.primary_improvement,
-                                "failed_gates": assessment.gates.iter().filter(|gate| !gate.passed).collect::<Vec<_>>(),
-                            })
-                        })
-                        .collect::<Vec<_>>();
-                    serde_json::json!({
-                        "candidate_id": id,
-                        "state": execution.state,
-                        "checkpoint": execution.train_output.as_ref().map(|output| serde_json::json!({
-                            "key": output.model.key,
-                            "format": output.model.format,
-                            "bytes": output.model.bytes,
-                            "fingerprint": output.model.fingerprint,
-                            "training_duration_seconds": output.duration_seconds,
-                            "metadata": output.metadata,
-                        })),
-                        "development_suites": development,
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let training_seconds = experiment
-        .map(|value| {
-            value
-                .candidates
-                .values()
-                .filter_map(|candidate| candidate.train_output.as_ref())
-                .map(|output| output.duration_seconds)
-                .sum::<u64>()
-        })
-        .unwrap_or_default();
-    let candidate_failures = experiment_events
-        .iter()
-        .filter(|event| matches!(event.event, ExperimentEventKind::CandidateFailed { .. }))
-        .count();
-    let adopted = campaign_events.iter().any(|event| {
-        matches!(
-            event.event,
-            encoder_campaign_core::CampaignEventKind::RunAdopted { .. }
-        )
-    });
-    let sealed_used = experiment.is_some_and(|value| value.sealed_report.is_some());
-    let development_evaluations = experiment
-        .map(|value| {
-            value
-                .candidates
-                .values()
-                .map(|candidate| candidate.development_reports.len())
-                .sum::<usize>()
-        })
-        .unwrap_or_default();
-    presentation::print(&serde_json::json!({
-        "schema_version": 1,
-        "run_id": context.run.id,
-        "name": context.definition.name,
-        "state": context.view.state,
-        "decision": context.view.decision.or_else(|| experiment.and_then(|value| value.final_decision)),
-        "production_baseline_changed": false,
-        "project": {
-            "id": project.id,
-            "revision": project.source_revision,
-            "fingerprint": project.fingerprint,
-            "baseline_model": project.baseline_model,
-        },
-        "diagnosis": {
-            "id": diagnosis.id,
-            "fingerprint": diagnosis.fingerprint,
-            "weaknesses": diagnosis.weaknesses,
-            "source_campaign_id": diagnosis.source_campaign_id,
-            "source_experiment_run_id": diagnosis.source_experiment_run_id,
-        },
-        "approved_repair": {
-            "proposal_id": approved.proposal.id,
-            "proposal_fingerprint": approved.proposal.fingerprint,
-            "targets": approved.proposal.targets,
-            "actions": approved.proposal.actions,
-            "candidate_hypotheses": approved.proposal.candidates,
-            "proposal_application": approved.selection.application,
-            "delta_approval": approved.approval,
-            "delta_selection_id": approved.selection.id,
-            "delta_selection_fingerprint": approved.selection.fingerprint,
-        },
-        "training_data_change": {
-            "snapshot_id": snapshot.id,
-            "snapshot_fingerprint": snapshot.fingerprint,
-            "base_rows": snapshot.base_rows,
-            "delta_rows": snapshot.delta_rows,
-            "total_rows": snapshot.total_rows,
-            "combined_membership_fingerprint": snapshot.combined_membership_fingerprint,
-            "inputs": snapshot.inputs,
-        },
-        "selected_candidate_id": experiment.and_then(|value| value.selected_candidate_id),
-        "sealed_evidence": {
-            "used": sealed_used,
-            "candidate_exposures": usize::from(sealed_used),
-            "generation_id": context.definition.benchmark.generation_id,
-            "generation_state": campaign.as_ref().and_then(|value| value.generation.as_ref()).map(|value| value.1.state),
-            "authorization": experiment.and_then(|value| value.sealed_authorized_by.as_deref()),
-        },
-        "candidate_results": candidate_results,
-        "budget_and_recovery": {
-            "maximum": context.definition.campaign_budget,
-            "observed_training_seconds": training_seconds,
-            "observed_development_evaluations": development_evaluations,
-            "observed_sealed_evaluations": usize::from(sealed_used),
-            "candidate_failure_events": candidate_failures,
-            "adopted_previously_proven_run": adopted,
-            "optimization_event_count": optimization_events.len(),
-            "campaign_event_count": campaign_events.len(),
-            "experiment_event_count": experiment_events.len(),
-        },
-        "known_evidence_limits": [
-            "One deliberately small candidate and one training seed were tested; this is not a hyperparameter search.",
-            "The candidate failed development gates, so sealed acceptance evidence correctly remains unused.",
-            "The negative result does not establish which different data recipe or training configuration would avoid the observed generic and retired regressions.",
-        ],
-        "next_command": next_command(&context, campaign.as_ref()),
-        "provenance_head": context.view.last_event_fingerprint,
-    }))
-}
-
 async fn resolve_manifest(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
     path: &Path,
 ) -> anyhow::Result<ResolvedLaunch> {
     let manifest = read_manifest(path)?;
@@ -799,8 +625,7 @@ async fn resolve_manifest(
     {
         anyhow::bail!("optimization manifest training snapshot binding changed");
     }
-    let approved =
-        load_approved_delta_context(store, backend, snapshot.selection.id, false).await?;
+    let approved = load_approved_delta_facts(store, snapshot.selection.id).await?;
     snapshot.validate_against(
         &approved.project,
         &approved.proposal,
@@ -814,9 +639,8 @@ async fn resolve_manifest(
         anyhow::bail!("optimization manifest project revision differs from the immutable project");
     }
 
-    let source_view = ExperimentRunner::new(store, backend)
-        .status(approved.proposal.context.source_experiment_run_id)
-        .await?;
+    let source_view =
+        load_persisted_view(approved.proposal.context.source_experiment_run_id, store).await?;
     let source_protocol = store
         .get_protocol(source_view.protocol_id)
         .await?
@@ -881,9 +705,7 @@ async fn resolve_manifest(
                 .await?
                 .context("manifest adoption protocol does not exist")?;
             protocol.validate_integrity(&approved.project)?;
-            let view = ExperimentRunner::new(store, backend)
-                .status(existing.run_id)
-                .await?;
+            let view = load_persisted_view(existing.run_id, store).await?;
             if protocol.fingerprint != existing.protocol_fingerprint
                 || view.protocol_id != protocol.id
                 || view.last_event_fingerprint != existing.run_head_fingerprint
@@ -946,7 +768,6 @@ async fn resolve_manifest(
 
 async fn attach_campaign(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
     context: &LaunchContext,
 ) -> anyhow::Result<()> {
     ensure_generation_current(store, &context.definition).await?;
@@ -971,7 +792,7 @@ async fn attach_campaign(
             expected
         }
     };
-    let mut campaign_context = load_optimization_campaign(store, backend, campaign.id).await?;
+    let mut campaign_context = load_optimization_campaign(store, campaign.id).await?;
     if campaign_context.view.state == CampaignState::AwaitingGeneration {
         let event = bind_generation_event(
             &campaign_context.campaign,
@@ -980,7 +801,7 @@ async fn attach_campaign(
             Utc::now(),
         )?;
         store.append_campaign_event(&event).await?;
-        campaign_context = load_optimization_campaign(store, backend, campaign.id).await?;
+        campaign_context = load_optimization_campaign(store, campaign.id).await?;
     }
     let event = context.view.next_event(
         &context.run,
@@ -993,11 +814,7 @@ async fn attach_campaign(
     Ok(())
 }
 
-async fn load_launch(
-    store: &SqliteExperimentStore,
-    _backend: &NomosBackend,
-    run_id: Uuid,
-) -> anyhow::Result<LaunchContext> {
+async fn load_launch(store: &SqliteExperimentStore, run_id: Uuid) -> anyhow::Result<LaunchContext> {
     let (definition, run) = store
         .get_optimization_run(run_id)
         .await?
@@ -1025,7 +842,6 @@ async fn load_launch(
 /// inspection belongs to side-effecting runner stages and to `doctor`, not to every status poll.
 async fn load_optimization_campaign(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
     campaign_id: Uuid,
 ) -> anyhow::Result<CampaignContext> {
     let campaign = store
@@ -1052,7 +868,7 @@ async fn load_optimization_campaign(
         None => None,
     };
     let experiment = match view.run_id {
-        Some(run_id) => Some(ExperimentRunner::new(store, backend).status(run_id).await?),
+        Some(run_id) => Some(load_persisted_view(run_id, store).await?),
         None => None,
     };
     Ok(CampaignContext {
@@ -1065,7 +881,6 @@ async fn load_optimization_campaign(
 
 async fn load_optional_campaign(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
     context: &LaunchContext,
 ) -> anyhow::Result<Option<crate::commands::production_campaign::CampaignContext>> {
     if store
@@ -1073,8 +888,7 @@ async fn load_optional_campaign(
         .await?
         .is_some()
     {
-        let campaign =
-            load_optimization_campaign(store, backend, context.run.reserved_campaign_id).await?;
+        let campaign = load_optimization_campaign(store, context.run.reserved_campaign_id).await?;
         if context
             .view
             .campaign_fingerprint
@@ -1271,11 +1085,10 @@ fn canonical_fingerprint(value: &str) -> bool {
 
 async fn print_current_status(
     store: &SqliteExperimentStore,
-    backend: &NomosBackend,
     context: &LaunchContext,
     existing: bool,
 ) -> anyhow::Result<()> {
-    let campaign = load_optional_campaign(store, backend, context).await?;
+    let campaign = load_optional_campaign(store, context).await?;
     print_status(context, existing, campaign.as_ref())
 }
 
@@ -1382,7 +1195,7 @@ fn next_command(
     }
 }
 
-fn backend_args(command: &EncoderOptimizeCommand) -> &NomosWorkspaceArgs {
+pub(crate) fn backend_args(command: &EncoderOptimizeCommand) -> &NomosWorkspaceArgs {
     match command {
         EncoderOptimizeCommand::Preview(args) | EncoderOptimizeCommand::Start(args) => {
             &args.backend

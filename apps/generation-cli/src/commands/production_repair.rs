@@ -1,3 +1,6 @@
+mod approved;
+pub(crate) use approved::{ApprovedDeltaContext, load_approved_delta_facts};
+
 use std::collections::BTreeMap;
 
 use anyhow::Context;
@@ -529,79 +532,23 @@ async fn delta_select(
     presentation::print(&selection)
 }
 
-pub(crate) struct ApprovedDeltaContext {
-    pub(crate) project: encoder_experiment_core::domain::ExternalProjectSnapshot,
-    pub(crate) proposal: RepairProposal,
-    pub(crate) candidate_set: NativeDeltaCandidateSet,
-    pub(crate) report: NativeDeltaQualityReport,
-    pub(crate) approval: NativeDeltaReview,
-    pub(crate) approval_predecessor: Option<NativeDeltaReview>,
-    pub(crate) selection: ApprovedNativeDeltaSelection,
-}
-
 pub(crate) async fn load_approved_delta_context(
     store: &SqliteExperimentStore,
     backend: &NomosBackend,
     selection_id: Uuid,
     require_native_replay: bool,
 ) -> anyhow::Result<ApprovedDeltaContext> {
-    let selection = store
-        .get_native_delta_selection(selection_id)
-        .await?
-        .with_context(|| format!("native repair delta selection {selection_id} does not exist"))?;
-    let proposal =
-        load_verified_proposal(store, backend, selection.proposal.id, require_native_replay)
-            .await?;
-    let project = store
-        .get_project(proposal.context.execution_project.id)
-        .await?
-        .context("repair execution project does not exist")?;
-    proposal.context.execution_project.verify(&project)?;
-    let candidate_set = store
-        .get_native_delta_candidate_set(selection.candidate_set.id)
-        .await?
-        .context("native repair delta candidate set does not exist")?;
-    let report = store
-        .get_native_delta_report(selection.report.id)
-        .await?
-        .context("native repair delta report does not exist")?;
-    let reviews = store.list_native_delta_reviews(report.id).await?;
-    let approval_index = reviews
-        .iter()
-        .position(|value| value.id == selection.approval.id)
-        .context("native repair delta selection approval does not exist")?;
-    if approval_index + 1 != reviews.len() {
-        anyhow::bail!("native repair delta selection does not bind the frozen latest review");
-    }
-    let approval = reviews[approval_index].clone();
-    let approval_predecessor = approval_index
-        .checked_sub(1)
-        .and_then(|index| reviews.get(index))
-        .cloned();
-    selection.validate_against(
-        &proposal,
-        &candidate_set,
-        &report,
-        &approval,
-        approval_predecessor.as_ref(),
-    )?;
+    let context = load_approved_delta_facts(store, selection_id).await?;
     if require_native_replay {
-        let rebuilt = build_delta_candidate(store, backend, &proposal).await?;
-        if rebuilt.evidence_fingerprint != candidate_set.evidence_fingerprint
-            || rebuilt.delta_artifact != candidate_set.delta_artifact
+        load_verified_proposal(store, backend, context.proposal.id, true).await?;
+        let rebuilt = build_delta_candidate(store, backend, &context.proposal).await?;
+        if rebuilt.evidence_fingerprint != context.candidate_set.evidence_fingerprint
+            || rebuilt.delta_artifact != context.candidate_set.delta_artifact
         {
             anyhow::bail!("native repair delta no longer reproduces its selected evidence");
         }
     }
-    Ok(ApprovedDeltaContext {
-        project,
-        proposal,
-        candidate_set,
-        report,
-        approval,
-        approval_predecessor,
-        selection,
-    })
+    Ok(context)
 }
 
 async fn training_snapshot_build(
@@ -897,28 +844,30 @@ async fn load_verified_proposal(
     proposal_id: Uuid,
     require_current: bool,
 ) -> anyhow::Result<RepairProposal> {
-    let proposal = store
-        .get_proposal(proposal_id)
-        .await?
-        .with_context(|| format!("production repair proposal {proposal_id} does not exist"))?;
-    let diagnosis = store
-        .get_diagnosis(proposal.context.diagnosis.id)
-        .await?
-        .context("repair proposal diagnosis does not exist")?;
-    let source = store
-        .get_project(proposal.context.source_project.id)
-        .await?
-        .context("repair source project does not exist")?;
-    proposal.context.source_project.verify(&source)?;
+    let proposal = approved::load_frozen_proposal(store, proposal_id).await?;
     if require_current {
-        let execution = register_current_project(store, backend).await?;
+        let diagnosis = store
+            .get_diagnosis(proposal.context.diagnosis.id)
+            .await?
+            .context("repair proposal diagnosis does not exist")?;
+        let source = store
+            .get_project(proposal.context.source_project.id)
+            .await?
+            .context("repair source project does not exist")?;
+        let current = backend.project_snapshot()?;
+        backend.inspect(current.clone()).await?;
+        let execution = store
+            .find_project_by_source_fingerprint(current.source_fingerprint)
+            .await?
+            .context(
+                "current project does not match a registered immutable repair execution project",
+            )?;
+        backend.inspect(execution.clone()).await?;
         proposal.context.execution_project.verify(&execution)?;
         let benchmark =
             load_current_benchmark_binding(store, proposal.context.benchmark.generation_id).await?;
         let context = RepairContext::create(&diagnosis, &source, &execution, benchmark)?;
         proposal.validate_against(&diagnosis, &context, Utc::now())?;
-    } else {
-        proposal.validate_integrity(&diagnosis)?;
     }
     Ok(proposal)
 }
