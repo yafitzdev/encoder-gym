@@ -23,10 +23,11 @@ identity or a live connection.
   checks, configuration, model identity, and links to its run attempts.
 - Runs: chronological experiment records. Run detail owns the hypothesis,
   candidates, training inputs, progress, finite usage, and provenance.
-- Benchmarks: the development evaluation setups used in these records. Explain
+- Evaluation: the development evaluation setups used in these records. Explain
   which comparisons are meaningful and keep final acceptance separate.
-- Project: workspace, data source, recorded baseline artifacts, and source
-  revision. A reading guide explains baseline, candidate, run, and checks.
+- Project settings: workspace, scientific binding, provider setup, recorded
+  baseline artifacts, and source revision. A reading guide explains baseline,
+  candidate, run, and checks.
 
 Switching projects isolates navigation, filters, selections, and asynchronous
 responses. Only the active project's pages expand below its sidebar folder.
@@ -70,3 +71,11 @@ Verify the actual renderer at desktop and narrow widths, keyboard navigation,
 both themes, and evidence isolation. Verify presentation logic with focused tests
 for matching authority, incomplete evidence, recovered identities, and deltas.
 Run the repository's required checks before committing each coherent stage.
+
+For a managed project, **Start optimization** opens a dedicated preparation
+route. Readiness comes from `synth workspace readiness`; the renderer does not
+infer it from imported-file counts. The renderer can submit only fixed typed
+intents. A reviewed TOML definition is selected through the native picker and
+represented in the renderer by a process-local token, never its filesystem
+path. Reserving a run persists no training result and makes no provider call.
+Resume advances at most one durable backend stage.

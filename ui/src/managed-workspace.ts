@@ -14,6 +14,9 @@ export interface ManagedWorkspace {
   folder: string; verified: boolean;
   manifest: { version: 1; id: string; name: string; createdAt: string; task: string | null; baseline: LocalModel };
   datasets: DatasetImport[];
+  modelCatalog?: ModelCatalog;
+  scientificBinding?: ScientificBinding;
+  providerCatalog?: ProviderCatalog;
 }
 export interface ModelChoice { token: string; model: LocalModel }
 export interface FolderChoice { token: string; path: string }
@@ -21,3 +24,36 @@ export interface DatasetChoice {
   token: string; source: string; artifact: FileIdentity; rows: number; partitions: Record<string, number>; purpose: DatasetPurpose;
 }
 export interface CreateProjectRequest { modelToken: string; parentToken: string; folderName: string; name: string; task: string }
+
+export interface BoundIdentity { id: string; fingerprint: string }
+export interface ModelArtifact {
+  id: string; projectId: string; name: string; createdAt: string; origin: "imported" | "trained" | "transformed";
+  path: string; format: string; bytes: number; fingerprint: string; parentModelId?: string;
+  producingRun?: BoundIdentity; trainingSnapshot?: BoundIdentity; trainer?: BoundIdentity;
+  effectiveConfigurationFingerprint?: string; tokenizerFingerprint?: string; sourceRevision?: string;
+}
+export interface BaselineRevision {
+  id: string; projectId: string; sequence: number; modelArtifactId: string; previousRevisionId?: string;
+  change: { kind: "initialization"; source_fingerprint: string } | { kind: "promotion"; decision_id: string; decision_fingerprint: string } | { kind: "restoration"; target_revision_id: string };
+  actor: string; reason: string; createdAt: string; fingerprint: string;
+}
+export interface ModelCatalog { projectId: string; artifacts: ModelArtifact[]; baselineRevisions: BaselineRevision[]; activeBaselineRevisionId: string }
+
+export interface ScientificBinding {
+  id: string; projectId: string; baselineRevisionId: string; previousBindingId?: string;
+  adapter: { key: string; protocol: string; configurationFingerprint: string };
+  runtime: { kind: "managed" | "external-isolated"; location: string; executable?: string; projectSnapshot: BoundIdentity };
+  store: { databasePath: string; schema: BoundIdentity };
+  actor: string; reason: string; createdAt: string; specificationFingerprint: string; fingerprint: string;
+}
+
+export type ProviderRole = "generation" | "advisor" | "evaluator";
+export interface ProviderConfiguration {
+  role: ProviderRole; kind: "fake" | "openai-compatible"; endpoint?: string; model: string;
+  authentication: "none" | "bearer"; secret?: { id: string; environmentFallback?: string };
+  limits: { maximumRequests: number; maximumInputTokens: number; maximumOutputTokens: number; maximumCostMicrousd: number };
+}
+export interface ProviderCatalog {
+  id: string; projectId: string; sequence: number; previousRevisionId?: string; providers: ProviderConfiguration[];
+  actor: string; reason: string; createdAt: string; fingerprint: string;
+}

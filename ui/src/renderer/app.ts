@@ -1,4 +1,5 @@
 import type { WorkspaceSnapshot } from "../workspace.js";
+import type { ManagedOptimizationResult, ManagedRunStatus } from "../managed-control.js";
 import { ProjectSelection, type OpenedProject, type ProjectCollection } from "../projects.js";
 import type { Actions, Location, Page, ProjectActions } from "./actions.js";
 import { candidateName, candidateRows, dateLabel, initialFilter, metricInfo, runName, setupId } from "./catalog.js";
@@ -12,10 +13,11 @@ import { renderProjectSettings, renderProjectState, renderWelcome } from "./proj
 import { previewBridge } from "./preview-bridge.js";
 import { newProjectDialog, importDatasetDialog } from "./onboarding.js";
 import { renderDatasets, renderManagedSettings } from "./managed-pages.js";
+import { renderOptimization, type OptimizationPageActions, type OptimizationPageState } from "./optimization-page.js";
 
 const element = (id: string): HTMLElement => { const found = document.getElementById(id); if (!found) throw new Error("Missing #" + id); return found; };
-interface ProjectView { history: NavigationHistory; models: ModelPageState; details: Map<string, DetailState> }
-const newView = (): ProjectView => ({ history: new NavigationHistory(), models: { filter: initialFilter(), selected: new Set(), suiteIndex: 0 }, details: new Map() });
+interface ProjectView { history: NavigationHistory; models: ModelPageState; details: Map<string, DetailState>; optimization: OptimizationPageState }
+const newView = (): ProjectView => ({ history: new NavigationHistory(), models: { filter: initialFilter(), selected: new Set(), suiteIndex: 0 }, details: new Map(), optimization: { loading: false } });
 
 export function mount(): void {
   const bridge = window.encoderGym ?? previewBridge();
@@ -29,6 +31,10 @@ export function mount(): void {
   const workspace = (): WorkspaceSnapshot | undefined => opened?.content.state === "ready" ? { ...opened.content.workspace, name: opened.project.name } : undefined;
   const notify = (message: string) => { const toast = element("toast"); toast.textContent = message; toast.hidden = false; clearTimeout(timer); timer = setTimeout(() => { toast.hidden = true; }, 6000); };
   const message = (error: unknown) => error instanceof Error ? error.message : String(error);
+  const runStatus = (value: ManagedOptimizationResult): ManagedRunStatus => {
+    if (!value || typeof value !== "object" || typeof (value as Partial<ManagedRunStatus>).run_id !== "string" || typeof (value as Partial<ManagedRunStatus>).state !== "string") throw new Error("The optimizer returned an unreadable run status.");
+    return value as ManagedRunStatus;
+  };
   const updateSidebar = () => element("sidebar-menu").setAttribute("aria-expanded", String(window.innerWidth <= 600 ? shell.classList.contains("mobile-sidebar-open") : !shell.classList.contains("sidebar-collapsed")));
   const focusHeading = () => main.querySelector<HTMLElement>("h1")?.focus({ preventScroll: true });
   const contentFocus = () => main.contains(document.activeElement) ? (document.activeElement as HTMLElement)?.id : undefined;
@@ -167,6 +173,60 @@ export function mount(): void {
     rename: () => projectDialog(false), forget: () => projectDialog(true),
     relocate: () => { const id = selection.selectedId; if (id) void changeCollection(() => bridge.relocateProject(id)); },
   };
+  async function refreshOptimization(): Promise<void> {
+    const id = selection.selectedId;
+    if (!id || !workspace()?.managed || view.optimization.loading) return;
+    const state = view.optimization; state.loading = true; state.error = undefined; render();
+    try {
+      state.readiness = await bridge.managedReadiness(id, state.manifest?.token);
+      if (state.manifest) state.manifest = { ...state.manifest, readiness: state.readiness };
+    } catch (error) { state.error = message(error); }
+    finally { state.loading = false; if (selection.selectedId === id) render(); }
+  }
+  async function chooseOptimizationManifest(): Promise<void> {
+    const id = selection.selectedId;
+    if (!id || view.optimization.loading) return;
+    const state = view.optimization; state.loading = true; state.error = undefined; render();
+    try {
+      const selected = await bridge.chooseOptimizationManifest(id);
+      if (selected && selection.selectedId === id) { state.manifest = selected; state.readiness = selected.readiness; state.run = undefined; }
+    } catch (error) { state.error = message(error); }
+    finally { state.loading = false; if (selection.selectedId === id) render(); }
+  }
+  async function optimize(request: Parameters<typeof bridge.managedOptimize>[1]): Promise<void> {
+    const id = selection.selectedId;
+    if (!id || view.optimization.loading) return;
+    const state = view.optimization; state.loading = true; state.error = undefined; render();
+    try { state.run = runStatus(await bridge.managedOptimize(id, request)); }
+    catch (error) { state.error = message(error); }
+    finally { state.loading = false; if (selection.selectedId === id) render(); }
+  }
+  const optimizationActions: OptimizationPageActions = {
+    refresh: () => { void refreshOptimization(); },
+    chooseManifest: () => { void chooseOptimizationManifest(); },
+    start: () => {
+      const existing = view.optimization.manifest?.readiness.launchPreview?.existingRun;
+      if (existing) void optimize({ action: "status", runId: existing.runId });
+      else if (view.optimization.manifest) void optimize({ action: "start", manifestToken: view.optimization.manifest.token });
+    },
+    resume: () => { const id = view.optimization.run?.run_id; if (id) void optimize({ action: "resume", runId: id }); },
+    authorizeSealed: () => { const id = view.optimization.run?.run_id; if (id) void optimize({ action: "authorize-sealed", runId: id }); },
+    cancel: () => {
+      const id = view.optimization.run?.run_id;
+      if (!id) return;
+      const reason = window.prompt("Why are you cancelling this run? The reason is persisted in its audit history.");
+      if (reason?.trim()) void optimize({ action: "cancel", runId: id, reason: reason.trim() });
+    },
+    openSettings: () => navigate({ page: "project" }), openData: () => navigate({ page: "datasets" }),
+    upgrade: () => {
+      const id = selection.selectedId; if (!id || view.optimization.loading) return;
+      view.optimization.loading = true; view.optimization.error = undefined; render();
+      void bridge.upgradeManagedProject(id).then(result => {
+        if (selection.selectedId !== id) return;
+        opened = result; view.optimization.loading = false; void refreshOptimization();
+      }, error => { if (selection.selectedId === id) { view.optimization.loading = false; view.optimization.error = message(error); render(); } });
+    },
+  };
   const actions: Actions = {
     navigate, render, help, notify, connect: projects.addFolder,
     backTo: page => { if (view.history.returnTo(page, main.scrollTop)) { render(); restorePlace(); } else navigate({ page }); },
@@ -176,12 +236,13 @@ export function mount(): void {
       if (!rows.length || rows.length > 3 || rows.some(row => setupId(row.run) !== setupId(rows[0]!.run))) { notify("Select 1–3 candidates from the same evaluation setup."); return; }
       navigate({ page: "compare", candidateIds: rows.map(row => row.candidate.id) });
     },
+    prepareOptimization: () => { navigate({ page: "optimization" }); if (!view.optimization.readiness) void refreshOptimization(); },
   };
-  const pages: [Page, string, string][] = [["models", "Models", "models"], ["datasets", "Datasets", "dataset"], ["runs", "Runs", "runs"], ["benchmarks", "Benchmarks", "benchmark"], ["project", "Project settings", "settings"]];
+  const pages: [Page, string, string][] = [["models", "Models", "models"], ["datasets", "Data", "dataset"], ["runs", "Runs", "runs"], ["benchmarks", "Evaluation", "benchmark"], ["project", "Project settings", "settings"]];
   function render(): void {
     const current = view.history.current, data = workspace();
     const project = collection.projects.find(p => p.id === selection.selectedId);
-    const activePage = ["candidate", "baseline", "compare"].includes(current.page) ? "models" : current.page === "run" ? "runs" : current.page;
+    const activePage = ["candidate", "baseline", "compare"].includes(current.page) ? "models" : ["run", "optimization"].includes(current.page) ? "runs" : current.page;
     const focus = document.activeElement, focusId = focus?.id;
     const caret = focus instanceof HTMLInputElement && ["text", "search"].includes(focus.type) ? [focus.selectionStart, focus.selectionEnd] : undefined;
     const scroll = main.scrollTop;
@@ -195,7 +256,7 @@ export function mount(): void {
     const run = data?.runs.find(r => r.id === current.id);
     const title = !project ? "Projects" : current.page === "candidate" ? candidate ? candidateName(candidate) : "Candidate not found" :
       current.page === "run" ? run ? runName(run) : "Run not found" :
-      pages.find(p => p[0] === current.page)?.[1] ?? (current.page === "baseline" ? "Baseline" : "Compare models");
+      pages.find(p => p[0] === current.page)?.[1] ?? (current.page === "baseline" ? "Baseline" : current.page === "optimization" ? "Start optimization" : "Compare models");
     element("breadcrumb").textContent = project ? project.name + " / " + title : "Encoder Gym";
     document.title = title + " · Encoder Gym";
     element("source-state").replaceChildren(...(project ? [button(loading ? "Reading…" : opened?.content.state === "error" ? "Evidence unavailable" : data?.managed ? "Managed workspace" : data?.source === "recorded" ? "Recorded example" : data ? "Legacy journals" : "No records yet", () => navigate({ page: "project" }), "source-button"),
@@ -214,6 +275,7 @@ export function mount(): void {
       if (current.id) view.details.set(detailKey, detail);
       if (current.page === "models") content = renderModels(data, view.models, actions);
       else if (current.page === "datasets" && data.managed) content = renderDatasets(data.managed, actions, projects);
+      else if (current.page === "optimization" && data.managed) content = renderOptimization(data.managed, view.optimization, optimizationActions);
       else if (current.page === "candidate") content = renderCandidate(data, current.id ?? "", current.tab ?? "results", detail, actions, current.runId);
       else if (current.page === "run") content = renderRun(data, current.id ?? "", current.tab ?? "overview", actions);
       else if (current.page === "runs") content = renderRuns(data, actions);

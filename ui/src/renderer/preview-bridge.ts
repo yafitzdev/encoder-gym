@@ -9,6 +9,7 @@ export function previewBridge(): EncoderGymBridge {
   return {
     openManagedProject: unavailable, chooseLocalModel: unavailable, chooseProjectParent: unavailable, createManagedProject: unavailable,
     chooseDataset: unavailable, importDataset: unavailable, verifyManagedProject: unavailable,
+    upgradeManagedProject: unavailable, managedReadiness: unavailable, chooseOptimizationManifest: unavailable, managedOptimize: unavailable,
     getProjects: async () => structuredClone(collection),
     addProjectFolder: unavailable, relocateProject: unavailable, renameProject: unavailable,
     openExample: async () => {

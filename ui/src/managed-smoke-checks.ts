@@ -79,7 +79,12 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   const firstId = await create("Routing encoder", one);
   await check("new project shows its baseline without fabricated runs or candidates", "document.querySelector('.baseline-name').textContent.includes('Routing encoder') && document.querySelectorAll('[data-candidate-id]').length === 0 && document.getElementById('source-state').textContent.includes('Managed workspace')");
   await screenshot("managed-baseline");
-  await check("new project explains actual desktop availability", "document.querySelector('.availability-note').textContent.includes('not available in this desktop') && document.querySelector('.next-step').textContent.includes('Open datasets')");
+  await check("Models leads to the real optimization journey without dataset filler", "document.querySelector('.next-step').textContent.includes('Prepare the first bounded run') && [...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Start optimization') && !document.querySelector('.candidate-empty').textContent.includes('imported dataset')");
+  await textButton("Start optimization"); await until("document.querySelector('.launch-summary') && document.querySelectorAll('.readiness-row').length > 0");
+  await check("readiness distinguishes ready foundations from missing scientific authority", "document.querySelector('.readiness-list').textContent.includes('Connect the scientific runtime') && document.querySelector('.readiness-list > details').textContent.includes('foundations are ready') && document.querySelector('.readiness-list').textContent.includes('Choose the reviewed run definition')");
+  await check("readiness exposes no managed paths as editable command input", "!document.querySelector('.optimization-page input') && !document.querySelector('.optimization-page').textContent.includes('project.sqlite')");
+  await screenshot("managed-readiness");
+  await nav("models");
   await nav("runs");
   await check("managed runs do not promise automatic CLI history import", "document.querySelector('.empty-state').textContent.includes('linking their CLI history') && document.querySelector('.empty-state').textContent.includes('not available')");
   await nav("benchmarks");
@@ -173,7 +178,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await textButton("Rename project"); await type("project-name-input", longName); await textButton("Save name"); await until("!document.querySelector('#project-dialog[open]')");
   for (const width of [760, 390]) {
     await screenshot("managed-long-name-" + width, width, 700);
-    await check("long names and workspace paths remain readable at " + width, "document.querySelector('.project-info h2').textContent.length > 100 && document.getElementById('page').scrollWidth <= document.getElementById('page').clientWidth + 1 && document.documentElement.scrollWidth <= innerWidth");
+    await check("long names and workspace paths remain readable at " + width, "[...document.querySelectorAll('.project-info h2')].some(heading=>heading.textContent.length > 100) && document.getElementById('page').scrollWidth <= document.getElementById('page').clientWidth + 1 && document.documentElement.scrollWidth <= innerWidth");
   }
   window.setContentSize(1440, 960);
   await textButton("Rename project"); await type("project-name-input", "Routing encoder"); await textButton("Save name"); await until("!document.querySelector('#project-dialog[open]')");

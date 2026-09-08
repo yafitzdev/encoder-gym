@@ -19,7 +19,7 @@ export function renderModels(workspace: WorkspaceSnapshot, state: ModelPageState
   const filterChange = (key: keyof CatalogFilter, value: string) => { state.filter[key] = value; actions.render(); };
   const selectedSetup = selectedRows[0] ? setupId(selectedRows[0].run) : undefined;
   return h("div", { class: "page-content" },
-    pageHeader("Models", allRows.length ? "Which candidates improve on your reference model?" : "Your starting model and the alternatives you develop from it.", allRows.length ? button("How to read this", () => actions.help(), "ghost", "help") : null),
+    pageHeader("Models", allRows.length ? "Which candidates improve on your reference model?" : "Your starting model and the alternatives you develop from it.", workspace.managed ? button("Start optimization", actions.prepareOptimization, "primary", "runs") : allRows.length ? button("How to read this", () => actions.help(), "ghost", "help") : null),
     h("section", { class: "baseline-anchor", "aria-label": "Baseline encoder" },
       h("div", { class: "baseline-heading" }, h("div", { class: "model-symbol", "aria-hidden": "true" }, icon("models")),
         h("div", { class: "baseline-name" }, h("div", { class: "eyebrow" }, "Project baseline"), h("h2", {}, modelName(workspace.baseline.key)), h("p", {}, workspace.baseline.format + " · comparison reference"))),
@@ -73,10 +73,9 @@ export function renderModels(workspace: WorkspaceSnapshot, state: ModelPageState
       }),
       !allRows.length ? h("div", { class: "candidate-empty" }, h("h3", {}, "No candidates recorded yet"),
         h("p", {}, "A candidate is a trained or transformed alternative to your baseline. Its results belong here once an experiment has produced evidence."),
-        workspace.managed ? h("div", { class: "next-step" }, h("div", {}, h("h3", {}, workspace.managed.datasets.length ? `${workspace.managed.datasets.length} imported ${workspace.managed.datasets.length === 1 ? "dataset" : "datasets"}` : "Start with your data"),
-          h("p", {}, workspace.managed.datasets.length ? "Review your source files and their intended use." : "Add a local JSONL source file to this project.")),
-          button("Open datasets", () => actions.navigate({ page: "datasets" }), "primary", "arrow")) : button("Project settings", () => actions.navigate({ page: "project" })),
-        workspace.managed ? h("p", { class: "availability-note" }, "Available here: model and dataset storage. Training, evaluation, and linking run history are not available in this desktop yet.") : null,
+        workspace.managed ? h("div", { class: "next-step" }, h("div", {}, h("h3", {}, "Prepare the first bounded run"),
+          h("p", {}, "Check the active baseline, scientific inputs, evaluations, providers, and finite budgets before reserving any work.")),
+          button("Start optimization", actions.prepareOptimization, "primary", "arrow")) : button("Project settings", () => actions.navigate({ page: "project" })),
       ) : !groups.length ? empty("No matching candidates", "Try a different name, result, or evaluation setup.", button("Reset filters", () => { state.filter = initialFilter(); actions.render(); })) : null,
       allRows.length ? h("p", { class: "table-footnote" }, "Changes are relative to the matching baseline. pp = percentage points. A score improvement can still miss a required threshold. ", h("button", { class: "inline-link", type: "button", onClick: () => actions.navigate({ page: "benchmarks" }) }, "Understand the benchmarks →")) : null,
     ),

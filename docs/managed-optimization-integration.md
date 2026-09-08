@@ -178,6 +178,17 @@ The renderer sends typed intents such as preview, start, resume, authorize
 sealed, cancel, and inspect. It never sends command arrays, paths outside a
 selected project/binding, SQL, environment maps, or shell text.
 
+Implemented boundary: the main process owns native manifest selection and keeps
+the chosen path behind a project-scoped, process-local token. It exposes fixed
+readiness, upgrade, preview/start, status/inspection, review, resume,
+authorization, cancellation, Doctor, provenance, and report intents. Every
+intent reopens the registered workspace and the Rust composition root
+revalidates its active baseline, binding, runtime project, and scientific store.
+Mutating intents are exclusive per project; a second concurrent start/resume or
+authorization is rejected. CLI launch uses `execFile` without a shell and JSON
+stdout. Durable child-process correlation and credential injection remain the
+next main-process lifecycle component.
+
 The Electron main-process adapter:
 
 1. reopens and verifies the selected managed project;

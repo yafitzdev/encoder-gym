@@ -92,11 +92,12 @@ copied and content-addressed. Same-content imports with matching purpose and
 provenance are idempotent; conflicting purpose/provenance is rejected.
 
 `project.sqlite` is the workspace custody registry, not a legacy slice-run
-database. Source datasets still need normal task-compatible admission,
-snapshot and evaluation contracts before training. The desktop has no training
-or evaluation launch controls and never fabricates missing experiment history.
-Managed Runs and Benchmarks also state that automatically linking CLI run
-history is not implemented. Their empty states do not promise otherwise.
+database. Source datasets still need normal task-compatible admission, snapshot
+and evaluation contracts before training. **Start optimization** now shows the
+derived project readiness report and accepts a reviewed optimization definition
+through a native file picker. It can reserve a real bound optimization and
+advance it one persisted stage at a time. It does not turn imported source files
+into training authority, infer a scientific store, or fabricate missing history.
 
 The **legacy** reader opens `.sqlite`, `.sqlite3`, and `.db` files directly inside
 the selected directory, read-only. It projects the existing
@@ -124,8 +125,10 @@ but adding another encoder does not supply an execution adapter. Other
 encoders need compatible backend integration producing the supported contracts.
 The independent platform-slice CLI workflows remain available separately;
 their records are not silently converted into experiment journals by this UI.
-Training, generation, evaluation, approvals, and promotion remain explicit
-CLI operations. The desktop never starts them or contacts external services.
+Preparation of new snapshots, suites, hypotheses, provider credentials, and
+promotion is not yet complete in the desktop. A managed run can only start when
+the same immutable definition accepted by `synth workspace optimize` resolves.
+External and sealed work remain separately authorized workflow boundaries.
 
 Use `synth experiment --help` to inspect that command family. Run detail offers
 CLI help and exact recorded IDs/source databases, not an assumed runnable
@@ -138,6 +141,7 @@ the built Rust binary's path.
 - `src/preload.ts`: typed bridge; renderer cannot read arbitrary filesystem paths.
 - `src/project-registry.ts`: atomic, app-owned folder metadata only.
 - `src/managed-backend.ts`: fixed Rust CLI adapter and native-picker tokens.
+- `src/managed-control.ts`: typed readiness and finite optimization intents.
 - `src/managed-workspace.ts`: row-free managed-workspace presentation contract.
 - `src/renderer/onboarding.ts`: checkpoint-copy and JSONL-import dialogs.
 - `src/projects.ts`: project identity/content types and stale-response guard.

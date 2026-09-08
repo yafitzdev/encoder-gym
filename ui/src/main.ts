@@ -93,6 +93,27 @@ ipcMain.handle("encoder-gym:verify-managed", async (_event, value: unknown) => {
   const id = projectId(value);
   return { project: registry.get(id), content: { state: "ready", workspace: managedSnapshot(await backend.openRegistered(id, true)) } } satisfies OpenedProject;
 });
+ipcMain.handle("encoder-gym:upgrade-managed", async (_event, value: unknown) => {
+  const id = projectId(value);
+  return { project: registry.get(id), content: { state: "ready", workspace: managedSnapshot(await backend.upgradeRegistered(id)) } } satisfies OpenedProject;
+});
+ipcMain.handle("encoder-gym:managed-readiness", (_event, value: unknown, manifestToken: unknown) => {
+  const id = projectId(value);
+  if (manifestToken !== undefined && typeof manifestToken !== "string") throw new Error("Invalid optimization selection.");
+  return backend.readiness(id, manifestToken);
+});
+ipcMain.handle("encoder-gym:choose-optimization-manifest", async (_event, value: unknown) => {
+  const id = projectId(value);
+  await backend.openRegistered(id);
+  let path: string | undefined;
+  if (smokeTest) { path = smokeFolderChoice; smokeFolderChoice = undefined; }
+  else {
+    const result = await dialog.showOpenDialog({ title: "Choose a reviewed optimization definition", properties: ["openFile"], filters: [{ name: "Optimization definition", extensions: ["toml"] }] });
+    if (!result.canceled) path = result.filePaths[0];
+  }
+  return path ? backend.chooseOptimizationManifest(id, path) : null;
+});
+ipcMain.handle("encoder-gym:managed-optimize", (_event, value: unknown, request: unknown) => backend.optimize(projectId(value), request));
 
 ipcMain.handle("encoder-gym:window-action", (event, action: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender);

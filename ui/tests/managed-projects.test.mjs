@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, renameSync, readFileSync, existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
-import { ManagedBackend, managedSnapshot } from "../dist/evidence/managed-backend.js";
+import { ManagedBackend, managedSnapshot, redactBackendError } from "../dist/evidence/managed-backend.js";
 import { ProjectRegistry } from "../dist/evidence/project-registry.js";
 import { writeLocalModel } from "./fixtures/local-model.mjs";
 
@@ -74,4 +75,65 @@ test("opening arbitrary repositories fails without mutation and explicit legacy 
   writeFileSync(f.registry.file, JSON.stringify(collection));
   await assert.rejects(() => f.backend.openRegistered(id), /different Gym project/);
   assert.equal(project.source.workspaceId, id);
+});
+
+test("managed control accepts only native-picked manifests and fixed project-scoped intents", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gym-managed-control-")), folder = join(root, "project");
+  mkdirSync(folder);
+  const id = randomUUID(), baseline = { source: join(folder, "baseline"), format: "safetensors-encoder", architecture: "bert", files: [], bytes: 10, fingerprint: "sha256:" + "a".repeat(64), execution: "not-configured" };
+  const workspace = { folder, verified: true, manifest: { version: 1, id, name: "Control fixture", createdAt: new Date().toISOString(), task: "retrieval", baseline }, datasets: [] };
+  const registry = new ProjectRegistry(join(root, "profile", "projects.json"));
+  registry.addManaged(workspace);
+  const calls = [];
+  const readiness = { report: { projectId: id, computedAt: new Date().toISOString(), overall: "ready", runnable: true, checks: [] }, launchPreview: { projectId: id } };
+  const executor = async (_executable, args) => {
+    calls.push(args);
+    if (args[3] === "open") return JSON.stringify(workspace);
+    if (args[3] === "readiness") return JSON.stringify(readiness);
+    if (args[3] === "optimize") return JSON.stringify({ run_id: randomUUID(), state: "planned" });
+    throw new Error("unexpected command");
+  };
+  const backend = new ManagedBackend("owned-synth", registry, executor);
+  await assert.rejects(() => backend.readiness(id, "forged"), /Choose the optimization definition/);
+  await assert.rejects(() => backend.optimize(id, { action: "start", manifestToken: "forged" }), /Choose the optimization definition/);
+  const manifest = join(root, "reviewed.toml"); writeFileSync(manifest, "fixture");
+  const selected = await backend.chooseOptimizationManifest(id, manifest);
+  assert.equal(selected.name, "reviewed.toml");
+  assert.equal("path" in selected, false);
+  await backend.optimize(id, { action: "start", manifestToken: selected.token });
+  await backend.optimize(id, { action: "status", runId: id });
+  const optimizationCalls = calls.filter(args => args[3] === "optimize");
+  assert.deepEqual(optimizationCalls[0], ["--output", "json", "workspace", "optimize", folder, "start", "--manifest", manifest]);
+  assert.deepEqual(optimizationCalls[1], ["--output", "json", "workspace", "optimize", folder, "status", id]);
+  await assert.rejects(() => backend.optimize(id, { action: "shell", runId: id }), /supported optimization action/);
+  await assert.rejects(() => backend.optimize(id, { action: "status", runId: "../other" }), /Invalid run identity/);
+});
+
+test("managed control rejects a duplicate mutating operation for one project", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gym-managed-exclusive-")), folder = join(root, "project"); mkdirSync(folder);
+  const id = randomUUID(), baseline = { source: folder, format: "safetensors-encoder", architecture: "bert", files: [], bytes: 10, fingerprint: "sha256:" + "b".repeat(64), execution: "not-configured" };
+  const workspace = { folder, verified: true, manifest: { version: 1, id, name: "Exclusive fixture", createdAt: new Date().toISOString(), task: null, baseline }, datasets: [] };
+  const registry = new ProjectRegistry(join(root, "profile", "projects.json")); registry.addManaged(workspace);
+  let release; const held = new Promise(resolve => { release = resolve; });
+  const executor = async (_executable, args) => {
+    if (args[3] === "open") return JSON.stringify(workspace);
+    if (args[3] === "readiness") return JSON.stringify({ report: { projectId: id, computedAt: new Date().toISOString(), overall: "ready", runnable: true, checks: [] } });
+    if (args[3] === "optimize") { await held; return JSON.stringify({ run_id: id, state: "planned" }); }
+    throw new Error("unexpected command");
+  };
+  const backend = new ManagedBackend("owned-synth", registry, executor);
+  const selected = await backend.chooseOptimizationManifest(id, join(root, "run.toml"));
+  const first = backend.optimize(id, { action: "start", manifestToken: selected.token });
+  await new Promise(resolve => setImmediate(resolve));
+  await assert.rejects(() => backend.optimize(id, { action: "resume", runId: id }), /already running/);
+  release(); await first;
+});
+
+test("backend diagnostics redact bearer, key, and token shaped credentials", () => {
+  const diagnostic = "Bearer secret-value-123 key-live-value-123 token-debug-value-456 sk-project-value-789";
+  const redacted = redactBackendError(diagnostic);
+  assert.equal(redacted.includes("secret-value-123"), false);
+  assert.equal(redacted.includes("live-value-123"), false);
+  assert.equal(redacted.includes("debug-value-456"), false);
+  assert.equal(redacted.includes("project-value-789"), false);
 });
