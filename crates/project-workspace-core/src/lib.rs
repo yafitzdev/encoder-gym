@@ -7,9 +7,13 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 mod models;
+mod scientific;
 
 pub use models::{
     BaselineChange, BaselineRevision, BoundIdentity, ModelArtifact, ModelCatalog, ModelOrigin,
+};
+pub use scientific::{
+    AdapterBinding, RuntimeBinding, RuntimeKind, ScientificBinding, ScientificStoreBinding,
 };
 
 pub const MANIFEST: &str = "encoder-gym.json";

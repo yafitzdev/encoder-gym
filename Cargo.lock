@@ -978,6 +978,7 @@ dependencies = [
 name = "encoder-experiment-sqlite"
 version = "0.1.0"
 dependencies = [
+ "artifact-core",
  "chrono",
  "encoder-campaign-core",
  "encoder-experiment-core",

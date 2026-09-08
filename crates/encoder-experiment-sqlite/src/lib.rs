@@ -25,6 +25,25 @@ use uuid::Uuid;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
+pub const SCHEMA_ID: &str = "encoder-experiment-sqlite-v7";
+
+/// Content identity for the exact ordered migration set used by this adapter.
+pub fn schema_fingerprint() -> String {
+    artifact_core::fingerprint(&serde_json::json!({
+        "schema": SCHEMA_ID,
+        "migrations": [
+            include_str!("../migrations/0001_experiment_journal.sql"),
+            include_str!("../migrations/0002_renewable_campaigns.sql"),
+            include_str!("../migrations/0003_repair_evidence.sql"),
+            include_str!("../migrations/0004_repair_proposals.sql"),
+            include_str!("../migrations/0005_native_repair_delta_quality.sql"),
+            include_str!("../migrations/0006_native_repair_training_snapshots.sql"),
+            include_str!("../migrations/0007_production_optimizations.sql"),
+        ],
+    }))
+    .expect("static production schema fingerprints")
+}
+
 #[derive(Debug, Clone)]
 pub struct SqliteExperimentStore {
     pool: SqlitePool,
@@ -358,4 +377,14 @@ fn decode_project(artifact: String) -> Result<ExternalProjectSnapshot, Experimen
 
 pub(crate) fn store_error(error: impl std::fmt::Display) -> ExperimentStoreError {
     ExperimentStoreError(error.to_string())
+}
+
+#[cfg(test)]
+mod schema_tests {
+    #[test]
+    fn schema_identity_is_stable_and_content_addressed() {
+        assert_eq!(super::SCHEMA_ID, "encoder-experiment-sqlite-v7");
+        assert!(super::schema_fingerprint().starts_with("sha256:"));
+        assert_eq!(super::schema_fingerprint().len(), 71);
+    }
 }

@@ -79,3 +79,17 @@ versioned registry migrations and records the already-verified imported model
 as the first immutable model artifact and active baseline revision. It is
 idempotent and does not edit `encoder-gym.json`, copy artifacts, or initialize a
 scientific run database.
+
+The compiled Nomos adapter can be explicitly bound to a managed project after
+the project is upgraded:
+
+```powershell
+synth workspace bind-nomos C:\EncoderGym\Projects\Nomos --runtime C:\isolated\nomos-runtime
+```
+
+The command deeply verifies the managed checkpoint and the clean, no-remote
+isolated runtime, initializes a new production scientific store at
+`runs/scientific.sqlite`, and persists only their explicit binding in
+`project.sqlite`. It does not import the runtime's historical databases, start
+training, evaluate a model, or call a provider. The source `fitz-tool`
+repository is not a valid runtime.

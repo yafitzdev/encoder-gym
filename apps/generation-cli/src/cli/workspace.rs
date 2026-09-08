@@ -42,6 +42,18 @@ pub enum WorkspaceCommand {
     Verify { folder: PathBuf },
     /// Upgrade the project registry and initialize missing baseline history.
     Upgrade { folder: PathBuf },
+    /// Verify and bind the compiled Nomos runtime to a contained scientific store.
+    BindNomos {
+        folder: PathBuf,
+        #[arg(long)]
+        runtime: PathBuf,
+        #[arg(long, default_value = "python")]
+        python: PathBuf,
+        #[arg(long, default_value = "local-operator")]
+        actor: String,
+        #[arg(long, default_value = "Configure verified Nomos runtime")]
+        reason: String,
+    },
     /// Preview local JSONL data without altering its native structure.
     InspectDataset {
         source: PathBuf,

@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+artifact-core.workspace = true
 chrono.workspace = true
 encoder-campaign-core.workspace = true
 encoder-experiment-core.workspace = true

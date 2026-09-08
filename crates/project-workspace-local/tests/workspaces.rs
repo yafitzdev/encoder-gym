@@ -1,7 +1,11 @@
-use project_workspace_core::{DatasetPurpose, MANIFEST};
+use chrono::{TimeZone, Utc};
+use project_workspace_core::{
+    AdapterBinding, BoundIdentity, DatasetPurpose, MANIFEST, RuntimeBinding, RuntimeKind,
+    ScientificBinding, ScientificStoreBinding,
+};
 use project_workspace_local::{
     backfill_nomos, create_workspace, import_dataset, inspect_dataset, inspect_model,
-    open_workspace, upgrade_workspace,
+    open_workspace, record_scientific_binding, upgrade_workspace,
 };
 use serde_json::json;
 use std::fs;
@@ -11,6 +15,51 @@ fn model(root: &std::path::Path) -> std::path::PathBuf {
     let path = root.join("source-model");
     training_transformer::fixture::write_tiny_bert_bundle(&path).unwrap();
     path
+}
+
+fn digest(character: char) -> String {
+    format!("sha256:{}", character.to_string().repeat(64))
+}
+
+fn scientific_binding(
+    workspace: &project_workspace_local::ManagedWorkspace,
+    id: uuid::Uuid,
+    previous_binding_id: Option<uuid::Uuid>,
+) -> ScientificBinding {
+    ScientificBinding::new(
+        id,
+        workspace.manifest.id,
+        workspace
+            .model_catalog
+            .as_ref()
+            .unwrap()
+            .active_baseline_revision_id,
+        previous_binding_id,
+        AdapterBinding {
+            key: "nomos".into(),
+            protocol: "nomos-production-v1".into(),
+            configuration_fingerprint: digest('a'),
+        },
+        RuntimeBinding {
+            kind: RuntimeKind::ExternalIsolated,
+            location: "C:/isolated/nomos".into(),
+            project_snapshot: BoundIdentity {
+                id: "revision-1".into(),
+                fingerprint: digest('b'),
+            },
+        },
+        ScientificStoreBinding {
+            database_path: "runs/scientific.sqlite".into(),
+            schema: BoundIdentity {
+                id: "production-schema-v1".into(),
+                fingerprint: digest('c'),
+            },
+        },
+        "operator",
+        "configure verified runtime",
+        Utc.with_ymd_and_hms(2026, 9, 8, 12, 0, 0).unwrap(),
+    )
+    .unwrap()
 }
 
 #[tokio::test]
@@ -146,6 +195,61 @@ async fn old_workspace_requires_and_survives_an_explicit_idempotent_catalog_upgr
             .model_catalog
             .unwrap(),
         catalog
+    );
+}
+
+#[tokio::test]
+async fn scientific_bindings_are_project_and_baseline_scoped_compare_and_append_records() {
+    let temp = TempDir::new().unwrap();
+    let source = model(temp.path());
+    let preview = inspect_model(&source).unwrap();
+    let destination = temp.path().join("managed");
+    let workspace = create_workspace(
+        &destination,
+        "Binding fixture",
+        &source,
+        &preview.fingerprint,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(workspace.scientific_binding.is_none());
+    let first_id = uuid::Uuid::new_v4();
+    let first = scientific_binding(&workspace, first_id, None);
+    let bound = record_scientific_binding(&destination, first.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(bound.scientific_binding, Some(first.clone()));
+    assert_eq!(
+        record_scientific_binding(&destination, first, None)
+            .await
+            .unwrap()
+            .scientific_binding
+            .unwrap()
+            .id,
+        first_id
+    );
+
+    let second_id = uuid::Uuid::new_v4();
+    let second = scientific_binding(&bound, second_id, Some(first_id));
+    assert!(
+        record_scientific_binding(&destination, second.clone(), None)
+            .await
+            .is_err()
+    );
+    let rebound = record_scientific_binding(&destination, second, Some(first_id))
+        .await
+        .unwrap();
+    assert_eq!(rebound.scientific_binding.as_ref().unwrap().id, second_id);
+
+    let mut foreign = scientific_binding(&rebound, uuid::Uuid::new_v4(), Some(second_id));
+    foreign.project_id = uuid::Uuid::new_v4();
+    foreign.specification_fingerprint = foreign.reproduce_specification_fingerprint().unwrap();
+    foreign.fingerprint = foreign.reproduce_fingerprint().unwrap();
+    assert!(
+        record_scientific_binding(&destination, foreign, Some(second_id))
+            .await
+            .is_err()
     );
 }
 

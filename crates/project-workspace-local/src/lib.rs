@@ -9,7 +9,8 @@ use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use project_workspace_core::{
     BASELINE, BaselineChange, BaselineRevision, DATABASE, DIRECTORIES, DatasetImport, LocalModel,
-    MANIFEST, ModelArtifact, ModelCatalog, ModelOrigin, ProjectManifest, validate_name,
+    MANIFEST, ModelArtifact, ModelCatalog, ModelOrigin, ProjectManifest, ScientificBinding,
+    validate_name,
 };
 use serde::Serialize;
 use sqlx::{Connection, Row, SqliteConnection, sqlite::SqliteConnectOptions};
@@ -28,6 +29,9 @@ pub struct ManagedWorkspace {
     /// Absent only when an older workspace requires an explicit registry upgrade.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_catalog: Option<ModelCatalog>,
+    /// The latest explicit slice-store/runtime binding, if one has been configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scientific_binding: Option<ScientificBinding>,
     pub verified: bool,
 }
 
@@ -221,6 +225,7 @@ pub async fn open_workspace(folder: &Path, verify: bool) -> Result<ManagedWorksp
         datasets.push(dataset);
     }
     let model_catalog = load_model_catalog(&mut database, &manifest).await?;
+    let scientific_binding = load_scientific_binding(&mut database, &manifest).await?;
     database.close().await?;
     for file in &manifest.baseline.files {
         let mut identity = file.clone();
@@ -238,8 +243,86 @@ pub async fn open_workspace(folder: &Path, verify: bool) -> Result<ManagedWorksp
         manifest,
         datasets,
         model_catalog,
+        scientific_binding,
         verified: verify,
     })
+}
+
+/// Append and activate a verified scientific runtime/store binding.
+///
+/// Adapter-specific verification must happen before this boundary. The
+/// compare-and-append requirement prevents stale project views from replacing
+/// a newer binding.
+pub async fn record_scientific_binding(
+    folder: &Path,
+    binding: ScientificBinding,
+    expected_active_binding_id: Option<Uuid>,
+) -> Result<ManagedWorkspace> {
+    binding.validate()?;
+    let workspace = open_workspace(folder, false).await?;
+    let catalog = workspace
+        .model_catalog
+        .as_ref()
+        .context("Upgrade this managed workspace before configuring execution.")?;
+    ensure!(
+        binding.project_id == workspace.manifest.id
+            && binding.baseline_revision_id == catalog.active_baseline_revision_id,
+        "Scientific binding must target this project's current baseline revision."
+    );
+    let root = Path::new(&workspace.folder);
+    let mut database = connect(root, false, false).await?;
+    let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
+    let current = sqlx::query_scalar::<_, String>(
+        "SELECT active_binding_id FROM scientific_binding_state WHERE singleton=1",
+    )
+    .fetch_optional(&mut *transaction)
+    .await?
+    .map(|value| Uuid::parse_str(&value))
+    .transpose()?;
+    if let Some(row) = sqlx::query("SELECT binding_json FROM scientific_bindings WHERE id = ?")
+        .bind(binding.id.to_string())
+        .fetch_optional(&mut *transaction)
+        .await?
+    {
+        let existing: ScientificBinding =
+            serde_json::from_str(&row.get::<String, _>("binding_json"))?;
+        ensure!(
+            existing == binding && current == Some(binding.id),
+            "Scientific binding identity already exists with different or inactive state."
+        );
+        transaction.rollback().await?;
+        database.close().await?;
+        return open_workspace(root, true).await;
+    }
+    ensure!(
+        current == expected_active_binding_id && binding.previous_binding_id == current,
+        "Scientific binding changed after it was inspected. Reload before binding again."
+    );
+    sqlx::query(
+        "INSERT INTO scientific_bindings \
+         (id, project_id, baseline_revision_id, previous_binding_id, specification_fingerprint, fingerprint, binding_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(binding.id.to_string())
+    .bind(binding.project_id.to_string())
+    .bind(binding.baseline_revision_id.to_string())
+    .bind(binding.previous_binding_id.map(|value| value.to_string()))
+    .bind(&binding.specification_fingerprint)
+    .bind(&binding.fingerprint)
+    .bind(serde_json::to_string(&binding)?)
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO scientific_binding_state (singleton, project_id, active_binding_id) \
+         VALUES (1, ?, ?) ON CONFLICT(singleton) DO UPDATE SET active_binding_id=excluded.active_binding_id",
+    )
+    .bind(binding.project_id.to_string())
+    .bind(binding.id.to_string())
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    database.close().await?;
+    open_workspace(root, true).await
 }
 
 /// Apply project-registry migrations and initialize the imported baseline catalog.
@@ -432,6 +515,74 @@ async fn load_model_catalog(
         "Initial model catalog baseline does not match the immutable workspace manifest."
     );
     Ok(Some(catalog))
+}
+
+async fn load_scientific_binding(
+    database: &mut SqliteConnection,
+    manifest: &ProjectManifest,
+) -> Result<Option<ScientificBinding>> {
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='scientific_binding_state'",
+    )
+    .fetch_one(&mut *database)
+    .await?
+        == 1;
+    if !exists {
+        return Ok(None);
+    }
+    let Some(state) = sqlx::query(
+        "SELECT project_id, active_binding_id FROM scientific_binding_state WHERE singleton=1",
+    )
+    .fetch_optional(&mut *database)
+    .await?
+    else {
+        return Ok(None);
+    };
+    ensure!(
+        state.get::<String, _>("project_id") == manifest.id.to_string(),
+        "Scientific binding belongs to another managed project."
+    );
+    let active_id = Uuid::parse_str(&state.get::<String, _>("active_binding_id"))?;
+    let rows = sqlx::query(
+        "SELECT id, project_id, baseline_revision_id, previous_binding_id, \
+         specification_fingerprint, fingerprint, binding_json \
+         FROM scientific_bindings ORDER BY rowid",
+    )
+    .fetch_all(&mut *database)
+    .await?;
+    let mut previous = None;
+    let mut active = None;
+    for row in rows {
+        let binding: ScientificBinding =
+            serde_json::from_str(&row.get::<String, _>("binding_json"))?;
+        binding.validate()?;
+        let row_previous = row
+            .get::<Option<String>, _>("previous_binding_id")
+            .map(|value| Uuid::parse_str(&value))
+            .transpose()?;
+        ensure!(
+            row.get::<String, _>("id") == binding.id.to_string()
+                && row.get::<String, _>("project_id") == binding.project_id.to_string()
+                && row.get::<String, _>("baseline_revision_id")
+                    == binding.baseline_revision_id.to_string()
+                && row_previous == binding.previous_binding_id
+                && row.get::<String, _>("specification_fingerprint")
+                    == binding.specification_fingerprint
+                && row.get::<String, _>("fingerprint") == binding.fingerprint
+                && binding.project_id == manifest.id
+                && binding.previous_binding_id == previous,
+            "Scientific binding history or normalized projection is invalid."
+        );
+        previous = Some(binding.id);
+        if binding.id == active_id {
+            active = Some(binding);
+        }
+    }
+    ensure!(
+        previous == Some(active_id) && active.is_some(),
+        "The active scientific binding must be the latest append-only record."
+    );
+    Ok(active)
 }
 
 fn model_origin(origin: ModelOrigin) -> &'static str {
