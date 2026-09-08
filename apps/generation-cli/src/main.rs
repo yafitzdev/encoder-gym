@@ -35,6 +35,7 @@ async fn run() -> anyhow::Result<()> {
     presentation::set_output(cli.output)?;
     let database_url = cli.database_url();
     let command = match cli.command {
+        Command::Workspace { command } => return commands::workspace::execute(command).await,
         Command::Experiment { command } => {
             // Keep the experiment handler's aggregate future off the small Windows
             // main-thread stack, just like the ordinary command dispatcher below.

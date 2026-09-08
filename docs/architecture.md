@@ -1,5 +1,16 @@
 # Platform architecture
 
+## Managed project custody
+
+`project-workspace-core` owns portable project identities, baseline inventories,
+dataset custody metadata, and pure validation. `project-workspace-local` owns
+safe local copying, format inspection, hashing and project-bound SQLite.
+`synth workspace` uses that adapter without opening the global synthetic-data
+store. Imported assets do not imply admitted snapshot membership, training
+execution, evaluation policy, or scientific approval. Existing slices retain
+those responsibilities. See `managed-workspaces-spec.md` and
+`managed-workspaces.md`.
+
 ## Dependency direction
 
 ```text

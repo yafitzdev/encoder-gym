@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use uuid::Uuid;
+mod workspace;
+pub use workspace::WorkspaceCommand;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -38,6 +40,11 @@ impl Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Create and open Gym-owned local-model workspaces; never starts training.
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCommand,
+    },
     /// Check local database, configuration, artifacts, and optional backend connectivity.
     Doctor(DoctorArgs),
     /// Validate, resolve, and initialize declarative project configuration.

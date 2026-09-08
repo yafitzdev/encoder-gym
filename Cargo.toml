@@ -32,6 +32,8 @@ members = [
     "crates/optimization-core",
     "crates/project-config",
     "crates/project-preparation",
+    "crates/project-workspace-core",
+    "crates/project-workspace-local",
     "crates/research-core",
     "crates/research-web",
     "crates/research-agent-pi-process",
@@ -108,6 +110,8 @@ benchmark-architect-runner = { package = "benchmark-architect-runner", path = "c
 optimization-core = { package = "optimization-core", path = "crates/optimization-core" }
 project-config = { package = "project-config", path = "crates/project-config" }
 project-preparation = { package = "project-preparation", path = "crates/project-preparation" }
+project-workspace-core = { path = "crates/project-workspace-core" }
+project-workspace-local = { path = "crates/project-workspace-local" }
 research-core = { package = "research-core", path = "crates/research-core" }
 research-web = { package = "research-web", path = "crates/research-web" }
 research-agent-pi-process = { package = "research-agent-pi-process", path = "crates/research-agent-pi-process" }

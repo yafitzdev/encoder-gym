@@ -2332,6 +2332,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "project-workspace-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "project-workspace-local"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "project-workspace-core",
+ "safetensors",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "training-transformer",
+ "uuid",
+]
+
+[[package]]
 name = "pulp"
 version = "0.22.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3376,6 +3406,8 @@ dependencies = [
  "optimization-core",
  "project-config",
  "project-preparation",
+ "project-workspace-core",
+ "project-workspace-local",
  "recovery-core",
  "reqwest",
  "research-agent-pi-process",

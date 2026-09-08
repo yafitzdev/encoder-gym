@@ -35,6 +35,7 @@ mod snapshot;
 mod supervisor;
 mod training;
 mod workflow;
+pub(crate) mod workspace;
 
 use crate::cli::Command;
 use std::{future::Future, pin::Pin};
@@ -50,6 +51,9 @@ pub fn execute(
 ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>>>> {
     Box::pin(async move {
         match command {
+            Command::Workspace { .. } => {
+                unreachable!("workspace commands use only their own project database")
+            }
             Command::Doctor(args) => doctor::execute(args, &store).await,
             Command::Config { command } => config::execute(command, &store).await,
             Command::Project { command } => project_preparation::execute(command, &store).await,
