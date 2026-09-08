@@ -70,8 +70,8 @@ export function renderModels(workspace: WorkspaceSnapshot, state: ModelPageState
           )),
         );
       }),
-      !allRows.length ? empty("No candidates recorded yet", "Your baseline is registered. Candidates and comparisons will appear when an experiment records them.", button("Project settings", () => actions.navigate({ page: "project" }))) : !groups.length ? empty("No matching candidates", "Try a different name, result, or evaluation setup.", button("Reset filters", () => { state.filter = initialFilter(); actions.render(); })) : null,
-      h("p", { class: "table-footnote" }, "Changes are relative to the matching baseline. pp = percentage points. A score improvement can still miss a required threshold. ", h("button", { class: "inline-link", type: "button", onClick: () => actions.navigate({ page: "benchmarks" }) }, "Understand the benchmarks →")),
+      !allRows.length ? empty("No candidates recorded yet", workspace.managed ? `Your baseline is stored in this project. ${workspace.managed.datasets.length ? "Review the imported datasets, then configure training membership and evaluation rules before your first experiment." : "Add your first dataset to continue setting up this encoder."}` : "Your baseline is registered. Candidates and comparisons will appear when an experiment records them.", button(workspace.managed ? "Open datasets" : "Project settings", () => actions.navigate({ page: workspace.managed ? "datasets" : "project" }))) : !groups.length ? empty("No matching candidates", "Try a different name, result, or evaluation setup.", button("Reset filters", () => { state.filter = initialFilter(); actions.render(); })) : null,
+      allRows.length ? h("p", { class: "table-footnote" }, "Changes are relative to the matching baseline. pp = percentage points. A score improvement can still miss a required threshold. ", h("button", { class: "inline-link", type: "button", onClick: () => actions.navigate({ page: "benchmarks" }) }, "Understand the benchmarks →")) : null,
     ),
   );
 }

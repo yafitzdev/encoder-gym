@@ -1,7 +1,15 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { OpenedProject, ProjectCollection } from "./projects.js";
+import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, ModelChoice } from "./managed-workspace.js";
 
 export interface EncoderGymBridge {
+  openManagedProject(): Promise<ProjectCollection | null>;
+  chooseLocalModel(): Promise<ModelChoice | null>;
+  chooseProjectParent(): Promise<FolderChoice | null>;
+  createManagedProject(request: CreateProjectRequest): Promise<ProjectCollection>;
+  chooseDataset(id: string, purpose: DatasetPurpose): Promise<DatasetChoice | null>;
+  importDataset(id: string, token: string, name: string): Promise<OpenedProject>;
+  verifyManagedProject(id: string): Promise<OpenedProject>;
   getProjects(): Promise<ProjectCollection>;
   addProjectFolder(): Promise<ProjectCollection | null>;
   openExample(): Promise<ProjectCollection>;
@@ -15,6 +23,13 @@ export interface EncoderGymBridge {
 }
 
 const bridge: EncoderGymBridge = {
+  openManagedProject: () => ipcRenderer.invoke("encoder-gym:open-managed"),
+  chooseLocalModel: () => ipcRenderer.invoke("encoder-gym:choose-model"),
+  chooseProjectParent: () => ipcRenderer.invoke("encoder-gym:choose-parent"),
+  createManagedProject: request => ipcRenderer.invoke("encoder-gym:create-managed", request),
+  chooseDataset: (id, purpose) => ipcRenderer.invoke("encoder-gym:choose-dataset", id, purpose),
+  importDataset: (id, token, name) => ipcRenderer.invoke("encoder-gym:import-dataset", id, token, name),
+  verifyManagedProject: id => ipcRenderer.invoke("encoder-gym:verify-managed", id),
   getProjects: () => ipcRenderer.invoke("encoder-gym:get-projects"),
   addProjectFolder: () => ipcRenderer.invoke("encoder-gym:add-project-folder"),
   openExample: () => ipcRenderer.invoke("encoder-gym:open-example"),

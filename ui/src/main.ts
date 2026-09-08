@@ -8,11 +8,18 @@ import type { OpenedProject } from "./projects.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { runSmokeChecks } from "./smoke-checks.js";
+import { runManagedSmokeChecks } from "./managed-smoke-checks.js";
+import { checkCurrentManaged } from "./current-managed-check.js";
+import { ManagedBackend, datasetPurpose, managedSnapshot } from "./managed-backend.js";
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const smokeTest = process.argv.includes("--smoke-test");
+const verifyCurrent = process.argv.includes("--verify-managed-current");
+const actualRegistryFile = join(app.getPath("userData"), "projects.json");
 if (smokeTest) app.setPath("userData", process.env.ENCODER_GYM_SMOKE_PROFILE ?? mkdtempSync(join(tmpdir(), "encoder-gym-renderer-")));
-const registry = new ProjectRegistry(join(app.getPath("userData"), "projects.json"));
+if (verifyCurrent) app.setPath("userData", mkdtempSync(join(tmpdir(), "encoder-gym-current-check-")));
+const registry = new ProjectRegistry(verifyCurrent ? actualRegistryFile : join(app.getPath("userData"), "projects.json"));
+const backend = new ManagedBackend(app.isPackaged ? join(process.resourcesPath, "synth" + (process.platform === "win32" ? ".exe" : "")) : join(directory, "..", "..", "target", "debug", "synth" + (process.platform === "win32" ? ".exe" : "")), registry);
 let smokeFolderChoice: string | undefined;
 async function pickFolder(title: string, defaultPath?: string): Promise<string | undefined> {
   if (smokeTest) { const choice = smokeFolderChoice; smokeFolderChoice = undefined; return choice; }
@@ -26,11 +33,14 @@ ipcMain.handle("encoder-gym:add-project-folder", async () => {
   return selected ? registry.addFolder(selected) : null;
 });
 ipcMain.handle("encoder-gym:open-example", () => registry.addExample(example.key, example.name));
-ipcMain.handle("encoder-gym:select-project", (_event, value: unknown): OpenedProject => {
+ipcMain.handle("encoder-gym:select-project", async (_event, value: unknown): Promise<OpenedProject> => {
   const id = projectId(value);
-  registry.select(id);
+  if (!verifyCurrent) registry.select(id);
   const project = registry.get(id);
-  if (project.source.kind === "folder") return { project, content: readProjectContent(project.source.path) };
+  if (project.source.kind === "folder") {
+    if (project.source.workspaceId) return { project, content: { state: "ready", workspace: managedSnapshot(await backend.openRegistered(id)) } };
+    return { project, content: readProjectContent(project.source.path) };
+  }
   try { return { project, content: { state: "ready", workspace: readExample(project.source.key) } }; }
   catch (error) { return { project, content: { state: "error", message: error instanceof Error ? error.message : "Example unavailable." } }; }
 });
@@ -42,9 +52,47 @@ ipcMain.handle("encoder-gym:relocate-project", async (_event, value: unknown) =>
   const id = projectId(value), project = registry.get(id);
   if (project.source.kind !== "folder") throw new Error("Recorded examples do not have a connected folder.");
   const selected = await pickFolder(`Reconnect ${project.name}`, project.source.path);
+  if (selected && project.source.workspaceId) {
+    const workspace = await backend.open(selected, true);
+    if (workspace.manifest.id !== project.source.workspaceId) throw new Error("Choose the same Gym project at its new location. This folder has a different project identity.");
+    return registry.addManaged(workspace);
+  }
   return selected ? registry.relocate(id, selected) : null;
 });
 ipcMain.handle("encoder-gym:forget-project", (_event, value: unknown) => registry.remove(projectId(value)));
+
+ipcMain.handle("encoder-gym:open-managed", async () => {
+  const path = await pickFolder("Open an Encoder Gym workspace");
+  return path ? registry.addManaged(await backend.open(path, true)) : null;
+});
+ipcMain.handle("encoder-gym:choose-model", async () => {
+  const path = await pickFolder("Choose a local encoder checkpoint");
+  return path ? backend.chooseModel(path) : null;
+});
+ipcMain.handle("encoder-gym:choose-parent", async () => {
+  const path = await pickFolder("Choose where Encoder Gym will create the project", app.getPath("documents"));
+  return path ? backend.chooseParent(path) : null;
+});
+ipcMain.handle("encoder-gym:create-managed", (_event, value: unknown) => backend.create(value));
+ipcMain.handle("encoder-gym:choose-dataset", async (_event, value: unknown, purpose: unknown) => {
+  const id = projectId(value), role = datasetPurpose(purpose);
+  await backend.openRegistered(id);
+  let path: string | undefined;
+  if (smokeTest) { path = smokeFolderChoice; smokeFolderChoice = undefined; }
+  else {
+    const result = await dialog.showOpenDialog({ title: "Import local JSONL data", properties: ["openFile"], filters: [{ name: "JSON Lines", extensions: ["jsonl", "ndjson"] }] });
+    if (!result.canceled) path = result.filePaths[0];
+  }
+  return path ? backend.chooseDataset(id, path, role) : null;
+});
+ipcMain.handle("encoder-gym:import-dataset", async (_event, value: unknown, token: unknown, name: unknown) => {
+  const id = projectId(value);
+  return { project: registry.get(id), content: { state: "ready", workspace: managedSnapshot(await backend.importDataset(id, token, name)) } } satisfies OpenedProject;
+});
+ipcMain.handle("encoder-gym:verify-managed", async (_event, value: unknown) => {
+  const id = projectId(value);
+  return { project: registry.get(id), content: { state: "ready", workspace: managedSnapshot(await backend.openRegistered(id, true)) } } satisfies OpenedProject;
+});
 
 ipcMain.handle("encoder-gym:window-action", (event, action: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender);
@@ -85,7 +133,7 @@ function createWindow(): void {
   void window.loadFile(join(directory, "renderer", "index.html"));
 }
 
-if (smokeTest) {
+if (smokeTest || verifyCurrent) {
   app.whenReady().then(async () => {
     const window = new BrowserWindow({
       show: false,
@@ -101,7 +149,8 @@ if (smokeTest) {
     });
     try {
       await window.loadFile(join(directory, "renderer", "index.html"));
-      await runSmokeChecks(window, join(directory, "..", "qa"), { registry, chooseFolder: path => { smokeFolderChoice = path; }, restart: process.argv.includes("--smoke-restart") });
+      if (verifyCurrent) await checkCurrentManaged(window, join(directory, "..", "qa"), registry, backend);
+      else await (process.argv.includes("--smoke-managed") ? runManagedSmokeChecks : runSmokeChecks)(window, join(directory, "..", "qa"), { registry, chooseFolder: path => { smokeFolderChoice = path; }, restart: process.argv.includes("--smoke-restart") });
       window.destroy(); app.quit();
     } catch (error) { console.error(error); window.destroy(); app.exit(1); }
   });

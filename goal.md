@@ -1,5 +1,11 @@
 # Active goal — Local-model onboarding and Gym-owned workspaces
 
+Implementation delivered 2026-09-08: local New/Open, managed checkpoint copies,
+dataset import/provenance, persistence/recovery, and real Nomos final-stage
+backfill. Verification and exact onboarding records are in
+`docs/nomos-managed-onboarding.md`; Hugging Face and automatic execution remain
+outside this goal.
+
 Implement the managed project workflow end to end, with Hugging Face deferred.
 Encoder Gym creates a standardized project folder from a local checkpoint;
 users reopen Gym projects rather than register arbitrary source repositories.

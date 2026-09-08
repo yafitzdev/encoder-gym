@@ -7,8 +7,9 @@ import { h, type Child } from "./dom.js";
 export function renderWelcome(actions: ProjectActions): HTMLElement {
   return h("div", { class: "page-content welcome-page" },
     h("div", { class: "eyebrow" }, "Your encoder workspace"),
-    pageHeader("Start with a project folder", "Keep each encoder's baseline, candidates, and experiment history together."),
-    h("div", { class: "welcome-action" }, icon("project"), h("div", {}, h("h2", {}, "Add your first project"), h("p", {}, "Choose an existing folder—or create an empty one in the folder picker. Adding it does not start any training.")), button("Add project folder", actions.addFolder, "primary", "project")),
+    pageHeader("Start with an encoder", "Each project owns its baseline, datasets, and experiment history."),
+    h("div", { class: "welcome-action" }, icon("models"), h("div", {}, h("h2", {}, "Create a new project"), h("p", {}, "Choose a local checkpoint. Gym creates a workspace and copies the baseline into it. No training starts.")), button("New project", actions.create, "primary", "project")),
+    h("div", { class: "welcome-action" }, icon("project"), h("div", {}, h("h2", {}, "Continue an existing project"), h("p", {}, "Open a folder created by Encoder Gym—not a source-code repository.")), button("Open project", actions.openManaged, "secondary", "project")),
     h("p", { class: "welcome-example" }, "Want to explore first? ", h("button", { type: "button", id: "open-recorded-example", class: "inline-link", onClick: actions.openExample }, "Open a recorded example →")),
   );
 }
@@ -21,12 +22,11 @@ export function renderProjectState(project: ProjectEntry, opened: OpenedProject 
   if (page === "runs" || page === "benchmarks") return h("div", { class: "page-content" }, pageHeader(page === "runs" ? "Runs" : "Benchmarks", project.name),
     empty(page === "runs" ? "No runs recorded yet" : "No benchmark results recorded yet", "This project has not recorded experiment evidence. Start with its baseline setup.", button("Open model setup", () => actions.navigate({ page: "models" }), "primary")));
   return h("div", { class: "page-content" }, pageHeader("Models", `${project.name} · baseline and candidates`),
-    h("section", { class: "empty-baseline" }, icon("models"), h("div", {}, h("div", { class: "eyebrow" }, "Project baseline"), h("h2", {}, "No baseline recorded yet"), h("p", {}, "This folder is ready to organize an encoder project. Its baseline will appear when a supported experiment snapshot is registered."))),
+    h("section", { class: "empty-baseline" }, icon("models"), h("div", {}, h("div", { class: "eyebrow" }, "Legacy folder connection"), h("h2", {}, "No baseline recorded yet"), h("p", {}, "This external folder is not a Gym-managed workspace. Its baseline appears only if a supported experiment journal already exists."))),
     h("section", { class: "setup-section" }, sectionHeader("Set up this project"),
       h("p", { class: "section-note" }, "Connect a folder containing supported encoder experiment journals, or prepare one through a compatible CLI adapter. Reload after preparation. Folder registration itself does not create a model, dataset, or experiment."),
-      h("p", { class: "section-note" }, "The current experiment CLI is wired to the Nomos adapter. Other encoders need a compatible backend integration; adding their folder does not provide one."),
-      copyField("synth experiment --help", actions.copy),
-      h("div", { class: "inline-group" }, button("Reload evidence", actions.refresh, "primary", "refresh"), button("Project settings", () => actions.navigate({ page: "project" }), "secondary"))),
+      h("p", { class: "section-note" }, "To start from a local encoder, create a separate managed project. Gym will copy its checkpoint and keep this source folder untouched."),
+      h("div", { class: "inline-group" }, button("New project", projects.create, "primary", "project"), button("Reload evidence", actions.refresh, "secondary", "refresh"))),
     sectionHeader("Candidates", tag("0")), h("p", { class: "section-note" }, "Candidates appear here as your experiments create and evaluate them."));
 }
 export function renderProjectSettings(project: ProjectEntry, opened: OpenedProject | undefined, actions: Actions, projects: ProjectActions): HTMLElement {

@@ -1,4 +1,5 @@
 /** Presentation read model. No native rows, predictions, or sealed scores. */
+import type { ManagedWorkspace } from "./managed-workspace.js";
 export interface ModelArtifact {
   id: string;
   key: string;
@@ -70,6 +71,7 @@ export interface RunRecord {
 }
 
 export interface WorkspaceSnapshot {
+  managed?: ManagedWorkspace;
   schemaVersion: 1;
   capturedAt: string;
   source: "recorded" | "local";

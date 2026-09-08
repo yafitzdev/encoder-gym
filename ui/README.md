@@ -1,13 +1,13 @@
 # Encoder Gym desktop
 
-A local, multi-project Electron workspace for inspecting encoder baselines,
-candidates, and their recorded development evidence. The app starts with an
+A local, multi-project Electron workspace for importing encoder baselines and
+datasets and inspecting recorded development evidence. The app starts with an
 empty project collection. Nomos is an opt-in recorded example, not the product
 identity or a default connection.
 
 ## Launch
 
-Use Node.js 22.19 or newer and npm. From the repository root:
+Use Node.js 22.19 or newer, npm, and the repository's Rust toolchain. From the repository root:
 
 ```powershell
 cd ui
@@ -15,14 +15,20 @@ npm ci
 npm start
 ```
 
-`npm start` builds and opens the desktop app. Close an older running instance
+`npm start` builds the Rust workspace CLI and opens the desktop app. Close an older running instance
 before launching changed code; a second normal launch focuses that instance.
 
 ## Project folders and page responsibilities
 
-Use **Add project folder** to register an existing local directory. The native
-folder picker also supports creating an empty directory. Registration only
-adds an app entry; it does not initialize a model, database, or experiment.
+Use **New project** (the sidebar plus) to choose a local checkpoint, preview its
+format/size, name the project, and choose a parent location. Gym copies the
+checkpoint into a new owned folder and creates its manifest, registry database,
+and artifact directories. The source stays untouched. Hugging Face is deferred.
+
+Use **Open project** for an existing Gym workspace containing `encoder-gym.json`.
+Arbitrary repositories are not accepted. Earlier read-only journal folders
+remain available under **Earlier experiment folders → Connect legacy journals**.
+They are labelled Legacy and are not silently converted into managed projects.
 
 - **Project folders:** persistent entries in the sidebar. Selecting a folder
   opens its Models page. Previously registered folders remain available.
@@ -32,6 +38,10 @@ adds an app entry; it does not initialize a model, database, or experiment.
   or compare up to three candidates from one setup.
 - **Candidate detail:** exact development checks, training configuration and
   immutable input references, model artifact, and historical attempts.
+- **Datasets (managed projects):** import native JSONL with an explicit purpose,
+  preview record counts and partitions, and inspect copied-file provenance.
+  Imports are not admitted training snapshots and do not create class labels,
+  splits, runs, or evaluation results. Training imports reject held-out rows.
 - **Runs:** immutable experiment records. A run owns its candidate attempts,
   activity, recorded budgets, provenance, and final decision. Completion does
   not mean the candidate was accepted.
@@ -40,7 +50,8 @@ adds an app entry; it does not initialize a model, database, or experiment.
   evidence source, rename/reconnect, and removal from the collection.
 
 Removing an entry never deletes project files. Reconnect a moved folder using
-**Locate folder**; this preserves its organizational ID. Duplicate registration
+**Locate folder**; this requires the same managed identity at its new path.
+Managed identity also survives reopening in a different app profile. Duplicate registration
 selects the existing entry. Empty projects and registered baselines with no
 runs have dedicated states; missing, corrupt, and unsupported evidence have
 recovery guidance rather than borrowing another project's results.
@@ -52,9 +63,26 @@ and page history are isolated per project during the session; those view
 settings are not persisted across app restarts. A corrupt collection is
 reported without overwriting the original file.
 
-## Supported evidence and boundaries
+## Local models, imported datasets, and legacy evidence
 
-The local reader opens `.sqlite`, `.sqlite3`, and `.db` files directly inside
+Managed onboarding calls the project-owned `synth workspace` commands. It
+accepts self-contained BERT-family safetensors encoder bundles, preserving
+supported sentence-transformer modules. It does not execute model code or
+prove trainer compatibility. Unsupported formats, custom code, pickle weights,
+and links/junctions are rejected. See [the workspace guide](../docs/managed-workspaces.md).
+
+Project settings offers **Verify project files**: the backend rehashes model
+and dataset artifacts and checks counts and native training provenance. Routine
+opening checks metadata binding and file sizes. Imports are independently
+copied and content-addressed. Same-content imports with matching purpose and
+provenance are idempotent; conflicting purpose/provenance is rejected.
+
+`project.sqlite` is the workspace custody registry, not a legacy slice-run
+database. Source datasets still need normal task-compatible admission,
+snapshot and evaluation contracts before training. The desktop has no training
+or evaluation launch controls and never fabricates missing experiment history.
+
+The **legacy** reader opens `.sqlite`, `.sqlite3`, and `.db` files directly inside
 the selected directory, read-only. It projects the existing
 `encoder_experiment_projects`, `encoder_experiment_protocols`, and
 `encoder_experiment_events` contracts; optimization links are optional.
@@ -93,6 +121,9 @@ the built Rust binary's path.
 - `src/main.ts`: hardened Electron composition, folder picker, IPC handlers.
 - `src/preload.ts`: typed bridge; renderer cannot read arbitrary filesystem paths.
 - `src/project-registry.ts`: atomic, app-owned folder metadata only.
+- `src/managed-backend.ts`: fixed Rust CLI adapter and native-picker tokens.
+- `src/managed-workspace.ts`: row-free managed-workspace presentation contract.
+- `src/renderer/onboarding.ts`: checkpoint-copy and JSONL-import dialogs.
 - `src/projects.ts`: project identity/content types and stale-response guard.
 - `src/evidence/read-workspace.ts`: read-only SQLite-to-presentation projection.
 - `src/workspace.ts`: presentation contract, independent of SQLite and Electron.
@@ -108,18 +139,30 @@ cannot register local folders; actual folder workflows require Electron.
 ## Validation
 
 ```powershell
-npm run check   # TypeScript, build, deterministic Node tests
-npm run smoke   # Build and actual Electron interaction + restart checks
+npm run check   # Rust CLI build, TypeScript, UI build, deterministic Node tests
+npm run smoke   # Legacy + managed actual Electron interaction and restart checks
 ```
 
-The smoke test launches two separate hidden Electron processes sharing an
-isolated temporary profile. It registers classification and similarity fixture
+The smoke test launches four hidden Electron processes: legacy and managed
+flows each get their own temporary profile and an independent restart. Legacy
+checks register classification and similarity fixture
 folders, switches and reopens them after process restart, and checks rename,
 empty/baseline-only states, moved-folder recovery, non-destructive removal,
 project-local search/selection, generic metrics, historical attempt provenance,
 comparison, keyboard tabs, theme/width preferences, and responsive layout.
 The test controls the folder picker's returned selection; the native OS dialog
 itself is not automated. Experiment database bytes are checked unchanged.
+
+Managed checks exercise New, checkpoint preview/cancel, copied baselines,
+dataset preview/import and held-out rejection, two-project isolation, invalid
+Open, moved-folder recovery with identity checks, verification, forget/reopen,
+and responsive dialogs/dataset pages. Tiny custody-format model fixtures never
+claim to be trained or executable encoders.
+
+For an explicitly requested real-project read-only check, select a managed
+project in the saved library and run `npm run verify:current`. It uses temporary
+Chromium state, reads the actual saved library without rewriting it, verifies
+model/data files through the backend, and captures Models/Datasets/Settings.
 
 Screenshots are written to ignored `ui/qa/`. Checked viewport sizes include
 1440, 1280, 1024, 760, and 390 CSS pixels; the normal desktop window minimum

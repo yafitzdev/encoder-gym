@@ -33,7 +33,8 @@ export const modelName = (key: string) => key.split(/[\\/]/).filter(Boolean).at(
 export const dateLabel = (date: string) => new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(date));
 export const timeLabel = (date: string) => new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }).format(new Date(date)) + " UTC";
 export function durationLabel(seconds?: number): string { return seconds === undefined ? "Not recorded" : seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`; }
-export function bytesLabel(bytes: number): string { return (bytes / 1024 / 1024).toFixed(1) + " MB"; }
+export function bytesLabel(bytes: number): string { return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? (bytes / 1024).toFixed(1) + " KB" : (bytes / 1024 / 1024).toFixed(1) + " MB"; }
+export function displayPath(path: string): string { return path.startsWith("\\\\?\\") && /^[A-Za-z]:\\/.test(path.slice(4)) ? path.slice(4) : path; }
 
 export function score(value: number | undefined, key: string): string {
   if (value === undefined) return "—";

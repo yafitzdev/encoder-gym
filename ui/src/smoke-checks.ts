@@ -119,7 +119,7 @@ export async function runSmokeChecks(window: BrowserWindow, output: string, harn
   f.events[3].event.assessment.gates = [{ key: "mean_squared_error", baseline: 0.12, candidate: 0.10, direction_adjusted_improvement: 0.02, condition: { kind: "minimum_improvement", value: 0.03 }, passed: false }];
   writeExperimentDatabase(join(semantic, "semantic.sqlite3"), f);
   const before = readFileSync(join(support, "experiment.db"));
-  const add = async (folder: string) => { harness.chooseFolder(folder); await click("#add-project"); await until("document.getElementById('breadcrumb').textContent.includes(" + JSON.stringify(folder.split(/[\\/]/).at(-1)) + ")"); await loaded(); };
+  const add = async (folder: string) => { harness.chooseFolder(folder); await evaluate("document.querySelector('.legacy-connections').open = true"); await click("#open-legacy-project"); await until("document.getElementById('breadcrumb').textContent.includes(" + JSON.stringify(folder.split(/[\\/]/).at(-1)) + ")"); await loaded(); };
   const open = async (id: string) => { await click('[data-project-id="' + id + '"]'); await loaded(); };
   await add(draft);
   const draftId = harness.registry.read().selectedId!;

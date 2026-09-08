@@ -26,9 +26,11 @@
     <div class="app-shell" id="app-shell">
       <aside class="sidebar" aria-label="Workspace navigation">
         <div class="brand"><span class="brand-mark" aria-hidden="true">e<span>g</span></span><strong>Encoder Gym</strong></div>
-        <div class="project-collection-heading"><span class="nav-label">PROJECTS</span><button id="add-project" class="icon-button" type="button" aria-label="Add project folder">+</button></div>
+        <div class="project-collection-heading"><span class="nav-label">PROJECTS</span><button id="add-project" class="icon-button" type="button" aria-label="New project">+</button></div>
+        <button id="open-project" class="nav-item open-project-action" type="button">Open project…</button>
         <nav id="project-nav" aria-label="Project folders"></nav>
         <div class="sidebar-bottom">
+          <details class="legacy-connections"><summary>Earlier experiment folders</summary><button id="open-legacy-project" class="nav-item" type="button">Connect legacy journals…</button></details>
           <button id="open-guide" class="nav-item" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20M9 8a3 3 0 1 1 4 3c-1 1-1 2-1 3M12 17h.01"/></svg>Reading guide</button>
           <div class="sidebar-footer"><span>Local · single user</span><button id="theme-toggle" class="icon-button" type="button" aria-label="Use light theme"></button></div>
         </div>

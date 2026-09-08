@@ -42,6 +42,7 @@ export function renderBaseline(workspace: WorkspaceSnapshot, actions: Actions): 
     h("div", { class: "detail-columns" }, h("section", {}, sectionHeader("Reference artifact"), facts([["Format", workspace.baseline.format], ["Size", bytesLabel(workspace.baseline.bytes)], ["Artifact", copyField(workspace.baseline.key, actions.copy)], ["Fingerprint", copyField(workspace.baseline.fingerprint, actions.copy)]])),
       workspace.deployment ? h("section", {}, sectionHeader("Recorded inference export"), h("p", { class: "section-note" }, "This ONNX export was recorded alongside the reference checkpoint. Its presence does not establish that it is currently deployed."), facts([["Format", "FP32 ONNX"], ["Size", bytesLabel(workspace.deployment.bytes)], ["Artifact", copyField(workspace.deployment.key, actions.copy)], ["Fingerprint", copyField(workspace.deployment.fingerprint, actions.copy)]])) : null),
     sectionHeader("Baseline evaluations"), ...evaluations,
+    workspace.managed ? details("Imported checkpoint files", facts(workspace.managed.manifest.baseline.files.map(file => [file.path, `${bytesLabel(file.bytes)} · ${file.fingerprint}`]))) : null,
     !evaluations.length ? h("p", { class: "section-note" }, "No evaluations from recorded runs are available for this baseline yet.") : null,
   );
 }

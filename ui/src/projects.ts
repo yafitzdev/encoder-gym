@@ -5,7 +5,7 @@ export interface ProjectEntry {
   id: string;
   name: string;
   createdAt: string;
-  source: { kind: "folder"; path: string } | { kind: "example"; key: string };
+  source: { kind: "folder"; path: string; workspaceId?: string } | { kind: "example"; key: string };
 }
 export interface ProjectCollection {
   version: 1;

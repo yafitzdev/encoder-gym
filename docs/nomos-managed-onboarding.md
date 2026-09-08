@@ -1,8 +1,8 @@
 # Nomos managed-workspace onboarding
 
-Status: baseline copy and dataset backfill verified; desktop connection and
-New/Open/import presentation are still pending. This is not completion of the
-managed-workspace goal.
+Status: managed baseline, final-stage dataset backfill, and desktop connection
+verified. The actual saved Nomos entry opens through the same backend/renderer
+as New/Open/import, not through a special Nomos presentation path.
 
 ## Identity
 
@@ -44,8 +44,8 @@ does not import sealed evidence or unrelated data directories.
 ## Recheck
 
 The backend stage passed `cargo fmt-check`, `cargo check-all`, `cargo lint`,
-and the full `cargo test-all` suite (`RUST_TEST_THREADS=1`). Existing UI checks
-also passed (23 tests); this does not verify the still-pending onboarding UI.
+and the full `cargo test-all` suite (`RUST_TEST_THREADS=1`). All four Rust gates
+were run again and passed after the desktop implementation.
 Independent source hashing matched all 11 checkpoint files and both dataset
 copies after import. The source repository retained the same seven pre-existing
 modified/untracked paths; no source files were changed by onboarding.
@@ -55,7 +55,23 @@ synth workspace verify C:\Users\yanfi\EncoderGym\Projects\Nomos
 ```
 
 The workspace no longer needs the original checkpoint or input paths to open
-or verify. Keep the whole managed folder together when moving it. The existing
-app-library entry still points to `fitz-tool` until the desktop integration
-stage replaces that connection through the registry; do not create duplicate
-Nomos entries or delete the source repository.
+or verify. Keep the whole managed folder together when moving it.
+The app-library entry now points to the managed folder using the manifest's
+stable project ID. The old `fitz-tool` connection was replaced without deleting
+source files or creating a duplicate Nomos entry. A recoverable library backup
+is at `%APPDATA%\@encoder-gym\ui\projects.json.before-managed-nomos.json`.
+
+## Desktop verification
+
+- `npm run check`: 26 deterministic UI/bridge tests pass.
+- `npm run smoke`: legacy and managed flows each pass an independent Electron
+  restart (four processes total), including New/Open, imports, foreign/missing
+  project rejection, project isolation, verification, and forget/reopen.
+- `npm run verify:current`: the actual saved Nomos entry rendered its baseline
+  and two datasets with 6,800 records, while deep backend verification passed
+  and the saved library's bytes remained unchanged.
+- Screenshots in ignored `ui/qa/`: `managed-current-models.png`,
+  `managed-current-datasets.png`, and `managed-current-settings.png`.
+
+Restart an already-running older Electron instance to load the changed UI;
+`npm start` builds the backend and UI and opens the saved managed project.

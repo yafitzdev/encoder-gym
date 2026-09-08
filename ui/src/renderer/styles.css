@@ -404,6 +404,31 @@ dialog::backdrop { background: #0008; }
 .form-error { min-height: 20px; color: var(--danger); font-size: 12px; margin-top: 12px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px; }
 .browser-preview .window-controls { visibility: hidden; }
+.open-project-action { color: var(--muted); margin-bottom: 12px; }
+.legacy-connections { font-size: 11px; color: var(--subtle); margin: 10px 9px; }
+.legacy-connections summary { cursor: pointer; padding-block: 7px; }
+.legacy-connections .nav-item { font-size: 11px; padding-inline: 0; }
+.welcome-action + .welcome-action { border-top: 0; }
+#project-dialog { width: 620px; max-width: min(620px, calc(100vw - 30px)); max-height: calc(100vh - 36px); overflow: auto; }
+.onboarding-fields { display: grid; gap: 16px; min-width: 0; padding: 0; margin: 16px 0 0; border: 0; }
+.onboarding-fields:disabled { opacity: .65; }
+.onboarding-fields .dialog-actions { margin-top: 0; }
+.onboarding-section { min-width: 0; border-top: 1px solid var(--line); padding-top: 18px; }
+.onboarding-section h3 { font-size: 13px; margin-bottom: 9px; }
+.onboarding-section > p { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+.onboarding-section .form-field { margin-top: 14px; }
+.import-preview { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 14px; font-size: 12px; color: var(--muted); margin-top: 12px; min-width: 0; }
+.import-preview .facts { margin-block: 7px 0; }
+.path-note { color: var(--muted); overflow-wrap: anywhere; font-family: var(--font-mono, monospace); font-size: 11px; line-height: 1.6; margin-top: 10px; }
+.operation-status:not(:empty) { padding: 13px; background: var(--surface); color: var(--accent); border-left: 2px solid var(--accent); font-size: 12px; margin-top: 15px; }
+.dataset-list { display: grid; gap: 16px; }
+.dataset-card { min-width: 0; border: 1px solid var(--line); border-radius: 7px; padding: 22px; }
+.dataset-card h2 { overflow-wrap: anywhere; font-size: 15px; }
+.dataset-summary { color: var(--muted); font-size: 13px; }
+.dataset-card .section-note { margin-top: 12px; }
+.dataset-card .disclosure { margin-top: 17px; }
+.dataset-list + .reading-note { margin-top: 28px; }
+#project-dialog .dialog-actions { position: sticky; bottom: 0; background: var(--surface); padding: 14px 0; z-index: 1; }
 @media (max-width: 1100px) {
   .candidate-table td.numeric { min-width: 90px; }
   .candidate-table tbody th { min-width: 175px; }

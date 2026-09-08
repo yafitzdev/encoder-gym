@@ -10,6 +10,8 @@ import { NavigationHistory } from "./state.js";
 import { renderBaseline, renderBenchmarks, renderRuns } from "./workspace-pages.js";
 import { renderProjectSettings, renderProjectState, renderWelcome } from "./project-pages.js";
 import { previewBridge } from "./preview-bridge.js";
+import { newProjectDialog, importDatasetDialog } from "./onboarding.js";
+import { renderDatasets, renderManagedSettings } from "./managed-pages.js";
 
 const element = (id: string): HTMLElement => { const found = document.getElementById(id); if (!found) throw new Error("Missing #" + id); return found; };
 interface ProjectView { history: NavigationHistory; models: ModelPageState; details: Map<string, DetailState> }
@@ -66,13 +68,14 @@ export function mount(): void {
     loading = false; render();
   }
   async function changeCollection(operation: () => Promise<ProjectCollection | null>): Promise<void> {
+    loading = true; render();
     try {
       const next = await operation();
-      if (!next) return;
+      if (!next) { loading = false; render(); return; }
       collection = next;
       if (next.selectedId) await selectProject(next.selectedId);
       else { selection.invalidate(null); opened = undefined; loading = false; render(); }
-    } catch (error) { notify(message(error)); }
+    } catch (error) { loading = false; render(); notify(message(error)); }
   }
   function projectDialog(removing: boolean): void {
     const project = collection.projects.find(p => p.id === selection.selectedId);
@@ -120,6 +123,27 @@ export function mount(): void {
     dialog.showModal();
   }
   const projects: ProjectActions = {
+    create: () => newProjectDialog(element("project-dialog") as HTMLDialogElement, bridge, async next => { collection = next; if (next.selectedId) await selectProject(next.selectedId); notify("Project created. The source checkpoint is unchanged."); }),
+    openManaged: () => { void changeCollection(() => bridge.openManagedProject()); },
+    importDataset: () => {
+      const id = selection.selectedId; if (!id || !workspace()?.managed) return;
+      importDatasetDialog(element("project-dialog") as HTMLDialogElement, bridge, id, async result => {
+        if (selection.selectedId !== id) return;
+        opened = result; navigate({ page: "datasets" }); notify("Dataset ready in this project. The original file is unchanged.");
+      });
+    },
+    verify: () => {
+      const id = selection.selectedId; if (!id || loading) return;
+      loading = true; render();
+      void bridge.verifyManagedProject(id).then(result => {
+        if (selection.selectedId !== id) return;
+        opened = result; loading = false; render(); notify("Project files and record counts verified.");
+      }, error => {
+        if (selection.selectedId !== id) return;
+        const project = collection.projects.find(p => p.id === id)!;
+        opened = { project, content: { state: "error", message: message(error) } }; loading = false; render();
+      });
+    },
     addFolder: () => { void changeCollection(() => bridge.addProjectFolder()); },
     openExample: () => { void changeCollection(() => bridge.openExample()); },
     select: id => { void selectProject(id); },
@@ -135,7 +159,7 @@ export function mount(): void {
       navigate({ page: "compare", candidateIds: rows.map(row => row.candidate.id) });
     },
   };
-  const pages: [Page, string, string][] = [["models", "Models", "models"], ["runs", "Runs", "runs"], ["benchmarks", "Benchmarks", "benchmark"], ["project", "Project settings", "project"]];
+  const pages: [Page, string, string][] = [["models", "Models", "models"], ["datasets", "Datasets", "project"], ["runs", "Runs", "runs"], ["benchmarks", "Benchmarks", "benchmark"], ["project", "Project settings", "project"]];
   function render(): void {
     const current = view.history.current, data = workspace();
     const project = collection.projects.find(p => p.id === selection.selectedId);
@@ -146,9 +170,9 @@ export function mount(): void {
     element("project-nav").replaceChildren(...collection.projects.map(p => h("section", { class: "project-folder" + (p.id === project?.id ? " selected-project" : "") },
       h("button", { type: "button", class: "project-folder-button", title: p.source.kind === "folder" ? p.source.path : "Recorded example", "data-project-id": p.id, "aria-expanded": String(p.id === project?.id), onClick: () => {
         if (p.id === selection.selectedId) navigate({ page: "models" }); else projects.select(p.id);
-      } }, icon("project"), h("span", {}, p.name), p.source.kind === "example" ? h("small", {}, "Example") : null),
-      p.id === project?.id ? h("div", { class: "project-pages" }, ...pages.map(([page, label, symbol]) => h("button", { type: "button", class: "nav-item" + (page === activePage ? " active" : ""), "aria-current": page === activePage ? "page" : null, "data-page": page, onClick: () => navigate({ page }) }, icon(symbol), label,
-        data && ["models", "runs"].includes(page) ? h("span", { class: "nav-count" }, page === "models" ? candidateRows(data).length : data.runs.length) : null))) : null)));
+      } }, icon("project"), h("span", {}, p.name), p.source.kind === "example" ? h("small", {}, "Example") : !p.source.workspaceId ? h("small", {}, "Legacy") : null),
+      p.id === project?.id ? h("div", { class: "project-pages" }, ...pages.filter(([page]) => page !== "datasets" || (p.source.kind === "folder" && p.source.workspaceId)).map(([page, label, symbol]) => h("button", { type: "button", class: "nav-item" + (page === activePage ? " active" : ""), "aria-current": page === activePage ? "page" : null, "data-page": page, onClick: () => navigate({ page }) }, icon(symbol), label,
+        data && ["models", "runs"].includes(page) ? h("span", { class: "nav-count" }, page === "models" ? candidateRows(data).length + 1 : data.runs.length) : null))) : null)));
     const candidate = data ? candidateRows(data).find(r => r.candidate.id === current.id)?.candidate : undefined;
     const run = data?.runs.find(r => r.id === current.id);
     const title = !project ? "Projects" : current.page === "candidate" ? candidate ? candidateName(candidate) : "Candidate not found" :
@@ -156,13 +180,13 @@ export function mount(): void {
       pages.find(p => p[0] === current.page)?.[1] ?? (current.page === "baseline" ? "Baseline" : "Compare models");
     element("breadcrumb").textContent = project ? project.name + " / " + title : "Encoder Gym";
     document.title = title + " · Encoder Gym";
-    element("source-state").replaceChildren(...(project ? [button(loading ? "Reading…" : opened?.content.state === "error" ? "Evidence unavailable" : data?.source === "recorded" ? "Recorded example" : data ? "Local journals" : "No records yet", () => navigate({ page: "project" }), "source-button"),
+    element("source-state").replaceChildren(...(project ? [button(loading ? "Reading…" : opened?.content.state === "error" ? "Evidence unavailable" : data?.managed ? "Managed workspace" : data?.source === "recorded" ? "Recorded example" : data ? "Legacy journals" : "No records yet", () => navigate({ page: "project" }), "source-button"),
       ...(data ? [h("span", {}, dateLabel(data.capturedAt))] : [])] : []));
     const reload = element("reload-evidence") as HTMLButtonElement; reload.hidden = !project; reload.disabled = loading;
     let content: HTMLElement;
     if (collectionError) content = h("div", { class: "page-content" }, empty("Couldn't open the project collection", collectionError, button("Try again", () => { void refreshCollection(); }, "primary")));
     else if (!project) content = loading ? h("div", { class: "page-content", role: "status" }, "Opening project collection…") : renderWelcome(projects);
-    else if (current.page === "project") content = renderProjectSettings(project, opened, actions, projects);
+    else if (current.page === "project") content = data?.managed ? renderManagedSettings(project, data.managed, actions, projects) : renderProjectSettings(project, opened, actions, projects);
     else if (!data) content = renderProjectState(project, opened, actions, projects, current.page);
     else {
       const detailKey = (current.id ?? "") + ":" + (current.runId ?? "");
@@ -170,6 +194,7 @@ export function mount(): void {
       const detail = view.details.get(detailKey) ?? { failedOnly: exactCandidate?.development.some(d => d.checks.some(g => !g.passed)) ?? false };
       if (current.id) view.details.set(detailKey, detail);
       if (current.page === "models") content = renderModels(data, view.models, actions);
+      else if (current.page === "datasets" && data.managed) content = renderDatasets(data.managed, actions, projects);
       else if (current.page === "candidate") content = renderCandidate(data, current.id ?? "", current.tab ?? "results", detail, actions, current.runId);
       else if (current.page === "run") content = renderRun(data, current.id ?? "", current.tab ?? "overview", actions);
       else if (current.page === "runs") content = renderRuns(data, actions);
@@ -185,7 +210,9 @@ export function mount(): void {
   for (const [id, offset] of [["navigate-back", -1], ["navigate-forward", 1]] as const) element(id).addEventListener("click", () => { const entry = view.history.move(offset, main.scrollTop); if (entry) { render(); main.scrollTop = entry.scroll; focusHeading(); } });
   element("reload-evidence").addEventListener("click", actions.refresh);
   element("open-guide").addEventListener("click", () => help());
-  element("add-project").addEventListener("click", projects.addFolder);
+  element("add-project").addEventListener("click", projects.create);
+  element("open-project").addEventListener("click", projects.openManaged);
+  element("open-legacy-project").addEventListener("click", projects.addFolder);
   const readPreference = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
   const savePreference = (key: string, value: string) => { try { localStorage.setItem(key, value); } catch { /* Preferences must not prevent using the app. */ } };
   let theme = readPreference("encoder-gym:theme") === "light" ? "light" : "dark";
