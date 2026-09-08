@@ -24,6 +24,11 @@ Use **New project** (the sidebar plus) to choose a local checkpoint, preview its
 format/size, name the project, and choose a parent location. Gym copies the
 checkpoint into a new owned folder and creates its manifest, registry database,
 and artifact directories. The source stays untouched. Hugging Face is deferred.
+The confirmation shows the full new folder path and copy size. Fields scroll
+separately from the action/feedback area, including in small windows. Task
+description is optional. Failed operations keep the dialog open with recovery
+guidance and expandable technical details; re-select a file if it changed after
+preview. No source files are overwritten.
 
 Use **Open project** for an existing Gym workspace containing `encoder-gym.json`.
 Arbitrary repositories are not accepted. Earlier read-only journal folders
@@ -42,6 +47,8 @@ They are labelled Legacy and are not silently converted into managed projects.
   preview record counts and partitions, and inspect copied-file provenance.
   Imports are not admitted training snapshots and do not create class labels,
   splits, runs, or evaluation results. Training imports reject held-out rows.
+  File counts, size, and intended use are visible in the list; expand **File
+  details and provenance** for original/copy locations and content identities.
 - **Runs:** immutable experiment records. A run owns its candidate attempts,
   activity, recorded budgets, provenance, and final decision. Completion does
   not mean the candidate was accepted.
@@ -81,6 +88,8 @@ provenance are idempotent; conflicting purpose/provenance is rejected.
 database. Source datasets still need normal task-compatible admission,
 snapshot and evaluation contracts before training. The desktop has no training
 or evaluation launch controls and never fabricates missing experiment history.
+Managed Runs and Benchmarks also state that automatically linking CLI run
+history is not implemented. Their empty states do not promise otherwise.
 
 The **legacy** reader opens `.sqlite`, `.sqlite3`, and `.db` files directly inside
 the selected directory, read-only. It projects the existing

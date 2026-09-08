@@ -126,11 +126,11 @@ code { font-size: 12px; overflow-wrap: anywhere; }
 
 /* Baseline is the visual anchor */
 .baseline-anchor { border: 1px solid var(--line); border-radius: 7px; background: var(--surface); display: flex; justify-content: space-between; gap: 16px; padding: 14px 18px; align-items: center; }
-.baseline-heading { display: flex; gap: 13px; align-items: center; }
+.baseline-heading { display: flex; gap: 13px; align-items: center; min-width: 0; }
 .model-symbol { width: 38px; height: 42px; border: 1px solid var(--line); background: var(--table-base); color: var(--accent); border-radius: 8px; display: grid; place-items: center; flex-shrink: 0; }
 .model-symbol svg { width: 25px; height: 25px; }
 .baseline-name { min-width: 0; }
-.baseline-name h2 { font-size: 19px; margin-top: 3px; }
+.baseline-name h2 { font-size: 19px; margin-top: 3px; overflow-wrap: anywhere; }
 .baseline-name p { color: var(--muted); font-size: 12px; margin-top: 3px; }
 .baseline-action { display: grid; justify-items: end; gap: 9px; margin-left: auto; }
 .metric-heading { display: inline-flex; flex-direction: column; align-items: inherit; gap: 2px; padding: 0; color: var(--muted); font-size: 11px; background: transparent; text-align: inherit; font-weight: 500; }
@@ -401,7 +401,8 @@ dialog::backdrop { background: #0008; }
 #project-dialog h2 { margin-bottom: 15px; }
 .form-field { display: grid; gap: 8px; color: var(--muted); font-size: 12px; }
 .text-input { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 9px 10px; min-width: 0; width: 100%; }
-.form-error { min-height: 20px; color: var(--danger); font-size: 12px; margin-top: 12px; }
+.form-error { color: var(--danger); font-size: 12px; margin-top: 12px; }
+.form-error:empty { display: none; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px; }
 .browser-preview .window-controls { visibility: hidden; }
 .open-project-action { color: var(--muted); margin-bottom: 12px; }
@@ -410,9 +411,30 @@ dialog::backdrop { background: #0008; }
 .legacy-connections .nav-item { font-size: 11px; padding-inline: 0; }
 .welcome-action + .welcome-action { border-top: 0; }
 #project-dialog { width: 620px; max-width: min(620px, calc(100vw - 30px)); max-height: calc(100vh - 36px); overflow: auto; }
-.onboarding-fields { display: grid; gap: 16px; min-width: 0; padding: 0; margin: 16px 0 0; border: 0; }
+.onboarding-fields { display: grid; gap: 16px; min-width: 0; min-height: 0; padding: 20px 24px; margin: 0; border: 0; overflow: auto; }
 .onboarding-fields:disabled { opacity: .65; }
-.onboarding-fields .dialog-actions { margin-top: 0; }
+#project-dialog:has(.onboarding-form) { padding: 0; overflow: hidden; }
+.onboarding-form { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; max-height: calc(100vh - 40px); }
+.onboarding-heading { padding: 20px 24px 16px; border-bottom: 1px solid var(--line); }
+#project-dialog .onboarding-heading h2 { margin-bottom: 6px; font-size: 21px; }
+.onboarding-heading p { color: var(--muted); font-size: 13px; }
+.onboarding-footer { min-width: 0; margin: 0; padding: 14px 24px; border: 0; border-top: 1px solid var(--line); }
+.onboarding-footer .form-error { max-height: 28vh; overflow: auto; margin: 0 0 10px; }
+.onboarding-footer .operation-status:not(:empty) { margin: 0 0 10px; }
+.confirmation-hint { color: var(--muted); font-size: 12px; }
+.field-caption { display: block; color: var(--muted); font-size: 11px; margin-top: 12px; }
+.field-help { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.onboarding-fields > .field-help { margin-top: -8px; }
+.onboarding-fields > .button { justify-self: start; }
+.onboarding-fields > .disclosure { margin: 0; padding-bottom: 0; }
+.onboarding-fields #project-parent-path { margin-top: 3px; }
+.preview-summary { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.preview-summary strong { color: var(--text); font-size: 15px; }
+.failure-notice { border-left: 3px solid var(--danger); padding: 10px 13px; background: var(--surface); }
+.failure-notice > strong { display: block; color: var(--danger); }
+.failure-notice > p { color: var(--muted); margin-top: 5px; font-size: 12px; }
+.failure-notice .disclosure { padding: 7px 0 0; margin-top: 7px; }
+.failure-notice pre { font: 11px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); margin: 0; }
 .onboarding-section { min-width: 0; border-top: 1px solid var(--line); padding-top: 18px; }
 .onboarding-section h3 { font-size: 13px; margin-bottom: 9px; }
 .onboarding-section > p { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
@@ -421,14 +443,31 @@ dialog::backdrop { background: #0008; }
 .import-preview .facts { margin-block: 7px 0; }
 .path-note { color: var(--muted); overflow-wrap: anywhere; font-family: var(--font-mono, monospace); font-size: 11px; line-height: 1.6; margin-top: 10px; }
 .operation-status:not(:empty) { padding: 13px; background: var(--surface); color: var(--accent); border-left: 2px solid var(--accent); font-size: 12px; margin-top: 15px; }
-.dataset-list { display: grid; gap: 16px; }
-.dataset-card { min-width: 0; border: 1px solid var(--line); border-radius: 7px; padding: 22px; }
+.dataset-list { border-top: 1px solid var(--line); }
+.dataset-card { min-width: 0; border-bottom: 1px solid var(--line); padding: 19px 0 8px; }
 .dataset-card h2 { overflow-wrap: anywhere; font-size: 15px; }
-.dataset-summary { color: var(--muted); font-size: 13px; }
+.dataset-row { display: flex; justify-content: space-between; align-items: start; gap: 24px; }
+.dataset-identity { min-width: 0; }
+.dataset-purpose { flex-shrink: 0; display: grid; justify-items: end; gap: 5px; }
+.dataset-purpose .field-caption { margin: 0; }
+.dataset-summary { color: var(--muted); font-size: 13px; margin-top: 6px; }
 .dataset-card .section-note { margin-top: 12px; }
-.dataset-card .disclosure { margin-top: 17px; }
-.dataset-list + .reading-note { margin-top: 28px; }
+.dataset-card > .disclosure { margin-top: 8px; border: 0; padding: 9px 0; }
+.preparation-note { margin-top: 28px; max-width: 720px; }
+.preparation-note h2 { font-size: 14px; }
+.preparation-note p { color: var(--muted); font-size: 13px; line-height: 1.7; margin-top: 7px; }
+.preparation-note .disclosure { border: 0; margin: 0; padding: 10px 0; }
+.candidate-empty { border-top: 1px solid var(--line); padding-top: 18px; }
+.candidate-empty > h3 { font-size: 16px; }
+.candidate-empty > p { color: var(--muted); margin: 8px 0 20px; max-width: 690px; font-size: 13px; }
+.next-step { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
+.next-step p { color: var(--muted); margin-top: 5px; font-size: 13px; }
+.candidate-empty > .availability-note { margin-top: 16px; font-size: 12px; }
+.settings-page { max-width: 1100px; }
+.settings-page .settings-actions { margin-bottom: 14px; }
+.settings-page .project-info { padding: 20px; }
 #project-dialog .dialog-actions { position: sticky; bottom: 0; background: var(--surface); padding: 14px 0; z-index: 1; }
+#project-dialog .onboarding-footer .dialog-actions { position: static; padding: 0; margin-top: 12px; }
 @media (max-width: 1100px) {
   .candidate-table td.numeric { min-width: 90px; }
   .candidate-table tbody th { min-width: 175px; }
@@ -438,6 +477,10 @@ dialog::backdrop { background: #0008; }
   .welcome-action > div { flex-basis: calc(100% - 60px); }
 }
 @media (max-width: 600px) {
+  .dataset-row { flex-direction: column; gap: 12px; }
+  .dataset-purpose { display: flex; align-items: center; gap: 9px; }
+  .next-step { flex-direction: column; align-items: start; gap: 15px; }
+  .onboarding-heading, .onboarding-fields, .onboarding-footer { padding-inline: 17px; }
   .baseline-anchor { align-items: start; flex-direction: column; gap: 9px; }
   .baseline-action { margin-left: 0; }
   .baseline-name h2 { overflow-wrap: anywhere; }

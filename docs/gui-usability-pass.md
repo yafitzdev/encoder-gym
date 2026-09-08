@@ -70,5 +70,30 @@ Use temporary fixtures for writes. Real Nomos verification remains read-only.
 
 ## Completion evidence
 
-Pending implementation and verification. Baseline green checks above do not
-establish completion of the usability goal.
+### Stage 1 — Managed project comprehension and onboarding
+
+Implemented compact baseline/candidate setup, scan-friendly dataset rows with
+expandable provenance, one primary import action in empty/populated states,
+plain managed-run/evaluation availability, and name/location-first settings.
+New/import dialogs have independently scrolling fields and fixed feedback/actions.
+Creation shows its complete destination and why confirmation is unavailable;
+optional task metadata is disclosed. Known import errors lead with recovery,
+preserve raw diagnostics on demand, and retain entered names on failed copies.
+Success says "imported", not "ready".
+
+Verification so far: 29 deterministic UI tests and both two-process Electron
+journeys pass. Added checks cover fixed footer geometry at 760px, actions at
+390px, cancelled-dialog focus, exact destination, held-out rejection, source
+drift after preview, retained input, no failed-import publication, and accessible
+dataset details. The final UI rerun after visual refinements passed as well.
+Nomos read-only verification again reports the same baseline and 6,800 records,
+with unchanged library bytes. Current Models/Datasets/Settings and dialog
+screenshots were visually reviewed. `cargo fmt-check`, `cargo check-all`,
+`cargo lint`, and full `cargo test-all` all passed (`RUST_TEST_THREADS=1`).
+
+Interface review: no domain, persistence, native-file or IPC contracts changed.
+The new pure error-description helper only maps existing diagnostics to display
+copy; the backend still makes every validation and custody decision.
+
+Stage 2 and the final requirement-by-requirement audit remain pending. Stage 1
+checks do not establish completion of the full usability goal.

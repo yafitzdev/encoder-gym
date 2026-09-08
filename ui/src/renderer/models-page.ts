@@ -18,7 +18,7 @@ export function renderModels(workspace: WorkspaceSnapshot, state: ModelPageState
   const filterChange = (key: keyof CatalogFilter, value: string) => { state.filter[key] = value; actions.render(); };
   const selectedSetup = selectedRows[0] ? setupId(selectedRows[0].run) : undefined;
   return h("div", { class: "page-content" },
-    pageHeader("Models", "Compare every candidate with your baseline encoder.", button("How to read this", () => actions.help(), "ghost", "help")),
+    pageHeader("Models", allRows.length ? "Which candidates improve on your reference model?" : "Your starting model and the alternatives you develop from it.", allRows.length ? button("How to read this", () => actions.help(), "ghost", "help") : null),
     h("section", { class: "baseline-anchor", "aria-label": "Baseline encoder" },
       h("div", { class: "baseline-heading" }, h("div", { class: "model-symbol", "aria-hidden": "true" }, icon("models")),
         h("div", { class: "baseline-name" }, h("div", { class: "eyebrow" }, "Project baseline"), h("h2", {}, modelName(workspace.baseline.key)), h("p", {}, workspace.baseline.format + " · comparison reference"))),
@@ -26,7 +26,7 @@ export function renderModels(workspace: WorkspaceSnapshot, state: ModelPageState
     ),
     newest ? h("div", { class: "project-update" }, icon("runs"), h("span", {}, newest.decision === "retain_baseline" ? "Latest run kept the baseline." : "Latest recorded run is available.", " ", h("button", { type: "button", class: "inline-link", onClick: () => actions.navigate({ page: "run", id: newest.id }) }, `${runName(newest)} →`)), h("time", {}, dateLabel(newest.updatedAt))) : null,
     h("section", { class: "candidate-section", "aria-label": "Candidate comparisons" },
-      sectionHeader("Candidates", h("div", { class: "section-tools" }, tag(String(allRows.length)), h("span", { class: "muted" }, "Development evidence"))),
+      sectionHeader("Candidates", allRows.length ? h("div", { class: "section-tools" }, tag(String(allRows.length)), h("span", { class: "muted" }, "Development results")) : null),
       allRows.length ? h("div", { class: "comparison-toolbar" },
         h("label", { class: "search-control", for: "candidate-search" }, icon("search"), h("span", { class: "sr-only" }, "Find a candidate or run"), h("input", { id: "candidate-search", type: "search", placeholder: "Find a candidate or run…", value: state.filter.query, onInput: (e: Event) => filterChange("query", (e.target as HTMLInputElement).value) })),
         setups.length > 1 ? selectControl("setup-filter", "Evaluation setup", [["all", "All setups"], ...setups.map(g => [g.id, g.label] as [string, string])], state.filter.setup, v => filterChange("setup", v)) : null,
@@ -70,7 +70,13 @@ export function renderModels(workspace: WorkspaceSnapshot, state: ModelPageState
           )),
         );
       }),
-      !allRows.length ? empty("No candidates recorded yet", workspace.managed ? `Your baseline is stored in this project. ${workspace.managed.datasets.length ? "Review the imported datasets, then configure training membership and evaluation rules before your first experiment." : "Add your first dataset to continue setting up this encoder."}` : "Your baseline is registered. Candidates and comparisons will appear when an experiment records them.", button(workspace.managed ? "Open datasets" : "Project settings", () => actions.navigate({ page: workspace.managed ? "datasets" : "project" }))) : !groups.length ? empty("No matching candidates", "Try a different name, result, or evaluation setup.", button("Reset filters", () => { state.filter = initialFilter(); actions.render(); })) : null,
+      !allRows.length ? h("div", { class: "candidate-empty" }, h("h3", {}, "No candidates recorded yet"),
+        h("p", {}, "A candidate is a trained or transformed alternative to your baseline. Its results belong here once an experiment has produced evidence."),
+        workspace.managed ? h("div", { class: "next-step" }, h("div", {}, h("h3", {}, workspace.managed.datasets.length ? `${workspace.managed.datasets.length} imported ${workspace.managed.datasets.length === 1 ? "dataset" : "datasets"}` : "Start with your data"),
+          h("p", {}, workspace.managed.datasets.length ? "Review your source files and their intended use." : "Add a local JSONL source file to this project.")),
+          button("Open datasets", () => actions.navigate({ page: "datasets" }), "primary", "arrow")) : button("Project settings", () => actions.navigate({ page: "project" })),
+        workspace.managed ? h("p", { class: "availability-note" }, "Available here: model and dataset storage. Training, evaluation, and linking run history are not available in this desktop yet.") : null,
+      ) : !groups.length ? empty("No matching candidates", "Try a different name, result, or evaluation setup.", button("Reset filters", () => { state.filter = initialFilter(); actions.render(); })) : null,
       allRows.length ? h("p", { class: "table-footnote" }, "Changes are relative to the matching baseline. pp = percentage points. A score improvement can still miss a required threshold. ", h("button", { class: "inline-link", type: "button", onClick: () => actions.navigate({ page: "benchmarks" }) }, "Understand the benchmarks →")) : null,
     ),
   );

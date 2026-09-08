@@ -1,5 +1,6 @@
 import { h, type Child } from "./dom.js";
 import { delta, metricInfo, score } from "./catalog.js";
+import { describeFailure } from "../presentation-errors.js";
 
 const paths: Record<string, string[]> = {
   models: ["M4 7 12 3l8 4-8 4-8-4Z", "m4 12 8 4 8-4", "m4 17 8 4 8-4"],
@@ -42,6 +43,11 @@ export function scoreStack(value: number | undefined, baseline: number | undefin
 export function facts(entries: [string, Child][]): HTMLElement { return h("dl", { class: "facts" }, ...entries.map(([key, value]) => h("div", {}, h("dt", {}, key), h("dd", {}, value)))); }
 export function copyField(value: string, copy: (value: string) => void): HTMLElement { return h("div", { class: "copy-field" }, h("code", {}, value), button("Copy", () => copy(value), "ghost small", "copy")); }
 export function details(title: string, content: Child, open = false): HTMLElement { return h("details", { class: "disclosure", open }, h("summary", {}, title), h("div", { class: "disclosure-content" }, content)); }
+export function failureNotice(error: unknown): HTMLElement {
+  const failure = describeFailure(error);
+  return h("div", { class: "failure-notice" }, h("strong", {}, failure.title), h("p", {}, failure.recovery),
+    details("Technical details", h("pre", {}, failure.detail)));
+}
 export function selectControl(id: string, label: string, options: [string, string][], value: string, change: (value: string) => void): HTMLElement {
   return h("label", { class: "select-control", for: id }, h("span", {}, label), h("select", { id, value, onChange: (e: Event) => change((e.target as HTMLSelectElement).value) }, ...options.map(([v, text]) => h("option", { value: v }, text))));
 }

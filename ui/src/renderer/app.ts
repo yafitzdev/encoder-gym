@@ -129,7 +129,7 @@ export function mount(): void {
       const id = selection.selectedId; if (!id || !workspace()?.managed) return;
       importDatasetDialog(element("project-dialog") as HTMLDialogElement, bridge, id, async result => {
         if (selection.selectedId !== id) return;
-        opened = result; navigate({ page: "datasets" }); notify("Dataset ready in this project. The original file is unchanged.");
+        opened = result; navigate({ page: "datasets" }); notify("Dataset imported. The original file is unchanged.");
       });
     },
     verify: () => {

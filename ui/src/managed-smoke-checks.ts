@@ -11,7 +11,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   const evaluate = (code: string) => web.executeJavaScript(code, true);
   const until = async (expression: string) => evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(" + expression + ")resolve(true);else if(n++>1000)reject(new Error('Timed out: '+" + JSON.stringify(expression) + "));else setTimeout(poll,20)};poll()})");
   const check = async (name: string, expression: string) => { if (!await evaluate(expression)) throw new Error("Managed renderer check failed: " + name); console.log("PASS " + name); };
-  const click = async (selector: string) => evaluate("document.querySelector(" + JSON.stringify(selector) + ").click()");
+  const click = async (selector: string) => evaluate("(()=>{const control=document.querySelector(" + JSON.stringify(selector) + ");control.focus();control.click()})()");
   const textButton = async (text: string) => evaluate("[...document.querySelectorAll('#page button, dialog[open] button')].find(b=>b.textContent === " + JSON.stringify(text) + ").click()");
   const type = async (id: string, value: string) => evaluate("document.getElementById(" + JSON.stringify(id) + ").value=" + JSON.stringify(value) + ";document.getElementById(" + JSON.stringify(id) + ").dispatchEvent(new Event('input',{bubbles:true}))");
   const nav = async (page: string) => click('[data-page="' + page + '"]');
@@ -40,6 +40,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await until("!document.querySelector('.onboarding-fields').disabled");
   await check("cancelled checkpoint picker does not create a project", "document.getElementById('confirm-new-project').disabled && document.querySelectorAll('[data-project-id]').length === 0");
   await textButton("Cancel");
+  await check("cancelling onboarding restores keyboard focus to New project", "document.activeElement.id === 'add-project'");
   const create = async (name: string, source: string) => {
     await click("#add-project"); await type("new-project-name", name); await type("new-project-task", "Local encoder fixture");
     harness.chooseFolder(source); await click("#choose-local-model"); await until("document.getElementById('model-preview').textContent.includes('files') && !document.querySelector('.onboarding-fields').disabled");
@@ -47,6 +48,10 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     if (name === "Routing encoder") {
       await screenshot("managed-create-preview"); await screenshot("managed-create-760", 760, 800);
       await check("creation confirmation stays visible in the small desktop dialog", "document.getElementById('confirm-new-project').getBoundingClientRect().bottom <= document.getElementById('project-dialog').getBoundingClientRect().bottom");
+      await check("dialog fields never overlap fixed actions", "document.querySelector('.onboarding-fields').getBoundingClientRect().bottom <= document.querySelector('.onboarding-footer').getBoundingClientRect().top + 1");
+      await check("creation preview shows the complete destination", "document.getElementById('project-parent-path').textContent.endsWith('\\\\Routing encoder') && document.getElementById('confirm-new-project-hint').textContent.includes('No training starts')");
+      await screenshot("managed-create-390", 390, 700);
+      await check("narrow dialog keeps confirmation inside viewport", "document.getElementById('confirm-new-project').getBoundingClientRect().bottom < innerHeight && document.getElementById('project-dialog').scrollWidth <= document.getElementById('project-dialog').clientWidth + 1");
       window.setContentSize(1440, 960);
     }
     await click("#confirm-new-project"); await until("!document.querySelector('#project-dialog[open]')"); await loaded();
@@ -55,16 +60,33 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   const firstId = await create("Routing encoder", one);
   await check("new project shows its baseline without fabricated runs or candidates", "document.querySelector('.baseline-name').textContent.includes('Routing encoder') && document.querySelectorAll('[data-candidate-id]').length === 0 && document.getElementById('source-state').textContent.includes('Managed workspace')");
   await screenshot("managed-baseline");
+  await check("new project explains actual desktop availability", "document.querySelector('.availability-note').textContent.includes('not available in this desktop') && document.querySelector('.next-step').textContent.includes('Open datasets')");
+  await nav("runs");
+  await check("managed runs do not promise automatic CLI history import", "document.querySelector('.empty-state').textContent.includes('linking their CLI history') && document.querySelector('.empty-state').textContent.includes('not available')");
+  await nav("benchmarks");
+  await check("managed benchmarks distinguish imports from evaluation", "document.querySelector('.empty-state').textContent.includes('does not create evaluation results')");
   await nav("datasets"); await textButton("Import dataset");
   const sealed = join(root, "held-out.jsonl"); writeFileSync(sealed, '{"evaluation_partition":"sealed"}\n');
   await evaluate("document.getElementById('dataset-purpose').value='training';document.getElementById('dataset-purpose').dispatchEvent(new Event('change',{bubbles:true}))");
   harness.chooseFolder(sealed); await click("#choose-dataset-file"); await until("document.querySelector('dialog .form-error').textContent.includes('non-training partition')");
   await check("training import rejects held-out rows visibly before copying", "document.getElementById('confirm-dataset-import').disabled && document.querySelectorAll('[data-dataset-id]').length === 0");
+  await check("import error leads with recovery and keeps diagnostics collapsed", "document.querySelector('.form-error strong').textContent === 'This file contains held-out data' && !document.querySelector('.form-error details').open && document.querySelector('.form-error').getBoundingClientRect().bottom < innerHeight");
+  await screenshot("managed-import-rejection", 760, 800); window.setContentSize(1440, 960);
   const sourceData = join(root, "train.jsonl"); writeFileSync(sourceData, '{"text":"source only one","split":"train"}\n{"text":"source only two","split":"train"}\n');
   harness.chooseFolder(sourceData); await click("#choose-dataset-file"); await until("!document.getElementById('confirm-dataset-import').disabled && !document.querySelector('.onboarding-fields').disabled");
   await type("import-dataset-name", "Routing training source"); await screenshot("managed-import-preview");
+  const sourceBytes = readFileSync(sourceData);
+  writeFileSync(sourceData, sourceBytes.toString() + '{"text":"changed after preview","split":"train"}\n');
+  await click("#confirm-dataset-import"); await until("document.querySelector('dialog .form-error').textContent.includes('Dataset changed after preview')");
+  await check("failed import preserves input and creates no dataset", "document.getElementById('import-dataset-name').value === 'Routing training source' && document.querySelectorAll('[data-dataset-id]').length === 0 && document.querySelector('#project-dialog[open]')");
+  writeFileSync(sourceData, sourceBytes);
+  harness.chooseFolder(sourceData); await click("#choose-dataset-file"); await until("!document.querySelector('.onboarding-fields').disabled && !document.getElementById('confirm-dataset-import').disabled");
   await click("#confirm-dataset-import"); await until("!document.querySelector('#project-dialog[open]') && document.querySelectorAll('[data-dataset-id]').length === 1");
   await check("dataset view exposes provenance and counts, not native payloads", "document.querySelector('.dataset-summary').textContent.includes('2 records') && !document.getElementById('page').textContent.includes('source only one')");
+  await check("dataset details are optional and source readiness stays explicit", "!document.querySelector('[data-dataset-id] details').open && document.querySelector('.preparation-note').textContent.includes('not training-ready')");
+  await click("[data-dataset-id] summary");
+  await check("expanded dataset retains source identities and copy actions", "document.querySelector('[data-dataset-id] details').open && document.querySelector('[data-dataset-id] details').textContent.includes('Content identity') && document.querySelector('[data-dataset-id] .copy-field button')");
+  await click("[data-dataset-id] summary");
   await screenshot("managed-datasets");
   await click("#theme-toggle"); await screenshot("managed-datasets-light"); await click("#theme-toggle");
   for (const width of [760, 390]) {
