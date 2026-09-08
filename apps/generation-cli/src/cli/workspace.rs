@@ -1,5 +1,54 @@
 use clap::{Subcommand, ValueEnum};
 use std::path::PathBuf;
+use uuid::Uuid;
+
+#[derive(Debug, Subcommand)]
+pub enum ManagedOptimizeCommand {
+    /// Resolve the exact reviewed request without persisting a run.
+    Preview {
+        #[arg(long)]
+        manifest: PathBuf,
+    },
+    /// Idempotently reserve one run for the exact reviewed request.
+    Start {
+        #[arg(long)]
+        manifest: PathBuf,
+    },
+    /// Show concise persisted lifecycle state.
+    Status { run_id: Uuid },
+    /// Inspect the immutable definition and linked lifecycle state.
+    Inspect { run_id: Uuid },
+    /// Verify the frozen repair review used by this run.
+    ReviewRepair { run_id: Uuid },
+    /// Verify the frozen native-delta review used by this run.
+    ReviewDelta { run_id: Uuid },
+    /// Execute at most one durable stage.
+    Resume { run_id: Uuid },
+    /// Inspect a reserved external-call boundary.
+    AuthorizeExternal {
+        run_id: Uuid,
+        #[arg(long, default_value = "local-operator")]
+        authorized_by: String,
+    },
+    /// Authorize the selected candidate's one sealed evaluation.
+    AuthorizeSealed {
+        run_id: Uuid,
+        #[arg(long, default_value = "local-operator")]
+        authorized_by: String,
+    },
+    /// Persist cancellation before another stage starts.
+    Cancel {
+        run_id: Uuid,
+        #[arg(long)]
+        reason: String,
+    },
+    /// Deeply verify the complete optimization and native evidence chain.
+    Doctor { run_id: Uuid },
+    /// Print a row-free, machine-verifiable provenance bundle.
+    Provenance { run_id: Uuid },
+    /// Print the deterministic operator report.
+    Report { run_id: Uuid },
+}
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum WorkspaceDatasetPurpose {
@@ -48,6 +97,12 @@ pub enum WorkspaceCommand {
         /// Exact reviewed optimization manifest to resolve without persisting it.
         #[arg(long)]
         manifest: Option<PathBuf>,
+    },
+    /// Operate the bound finite optimizer through fixed project-scoped intents.
+    Optimize {
+        folder: PathBuf,
+        #[command(subcommand)]
+        command: Box<ManagedOptimizeCommand>,
     },
     /// Verify and bind the compiled Nomos runtime to a contained scientific store.
     BindNomos {

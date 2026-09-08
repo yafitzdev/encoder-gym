@@ -271,9 +271,32 @@ pub(crate) fn ensure_database_belongs_to_workspace(
     database_url: &str,
     workspace: &Path,
 ) -> anyhow::Result<()> {
-    let workspace = workspace
+    ensure_database_belongs_to_root(
+        database_url,
+        workspace,
+        "experiment database must remain inside the isolated Nomos workspace",
+    )
+}
+
+pub(crate) fn ensure_database_belongs_to_managed_root(
+    database_url: &str,
+    managed_root: &Path,
+) -> anyhow::Result<()> {
+    ensure_database_belongs_to_root(
+        database_url,
+        managed_root,
+        "experiment database must remain inside the explicitly bound managed project",
+    )
+}
+
+fn ensure_database_belongs_to_root(
+    database_url: &str,
+    authorized_root: &Path,
+    outside_message: &str,
+) -> anyhow::Result<()> {
+    let authorized_root = authorized_root
         .canonicalize()
-        .context("could not resolve isolated Nomos workspace")?;
+        .context("could not resolve authorized database root")?;
     let raw = database_url
         .strip_prefix("sqlite://")
         .context("experiment database must use an explicit sqlite:// file URL")?
@@ -308,8 +331,8 @@ pub(crate) fn ensure_database_belongs_to_workspace(
             .file_name()
             .context("experiment database path has no filename")?,
     );
-    if !database.starts_with(&workspace) {
-        anyhow::bail!("experiment database must remain inside the isolated Nomos workspace");
+    if !database.starts_with(&authorized_root) {
+        anyhow::bail!(outside_message.to_owned());
     }
     Ok(())
 }
@@ -332,5 +355,15 @@ mod tests {
             .is_err()
         );
         assert!(ensure_database_belongs_to_workspace("sqlite::memory:", workspace.path()).is_err());
+
+        let managed = tempfile::tempdir().unwrap();
+        let managed_database = managed.path().join("runs").join("scientific.sqlite");
+        std::fs::create_dir(managed.path().join("runs")).unwrap();
+        let managed_url = format!(
+            "sqlite://{}",
+            managed_database.to_string_lossy().replace('\\', "/")
+        );
+        assert!(ensure_database_belongs_to_managed_root(&managed_url, managed.path()).is_ok());
+        assert!(ensure_database_belongs_to_managed_root(&inside_url, managed.path()).is_err());
     }
 }

@@ -114,3 +114,22 @@ training snapshot, active benchmark generation, candidate set, finite budget,
 bound runtime, and scientific project all agree. If that exact manifest already
 owns a nonterminal run, readiness directs the operator to resume it instead of
 offering a duplicate start.
+
+The managed launch boundary exposes fixed intents and derives the database,
+runtime, executable, and project scope from the active scientific binding:
+
+```powershell
+synth workspace optimize C:\EncoderGym\Projects\Nomos preview --manifest C:\path\to\optimize.toml
+synth workspace optimize C:\EncoderGym\Projects\Nomos start --manifest C:\path\to\optimize.toml
+synth workspace optimize C:\EncoderGym\Projects\Nomos status <run-id>
+synth workspace optimize C:\EncoderGym\Projects\Nomos resume <run-id>
+```
+
+The boundary also provides fixed `inspect`, `review-repair`, `review-delta`,
+`authorize-external`, `authorize-sealed`, `cancel`, `doctor`, `provenance`, and
+`report` intents. It accepts no database URL, runtime path, Python selection,
+environment map, SQL, or shell text from the caller. Every invocation reopens
+the managed workspace, verifies the active baseline and binding, reproduces the
+Nomos runtime project, confirms the store contains that exact project, and
+rejects runs or manifests from another project. Starting remains idempotent;
+resuming advances at most one persisted stage.

@@ -36,7 +36,10 @@ use crate::{
         EncoderOptimizeManifestArgs, EncoderOptimizeRunArgs, NomosWorkspaceArgs,
     },
     commands::{
-        experiment::{ensure_database_belongs_to_workspace, load_persisted_view},
+        experiment::{
+            ensure_database_belongs_to_managed_root, ensure_database_belongs_to_workspace,
+            load_persisted_view,
+        },
         production_campaign::{
             CampaignContext, campaign_provenance, finalize_campaign_iteration, load_generation,
         },
@@ -190,6 +193,83 @@ pub async fn execute(command: EncoderOptimizeCommand, database_url: &str) -> any
             .await
         }
     }
+}
+
+/// Fixed managed-project composition. The caller supplies values reproduced
+/// from an active scientific binding; arbitrary database roots remain invalid.
+pub(crate) async fn execute_managed(
+    command: EncoderOptimizeCommand,
+    database_url: &str,
+    managed_root: &Path,
+    project_id: Uuid,
+    project_fingerprint: &str,
+) -> anyhow::Result<()> {
+    ensure_database_belongs_to_managed_root(database_url, managed_root)?;
+    let args = backend_args(&command);
+    let workspace = args.workspace.clone();
+    let python = args.python.clone();
+    let store = command.database_access().production(database_url).await?;
+    ensure_managed_command_scope(&command, &store, project_id, project_fingerprint).await?;
+    match command {
+        EncoderOptimizeCommand::Doctor(args) => {
+            let backend = NomosBackend::open(&workspace, python)?;
+            doctor(&store, &backend, args).await
+        }
+        command => {
+            execute_lifecycle(command, &store, || {
+                NomosBackend::open(&workspace, python).map_err(Into::into)
+            })
+            .await
+        }
+    }
+}
+
+async fn ensure_managed_command_scope(
+    command: &EncoderOptimizeCommand,
+    store: &SqliteExperimentStore,
+    project_id: Uuid,
+    project_fingerprint: &str,
+) -> anyhow::Result<()> {
+    let project = match command {
+        EncoderOptimizeCommand::Preview(args) | EncoderOptimizeCommand::Start(args) => {
+            let preview = managed_readiness(store, &args.manifest).await?;
+            (preview.project_id, preview.project_fingerprint)
+        }
+        EncoderOptimizeCommand::Status(args)
+        | EncoderOptimizeCommand::Inspect(args)
+        | EncoderOptimizeCommand::ReviewRepair(args)
+        | EncoderOptimizeCommand::ReviewDelta(args)
+        | EncoderOptimizeCommand::Resume(args)
+        | EncoderOptimizeCommand::Doctor(args)
+        | EncoderOptimizeCommand::Provenance(args)
+        | EncoderOptimizeCommand::Report(args) => {
+            let context = load_launch(store, args.run_id).await?;
+            (
+                context.definition.project.id,
+                context.definition.project.fingerprint,
+            )
+        }
+        EncoderOptimizeCommand::AuthorizeExternal(args)
+        | EncoderOptimizeCommand::AuthorizeSealed(args) => {
+            let context = load_launch(store, args.run_id).await?;
+            (
+                context.definition.project.id,
+                context.definition.project.fingerprint,
+            )
+        }
+        EncoderOptimizeCommand::Cancel(args) => {
+            let context = load_launch(store, args.run_id).await?;
+            (
+                context.definition.project.id,
+                context.definition.project.fingerprint,
+            )
+        }
+    };
+    anyhow::ensure!(
+        project.0 == project_id && project.1 == project_fingerprint,
+        "optimization belongs to another managed project's scientific binding"
+    );
+    Ok(())
 }
 
 /// The compiled composition root supplies a task adapter only for native stages.

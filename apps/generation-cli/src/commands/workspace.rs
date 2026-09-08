@@ -1,4 +1,11 @@
-use crate::{cli::WorkspaceCommand, presentation::print};
+use crate::{
+    cli::{
+        EncoderOptimizeAuthorizeArgs, EncoderOptimizeCancelArgs, EncoderOptimizeCommand,
+        EncoderOptimizeManifestArgs, EncoderOptimizeRunArgs, ManagedOptimizeCommand,
+        NomosWorkspaceArgs, WorkspaceCommand,
+    },
+    presentation::print,
+};
 use chrono::Utc;
 use encoder_campaign_core::optimization::OptimizationRunState;
 use encoder_experiment_core::{
@@ -52,6 +59,7 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
         WorkspaceCommand::Readiness { folder, manifest } => {
             print(&readiness(&folder, manifest.as_deref()).await?)
         }
+        WorkspaceCommand::Optimize { folder, command } => managed_optimize(&folder, *command).await,
         WorkspaceCommand::BindNomos {
             folder,
             runtime,
@@ -90,6 +98,112 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
             eprintln!("Backfilling final-stage inputs named by this baseline's training manifest.");
             print(&backfill_nomos(&folder, &source_root).await?)
         }
+    }
+}
+
+async fn managed_optimize(
+    folder: &std::path::Path,
+    command: ManagedOptimizeCommand,
+) -> anyhow::Result<()> {
+    let workspace = open_workspace(folder, true).await?;
+    let catalog = workspace
+        .model_catalog
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Upgrade this managed workspace before optimization."))?;
+    let binding = workspace
+        .scientific_binding
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Configure a scientific binding before optimization."))?;
+    anyhow::ensure!(
+        binding.baseline_revision_id == catalog.active_baseline_revision_id,
+        "The scientific binding is stale for the active baseline; rebind it before optimization."
+    );
+    let project = verify_nomos_runtime(binding, catalog).await?;
+    let store = open_bound_store(&workspace.folder, binding).await?;
+    let stored_project = store
+        .get_project(project.id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("The bound scientific project snapshot is missing."))?;
+    anyhow::ensure!(
+        stored_project == project,
+        "The bound runtime and scientific store project snapshots differ."
+    );
+    store.pool().close().await;
+
+    let executable = binding
+        .runtime
+        .executable
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Rebind the runtime with an executable selection."))?;
+    let backend = NomosWorkspaceArgs {
+        workspace: binding.runtime.location.clone().into(),
+        python: executable.into(),
+    };
+    let command = managed_command(command, backend);
+    let root = std::path::Path::new(&workspace.folder);
+    let database_url = bound_store_url(root, binding)?;
+    super::encoder_optimize::execute_managed(
+        command,
+        &database_url,
+        root,
+        project.id,
+        &project.fingerprint,
+    )
+    .await
+}
+
+fn managed_command(
+    command: ManagedOptimizeCommand,
+    backend: NomosWorkspaceArgs,
+) -> EncoderOptimizeCommand {
+    let run = |run_id| EncoderOptimizeRunArgs {
+        run_id,
+        backend: backend.clone(),
+    };
+    match command {
+        ManagedOptimizeCommand::Preview { manifest } => {
+            EncoderOptimizeCommand::Preview(EncoderOptimizeManifestArgs { manifest, backend })
+        }
+        ManagedOptimizeCommand::Start { manifest } => {
+            EncoderOptimizeCommand::Start(EncoderOptimizeManifestArgs { manifest, backend })
+        }
+        ManagedOptimizeCommand::Status { run_id } => EncoderOptimizeCommand::Status(run(run_id)),
+        ManagedOptimizeCommand::Inspect { run_id } => EncoderOptimizeCommand::Inspect(run(run_id)),
+        ManagedOptimizeCommand::ReviewRepair { run_id } => {
+            EncoderOptimizeCommand::ReviewRepair(run(run_id))
+        }
+        ManagedOptimizeCommand::ReviewDelta { run_id } => {
+            EncoderOptimizeCommand::ReviewDelta(run(run_id))
+        }
+        ManagedOptimizeCommand::Resume { run_id } => EncoderOptimizeCommand::Resume(run(run_id)),
+        ManagedOptimizeCommand::AuthorizeExternal {
+            run_id,
+            authorized_by,
+        } => EncoderOptimizeCommand::AuthorizeExternal(EncoderOptimizeAuthorizeArgs {
+            run_id,
+            authorized_by,
+            backend,
+        }),
+        ManagedOptimizeCommand::AuthorizeSealed {
+            run_id,
+            authorized_by,
+        } => EncoderOptimizeCommand::AuthorizeSealed(EncoderOptimizeAuthorizeArgs {
+            run_id,
+            authorized_by,
+            backend,
+        }),
+        ManagedOptimizeCommand::Cancel { run_id, reason } => {
+            EncoderOptimizeCommand::Cancel(EncoderOptimizeCancelArgs {
+                run_id,
+                reason,
+                backend,
+            })
+        }
+        ManagedOptimizeCommand::Doctor { run_id } => EncoderOptimizeCommand::Doctor(run(run_id)),
+        ManagedOptimizeCommand::Provenance { run_id } => {
+            EncoderOptimizeCommand::Provenance(run(run_id))
+        }
+        ManagedOptimizeCommand::Report { run_id } => EncoderOptimizeCommand::Report(run(run_id)),
     }
 }
 
@@ -590,14 +704,25 @@ async fn open_bound_store(
             && binding.store.schema.fingerprint == schema_fingerprint(),
         "The bound scientific-store schema differs from this executable."
     );
-    let root = std::path::Path::new(workspace_folder).canonicalize()?;
+    let root = std::path::Path::new(workspace_folder);
+    let url = bound_store_url(root, binding)?;
+    Ok(SqliteExperimentStore::connect_read_only(&url).await?)
+}
+
+fn bound_store_url(
+    workspace_root: &std::path::Path,
+    binding: &ScientificBinding,
+) -> anyhow::Result<String> {
+    let root = workspace_root.canonicalize()?;
     let path = root.join(&binding.store.database_path).canonicalize()?;
     anyhow::ensure!(
         path.starts_with(&root),
         "Scientific store escapes the managed project."
     );
-    let url = format!("sqlite://{}", path.to_string_lossy().replace('\\', "/"));
-    Ok(SqliteExperimentStore::connect_read_only(&url).await?)
+    Ok(format!(
+        "sqlite://{}",
+        path.to_string_lossy().replace('\\', "/")
+    ))
 }
 
 fn recovery_check(preview: &ManagedOptimizationReadiness) -> anyhow::Result<ReadinessCheck> {
@@ -785,4 +910,48 @@ async fn bind_nomos(
         "Binding the verified isolated Nomos runtime to a new managed scientific store; no training or evaluation will run."
     );
     print(&record_scientific_binding(folder, binding, previous).await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn backend() -> NomosWorkspaceArgs {
+        NomosWorkspaceArgs {
+            workspace: "C:/isolated/nomos".into(),
+            python: "C:/python/python.exe".into(),
+        }
+    }
+
+    #[test]
+    fn managed_intents_inject_the_fixed_bound_backend() {
+        let run_id = Uuid::new_v4();
+        let command = managed_command(ManagedOptimizeCommand::Status { run_id }, backend());
+        match command {
+            EncoderOptimizeCommand::Status(args) => {
+                assert_eq!(args.run_id, run_id);
+                assert_eq!(
+                    args.backend.workspace,
+                    std::path::PathBuf::from("C:/isolated/nomos")
+                );
+                assert_eq!(
+                    args.backend.python,
+                    std::path::PathBuf::from("C:/python/python.exe")
+                );
+            }
+            _ => panic!("managed status mapped to the wrong lifecycle command"),
+        }
+
+        let command = managed_command(
+            ManagedOptimizeCommand::Cancel {
+                run_id,
+                reason: "operator stop".into(),
+            },
+            backend(),
+        );
+        assert!(matches!(
+            command,
+            EncoderOptimizeCommand::Cancel(EncoderOptimizeCancelArgs { run_id: id, .. }) if id == run_id
+        ));
+    }
 }

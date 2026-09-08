@@ -1,4 +1,5 @@
 use encoder_experiment_sqlite::SqliteExperimentStore;
+use sqlx::Connection;
 
 fn database(directory: &tempfile::TempDir) -> (std::path::PathBuf, String) {
     let path = directory.path().join("passive.db");
@@ -64,6 +65,7 @@ async fn passive_connection_sees_live_wal_and_rejects_writes() {
     );
     reader.pool().close().await;
     writer.pool().close().await;
+    drop(writer);
 }
 
 #[tokio::test]
@@ -76,12 +78,14 @@ async fn passive_connection_preserves_delete_journal_and_database_bytes() {
         .await
         .unwrap();
     writer.pool().close().await;
-    let connection = sqlx::SqlitePool::connect(&url).await.unwrap();
+    // Journal mode is database-wide. Use exactly one setup connection so a
+    // lazily opened sibling from a pool cannot retain a transient read lock.
+    let mut connection = sqlx::SqliteConnection::connect(&url).await.unwrap();
     sqlx::query("PRAGMA journal_mode=DELETE")
-        .execute(&connection)
+        .execute(&mut connection)
         .await
         .unwrap();
-    connection.close().await;
+    connection.close().await.unwrap();
     let before = std::fs::read(&path).unwrap();
     let reader = SqliteExperimentStore::connect_read_only(&url)
         .await

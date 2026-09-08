@@ -4,7 +4,7 @@ use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use uuid::Uuid;
 #[path = "cli/workspace.rs"]
 mod workspace;
-pub use workspace::WorkspaceCommand;
+pub use workspace::{ManagedOptimizeCommand, WorkspaceCommand};
 
 #[derive(Debug, Parser)]
 #[command(
