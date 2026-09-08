@@ -50,6 +50,24 @@ pub enum ManagedOptimizeCommand {
     Report { run_id: Uuid },
 }
 
+#[derive(Debug, Subcommand)]
+pub enum ManagedProviderCommand {
+    /// Show non-secret settings and availability-only credential status.
+    Show,
+    /// Append one strict non-secret settings revision from JSON.
+    Configure {
+        #[arg(long)]
+        file: PathBuf,
+        /// Active revision observed before editing; omit only for first setup.
+        #[arg(long)]
+        expected_revision_id: Option<Uuid>,
+        #[arg(long, default_value = "local-operator")]
+        actor: String,
+        #[arg(long, default_value = "Configure project providers")]
+        reason: String,
+    },
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum WorkspaceDatasetPurpose {
     Unassigned,
@@ -103,6 +121,12 @@ pub enum WorkspaceCommand {
         folder: PathBuf,
         #[command(subcommand)]
         command: Box<ManagedOptimizeCommand>,
+    },
+    /// Configure separate project providers without storing secret values.
+    Providers {
+        folder: PathBuf,
+        #[command(subcommand)]
+        command: ManagedProviderCommand,
     },
     /// Verify and bind the compiled Nomos runtime to a contained scientific store.
     BindNomos {

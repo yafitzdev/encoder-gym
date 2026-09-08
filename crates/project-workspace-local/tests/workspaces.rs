@@ -1,11 +1,12 @@
 use chrono::{TimeZone, Utc};
 use project_workspace_core::{
-    AdapterBinding, BoundIdentity, DatasetPurpose, MANIFEST, RuntimeBinding, RuntimeKind,
-    ScientificBinding, ScientificStoreBinding,
+    AdapterBinding, BoundIdentity, DatasetPurpose, MANIFEST, ProviderAuthentication,
+    ProviderCatalog, ProviderConfiguration, ProviderKind, ProviderLimits, ProviderRole,
+    RuntimeBinding, RuntimeKind, ScientificBinding, ScientificStoreBinding, SecretReference,
 };
 use project_workspace_local::{
     backfill_nomos, create_workspace, import_dataset, inspect_dataset, inspect_model,
-    open_workspace, record_scientific_binding, upgrade_workspace,
+    open_workspace, record_provider_catalog, record_scientific_binding, upgrade_workspace,
 };
 use serde_json::json;
 use std::fs;
@@ -59,6 +60,45 @@ fn scientific_binding(
         "operator",
         "configure verified runtime",
         Utc.with_ymd_and_hms(2026, 9, 8, 12, 0, 0).unwrap(),
+    )
+    .unwrap()
+}
+
+fn provider_catalog(
+    workspace: &project_workspace_local::ManagedWorkspace,
+    id: uuid::Uuid,
+    previous_revision_id: Option<uuid::Uuid>,
+    sequence: u64,
+) -> ProviderCatalog {
+    let provider = |role, environment: &str| ProviderConfiguration {
+        role,
+        kind: ProviderKind::OpenaiCompatible,
+        endpoint: Some("https://api.example.test/v1".into()),
+        model: "bounded-model".into(),
+        authentication: ProviderAuthentication::Bearer,
+        secret: Some(
+            SecretReference::for_role(workspace.manifest.id, role, Some(environment.into()))
+                .unwrap(),
+        ),
+        limits: ProviderLimits {
+            maximum_requests: 10,
+            maximum_input_tokens: 10_000,
+            maximum_output_tokens: 2_000,
+            maximum_cost_microusd: 50_000,
+        },
+    };
+    ProviderCatalog::create(
+        id,
+        workspace.manifest.id,
+        sequence,
+        previous_revision_id,
+        vec![
+            provider(ProviderRole::Generation, "GENERATION_KEY"),
+            provider(ProviderRole::Advisor, "ADVISOR_KEY"),
+        ],
+        "operator",
+        "configure providers",
+        Utc::now(),
     )
     .unwrap()
 }
@@ -252,6 +292,52 @@ async fn scientific_bindings_are_project_and_baseline_scoped_compare_and_append_
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn provider_settings_are_non_secret_append_only_compare_and_append_records() {
+    let temp = TempDir::new().unwrap();
+    let source = model(temp.path());
+    let preview = inspect_model(&source).unwrap();
+    let destination = temp.path().join("managed");
+    let workspace = create_workspace(
+        &destination,
+        "Provider fixture",
+        &source,
+        &preview.fingerprint,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(workspace.provider_catalog.is_none());
+    let first_id = uuid::Uuid::new_v4();
+    let first = provider_catalog(&workspace, first_id, None, 1);
+    let configured = record_provider_catalog(&destination, first.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(configured.provider_catalog, Some(first.clone()));
+    assert!(!serde_json::to_string(&first).unwrap().contains("sk-"));
+    assert_eq!(
+        record_provider_catalog(&destination, first, None)
+            .await
+            .unwrap()
+            .provider_catalog
+            .unwrap()
+            .id,
+        first_id
+    );
+
+    let second_id = uuid::Uuid::new_v4();
+    let second = provider_catalog(&configured, second_id, Some(first_id), 2);
+    assert!(
+        record_provider_catalog(&destination, second.clone(), None)
+            .await
+            .is_err()
+    );
+    let updated = record_provider_catalog(&destination, second, Some(first_id))
+        .await
+        .unwrap();
+    assert_eq!(updated.provider_catalog.unwrap().id, second_id);
 }
 
 #[tokio::test]

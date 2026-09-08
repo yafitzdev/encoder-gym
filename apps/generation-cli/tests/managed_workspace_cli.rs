@@ -60,6 +60,63 @@ fn local_onboarding_import_and_portable_reopen_are_real_cli_operations() {
         upgraded["modelCatalog"]["activeBaselineRevisionId"],
         first["modelCatalog"]["activeBaselineRevisionId"]
     );
+    fs::write(
+        root.join("providers.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "version": 1,
+            "generation": {
+                "kind": "openai-compatible",
+                "endpoint": "https://api.example.test/v1",
+                "model": "generation-model",
+                "authentication": "bearer",
+                "environment_fallback": "_ENCODER_GYM_TEST_GENERATION_KEY",
+                "limits": {
+                    "maximumRequests": 10,
+                    "maximumInputTokens": 10000,
+                    "maximumOutputTokens": 2000,
+                    "maximumCostMicrousd": 50000
+                }
+            },
+            "advisor": {
+                "kind": "openai-compatible",
+                "endpoint": "https://api.example.test/v1",
+                "model": "advisor-model",
+                "authentication": "bearer",
+                "environment_fallback": "_ENCODER_GYM_TEST_ADVISOR_KEY",
+                "limits": {
+                    "maximumRequests": 5,
+                    "maximumInputTokens": 5000,
+                    "maximumOutputTokens": 1000,
+                    "maximumCostMicrousd": 25000
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let providers = run(
+        root,
+        &[
+            "providers",
+            "project-one",
+            "configure",
+            "--file",
+            "providers.json",
+        ],
+    );
+    assert_eq!(providers["configured"], true);
+    assert_eq!(
+        providers["credentialAvailability"][0]["availability"],
+        "missing"
+    );
+    assert_ne!(
+        providers["catalog"]["providers"][0]["secret"]["id"],
+        providers["catalog"]["providers"][1]["secret"]["id"]
+    );
+    assert_eq!(
+        run(root, &["providers", "project-one", "show"])["catalog"]["id"],
+        providers["catalog"]["id"]
+    );
     fs::write(root.join("local.jsonl"), "{\"text\":\"offline fixture\"}\n").unwrap();
     let data = run(
         root,

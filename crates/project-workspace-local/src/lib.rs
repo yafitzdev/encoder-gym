@@ -9,8 +9,8 @@ use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use project_workspace_core::{
     BASELINE, BaselineChange, BaselineRevision, DATABASE, DIRECTORIES, DatasetImport, LocalModel,
-    MANIFEST, ModelArtifact, ModelCatalog, ModelOrigin, ProjectManifest, ScientificBinding,
-    validate_name,
+    MANIFEST, ModelArtifact, ModelCatalog, ModelOrigin, ProjectManifest, ProviderCatalog,
+    ScientificBinding, validate_name,
 };
 use serde::Serialize;
 use sqlx::{Connection, Row, SqliteConnection, sqlite::SqliteConnectOptions};
@@ -32,6 +32,9 @@ pub struct ManagedWorkspace {
     /// The latest explicit slice-store/runtime binding, if one has been configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scientific_binding: Option<ScientificBinding>,
+    /// Latest non-secret provider settings revision, if configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_catalog: Option<ProviderCatalog>,
     pub verified: bool,
 }
 
@@ -226,6 +229,7 @@ pub async fn open_workspace(folder: &Path, verify: bool) -> Result<ManagedWorksp
     }
     let model_catalog = load_model_catalog(&mut database, &manifest).await?;
     let scientific_binding = load_scientific_binding(&mut database, &manifest).await?;
+    let provider_catalog = load_provider_catalog(&mut database, &manifest).await?;
     database.close().await?;
     for file in &manifest.baseline.files {
         let mut identity = file.clone();
@@ -244,8 +248,91 @@ pub async fn open_workspace(folder: &Path, verify: bool) -> Result<ManagedWorksp
         datasets,
         model_catalog,
         scientific_binding,
+        provider_catalog,
         verified: verify,
     })
+}
+
+/// Append and activate one non-secret provider-settings revision.
+pub async fn record_provider_catalog(
+    folder: &Path,
+    catalog: ProviderCatalog,
+    expected_active_revision_id: Option<Uuid>,
+) -> Result<ManagedWorkspace> {
+    catalog.validate()?;
+    let workspace = open_workspace(folder, false).await?;
+    ensure!(
+        catalog.project_id == workspace.manifest.id,
+        "Provider settings belong to another managed project."
+    );
+    let root = Path::new(&workspace.folder);
+    let expected_sequence = workspace
+        .provider_catalog
+        .as_ref()
+        .map_or(1, |value| value.sequence + 1);
+    let mut database = connect(root, false, false).await?;
+    ensure!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='provider_catalog_state'",
+        )
+        .fetch_one(&mut database)
+        .await?
+            == 1,
+        "Upgrade this managed workspace before configuring providers."
+    );
+    let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
+    let current = sqlx::query_scalar::<_, String>(
+        "SELECT active_revision_id FROM provider_catalog_state WHERE singleton=1",
+    )
+    .fetch_optional(&mut *transaction)
+    .await?
+    .map(|value| Uuid::parse_str(&value))
+    .transpose()?;
+    if let Some(row) = sqlx::query("SELECT catalog_json FROM provider_catalog_revisions WHERE id=?")
+        .bind(catalog.id.to_string())
+        .fetch_optional(&mut *transaction)
+        .await?
+    {
+        let existing: ProviderCatalog =
+            serde_json::from_str(&row.get::<String, _>("catalog_json"))?;
+        ensure!(
+            existing == catalog && current == Some(catalog.id),
+            "Provider settings identity already exists with different or inactive state."
+        );
+        transaction.rollback().await?;
+        database.close().await?;
+        return open_workspace(root, true).await;
+    }
+    ensure!(
+        current == expected_active_revision_id
+            && catalog.previous_revision_id == current
+            && catalog.sequence == expected_sequence,
+        "Provider settings changed after inspection. Reload before saving again."
+    );
+    sqlx::query(
+        "INSERT INTO provider_catalog_revisions \
+         (id, project_id, sequence, previous_revision_id, fingerprint, catalog_json) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(catalog.id.to_string())
+    .bind(catalog.project_id.to_string())
+    .bind(i64::try_from(catalog.sequence)?)
+    .bind(catalog.previous_revision_id.map(|value| value.to_string()))
+    .bind(&catalog.fingerprint)
+    .bind(serde_json::to_string(&catalog)?)
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO provider_catalog_state (singleton, project_id, active_revision_id) \
+         VALUES (1, ?, ?) ON CONFLICT(singleton) DO UPDATE SET active_revision_id=excluded.active_revision_id",
+    )
+    .bind(catalog.project_id.to_string())
+    .bind(catalog.id.to_string())
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    database.close().await?;
+    open_workspace(root, true).await
 }
 
 /// Append and activate a verified scientific runtime/store binding.
@@ -581,6 +668,70 @@ async fn load_scientific_binding(
     ensure!(
         previous == Some(active_id) && active.is_some(),
         "The active scientific binding must be the latest append-only record."
+    );
+    Ok(active)
+}
+
+async fn load_provider_catalog(
+    database: &mut SqliteConnection,
+    manifest: &ProjectManifest,
+) -> Result<Option<ProviderCatalog>> {
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='provider_catalog_state'",
+    )
+    .fetch_one(&mut *database)
+    .await?
+        == 1;
+    if !exists {
+        return Ok(None);
+    }
+    let Some(state) = sqlx::query(
+        "SELECT project_id, active_revision_id FROM provider_catalog_state WHERE singleton=1",
+    )
+    .fetch_optional(&mut *database)
+    .await?
+    else {
+        return Ok(None);
+    };
+    ensure!(
+        state.get::<String, _>("project_id") == manifest.id.to_string(),
+        "Provider settings belong to another managed project."
+    );
+    let active_id = Uuid::parse_str(&state.get::<String, _>("active_revision_id"))?;
+    let rows = sqlx::query(
+        "SELECT id, project_id, sequence, previous_revision_id, fingerprint, catalog_json \
+         FROM provider_catalog_revisions ORDER BY sequence",
+    )
+    .fetch_all(&mut *database)
+    .await?;
+    let mut previous = None;
+    let mut active = None;
+    for (index, row) in rows.into_iter().enumerate() {
+        let catalog: ProviderCatalog = serde_json::from_str(&row.get::<String, _>("catalog_json"))?;
+        catalog.validate()?;
+        let row_previous = row
+            .get::<Option<String>, _>("previous_revision_id")
+            .map(|value| Uuid::parse_str(&value))
+            .transpose()?;
+        ensure!(
+            row.get::<String, _>("id") == catalog.id.to_string()
+                && row.get::<String, _>("project_id") == catalog.project_id.to_string()
+                && u64::try_from(row.get::<i64, _>("sequence"))? == catalog.sequence
+                && row_previous == catalog.previous_revision_id
+                && row.get::<String, _>("fingerprint") == catalog.fingerprint
+                && catalog.project_id == manifest.id
+                && catalog.sequence == index as u64 + 1
+                && catalog.previous_revision_id == previous,
+            "Provider settings history or normalized projection is invalid."
+        );
+        previous = Some(catalog.id);
+        if catalog.id == active_id {
+            active = Some(catalog);
+        }
+    }
+    ensure!(
+        previous == Some(active_id) && active.is_some(),
+        "Active provider settings must be the latest append-only revision."
     );
     Ok(active)
 }

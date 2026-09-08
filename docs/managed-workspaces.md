@@ -133,3 +133,56 @@ the managed workspace, verifies the active baseline and binding, reproduces the
 Nomos runtime project, confirms the store contains that exact project, and
 rejects runs or manifests from another project. Starting remains idempotent;
 resuming advances at most one persisted stage.
+
+## Provider settings and credentials
+
+Generation and advisor authorities are configured separately. An evaluator is
+optional. Save only non-secret endpoint, model, authentication mode, and finite
+limits in a strict JSON file:
+
+```json
+{
+  "version": 1,
+  "generation": {
+    "kind": "openai-compatible",
+    "endpoint": "https://api.openai.com/v1",
+    "model": "generation-model",
+    "authentication": "bearer",
+    "environment_fallback": "SYNTH_OPENAI_API_KEY",
+    "limits": {
+      "maximumRequests": 100,
+      "maximumInputTokens": 1000000,
+      "maximumOutputTokens": 200000,
+      "maximumCostMicrousd": 5000000
+    }
+  },
+  "advisor": {
+    "kind": "openai-compatible",
+    "endpoint": "https://api.openai.com/v1",
+    "model": "advisor-model",
+    "authentication": "bearer",
+    "environment_fallback": "SYNTH_ADVISOR_API_KEY",
+    "limits": {
+      "maximumRequests": 20,
+      "maximumInputTokens": 200000,
+      "maximumOutputTokens": 50000,
+      "maximumCostMicrousd": 2000000
+    }
+  }
+}
+```
+
+Configure and inspect it with:
+
+```powershell
+synth workspace providers C:\EncoderGym\Projects\Nomos configure --file C:\path\to\providers.json
+synth workspace providers C:\EncoderGym\Projects\Nomos show
+```
+
+Updates require `--expected-revision-id` from the current status, preventing a
+stale screen from overwriting newer settings. Provider revisions are immutable
+and append-only. The project stores only a project-and-role scoped secret
+reference and the optional environment-variable fallback—not the key. Status
+returns only `available`, `missing`, or `unavailable`; it makes no network call
+and never prints the environment value. Desktop-managed secret submission is
+owned by the Electron main-process credential boundary, not this registry.

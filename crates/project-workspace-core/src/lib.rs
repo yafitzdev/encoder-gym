@@ -7,11 +7,16 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 mod models;
+mod providers;
 mod readiness;
 mod scientific;
 
 pub use models::{
     BaselineChange, BaselineRevision, BoundIdentity, ModelArtifact, ModelCatalog, ModelOrigin,
+};
+pub use providers::{
+    ProviderAuthentication, ProviderCatalog, ProviderConfiguration, ProviderKind, ProviderLimits,
+    ProviderRole, SecretReference,
 };
 pub use readiness::{
     ReadinessAction, ReadinessCategory, ReadinessCheck, ReadinessReport, ReadinessState,

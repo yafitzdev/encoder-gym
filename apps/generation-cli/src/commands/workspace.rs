@@ -2,7 +2,7 @@ use crate::{
     cli::{
         EncoderOptimizeAuthorizeArgs, EncoderOptimizeCancelArgs, EncoderOptimizeCommand,
         EncoderOptimizeManifestArgs, EncoderOptimizeRunArgs, ManagedOptimizeCommand,
-        NomosWorkspaceArgs, WorkspaceCommand,
+        ManagedProviderCommand, NomosWorkspaceArgs, WorkspaceCommand,
     },
     presentation::print,
 };
@@ -15,13 +15,14 @@ use encoder_experiment_core::{
 use encoder_experiment_nomos::NomosBackend;
 use encoder_experiment_sqlite::{SCHEMA_ID, SqliteExperimentStore, schema_fingerprint};
 use project_workspace_core::{
-    AdapterBinding, BoundIdentity, ReadinessAction, ReadinessCategory, ReadinessCheck,
+    AdapterBinding, BoundIdentity, ProviderAuthentication, ProviderCatalog, ProviderConfiguration,
+    ProviderKind, ProviderLimits, ProviderRole, ReadinessAction, ReadinessCategory, ReadinessCheck,
     ReadinessReport, ReadinessState, RuntimeBinding, RuntimeKind, ScientificBinding,
-    ScientificStoreBinding,
+    ScientificStoreBinding, SecretReference,
 };
 use project_workspace_local::{
     backfill_nomos, create_workspace, import_dataset, inspect_dataset, inspect_model,
-    open_workspace, record_scientific_binding, upgrade_workspace,
+    open_workspace, record_provider_catalog, record_scientific_binding, upgrade_workspace,
 };
 use uuid::Uuid;
 
@@ -33,6 +34,71 @@ struct ManagedReadinessOutput {
     report: ReadinessReport,
     #[serde(skip_serializing_if = "Option::is_none")]
     launch_preview: Option<ManagedOptimizationReadiness>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProviderSettingsInput {
+    version: u32,
+    generation: ProviderInput,
+    advisor: ProviderInput,
+    #[serde(default)]
+    evaluator: Option<ProviderInput>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProviderInput {
+    kind: ProviderKind,
+    #[serde(default)]
+    endpoint: Option<String>,
+    model: String,
+    authentication: ProviderAuthentication,
+    #[serde(default)]
+    environment_fallback: Option<String>,
+    limits: ProviderLimits,
+}
+
+impl ProviderInput {
+    fn resolve(
+        self,
+        project_id: Uuid,
+        role: ProviderRole,
+    ) -> anyhow::Result<ProviderConfiguration> {
+        let secret = match self.authentication {
+            ProviderAuthentication::Bearer => Some(SecretReference::for_role(
+                project_id,
+                role,
+                self.environment_fallback,
+            )?),
+            ProviderAuthentication::None => {
+                anyhow::ensure!(
+                    self.environment_fallback.is_none(),
+                    "Unauthenticated providers cannot configure a credential fallback."
+                );
+                None
+            }
+        };
+        let value = ProviderConfiguration {
+            role,
+            kind: self.kind,
+            endpoint: self.endpoint,
+            model: self.model,
+            authentication: self.authentication,
+            secret,
+            limits: self.limits,
+        };
+        value.validate(project_id)?;
+        Ok(value)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SecretAvailability {
+    Missing,
+    Available,
+    Unavailable,
 }
 
 pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
@@ -60,6 +126,7 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
             print(&readiness(&folder, manifest.as_deref()).await?)
         }
         WorkspaceCommand::Optimize { folder, command } => managed_optimize(&folder, *command).await,
+        WorkspaceCommand::Providers { folder, command } => providers(&folder, command).await,
         WorkspaceCommand::BindNomos {
             folder,
             runtime,
@@ -98,6 +165,108 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
             eprintln!("Backfilling final-stage inputs named by this baseline's training manifest.");
             print(&backfill_nomos(&folder, &source_root).await?)
         }
+    }
+}
+
+async fn providers(
+    folder: &std::path::Path,
+    command: ManagedProviderCommand,
+) -> anyhow::Result<()> {
+    let workspace = open_workspace(folder, true).await?;
+    match command {
+        ManagedProviderCommand::Show => print(&provider_status(&workspace)),
+        ManagedProviderCommand::Configure {
+            file,
+            expected_revision_id,
+            actor,
+            reason,
+        } => {
+            let input = read_provider_input(&file)?;
+            anyhow::ensure!(input.version == 1, "Unsupported provider settings version.");
+            let current = workspace.provider_catalog.as_ref();
+            anyhow::ensure!(
+                current.map(|value| value.id) == expected_revision_id,
+                "Provider settings changed after inspection. Reload before saving."
+            );
+            let mut configured = vec![
+                input
+                    .generation
+                    .resolve(workspace.manifest.id, ProviderRole::Generation)?,
+                input
+                    .advisor
+                    .resolve(workspace.manifest.id, ProviderRole::Advisor)?,
+            ];
+            if let Some(evaluator) = input.evaluator {
+                configured.push(evaluator.resolve(workspace.manifest.id, ProviderRole::Evaluator)?);
+            }
+            let catalog = ProviderCatalog::create(
+                Uuid::new_v4(),
+                workspace.manifest.id,
+                current.map_or(1, |value| value.sequence + 1),
+                current.map(|value| value.id),
+                configured,
+                actor,
+                reason,
+                Utc::now(),
+            )?;
+            eprintln!(
+                "Saving non-secret provider settings; credentials are not read, stored, or tested."
+            );
+            let updated = record_provider_catalog(folder, catalog, expected_revision_id).await?;
+            print(&provider_status(&updated))
+        }
+    }
+}
+
+fn read_provider_input(path: &std::path::Path) -> anyhow::Result<ProviderSettingsInput> {
+    let metadata = path.metadata()?;
+    anyhow::ensure!(
+        metadata.is_file() && metadata.len() <= 1_048_576,
+        "Provider settings must be a JSON file of at most 1 MiB."
+    );
+    Ok(serde_json::from_slice(&std::fs::read(path)?)?)
+}
+
+fn provider_status(workspace: &project_workspace_local::ManagedWorkspace) -> serde_json::Value {
+    let catalog = workspace.provider_catalog.as_ref();
+    let credentials = catalog
+        .map(|catalog| {
+            catalog
+                .providers
+                .iter()
+                .map(|provider| {
+                    serde_json::json!({
+                        "role": provider.role,
+                        "authentication": provider.authentication,
+                        "availability": secret_availability(provider),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    serde_json::json!({
+        "projectId": workspace.manifest.id,
+        "configured": catalog.is_some(),
+        "catalog": catalog,
+        "credentialAvailability": credentials,
+        "liveProbePerformed": false,
+    })
+}
+
+fn secret_availability(provider: &ProviderConfiguration) -> SecretAvailability {
+    if provider.authentication == ProviderAuthentication::None {
+        return SecretAvailability::Available;
+    }
+    match provider
+        .secret
+        .as_ref()
+        .and_then(|secret| secret.environment_fallback.as_deref())
+    {
+        Some(name) if std::env::var_os(name).is_some_and(|value| !value.is_empty()) => {
+            SecretAvailability::Available
+        }
+        Some(_) => SecretAvailability::Missing,
+        None => SecretAvailability::Unavailable,
     }
 }
 
@@ -540,15 +709,16 @@ async fn readiness(
 
     // Provider settings become required while preparing new evidence. A fully
     // reviewed optimize manifest itself authorizes no implicit provider call.
-    checks.push(check(
-        "providers.configuration",
-        ReadinessCategory::Providers,
-        ReadinessState::Unavailable,
-        false,
-        "Project provider settings are not configured yet",
-        "Generation, advisor, and evaluator settings will be evaluated separately; no secret value is read or exposed by this check.",
-        Some(action("configure-providers", "Configure providers")?),
-    )?);
+    for role in [
+        ProviderRole::Generation,
+        ProviderRole::Advisor,
+        ProviderRole::Evaluator,
+    ] {
+        checks.push(provider_readiness_check(
+            workspace.provider_catalog.as_ref(),
+            role,
+        )?);
+    }
 
     let mut launch_preview = None;
     match (manifest, store.as_ref(), runtime_project.as_ref()) {
@@ -785,6 +955,71 @@ fn recovery_unavailable() -> anyhow::Result<ReadinessCheck> {
         "Run recovery cannot be evaluated",
         "Resolve the exact project optimization request before checking for an existing run.",
         Some(action("prepare-optimization", "Prepare optimization")?),
+    )
+}
+
+fn provider_readiness_check(
+    catalog: Option<&ProviderCatalog>,
+    role: ProviderRole,
+) -> anyhow::Result<ReadinessCheck> {
+    let key = match role {
+        ProviderRole::Generation => "providers.generation",
+        ProviderRole::Advisor => "providers.advisor",
+        ProviderRole::Evaluator => "providers.evaluator",
+    };
+    let Some(provider) = catalog.and_then(|catalog| catalog.provider(role)) else {
+        let optional = role == ProviderRole::Evaluator;
+        return check(
+            key,
+            ReadinessCategory::Providers,
+            if optional {
+                ReadinessState::Ready
+            } else {
+                ReadinessState::ActionRequired
+            },
+            false,
+            if optional {
+                "No external evaluator is configured"
+            } else {
+                "Provider is not configured"
+            },
+            if optional {
+                "Evaluator credentials are unnecessary until an external evaluator is selected."
+            } else {
+                "Configure this authority separately before preparing new generated or agent-authored evidence."
+            },
+            (!optional)
+                .then(|| action("configure-providers", "Configure providers"))
+                .transpose()?,
+        );
+    };
+    let availability = secret_availability(provider);
+    let ready = availability == SecretAvailability::Available;
+    check(
+        key,
+        ReadinessCategory::Providers,
+        if ready {
+            ReadinessState::Ready
+        } else {
+            ReadinessState::ActionRequired
+        },
+        false,
+        if ready {
+            "Provider configuration is usable"
+        } else {
+            "Provider credential is not available to this process"
+        },
+        format!(
+            "Role {} uses {:?} model '{}' with {} maximum request(s); secret availability is {:?} and no secret value was read into this report.",
+            role.key(),
+            provider.kind,
+            provider.model,
+            provider.limits.maximum_requests,
+            availability
+        ),
+        (!ready)
+            .then(|| action("configure-provider-secret", "Configure provider credential"))
+            .transpose()?,
     )
 }
 
