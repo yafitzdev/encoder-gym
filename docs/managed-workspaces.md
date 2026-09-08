@@ -13,6 +13,7 @@ synth workspace create C:\EncoderGym\Projects\my-encoder --name "My encoder" --m
 synth workspace open C:\EncoderGym\Projects\my-encoder
 synth workspace verify C:\EncoderGym\Projects\my-encoder
 synth workspace upgrade C:\EncoderGym\Projects\my-encoder
+synth workspace readiness C:\EncoderGym\Projects\my-encoder
 ```
 
 The destination must not exist; its parent must exist. Supported local bundles
@@ -93,3 +94,23 @@ isolated runtime, initializes a new production scientific store at
 `project.sqlite`. It does not import the runtime's historical databases, start
 training, evaluate a model, or call a provider. The source `fitz-tool`
 repository is not a valid runtime.
+
+`workspace readiness` is passive: it reopens and rehashes the managed project,
+reproduces the active runtime and scientific-store identities when configured,
+and reports stable required checks with one actionable next intent. It never
+migrates a database, runs training, evaluates sealed evidence, or contacts a
+provider. Imported files are reported as custody and cannot satisfy scientific
+snapshot or review requirements.
+
+After an exact reviewed optimize manifest exists, resolve the same immutable
+definition used by start:
+
+```powershell
+synth workspace readiness C:\EncoderGym\Projects\Nomos --manifest C:\path\to\optimize.json
+```
+
+The result includes a launch preview only when the manifest, approved native
+training snapshot, active benchmark generation, candidate set, finite budget,
+bound runtime, and scientific project all agree. If that exact manifest already
+owns a nonterminal run, readiness directs the operator to resume it instead of
+offering a duplicate start.

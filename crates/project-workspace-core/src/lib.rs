@@ -7,10 +7,14 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 mod models;
+mod readiness;
 mod scientific;
 
 pub use models::{
     BaselineChange, BaselineRevision, BoundIdentity, ModelArtifact, ModelCatalog, ModelOrigin,
+};
+pub use readiness::{
+    ReadinessAction, ReadinessCategory, ReadinessCheck, ReadinessReport, ReadinessState,
 };
 pub use scientific::{
     AdapterBinding, RuntimeBinding, RuntimeKind, ScientificBinding, ScientificStoreBinding,

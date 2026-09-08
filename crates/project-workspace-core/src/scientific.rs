@@ -46,6 +46,10 @@ pub struct RuntimeBinding {
     /// Managed paths are project-relative. External paths are local execution
     /// dependencies and must be revalidated by the owning adapter.
     pub location: String,
+    /// Fixed executable selected for this adapter runtime. It is non-secret
+    /// configuration, never an argument vector or shell command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executable: Option<String>,
     pub project_snapshot: BoundIdentity,
 }
 
@@ -56,6 +60,9 @@ impl RuntimeBinding {
             RuntimeKind::ExternalIsolated => {
                 safe_identifier(&self.location, "External runtime location")?
             }
+        }
+        if let Some(executable) = &self.executable {
+            safe_identifier(executable, "Runtime executable")?;
         }
         self.project_snapshot.validate("Runtime project snapshot")
     }
@@ -215,6 +222,7 @@ mod tests {
             RuntimeBinding {
                 kind: RuntimeKind::ExternalIsolated,
                 location: "C:/isolated/nomos".into(),
+                executable: Some("python".into()),
                 project_snapshot: BoundIdentity {
                     id: "revision".into(),
                     fingerprint: digest('2'),

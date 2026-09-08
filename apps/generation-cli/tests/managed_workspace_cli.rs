@@ -85,6 +85,23 @@ fn local_onboarding_import_and_portable_reopen_are_real_cli_operations() {
         run(root, &["open", "project-two"])["datasets"],
         serde_json::json!([])
     );
+    let readiness = run(root, &["readiness", "project-one"]);
+    assert_eq!(readiness["report"]["runnable"], false);
+    assert_eq!(readiness["report"]["overall"], "unavailable");
+    let checks = readiness["report"]["checks"].as_array().unwrap();
+    assert!(
+        checks
+            .iter()
+            .any(|check| { check["key"] == "workspace.integrity" && check["state"] == "ready" })
+    );
+    assert!(checks.iter().any(|check| {
+        check["key"] == "scientific.binding"
+            && check["state"] == "action_required"
+            && check["nextAction"]["key"] == "bind-scientific-runtime"
+    }));
+    assert!(checks.iter().any(|check| {
+        check["key"] == "optimization.preview" && check["state"] == "action_required"
+    }));
     fs::rename(root.join("project-one"), root.join("moved")).unwrap();
     fs::remove_dir_all(root.join("checkpoint")).unwrap();
     fs::remove_file(root.join("local.jsonl")).unwrap();

@@ -110,6 +110,68 @@ struct LaunchContext {
     view: OptimizationView,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ManagedOptimizationReadiness {
+    pub manifest_fingerprint: String,
+    pub specification_fingerprint: String,
+    pub project_id: Uuid,
+    pub project_fingerprint: String,
+    pub training_snapshot_id: Uuid,
+    pub benchmark_generation_id: Uuid,
+    pub candidate_count: usize,
+    pub budget: CampaignBudget,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub existing_run: Option<ManagedExistingOptimization>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ManagedExistingOptimization {
+    pub run_id: Uuid,
+    pub state: OptimizationRunState,
+}
+
+/// Resolve the same immutable definition consumed by `start`, without writing
+/// state or opening a native adapter. Managed-project readiness uses this
+/// instead of reproducing optimization policy in the presentation layer.
+pub(crate) async fn managed_readiness(
+    store: &SqliteExperimentStore,
+    manifest: &Path,
+) -> anyhow::Result<ManagedOptimizationReadiness> {
+    let resolved = resolve_manifest(store, manifest).await?;
+    let existing_run = match store
+        .find_optimization_by_manifest(resolved.manifest_fingerprint.clone())
+        .await?
+    {
+        Some((definition, run)) => {
+            if definition.specification_fingerprint != resolved.definition.specification_fingerprint
+            {
+                anyhow::bail!(
+                    "manifest identity already belongs to a different resolved optimization"
+                );
+            }
+            let context = load_launch(store, run.id).await?;
+            Some(ManagedExistingOptimization {
+                run_id: run.id,
+                state: context.view.state,
+            })
+        }
+        None => None,
+    };
+    Ok(ManagedOptimizationReadiness {
+        manifest_fingerprint: resolved.manifest_fingerprint,
+        specification_fingerprint: resolved.definition.specification_fingerprint,
+        project_id: resolved.definition.project.id,
+        project_fingerprint: resolved.definition.project.fingerprint,
+        training_snapshot_id: resolved.definition.training_snapshot.id,
+        benchmark_generation_id: resolved.definition.benchmark.generation_id,
+        candidate_count: resolved.definition.candidates.len(),
+        budget: resolved.definition.campaign_budget,
+        existing_run,
+    })
+}
+
 pub async fn execute(command: EncoderOptimizeCommand, database_url: &str) -> anyhow::Result<()> {
     let args = backend_args(&command);
     ensure_database_belongs_to_workspace(database_url, &args.workspace)?;

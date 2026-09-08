@@ -42,6 +42,13 @@ pub enum WorkspaceCommand {
     Verify { folder: PathBuf },
     /// Upgrade the project registry and initialize missing baseline history.
     Upgrade { folder: PathBuf },
+    /// Derive launch readiness from current managed and scientific facts.
+    Readiness {
+        folder: PathBuf,
+        /// Exact reviewed optimization manifest to resolve without persisting it.
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+    },
     /// Verify and bind the compiled Nomos runtime to a contained scientific store.
     BindNomos {
         folder: PathBuf,
