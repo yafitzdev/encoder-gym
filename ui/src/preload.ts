@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedReadiness, OptimizationManifestChoice } from "./managed-control.js";
+import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedProviderStatus, ManagedReadiness, OptimizationManifestChoice, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
 import type { OpenedProject, ProjectCollection } from "./projects.js";
 import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, ModelChoice } from "./managed-workspace.js";
 
@@ -15,6 +15,10 @@ export interface EncoderGymBridge {
   managedReadiness(id: string, manifestToken?: string): Promise<ManagedReadiness>;
   chooseOptimizationManifest(id: string): Promise<OptimizationManifestChoice | null>;
   managedOptimize(id: string, request: ManagedOptimizationRequest): Promise<ManagedOptimizationResult>;
+  managedProviders(id: string): Promise<ManagedProviderStatus>;
+  configureManagedProviders(id: string, request: ProviderSettingsRequest): Promise<ManagedProviderStatus>;
+  setProviderCredential(id: string, role: ProviderRole, secret: string): Promise<ManagedProviderStatus>;
+  removeProviderCredential(id: string, role: ProviderRole): Promise<ManagedProviderStatus>;
   getProjects(): Promise<ProjectCollection>;
   addProjectFolder(): Promise<ProjectCollection | null>;
   openExample(): Promise<ProjectCollection>;
@@ -39,6 +43,10 @@ const bridge: EncoderGymBridge = {
   managedReadiness: (id, manifestToken) => ipcRenderer.invoke("encoder-gym:managed-readiness", id, manifestToken),
   chooseOptimizationManifest: id => ipcRenderer.invoke("encoder-gym:choose-optimization-manifest", id),
   managedOptimize: (id, request) => ipcRenderer.invoke("encoder-gym:managed-optimize", id, request),
+  managedProviders: id => ipcRenderer.invoke("encoder-gym:managed-providers", id),
+  configureManagedProviders: (id, request) => ipcRenderer.invoke("encoder-gym:configure-managed-providers", id, request),
+  setProviderCredential: (id, role, secret) => ipcRenderer.invoke("encoder-gym:set-provider-credential", id, role, secret),
+  removeProviderCredential: (id, role) => ipcRenderer.invoke("encoder-gym:remove-provider-credential", id, role),
   getProjects: () => ipcRenderer.invoke("encoder-gym:get-projects"),
   addProjectFolder: () => ipcRenderer.invoke("encoder-gym:add-project-folder"),
   openExample: () => ipcRenderer.invoke("encoder-gym:open-example"),

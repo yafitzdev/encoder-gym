@@ -1,7 +1,9 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rmdir, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedReadiness, OptimizationManifestChoice } from "./managed-control.js";
+import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedProviderStatus, ManagedReadiness, OptimizationManifestChoice, ProviderInput, ProviderSettingsRequest } from "./managed-control.js";
 import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, LocalModel, ManagedWorkspace, ModelChoice } from "./managed-workspace.js";
 import type { ProjectRegistry } from "./project-registry.js";
 import type { WorkspaceSnapshot } from "./workspace.js";
@@ -18,6 +20,55 @@ function text(value: unknown, label: string, max = 120): string {
 function uuid(value: unknown, label: string): string {
   if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) throw new Error(`Invalid ${label}.`);
   return value.toLowerCase();
+}
+function object(value: unknown, label: string, keys: string[]): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid ${label}.`);
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some(key => !keys.includes(key))) throw new Error(`${label} contains an unsupported setting.`);
+  return record;
+}
+function integer(value: unknown, label: string, allowZero = false, maximum = Number.MAX_SAFE_INTEGER): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < (allowZero ? 0 : 1) || value > maximum) throw new Error(`Invalid ${label}.`);
+  return value;
+}
+function providerInput(value: unknown, role: "generation" | "advisor" | "evaluator"): ProviderInput {
+  const label = `${role} provider`;
+  const provider = object(value, label, ["kind", "endpoint", "model", "authentication", "environmentFallback", "limits"]);
+  if (!(["fake", "openai-compatible"] as unknown[]).includes(provider.kind) || !(["none", "bearer"] as unknown[]).includes(provider.authentication)) throw new Error(`Invalid ${label}.`);
+  const endpoint = provider.endpoint === undefined ? undefined : text(provider.endpoint, `${label} endpoint`, 2048);
+  const environmentFallback = provider.environmentFallback === undefined ? undefined : text(provider.environmentFallback, `${label} environment fallback`, 128);
+  const expectedFallback = role === "generation" ? "SYNTH_OPENAI_API_KEY" : role === "advisor" ? "SYNTH_ADVISOR_API_KEY" : "SYNTH_EVALUATOR_API_KEY";
+  if (provider.kind === "fake" && (endpoint !== undefined || provider.authentication !== "none" || environmentFallback !== undefined)) throw new Error(`Invalid ${label}.`);
+  if (provider.kind === "openai-compatible" && (!endpoint || provider.authentication !== "bearer" || environmentFallback !== expectedFallback)) throw new Error(`Invalid ${label}.`);
+  const limits = object(provider.limits, `${label} limits`, ["maximumRequests", "maximumInputTokens", "maximumOutputTokens", "maximumCostMicrousd"]);
+  const parsedLimits = {
+    maximumRequests: integer(limits.maximumRequests, `${label} request limit`, false, 1_000_000),
+    maximumInputTokens: integer(limits.maximumInputTokens, `${label} input-token limit`),
+    maximumOutputTokens: integer(limits.maximumOutputTokens, `${label} output-token limit`),
+    maximumCostMicrousd: integer(limits.maximumCostMicrousd, `${label} cost limit`, true),
+  };
+  if (provider.kind === "fake" && parsedLimits.maximumCostMicrousd !== 0) throw new Error(`Invalid ${label}.`);
+  return {
+    kind: provider.kind as ProviderInput["kind"], endpoint, model: text(provider.model, `${label} model`), authentication: provider.authentication as ProviderInput["authentication"], environmentFallback,
+    limits: parsedLimits,
+  };
+}
+function providerSettings(value: unknown): ProviderSettingsRequest {
+  const settings = object(value, "provider settings", ["version", "generation", "advisor", "evaluator", "actor", "reason"]);
+  if (settings.version !== 1) throw new Error("Unsupported provider settings version.");
+  return {
+    version: 1, generation: providerInput(settings.generation, "generation"), advisor: providerInput(settings.advisor, "advisor"),
+    ...(settings.evaluator === undefined ? {} : { evaluator: providerInput(settings.evaluator, "evaluator") }),
+    ...(settings.actor === undefined ? {} : { actor: text(settings.actor, "provider settings actor") }),
+    ...(settings.reason === undefined ? {} : { reason: text(settings.reason, "provider settings reason") }),
+  };
+}
+function providerFile(settings: ProviderSettingsRequest): object {
+  const encode = (provider: ProviderInput) => ({
+    kind: provider.kind, ...(provider.endpoint ? { endpoint: provider.endpoint } : {}), model: provider.model, authentication: provider.authentication,
+    ...(provider.environmentFallback ? { environment_fallback: provider.environmentFallback } : {}), limits: provider.limits,
+  });
+  return { version: 1, generation: encode(settings.generation), advisor: encode(settings.advisor), ...(settings.evaluator ? { evaluator: encode(settings.evaluator) } : {}) };
 }
 export function redactBackendError(value: string): string {
   return value
@@ -156,6 +207,29 @@ export class ManagedBackend {
     return ["start", "resume", "authorize-external", "authorize-sealed", "cancel"].includes(request.action)
       ? this.exclusiveProject(projectId, run)
       : run();
+  }
+
+  async providerStatus(projectId: string): Promise<ManagedProviderStatus> {
+    const workspace = await this.openRegistered(projectId);
+    return this.command<ManagedProviderStatus>(["providers", workspace.folder, "show"]);
+  }
+
+  async configureProviders(projectId: string, value: unknown): Promise<ManagedProviderStatus> {
+    const settings = providerSettings(value);
+    const workspace = await this.openRegistered(projectId);
+    return this.exclusiveProject(projectId, async () => {
+      const current = await this.command<ManagedProviderStatus>(["providers", workspace.folder, "show"]);
+      const directory = await mkdtemp(join(tmpdir(), "encoder-gym-providers-"));
+      const file = join(directory, "settings.json");
+      try {
+        await writeFile(file, JSON.stringify(providerFile(settings)), { flag: "wx", mode: 0o600 });
+        return await this.command<ManagedProviderStatus>(["providers", workspace.folder, "configure", "--file", file,
+          ...(current.catalog?.id ? ["--expected-revision-id", current.catalog.id] : []), "--actor", settings.actor ?? "local-operator", "--reason", settings.reason ?? "Configure project providers"]);
+      } finally {
+        try { await unlink(file); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+        try { await rmdir(directory); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      }
+    });
   }
 }
 

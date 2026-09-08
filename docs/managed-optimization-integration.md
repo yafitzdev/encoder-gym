@@ -167,6 +167,16 @@ variables as documented fallback. IPC returns only `missing`, `available`, or
 `unavailable`; secret values never cross into the renderer and are redacted
 from errors, logs, reports, tests, and screenshots.
 
+Implemented desktop storage uses Electron `safeStorage` after application
+startup (DPAPI on Windows, Keychain on macOS, and the selected supported secret
+backend on Linux). Only encrypted base64 blobs keyed by managed-project ID and
+provider role are written to the app profile; writes are atomic and mode 0600
+where supported. If OS encryption is unavailable, saving fails and the explicit
+environment fallback remains usable. Password fields are write-only, never
+prefilled, and disappear with the dialog. Main-process readiness overlays only
+availability/source onto the CLI's non-required provider checks; it never sends
+the secret into an ordinary readiness subprocess.
+
 Provider health checks are offline configuration checks by default. A live
 probe is a separate explicit operation that states its network and cost effect.
 Starting a run requires a persisted finite authorization envelope; merely

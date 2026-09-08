@@ -137,3 +137,31 @@ test("backend diagnostics redact bearer, key, and token shaped credentials", () 
   assert.equal(redacted.includes("debug-value-456"), false);
   assert.equal(redacted.includes("project-value-789"), false);
 });
+
+test("provider configuration serializes only validated non-secret settings to a temporary file", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gym-managed-providers-")), folder = join(root, "project"); mkdirSync(folder);
+  const id = randomUUID(), baseline = { source: folder, format: "safetensors-encoder", architecture: "bert", files: [], bytes: 10, fingerprint: "sha256:" + "c".repeat(64), execution: "not-configured" };
+  const workspace = { folder, verified: true, manifest: { version: 1, id, name: "Provider fixture", createdAt: new Date().toISOString(), task: null, baseline }, datasets: [] };
+  const registry = new ProjectRegistry(join(root, "profile", "projects.json")); registry.addManaged(workspace);
+  let temporary, serialized;
+  const emptyStatus = { projectId: id, configured: false, catalog: null, credentialAvailability: [], liveProbePerformed: false };
+  const executor = async (_executable, args) => {
+    if (args[3] === "open") return JSON.stringify(workspace);
+    if (args[3] === "providers" && args[5] === "show") return JSON.stringify(emptyStatus);
+    if (args[3] === "providers" && args[5] === "configure") {
+      temporary = args[args.indexOf("--file") + 1]; serialized = readFileSync(temporary, "utf8"); return JSON.stringify(emptyStatus);
+    }
+    throw new Error("unexpected command");
+  };
+  const backend = new ManagedBackend("owned-synth", registry, executor);
+  const limits = { maximumRequests: 5, maximumInputTokens: 5000, maximumOutputTokens: 1000, maximumCostMicrousd: 25000 };
+  const generation = { kind: "openai-compatible", endpoint: "https://api.example.test/v1", model: "generation-model", authentication: "bearer", environmentFallback: "SYNTH_OPENAI_API_KEY", limits };
+  await assert.rejects(() => backend.configureProviders(id, { version: 1, generation: { ...generation, secret: "must-not-be-written" }, advisor: generation }), /unsupported setting/);
+  await assert.rejects(() => backend.configureProviders(id, { version: 1, generation: { ...generation, environmentFallback: "PATH" }, advisor: { ...generation, environmentFallback: "SYNTH_ADVISOR_API_KEY" } }), /Invalid generation provider/);
+  await backend.configureProviders(id, { version: 1, generation, advisor: { ...generation, model: "advisor-model", environmentFallback: "SYNTH_ADVISOR_API_KEY" }, actor: "operator", reason: "separate authorities" });
+  const parsed = JSON.parse(serialized);
+  assert.equal(JSON.stringify(parsed).includes("secret"), false);
+  assert.equal(parsed.generation.environment_fallback, "SYNTH_OPENAI_API_KEY");
+  assert.equal(parsed.advisor.environment_fallback, "SYNTH_ADVISOR_API_KEY");
+  assert.equal(existsSync(temporary), false);
+});

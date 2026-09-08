@@ -91,6 +91,14 @@ opening checks metadata binding and file sizes. Imports are independently
 copied and content-addressed. Same-content imports with matching purpose and
 provenance are idempotent; conflicting purpose/provenance is rejected.
 
+Project settings also configures separate generation and advisor authorities.
+Their endpoint, model, environment fallback, and finite request/token/cost
+limits are append-only project records. Submitted keys are encrypted by the
+operating system in the Electron profile and are never returned to the
+renderer. `SYNTH_OPENAI_API_KEY` and `SYNTH_ADVISOR_API_KEY` remain explicit
+fallbacks when desktop credential encryption is unavailable or intentionally
+not used. Availability checks are offline and make no provider request.
+
 `project.sqlite` is the workspace custody registry, not a legacy slice-run
 database. Source datasets still need normal task-compatible admission, snapshot
 and evaluation contracts before training. **Start optimization** now shows the
@@ -142,6 +150,7 @@ the built Rust binary's path.
 - `src/project-registry.ts`: atomic, app-owned folder metadata only.
 - `src/managed-backend.ts`: fixed Rust CLI adapter and native-picker tokens.
 - `src/managed-control.ts`: typed readiness and finite optimization intents.
+- `src/credential-store.ts`: project/role-scoped encrypted secrets and fallback availability.
 - `src/managed-workspace.ts`: row-free managed-workspace presentation contract.
 - `src/renderer/onboarding.ts`: checkpoint-copy and JSONL-import dialogs.
 - `src/projects.ts`: project identity/content types and stale-response guard.

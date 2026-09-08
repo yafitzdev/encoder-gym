@@ -1,8 +1,9 @@
 import type { ManagedWorkspace } from "../managed-workspace.js";
+import type { ManagedProviderStatus, ProviderRole } from "../managed-control.js";
 import type { Actions, ProjectActions } from "./actions.js";
 import type { ProjectEntry } from "../projects.js";
 import { bytesLabel, dateLabel, displayPath } from "./catalog.js";
-import { button, copyField, details, empty, facts, pageHeader, sectionHeader, tag } from "./components.js";
+import { button, copyField, details, empty, facts, pageHeader, sectionHeader, status, tag } from "./components.js";
 import { h } from "./dom.js";
 
 export function renderDatasets(workspace: ManagedWorkspace, actions: Actions, projects: ProjectActions): HTMLElement {
@@ -28,16 +29,28 @@ export function renderDatasets(workspace: ManagedWorkspace, actions: Actions, pr
   );
 }
 
-export function renderManagedSettings(project: ProjectEntry, workspace: ManagedWorkspace, actions: Actions, projects: ProjectActions): HTMLElement {
-  const binding = workspace.scientificBinding, providers = workspace.providerCatalog;
+export interface ProviderPageState { loading: boolean; error?: string; status?: ManagedProviderStatus }
+export interface ProviderPageActions { configure(): void; refresh(): void; remove(role: ProviderRole): void }
+
+export function renderManagedSettings(project: ProjectEntry, workspace: ManagedWorkspace, providerState: ProviderPageState, providerActions: ProviderPageActions, actions: Actions, projects: ProjectActions): HTMLElement {
+  const binding = workspace.scientificBinding, providers = providerState.status?.catalog ?? workspace.providerCatalog;
+  const configureProviders = button(providers ? "Edit provider setup" : "Configure providers", providerActions.configure, "secondary");
+  configureProviders.disabled = providerState.loading;
   return h("div", { class: "page-content settings-page" }, pageHeader("Project settings", "Runtime, provider authorities, workspace identity, and integrity."),
     h("section", { class: "project-info" }, sectionHeader("Scientific runtime", tag(binding ? "Connected" : "Not connected", binding ? "accent" : undefined)),
       binding ? h("div", {}, h("p", { class: "section-note" }, "The task adapter and scientific store are bound to the current baseline revision. Readiness re-verifies their exact identities before every launch."), facts([["Task adapter", binding.adapter.key], ["Protocol", binding.adapter.protocol], ["Baseline revision", binding.baselineRevisionId]]),
         details("Runtime and store identity", facts([["Runtime", copyField(displayPath(binding.runtime.location), actions.copy)], ["Scientific store", binding.store.databasePath], ["Binding", copyField(binding.id, actions.copy)]]))) :
         h("p", { class: "section-note" }, "This project currently owns model and dataset custody only. No task adapter or scientific store is connected, so training snapshots, evaluation authority, and optimization runs cannot be verified. Desktop binding setup is not implemented yet; readiness will continue to block rather than infer one.")),
     h("section", { class: "project-info" }, sectionHeader("Provider authorities", tag(providers ? `${providers.providers.length} configured` : "Not configured")),
-      providers ? h("div", {}, h("p", { class: "section-note" }, "Generation, advisor, and optional evaluator settings are separate. Secret values are never part of this project record."), ...providers.providers.map(provider => h("div", { class: "provider-summary" }, h("strong", {}, provider.role[0]!.toUpperCase() + provider.role.slice(1)), h("span", {}, `${provider.kind} · ${provider.model}`)))) :
-        h("p", { class: "section-note" }, "Generation and advisor providers have not been selected. Provider choices and separate credential submission are not available in this desktop yet; ordinary readiness makes no external call.")),
+      providerState.error ? h("p", { class: "form-error", role: "alert" }, providerState.error) : null,
+      providers ? h("div", {}, h("p", { class: "section-note" }, "Generation, advisor, and optional evaluator settings are separate. Secret values are never part of this project record."), ...providers.providers.map(provider => {
+        const credential = providerState.status?.credentialAvailability.find(item => item.role === provider.role);
+        const availability = credential?.availability ?? (provider.authentication === "none" ? "available" : "unavailable");
+        return h("div", { class: "provider-summary" }, h("div", {}, h("strong", {}, provider.role[0]!.toUpperCase() + provider.role.slice(1)), h("small", {}, `${provider.kind} · ${provider.model}`)),
+          h("div", { class: "provider-state" }, status(availability === "available" ? credential?.source === "environment" ? "Available from environment" : "Credential available" : availability === "missing" ? "Credential missing" : "Availability unknown", availability === "available" ? "success" : availability === "missing" ? "warning" : "neutral"),
+            credential?.source === "credential_store" ? button("Remove saved key", () => providerActions.remove(provider.role), "ghost small") : null));
+      })) : h("p", { class: "section-note" }, "Generation and advisor providers have not been selected. Configure them separately; checking setup makes no external call."),
+      h("div", { class: "inline-group settings-actions" }, configureProviders, button(providerState.loading ? "Checking…" : "Refresh availability", providerActions.refresh, "ghost", "refresh"))),
     h("section", { class: "project-info" }, sectionHeader(project.name, tag("Managed project", "accent")), facts([
       ["Workspace folder", copyField(displayPath(workspace.folder), actions.copy)], ["Task", workspace.manifest.task ?? "No task description"],
     ]), h("div", { class: "inline-group settings-actions" }, button("Rename project", projects.rename, "secondary"), button("Locate folder", projects.relocate, "secondary", "project")),

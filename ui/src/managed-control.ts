@@ -70,3 +70,16 @@ export type ManagedOptimizationRequest =
   | { action: "cancel"; runId: string; reason: string };
 
 export type ManagedOptimizationResult = ManagedRunStatus | Record<string, unknown>;
+
+export type ProviderRole = "generation" | "advisor" | "evaluator";
+export interface ProviderLimitsInput { maximumRequests: number; maximumInputTokens: number; maximumOutputTokens: number; maximumCostMicrousd: number }
+export interface ProviderInput {
+  kind: "fake" | "openai-compatible"; endpoint?: string; model: string; authentication: "none" | "bearer";
+  environmentFallback?: string; limits: ProviderLimitsInput;
+}
+export interface ProviderSettingsRequest { version: 1; generation: ProviderInput; advisor: ProviderInput; evaluator?: ProviderInput; actor?: string; reason?: string }
+export interface CredentialAvailability { role: ProviderRole; authentication: "none" | "bearer"; availability: "available" | "missing" | "unavailable"; source?: "credential_store" | "environment" | "not_required" }
+export interface ManagedProviderStatus {
+  projectId: string; configured: boolean; catalog?: import("./managed-workspace.js").ProviderCatalog | null;
+  credentialAvailability: CredentialAvailability[]; liveProbePerformed: false;
+}

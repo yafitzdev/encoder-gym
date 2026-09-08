@@ -35,6 +35,8 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   if (harness.restart) {
     await loaded();
     await check("managed projects and selected identity survive another Electron process", "document.querySelectorAll('[data-project-id]').length === 2 && document.getElementById('breadcrumb').textContent.includes('Routing encoder') && document.getElementById('source-state').textContent.includes('Managed workspace')");
+    await nav("project"); await until("document.querySelectorAll('.provider-summary').length === 2 && !document.querySelector('.provider-state .neutral')");
+    await check("provider settings and encrypted credential availability survive restart", "document.querySelectorAll('.provider-state .success').length === 2 && !document.getElementById('page').textContent.includes('smoke-secret')");
     await nav("datasets");
     await check("imported dataset metadata survives restart", "document.querySelectorAll('[data-dataset-id]').length === 1 && document.querySelector('.dataset-summary').textContent.includes('2 records')");
     await screenshot("managed-restarted"); return;
@@ -84,6 +86,15 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await check("readiness distinguishes ready foundations from missing scientific authority", "document.querySelector('.readiness-list').textContent.includes('Connect the scientific runtime') && document.querySelector('.readiness-list > details').textContent.includes('foundations are ready') && document.querySelector('.readiness-list').textContent.includes('Choose the reviewed run definition')");
   await check("readiness exposes no managed paths as editable command input", "!document.querySelector('.optimization-page input') && !document.querySelector('.optimization-page').textContent.includes('project.sqlite')");
   await screenshot("managed-readiness");
+  await nav("project"); await until("[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Configure providers' && !b.disabled)");
+  await textButton("Configure providers"); await until("document.querySelector('#project-dialog[open]')");
+  await type("generation-model", "generation-smoke-model"); await type("advisor-model", "advisor-smoke-model");
+  await type("generation-credential", "generation-smoke-secret-123"); await type("advisor-credential", "advisor-smoke-secret-456");
+  await textButton("Save provider setup"); await until("!document.querySelector('#project-dialog[open]') && document.querySelectorAll('.provider-summary').length === 2");
+  await check("separate provider authorities expose availability without secret values", "document.querySelectorAll('.provider-state .success').length === 2 && !document.getElementById('page').textContent.includes('generation-smoke-secret-123') && !document.getElementById('page').textContent.includes('advisor-smoke-secret-456')");
+  const credentialIndex = readFileSync(join(harness.registry.file, "..", "credentials.json"), "utf8");
+  if (credentialIndex.includes("generation-smoke-secret-123") || credentialIndex.includes("advisor-smoke-secret-456")) throw new Error("Credential plaintext reached the desktop profile");
+  await screenshot("managed-provider-settings");
   await nav("models");
   await nav("runs");
   await check("managed runs do not promise automatic CLI history import", "document.querySelector('.empty-state').textContent.includes('linking their CLI history') && document.querySelector('.empty-state').textContent.includes('not available')");

@@ -12,12 +12,13 @@ import { renderBaseline, renderBenchmarks, renderRuns } from "./workspace-pages.
 import { renderProjectSettings, renderProjectState, renderWelcome } from "./project-pages.js";
 import { previewBridge } from "./preview-bridge.js";
 import { newProjectDialog, importDatasetDialog } from "./onboarding.js";
-import { renderDatasets, renderManagedSettings } from "./managed-pages.js";
+import { renderDatasets, renderManagedSettings, type ProviderPageActions, type ProviderPageState } from "./managed-pages.js";
 import { renderOptimization, type OptimizationPageActions, type OptimizationPageState } from "./optimization-page.js";
+import { providerDialog } from "./provider-dialog.js";
 
 const element = (id: string): HTMLElement => { const found = document.getElementById(id); if (!found) throw new Error("Missing #" + id); return found; };
-interface ProjectView { history: NavigationHistory; models: ModelPageState; details: Map<string, DetailState>; optimization: OptimizationPageState }
-const newView = (): ProjectView => ({ history: new NavigationHistory(), models: { filter: initialFilter(), selected: new Set(), suiteIndex: 0 }, details: new Map(), optimization: { loading: false } });
+interface ProjectView { history: NavigationHistory; models: ModelPageState; details: Map<string, DetailState>; optimization: OptimizationPageState; providers: ProviderPageState }
+const newView = (): ProjectView => ({ history: new NavigationHistory(), models: { filter: initialFilter(), selected: new Set(), suiteIndex: 0 }, details: new Map(), optimization: { loading: false }, providers: { loading: false } });
 
 export function mount(): void {
   const bridge = window.encoderGym ?? previewBridge();
@@ -51,6 +52,7 @@ export function mount(): void {
     if (location.page === "models" && location.id) view.models.filter.setup = location.id;
     view.history.remember(location, main.scrollTop, contentFocus());
     render(); main.scrollTop = 0; focusHeading();
+    if (location.page === "project" && workspace()?.managed && !view.providers.status) void refreshProviders();
   }
   async function selectProject(id: string): Promise<void> {
     if (collectionBusy) return;
@@ -65,6 +67,7 @@ export function mount(): void {
       const next = await pending;
       if (!next) return;
       opened = next; loading = false; render();
+      if (view.history.current.page === "project" && next.content.state === "ready" && next.content.workspace.managed && !view.providers.status) void refreshProviders();
       if (changed) restorePlace();
     } catch (error) {
       if (selection.selectedId !== id) return;
@@ -227,6 +230,34 @@ export function mount(): void {
       }, error => { if (selection.selectedId === id) { view.optimization.loading = false; view.optimization.error = message(error); render(); } });
     },
   };
+  async function refreshProviders(): Promise<void> {
+    const id = selection.selectedId;
+    if (!id || !workspace()?.managed || view.providers.loading) return;
+    const state = view.providers; state.loading = true; state.error = undefined; render();
+    try { state.status = await bridge.managedProviders(id); }
+    catch (error) { state.error = message(error); }
+    finally { state.loading = false; if (selection.selectedId === id) render(); }
+  }
+  const providerActions: ProviderPageActions = {
+    refresh: () => { void refreshProviders(); },
+    configure: () => {
+      const id = selection.selectedId;
+      if (!id || view.providers.loading) return;
+      providerDialog(element("project-dialog") as HTMLDialogElement, view.providers.status, async submission => {
+        view.providers.status = await bridge.configureManagedProviders(id, submission.settings);
+        for (const role of ["generation", "advisor", "evaluator"] as const) {
+          const secret = submission.credentials[role];
+          if (secret) view.providers.status = await bridge.setProviderCredential(id, role, secret);
+        }
+        if (selection.selectedId === id) { notify("Provider authorities saved. No external call was made."); render(); }
+      });
+    },
+    remove: role => {
+      const id = selection.selectedId; if (!id || view.providers.loading) return;
+      view.providers.loading = true; view.providers.error = undefined; render();
+      void bridge.removeProviderCredential(id, role).then(result => { if (selection.selectedId === id) { view.providers.status = result; view.providers.loading = false; render(); notify("Saved credential removed."); } }, error => { if (selection.selectedId === id) { view.providers.loading = false; view.providers.error = message(error); render(); } });
+    },
+  };
   const actions: Actions = {
     navigate, render, help, notify, connect: projects.addFolder,
     backTo: page => { if (view.history.returnTo(page, main.scrollTop)) { render(); restorePlace(); } else navigate({ page }); },
@@ -266,7 +297,7 @@ export function mount(): void {
     let content: HTMLElement;
     if (collectionError) content = h("div", { class: "page-content" }, h("h1", { tabindex: "-1" }, "Project library unavailable"), h("section", { class: "project-recovery", role: "alert" }, failureNotice(collectionError), button("Try again", () => { void refreshCollection(); }, "primary")));
     else if (!project) content = loading ? h("div", { class: "page-content", role: "status" }, "Opening project collection…") : renderWelcome(projects);
-    else if (current.page === "project") content = data?.managed ? renderManagedSettings(project, data.managed, actions, projects) : renderProjectSettings(project, opened, actions, projects);
+    else if (current.page === "project") content = data?.managed ? renderManagedSettings(project, data.managed, view.providers, providerActions, actions, projects) : renderProjectSettings(project, opened, actions, projects);
     else if (!data) content = renderProjectState(project, opened, actions, projects, current.page);
     else {
       const detailKey = (current.id ?? "") + ":" + (current.runId ?? "");
