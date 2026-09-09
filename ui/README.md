@@ -235,7 +235,11 @@ claim to be trained or executable encoders.
 For an explicitly requested real-project read-only check, select a managed
 project in the saved library and run `npm run verify:current`. It uses temporary
 Chromium state, reads the actual saved library without rewriting it, verifies
-model/data files through the backend, and captures Models/Datasets/Settings.
+model/data files through the backend, and captures Models/Data/Settings plus the
+real Start-page readiness. Its structured result lists required blockers, any
+exact run/authority, configured provider roles, pre-authorization external
+calls, and persistence. A second verified reopen proves the saved library,
+managed manifest, custody database, and workspace facts did not change.
 
 Screenshots are written to ignored `ui/qa/`. Checked viewport sizes include
 1440, 1280, 1024, 760, and 390 CSS pixels; the normal desktop window minimum

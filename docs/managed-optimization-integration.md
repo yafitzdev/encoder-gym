@@ -423,9 +423,16 @@ actual saved Nomos workspace through a temporary browser profile. It reproduced
 project `0dd64b24-47d2-4cfb-9523-6c0b65dc4a46`, baseline
 `sha256:9885102b8b6e2fc530dcea5614dd7c3293eacb175f62774382a51f486691f630`,
 two imported sources, and 6,800 rows. It rendered Models, Data, and Project
-settings and proved the saved project library remained byte-for-byte unchanged.
-It performed no upgrade, binding, scientific-store write, provider call,
-training, or evaluation.
+settings plus the actual Start page. Current readiness is false with five
+action groups: upgrade the project registry, connect the scientific runtime,
+establish training authority, establish development/sealed evaluation
+authority, and prepare a reviewed repair. There is no exact run definition,
+reviewed launch authority, or configured provider role yet. The preflight
+permits zero external calls and persists nothing. A second verified reopen
+proved the saved library, managed manifest, custody database, model/data
+fingerprints, and projected workspace facts remained unchanged. It performed
+no upgrade, binding, scientific-store write, provider call, training, or
+evaluation.
 
 The 2026-09-09 binding preflight copied the real managed workspace to a temporary
 directory, upgraded only that copy, and matched its 134,211,908-byte baseline to

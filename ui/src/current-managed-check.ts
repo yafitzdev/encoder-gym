@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BrowserWindow } from "electron";
 import type { ManagedBackend } from "./managed-backend.js";
@@ -9,6 +9,8 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
   const before = readFileSync(registry.file), collection = registry.read();
   if (!collection.selectedId) throw new Error("Select the real managed project to verify first.");
   const expected = await backend.openRegistered(collection.selectedId, true);
+  const manifestPath = join(expected.folder, "encoder-gym.json"), databasePath = join(expected.folder, "project.sqlite");
+  const manifestBefore = readFileSync(manifestPath), databaseBefore = existsSync(databasePath) ? readFileSync(databasePath) : undefined;
   const evaluate = (code: string) => window.webContents.executeJavaScript(code, true);
   await evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(document.querySelector('.baseline-name')&&!document.getElementById('source-state').textContent.includes('Reading'))resolve(true);else if(n++>1000)reject(new Error('Real managed baseline did not load'));else setTimeout(poll,20)};poll()})");
   const check = async (expression: string) => { if (!await evaluate(expression)) throw new Error("Real project UI verification failed: " + expression); };
@@ -28,6 +30,28 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
   await capture("managed-current-datasets");
   await evaluate("document.querySelector('[data-page=project]').click()");
   await capture("managed-current-settings");
+  await evaluate("[...document.querySelectorAll('[data-page=models]')].at(0).click();[...document.querySelectorAll('#page button')].find(button=>button.textContent==='Start optimization').click();true");
+  await evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(document.querySelector('.launch-summary')&&!document.querySelector('.workspace-progress'))resolve(true);else if(n++>1500)reject(new Error('Real managed readiness did not resolve'));else setTimeout(poll,20)};poll()})");
+  await capture("managed-current-readiness");
+  const readiness = await backend.readiness(expected.manifest.id);
+  const providers = await backend.providerStatus(expected.manifest.id);
+  const after = await backend.openRegistered(collection.selectedId, true);
   if (!before.equals(readFileSync(registry.file))) throw new Error("Verification changed the saved library.");
-  console.log(JSON.stringify({ projectId: expected.manifest.id, folder: expected.folder, baseline: expected.manifest.baseline.fingerprint, datasets: expected.datasets.length, rows: expected.datasets.reduce((n, d) => n + d.rows, 0), verified: true, savedLibraryUnchanged: true }));
+  if (!manifestBefore.equals(readFileSync(manifestPath))) throw new Error("Verification changed the managed manifest.");
+  if (databaseBefore && !databaseBefore.equals(readFileSync(databasePath))) throw new Error("Verification changed the managed custody database.");
+  if (JSON.stringify(expected) !== JSON.stringify(after)) throw new Error("Verification changed the managed workspace facts.");
+  const requiredBlockers = readiness.report.checks.filter(check => check.required && check.state !== "ready").map(check => ({ key: check.key, state: check.state, summary: check.summary, nextAction: check.nextAction?.label }));
+  console.log(JSON.stringify({
+    projectId: expected.manifest.id, folder: expected.folder, baseline: expected.manifest.baseline.fingerprint,
+    datasets: expected.datasets.length, rows: expected.datasets.reduce((n, d) => n + d.rows, 0), verified: true,
+    preflight: {
+      runnable: readiness.report.runnable, requiredBlockers,
+      exactRun: readiness.launchPreview ?? null,
+      reviewedAuthority: readiness.optimizationAuthority ?? null,
+      configuredProviderRoles: providers.catalog?.providers.map(provider => provider.role) ?? [],
+      externalCallsBeforeAuthorization: 0,
+      persistenceBeforeAuthorization: "none; this preflight is read-only",
+    },
+    unchanged: { savedLibrary: true, managedManifest: true, custodyDatabase: true, workspaceFacts: true },
+  }));
 }
