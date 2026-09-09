@@ -75,6 +75,12 @@ pub struct ScientificStoreBinding {
     /// schema and contents; project.sqlite stores only this reference.
     pub database_path: String,
     pub schema: BoundIdentity,
+    /// Present when this contained database is a transactionally consistent
+    /// snapshot of an explicitly selected Encoder Gym scientific store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_bytes: Option<u64>,
 }
 
 impl ScientificStoreBinding {
@@ -84,7 +90,17 @@ impl ScientificStoreBinding {
             self.database_path.starts_with("runs/") && self.database_path.ends_with(".sqlite"),
             "Scientific databases must use a contained runs/*.sqlite path.",
         )?;
-        self.schema.validate("Scientific store schema")
+        self.schema.validate("Scientific store schema")?;
+        match (&self.snapshot_fingerprint, self.snapshot_bytes) {
+            (Some(fingerprint), Some(bytes)) => {
+                validate_hash(fingerprint)?;
+                require(bytes > 0, "Scientific-store snapshot cannot be empty.")
+            }
+            (None, None) => Ok(()),
+            _ => Err(Invalid(
+                "Scientific-store snapshot identity requires both hash and byte count.".into(),
+            )),
+        }
     }
 }
 
@@ -234,6 +250,8 @@ mod tests {
                     id: "production-schema-v1".into(),
                     fingerprint: digest('3'),
                 },
+                snapshot_fingerprint: None,
+                snapshot_bytes: None,
             },
             "operator",
             "configure Nomos runtime",
@@ -266,5 +284,19 @@ mod tests {
         value.specification_fingerprint = value.reproduce_specification_fingerprint().unwrap();
         value.fingerprint = value.reproduce_fingerprint().unwrap();
         assert!(value.validate().is_err());
+    }
+
+    #[test]
+    fn imported_store_requires_a_complete_content_identity() {
+        let mut value = binding();
+        value.store.snapshot_fingerprint = Some(digest('4'));
+        value.specification_fingerprint = value.reproduce_specification_fingerprint().unwrap();
+        value.fingerprint = value.reproduce_fingerprint().unwrap();
+        assert!(value.validate().is_err());
+
+        value.store.snapshot_bytes = Some(42);
+        value.specification_fingerprint = value.reproduce_specification_fingerprint().unwrap();
+        value.fingerprint = value.reproduce_fingerprint().unwrap();
+        assert!(value.validate().is_ok());
     }
 }

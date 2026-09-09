@@ -7,13 +7,13 @@ import { h } from "./dom.js";
 
 export function renderRuns(workspace: WorkspaceSnapshot, actions: Actions): HTMLElement {
   return h("div", { class: "page-content" }, pageHeader("Runs", "Each run records an experiment and the evidence behind its decision.", tag(workspace.runs.length + " recorded runs")),
-    workspace.runs.length ? h("div", { class: "run-list" }, ...workspace.runs.map(run => runListItem(run, workspace, actions))) : empty("No runs recorded yet", workspace.managed ? "This workspace stores your baseline and datasets. Launching experiments and linking their CLI history to this managed project are not available in the desktop yet." : "The baseline is registered. Reload after a compatible CLI experiment writes records to this legacy folder.", button("Back to models", () => actions.navigate({ page: "models" }))),
+    workspace.runs.length ? h("div", { class: "run-list" }, ...workspace.runs.map(run => runListItem(run, workspace, actions))) : empty("No runs recorded yet", workspace.managed ? "Start a bounded optimization from Models. To continue prior Encoder Gym work, Project settings can verify and copy its scientific database into this managed project." : "The baseline is registered. Reload after a compatible CLI experiment writes records to this legacy folder.", button("Back to models", () => actions.navigate({ page: "models" }))),
     workspace.runs.length ? h("p", { class: "table-footnote" }, "A completed run can keep the baseline. Open a run to inspect its candidates, execution history, and recorded limits.") : null);
 }
 export function renderBenchmarks(workspace: WorkspaceSnapshot, actions: Actions): HTMLElement {
   const groups = comparisonGroups(workspace, initialFilter());
   if (!groups.length) return h("div", { class: "page-content" }, pageHeader("Benchmarks", "The tests used to measure baseline and candidate quality."),
-    empty("No run evaluations recorded yet", workspace.managed ? "Importing a model or dataset does not create evaluation results. Running evaluations and linking their evidence to this managed project are not available in the desktop yet." : "No comparison setup has been recorded in this folder. Reload after a compatible experiment produces evaluation evidence.", button("Back to models", () => actions.navigate({ page: "models" }))));
+    empty("No run evaluations recorded yet", workspace.managed ? "Importing a model or dataset does not create evaluation results. Start a bounded optimization, or explicitly bring matching Encoder Gym scientific history through Project settings." : "No comparison setup has been recorded in this folder. Reload after a compatible experiment produces evaluation evidence.", button("Back to models", () => actions.navigate({ page: "models" }))));
   return h("div", { class: "page-content" }, pageHeader("Benchmarks", "What each evaluation measures, and which candidate comparisons are valid."),
     h("p", { class: "section-note" }, "Compare candidates within a group: they share the same baseline, tests, and scoring rules. Identical metric names alone do not make different groups comparable."),
     ...groups.map((group, i) => {

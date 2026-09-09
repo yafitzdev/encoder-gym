@@ -97,7 +97,8 @@ export class ManagedBackend {
   private manifests = new Map<string, { projectId: string; path: string; name: string }>();
   private runtimes = new Map<string, { projectId: string; path: string }>();
   private pythons = new Map<string, { projectId: string; path: string }>();
-  private bindingPreviews = new Map<string, { projectId: string; runtime: string; python: string; ready: boolean }>();
+  private histories = new Map<string, { projectId: string; path: string }>();
+  private bindingPreviews = new Map<string, { projectId: string; runtime: string; python: string; history?: string; ready: boolean }>();
   private activeProjects = new Set<string>();
   private busy = false;
   constructor(readonly executable: string, private registry: ProjectRegistry, private executor: CommandExecutor = executeCommand) {}
@@ -233,16 +234,26 @@ export class ManagedBackend {
     return { token, path };
   }
 
-  async previewNomosBinding(projectId: string, runtimeToken: unknown, pythonToken: unknown): Promise<NomosBindingPreview> {
+  async chooseNomosHistory(projectId: string, path: string): Promise<NativePathChoice> {
+    await this.openRegistered(projectId);
+    this.histories.clear();
+    const token = randomUUID();
+    this.histories.set(token, { projectId, path });
+    return { token, path };
+  }
+
+  async previewNomosBinding(projectId: string, runtimeToken: unknown, pythonToken: unknown, historyToken?: unknown): Promise<NomosBindingPreview> {
     const runtime = typeof runtimeToken === "string" ? this.runtimes.get(runtimeToken) : undefined;
     const python = typeof pythonToken === "string" ? this.pythons.get(pythonToken) : undefined;
     if (!runtime || !python || runtime.projectId !== projectId || python.projectId !== projectId) throw new Error("Choose the isolated runtime and Python executable for this project again.");
+    const history = historyToken === undefined ? undefined : typeof historyToken === "string" ? this.histories.get(historyToken) : undefined;
+    if (historyToken !== undefined && (!history || history.projectId !== projectId)) throw new Error("Choose the existing scientific history for this project again.");
     const workspace = await this.openRegistered(projectId);
-    const inspected = await this.command<Omit<NomosBindingPreview, "token">>(["preview-nomos-binding", workspace.folder, "--runtime", runtime.path, "--python", python.path]);
+    const inspected = await this.command<Omit<NomosBindingPreview, "token">>(["preview-nomos-binding", workspace.folder, "--runtime", runtime.path, "--python", python.path, ...(history ? ["--history-database", history.path] : [])]);
     if (inspected.projectId !== projectId) throw new Error("The runtime preview belongs to a different project.");
     this.bindingPreviews.clear();
     const token = randomUUID();
-    this.bindingPreviews.set(token, { projectId, runtime: runtime.path, python: python.path, ready: inspected.ready === true });
+    this.bindingPreviews.set(token, { projectId, runtime: runtime.path, python: python.path, ...(history ? { history: history.path } : {}), ready: inspected.ready === true });
     return { ...inspected, token };
   }
 
@@ -252,7 +263,7 @@ export class ManagedBackend {
     if (!selected.ready) throw new Error("Resolve every missing runtime capability and preview the setup again before connecting.");
     const workspace = await this.openRegistered(projectId);
     return this.exclusiveProject(projectId, async () => {
-      const bound = await this.command<ManagedWorkspace>(["bind-nomos", workspace.folder, "--runtime", selected.runtime, "--python", selected.python, "--actor", "local-operator", "--reason", "Bind verified desktop scientific runtime"]);
+      const bound = await this.command<ManagedWorkspace>(["bind-nomos", workspace.folder, "--runtime", selected.runtime, "--python", selected.python, ...(selected.history ? ["--history-database", selected.history] : []), "--actor", "local-operator", "--reason", selected.history ? "Import verified scientific history and bind desktop runtime" : "Bind verified desktop scientific runtime"]);
       this.bindingPreviews.delete(previewToken as string);
       return bound;
     });

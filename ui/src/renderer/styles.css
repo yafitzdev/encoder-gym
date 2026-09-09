@@ -496,11 +496,17 @@ dialog::backdrop { background: #0008; }
 .runtime-selection > div { min-width: 0; display: grid; gap: 5px; }
 .runtime-selection strong { font-size: 12px; }
 .runtime-selection span { color: var(--muted); font: 11px/1.5 var(--mono); overflow-wrap: anywhere; }
+.runtime-selection small { color: var(--muted); font-size: 11px; line-height: 1.5; max-width: 430px; }
+.history-selection > .inline-group { display: flex; align-items: center; justify-content: end; }
 .runtime-preview { padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
 .runtime-preview-heading { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
 .runtime-preview-heading h3 { font-size: 15px; }
 .runtime-preview-heading p { color: var(--muted); font-size: 12px; margin-top: 5px; }
 .runtime-preview .facts { margin-top: 15px; }
+.history-preview { margin-top: 15px; padding: 12px 13px; border-left: 3px solid var(--success); background: color-mix(in srgb, var(--success) 6%, transparent); }
+.history-preview > strong { font-size: 12px; }
+.history-preview > p { color: var(--muted); font-size: 11px; line-height: 1.55; margin-top: 5px; }
+.history-preview > .disclosure { margin: 8px 0 0; padding-bottom: 0; }
 .capability-list { margin-top: 15px; border-top: 1px solid var(--line); }
 .capability-row { display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .capability-row strong { display: block; font-size: 12px; }

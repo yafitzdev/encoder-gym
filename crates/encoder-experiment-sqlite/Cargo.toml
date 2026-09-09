@@ -10,6 +10,7 @@ chrono.workspace = true
 encoder-campaign-core.workspace = true
 encoder-experiment-core.workspace = true
 encoder-repair-core.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 uuid.workspace = true

@@ -56,6 +56,8 @@ fn scientific_binding(
                 id: "production-schema-v1".into(),
                 fingerprint: digest('c'),
             },
+            snapshot_fingerprint: None,
+            snapshot_bytes: None,
         },
         "operator",
         "configure verified runtime",

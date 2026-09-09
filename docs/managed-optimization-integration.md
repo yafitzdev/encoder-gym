@@ -130,8 +130,18 @@ preview token can reach the fixed binding intent. Binding repeats all checks,
 then creates or verifies the contained scientific store and appends the binding;
 preview never writes, contacts a provider, trains, or evaluates.
 
-Historical Nomos databases and journals are not automatically bound. Importing
-legacy evidence requires a future explicit verifier and is outside this goal.
+Historical Nomos databases and journals are never automatically bound. Project
+settings may explicitly select an existing Encoder Gym production database
+through a separate opaque native-picker token. Preview opens it read-only,
+requires the exact current migration set and complete SQLite integrity, finds
+the current runtime project by its immutable source fingerprint, asks the
+compiled adapter to reproduce that project, and returns only a row-free artifact
+inventory. Binding repeats those checks and uses SQLite `VACUUM INTO` to create
+a transactionally consistent standalone image including committed WAL state.
+The image is hashed and atomically published below managed `runs/` under its
+content identity; the binding records its SHA-256 and bytes. The source database
+is neither attached nor modified. Individual historical artifacts remain
+subject to their existing deep owner verification before use.
 
 ## Readiness model
 
@@ -329,6 +339,26 @@ Windows extended paths are now stripped before SQLite URL construction, and
 runtime verification now loads the immutable project identity from the bound
 store before asking the adapter to reproduce its content. It no longer compares
 against the adapter's intentionally ephemeral inspection ID.
+
+The 2026-09-09 explicit-history preflight selected
+`encoder-gym-repair.sqlite` while operating only on a temporary managed-workspace
+copy. The current migration set, SQLite integrity, latest runtime project and
+source revision reproduced exactly. Its row-free inventory contains three
+project snapshots, two protocols, two experiment runs, two benchmark
+generations, one diagnosis, two repair proposals, two approved native-delta
+selections, one training snapshot, and one completed optimization run. The
+preview correctly remained blocked only by the separately reported missing
+`onnxruntime_genai` Python capability. The actual managed workspace, isolated
+runtime, and selected history database were unchanged.
+
+A separate full import lifecycle check used the same deliberate no-op capability
+marker as the earlier binding test, again only against a temporary managed copy.
+SQLite produced a 7,180,288-byte standalone history image with fingerprint
+`sha256:12586ad5146d9a95901748fa914931c7cb8acef2421654d73579c592c6ec6fdd`.
+The contained copy reopened in a fresh process and all four scientific binding,
+store, runtime, and project checks were ready. A before/after SHA-256 check
+proved the selected source database unchanged. The temporary workspace and
+marker were removed after verification.
 
 ## Delivery order
 

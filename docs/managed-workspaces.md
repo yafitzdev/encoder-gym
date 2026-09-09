@@ -89,6 +89,15 @@ synth workspace preview-nomos-binding C:\EncoderGym\Projects\Nomos --runtime C:\
 synth workspace bind-nomos C:\EncoderGym\Projects\Nomos --runtime C:\isolated\nomos-runtime
 ```
 
+To continue from a prior Encoder Gym scientific database, select it explicitly
+during the same preview and bind. This is an import, not an inferred nearby
+database:
+
+```powershell
+synth workspace preview-nomos-binding C:\EncoderGym\Projects\Nomos --runtime C:\isolated\nomos-runtime --python C:\path\to\python.exe --history-database C:\previous\encoder-gym-repair.sqlite
+synth workspace bind-nomos C:\EncoderGym\Projects\Nomos --runtime C:\isolated\nomos-runtime --python C:\path\to\python.exe --history-database C:\previous\encoder-gym-repair.sqlite
+```
+
 The preview deeply verifies the managed checkpoint and the clean, no-remote
 isolated runtime, proves that its baseline matches the active model, and runs a
 15-second offline Python capability check. The check requires Python 3.11 or
@@ -96,12 +105,17 @@ isolated runtime, proves that its baseline matches the active model, and runs a
 diagnostic modules used by the compiled Nomos adapter. It writes nothing and
 makes no network or provider call.
 
-The binding command repeats every check, rejects an incomplete interpreter,
-initializes a new production scientific store at
-`runs/scientific.sqlite`, and persists only their explicit binding in
-`project.sqlite`. It does not import the runtime's historical databases, start
-training, evaluate a model, or call a provider. The source `fitz-tool`
-repository is not a valid runtime.
+Without a history selection, the binding command repeats every check, rejects
+an incomplete interpreter, and initializes a new production scientific store
+at `runs/scientific.sqlite`. With a history selection it additionally requires
+the current schema, a complete SQLite integrity check, and the exact current
+runtime project snapshot. It then uses SQLite's transactionally consistent
+snapshot operation so committed WAL state is included, hashes the standalone
+copy, publishes it below `runs/` under its content identity, and records the
+hash and byte count in the binding. The selected source database is opened
+read-only and remains separate and unchanged. Neither path starts training,
+evaluates a model, or calls a provider. The source `fitz-tool` repository is not
+a valid runtime.
 
 `workspace readiness` is passive: it reopens and rehashes the managed project,
 reproduces the active runtime and scientific-store identities when configured,

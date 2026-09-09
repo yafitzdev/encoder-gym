@@ -135,6 +135,9 @@ pub enum WorkspaceCommand {
         runtime: PathBuf,
         #[arg(long, default_value = "python")]
         python: PathBuf,
+        /// Existing Encoder Gym scientific database to verify and copy into this project.
+        #[arg(long)]
+        history_database: Option<PathBuf>,
     },
     /// Verify and bind the compiled Nomos runtime to a contained scientific store.
     BindNomos {
@@ -143,6 +146,9 @@ pub enum WorkspaceCommand {
         runtime: PathBuf,
         #[arg(long, default_value = "python")]
         python: PathBuf,
+        /// Existing Encoder Gym scientific database previously accepted by preview.
+        #[arg(long)]
+        history_database: Option<PathBuf>,
         #[arg(long, default_value = "local-operator")]
         actor: String,
         #[arg(long, default_value = "Configure verified Nomos runtime")]

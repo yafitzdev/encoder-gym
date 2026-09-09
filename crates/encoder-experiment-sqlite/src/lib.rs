@@ -23,6 +23,8 @@ use sqlx::{
 };
 use uuid::Uuid;
 
+pub use read_only::ScientificStoreInventory;
+
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 pub const SCHEMA_ID: &str = "encoder-experiment-sqlite-v7";

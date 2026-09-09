@@ -105,7 +105,12 @@ first previews the isolated checkout and Python executable through the fixed
 clean/no-remote source state, supported Python version, and required execution
 capabilities without writing or contacting a provider. **Connect runtime** is
 enabled only for a ready preview; the binding command rechecks the same facts
-before creating or verifying the contained scientific store.
+before creating or verifying the contained scientific store. The same dialog
+can explicitly select existing Encoder Gym scientific history. The main process
+keeps that native path behind a project-scoped token; preview checks its exact
+schema, SQLite integrity, and current runtime project, then connection creates a
+transactionally consistent, content-addressed copy below the managed `runs/`
+folder. It never attaches or changes the selected database in place.
 
 `project.sqlite` is the workspace custody registry, not a legacy slice-run
 database. Source datasets still need normal task-compatible admission, snapshot

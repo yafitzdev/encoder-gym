@@ -86,6 +86,10 @@ export interface ManagedProviderStatus {
 
 export interface NativePathChoice { token: string; path: string }
 export interface PythonCapability { key: string; label: string; ready: boolean; missingModules: string[] }
+export interface ScientificStoreInventory {
+  projects: number; protocols: number; experimentRuns: number; benchmarkGenerations: number;
+  diagnoses: number; proposals: number; approvedDeltaSelections: number; trainingSnapshots: number; optimizationRuns: number;
+}
 export interface NomosBindingPreview {
   token: string; projectId: string; projectName: string; baselineRevisionId: string;
   activeModel: { name: string; format: string; bytes: number; fingerprint: string };
@@ -93,6 +97,9 @@ export interface NomosBindingPreview {
   runtimeLocation: string; sourceRevision: string; sourceFingerprint: string;
   projectSnapshot: { id: string; fingerprint: string };
   python: { executable: string; version: string; compatibleVersion: boolean; capabilities: PythonCapability[]; ready: boolean };
-  store: { databasePath: string; action: "initialize_new_store" | "verify_existing_store" };
+  store: {
+    databasePath: string; action: "initialize_new_store" | "verify_existing_store" | "import_verified_history";
+    importedHistory?: { sourceName: string; projectSnapshot: { id: string; fingerprint: string }; inventory: ScientificStoreInventory; verification: string };
+  };
   previousBindingId?: string; ready: boolean;
 }

@@ -13,7 +13,9 @@ use encoder_experiment_core::{
     ports::{EncoderTaskBackend, ExperimentStore},
 };
 use encoder_experiment_nomos::NomosBackend;
-use encoder_experiment_sqlite::{SCHEMA_ID, SqliteExperimentStore, schema_fingerprint};
+use encoder_experiment_sqlite::{
+    SCHEMA_ID, ScientificStoreInventory, SqliteExperimentStore, schema_fingerprint,
+};
 use project_workspace_core::{
     AdapterBinding, BoundIdentity, ProviderAuthentication, ProviderCatalog, ProviderConfiguration,
     ProviderKind, ProviderLimits, ProviderRole, ReadinessAction, ReadinessCategory, ReadinessCheck,
@@ -26,7 +28,14 @@ use project_workspace_local::{
 };
 use uuid::Uuid;
 
-use std::{collections::BTreeMap, path::PathBuf, time::Duration};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::BTreeMap,
+    fs::File,
+    io::Read,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use super::encoder_optimize::ManagedOptimizationReadiness;
 
@@ -77,8 +86,19 @@ struct BindingModelPreview {
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BindingStorePreview {
-    database_path: &'static str,
+    database_path: String,
     action: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    imported_history: Option<BindingHistoryPreview>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BindingHistoryPreview {
+    source_name: String,
+    project_snapshot: BoundIdentity,
+    inventory: ScientificStoreInventory,
+    verification: &'static str,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -105,6 +125,13 @@ struct VerifiedNomosBinding {
     project: ExternalProjectSnapshot,
     runtime_root: PathBuf,
     python: PythonRuntimeInspection,
+    history: Option<VerifiedScientificHistory>,
+}
+
+struct VerifiedScientificHistory {
+    source: PathBuf,
+    project: ExternalProjectSnapshot,
+    inventory: ScientificStoreInventory,
 }
 
 #[derive(serde::Deserialize)]
@@ -202,14 +229,26 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
             folder,
             runtime,
             python,
-        } => preview_nomos_binding(&folder, &runtime, &python).await,
+            history_database,
+        } => preview_nomos_binding(&folder, &runtime, &python, history_database.as_deref()).await,
         WorkspaceCommand::BindNomos {
             folder,
             runtime,
             python,
+            history_database,
             actor,
             reason,
-        } => bind_nomos(&folder, &runtime, &python, &actor, &reason).await,
+        } => {
+            bind_nomos(
+                &folder,
+                &runtime,
+                &python,
+                history_database.as_deref(),
+                &actor,
+                &reason,
+            )
+            .await
+        }
         WorkspaceCommand::InspectDataset { source, purpose } => {
             print(&inspect_dataset(&source, purpose.into())?)
         }
@@ -1173,16 +1212,18 @@ async fn bind_nomos(
     folder: &std::path::Path,
     runtime: &std::path::Path,
     python: &std::path::Path,
+    history_database: Option<&std::path::Path>,
     actor: &str,
     reason: &str,
 ) -> anyhow::Result<()> {
-    let verified = verify_nomos_binding(folder, runtime, python).await?;
+    let verified = verify_nomos_binding(folder, runtime, python, history_database).await?;
     let VerifiedNomosBinding {
         workspace,
         backend,
         project,
         runtime_root,
         python: python_inspection,
+        history,
     } = verified;
     let catalog = workspace
         .model_catalog
@@ -1193,18 +1234,29 @@ async fn bind_nomos(
         "The selected Python runtime is incomplete. Preview it and resolve every missing capability before binding."
     );
 
-    let store_path = std::path::Path::new(&workspace.folder).join("runs/scientific.sqlite");
-    let database_url = sqlite_file_url(&store_path);
-    let store = SqliteExperimentStore::connect(&database_url).await?;
-    if let Some(existing) = store.get_project(project.id).await? {
-        anyhow::ensure!(
-            existing == project,
-            "The managed scientific store contains a different project at this identity."
-        );
-    } else {
-        store.create_project(project.clone()).await?;
-    }
-    store.pool().close().await;
+    let root = Path::new(&workspace.folder);
+    let (store_path, store_fingerprint, store_bytes) = match history {
+        Some(history) => import_scientific_history(root, &backend, &history).await?,
+        None => {
+            let path = root.join("runs/scientific.sqlite");
+            let database_url = sqlite_file_url(&path);
+            let store = SqliteExperimentStore::connect(&database_url).await?;
+            if let Some(existing) = store.get_project(project.id).await? {
+                anyhow::ensure!(
+                    existing == project,
+                    "The managed scientific store contains a different project at this identity."
+                );
+            } else {
+                store.create_project(project.clone()).await?;
+            }
+            store.pool().close().await;
+            (path, None, None)
+        }
+    };
+    let database_path = store_path
+        .strip_prefix(root)?
+        .to_string_lossy()
+        .replace('\\', "/");
 
     let adapter = backend.identity();
     let previous = workspace
@@ -1231,18 +1283,20 @@ async fn bind_nomos(
             },
         },
         ScientificStoreBinding {
-            database_path: "runs/scientific.sqlite".into(),
+            database_path,
             schema: BoundIdentity {
                 id: SCHEMA_ID.into(),
                 fingerprint: schema_fingerprint(),
             },
+            snapshot_fingerprint: store_fingerprint,
+            snapshot_bytes: store_bytes,
         },
         actor,
         reason,
         Utc::now(),
     )?;
     eprintln!(
-        "Binding the verified isolated Nomos runtime to a new managed scientific store; no training or evaluation will run."
+        "Binding the verified isolated Nomos runtime to a contained scientific store; no training or evaluation will run."
     );
     print(&record_scientific_binding(folder, binding, previous).await?)
 }
@@ -1251,8 +1305,9 @@ async fn preview_nomos_binding(
     folder: &std::path::Path,
     runtime: &std::path::Path,
     python: &std::path::Path,
+    history_database: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
-    let verified = verify_nomos_binding(folder, runtime, python).await?;
+    let verified = verify_nomos_binding(folder, runtime, python, history_database).await?;
     let catalog = verified
         .workspace
         .model_catalog
@@ -1260,8 +1315,24 @@ async fn preview_nomos_binding(
         .expect("verified model catalog");
     let active_model = catalog.active_model();
     let adapter = verified.backend.identity();
-    let store_path =
-        std::path::Path::new(&verified.workspace.folder).join("runs/scientific.sqlite");
+    let store_path = Path::new(&verified.workspace.folder).join("runs/scientific.sqlite");
+    let imported_history = verified
+        .history
+        .as_ref()
+        .map(|history| BindingHistoryPreview {
+            source_name: history
+                .source
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("selected scientific database")
+                .to_owned(),
+            project_snapshot: BoundIdentity {
+                id: history.project.id.to_string(),
+                fingerprint: history.project.fingerprint.clone(),
+            },
+            inventory: history.inventory.clone(),
+            verification: "current_schema_integrity_and_runtime_project_match",
+        });
     let preview = NomosBindingPreview {
         project_id: verified.workspace.manifest.id,
         project_name: verified.workspace.manifest.name.clone(),
@@ -1285,12 +1356,19 @@ async fn preview_nomos_binding(
             fingerprint: verified.project.fingerprint.clone(),
         },
         store: BindingStorePreview {
-            database_path: "runs/scientific.sqlite",
-            action: if store_path.exists() {
+            database_path: if imported_history.is_some() {
+                "runs/scientific-<snapshot-sha256>.sqlite".into()
+            } else {
+                "runs/scientific.sqlite".into()
+            },
+            action: if imported_history.is_some() {
+                "import_verified_history"
+            } else if store_path.exists() {
                 "verify_existing_store"
             } else {
                 "initialize_new_store"
             },
+            imported_history,
         },
         previous_binding_id: verified
             .workspace
@@ -1307,6 +1385,7 @@ async fn verify_nomos_binding(
     folder: &std::path::Path,
     runtime: &std::path::Path,
     python: &std::path::Path,
+    history_database: Option<&std::path::Path>,
 ) -> anyhow::Result<VerifiedNomosBinding> {
     let workspace = open_workspace(folder, true).await?;
     let catalog = workspace
@@ -1314,9 +1393,9 @@ async fn verify_nomos_binding(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Upgrade this managed workspace before binding Nomos."))?;
     let backend = NomosBackend::open(runtime, python.to_path_buf())?;
-    let project = backend.project_snapshot()?;
+    let current_project = backend.project_snapshot()?;
     let runtime_root = runtime.canonicalize()?;
-    let runtime_baseline = inspect_model(&runtime_root.join(&project.baseline_model.key))?;
+    let runtime_baseline = inspect_model(&runtime_root.join(&current_project.baseline_model.key))?;
     let active_model = catalog.active_model();
     anyhow::ensure!(
         runtime_baseline.fingerprint == active_model.fingerprint
@@ -1324,6 +1403,44 @@ async fn verify_nomos_binding(
             && runtime_baseline.format == active_model.format,
         "The isolated Nomos runtime baseline does not match this project's active model."
     );
+    let history = match history_database {
+        Some(source) => {
+            let source = source.canonicalize()?;
+            let metadata = source.metadata()?;
+            anyhow::ensure!(
+                metadata.is_file() && metadata.len() > 0,
+                "Choose a non-empty SQLite scientific database."
+            );
+            let managed_root = Path::new(&workspace.folder).canonicalize()?;
+            anyhow::ensure!(
+                !source.starts_with(&managed_root),
+                "Choose external Encoder Gym history, not a database already contained by this project."
+            );
+            let store = SqliteExperimentStore::connect_read_only(&sqlite_file_url(&source)).await?;
+            store.verify_integrity().await?;
+            let project = store
+                .find_project_by_source_fingerprint(current_project.source_fingerprint.clone())
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "The selected history does not contain this exact current runtime revision."
+                    )
+                })?;
+            backend.verify_current_snapshot(project.clone()).await?;
+            let inventory = store.inventory().await?;
+            store.pool().close().await;
+            Some(VerifiedScientificHistory {
+                source,
+                project,
+                inventory,
+            })
+        }
+        None => None,
+    };
+    let project = history
+        .as_ref()
+        .map(|value| value.project.clone())
+        .unwrap_or(current_project);
     let python = inspect_python_runtime(python, &runtime_root).await?;
     Ok(VerifiedNomosBinding {
         workspace,
@@ -1331,7 +1448,79 @@ async fn verify_nomos_binding(
         project,
         runtime_root,
         python,
+        history,
     })
+}
+
+async fn import_scientific_history(
+    workspace_root: &Path,
+    backend: &NomosBackend,
+    history: &VerifiedScientificHistory,
+) -> anyhow::Result<(PathBuf, Option<String>, Option<u64>)> {
+    let runs = workspace_root.join("runs").canonicalize()?;
+    let staging = runs.join(format!(".scientific-import-{}.sqlite", Uuid::new_v4()));
+    if let Err(error) =
+        SqliteExperimentStore::snapshot_database(&sqlite_file_url(&history.source), &staging).await
+    {
+        if staging.starts_with(&runs) && staging.exists() {
+            let _ = std::fs::remove_file(&staging);
+        }
+        return Err(error.into());
+    }
+    let identity = hash_file(&staging)?;
+    let hex = identity.0.strip_prefix("sha256:").expect("SHA-256 prefix");
+    let destination = runs.join(format!("scientific-{hex}.sqlite"));
+    let publish = async {
+        if destination.exists() {
+            let existing = hash_file(&destination)?;
+            anyhow::ensure!(
+                existing == identity,
+                "A different scientific history already occupies the content-addressed destination."
+            );
+            std::fs::remove_file(&staging)?;
+        } else {
+            std::fs::rename(&staging, &destination)?;
+        }
+        let store =
+            SqliteExperimentStore::connect_read_only(&sqlite_file_url(&destination)).await?;
+        store.verify_integrity().await?;
+        let project = store
+            .get_project(history.project.id)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!("The contained history lost its verified project snapshot.")
+            })?;
+        anyhow::ensure!(
+            project == history.project,
+            "The contained history project identity changed during import."
+        );
+        backend.verify_current_snapshot(project).await?;
+        store.pool().close().await;
+        Ok::<_, anyhow::Error>((destination, Some(identity.0), Some(identity.1)))
+    }
+    .await;
+    if publish.is_err() && staging.starts_with(&runs) && staging.exists() {
+        let _ = std::fs::remove_file(&staging);
+    }
+    publish
+}
+
+fn hash_file(path: &Path) -> anyhow::Result<(String, u64)> {
+    let mut file = File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 1024 * 1024];
+    let mut bytes = 0_u64;
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+        bytes = bytes
+            .checked_add(u64::try_from(read)?)
+            .ok_or_else(|| anyhow::anyhow!("Scientific history size overflow."))?;
+    }
+    Ok((format!("sha256:{:x}", digest.finalize()), bytes))
 }
 
 async fn inspect_python_runtime(
@@ -1602,6 +1791,8 @@ mod tests {
                     id: SCHEMA_ID.into(),
                     fingerprint: schema_fingerprint(),
                 },
+                snapshot_fingerprint: None,
+                snapshot_bytes: None,
             },
             "operator",
             "test persisted binding",

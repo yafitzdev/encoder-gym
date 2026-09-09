@@ -184,7 +184,7 @@ test("scientific binding uses only native-picked runtime tokens and requires a s
     runtimeLocation: join(root, "isolated"), sourceRevision: "abc123", sourceFingerprint: "sha256:" + "b".repeat(64),
     projectSnapshot: { id: randomUUID(), fingerprint: "sha256:" + "d".repeat(64) },
     python: { executable: join(root, "python.exe"), version: "3.12.4", compatibleVersion: true, capabilities: [], ready: true },
-    store: { databasePath: "runs/scientific.sqlite", action: "initialize_new_store" }, ready: true,
+    store: { databasePath: "runs/scientific-<snapshot-sha256>.sqlite", action: "import_verified_history", importedHistory: { sourceName: "history.sqlite", projectSnapshot: { id: randomUUID(), fingerprint: "sha256:" + "d".repeat(64) }, inventory: { projects: 1, protocols: 1, experimentRuns: 1, benchmarkGenerations: 2, diagnoses: 1, proposals: 2, approvedDeltaSelections: 2, trainingSnapshots: 1, optimizationRuns: 1 }, verification: "current_schema_integrity_and_runtime_project_match" } }, ready: true,
   };
   const executor = async (_executable, args) => {
     calls.push(args);
@@ -196,12 +196,15 @@ test("scientific binding uses only native-picked runtime tokens and requires a s
   const backend = new ManagedBackend("owned-synth", registry, executor);
   const runtime = await backend.chooseNomosRuntime(id, join(root, "isolated"));
   const python = await backend.chooseNomosPython(id, join(root, "python.exe"));
+  const history = await backend.chooseNomosHistory(id, join(root, "history.sqlite"));
   await assert.rejects(() => backend.previewNomosBinding(id, "renderer-path", python.token), /Choose the isolated runtime/);
-  const preview = await backend.previewNomosBinding(id, runtime.token, python.token);
+  await assert.rejects(() => backend.previewNomosBinding(id, runtime.token, python.token, "renderer-path"), /Choose the existing scientific history/);
+  const preview = await backend.previewNomosBinding(id, runtime.token, python.token, history.token);
   await assert.rejects(() => backend.bindNomos(id, "renderer-path"), /Preview the scientific runtime/);
   await backend.bindNomos(id, preview.token);
   const bindArgs = calls.find(args => args[3] === "bind-nomos");
   assert.equal(bindArgs[bindArgs.indexOf("--runtime") + 1], join(root, "isolated"));
   assert.equal(bindArgs[bindArgs.indexOf("--python") + 1], join(root, "python.exe"));
+  assert.equal(bindArgs[bindArgs.indexOf("--history-database") + 1], join(root, "history.sqlite"));
   assert.equal(bindArgs.includes("renderer-path"), false);
 });

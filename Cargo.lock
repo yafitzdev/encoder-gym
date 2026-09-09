@@ -983,6 +983,7 @@ dependencies = [
  "encoder-campaign-core",
  "encoder-experiment-core",
  "encoder-repair-core",
+ "serde",
  "serde_json",
  "sqlx",
  "tempfile",

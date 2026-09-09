@@ -43,7 +43,7 @@ export interface ScientificBinding {
   id: string; projectId: string; baselineRevisionId: string; previousBindingId?: string;
   adapter: { key: string; protocol: string; configurationFingerprint: string };
   runtime: { kind: "managed" | "external-isolated"; location: string; executable?: string; projectSnapshot: BoundIdentity };
-  store: { databasePath: string; schema: BoundIdentity };
+  store: { databasePath: string; schema: BoundIdentity; snapshotFingerprint?: string; snapshotBytes?: number };
   actor: string; reason: string; createdAt: string; specificationFingerprint: string; fingerprint: string;
 }
 

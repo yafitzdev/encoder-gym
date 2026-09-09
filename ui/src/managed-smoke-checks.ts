@@ -89,7 +89,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await nav("project"); await until("[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Configure providers' && !b.disabled)");
   await check("scientific runtime setup is a real project-settings action", "[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Connect scientific runtime') && !document.getElementById('page').textContent.includes('not implemented')");
   await textButton("Connect scientific runtime"); await until("document.querySelector('#project-dialog[open] .runtime-form')");
-  await check("runtime setup explains isolation and requires offline preview", "document.querySelector('.runtime-form').textContent.includes('original source repository is deliberately rejected') && document.querySelector('.runtime-form').textContent.includes('no provider call') && [...document.querySelectorAll('.runtime-form button')].find(b=>b.textContent === 'Connect runtime').disabled");
+  await check("runtime setup explains isolation, explicit history import, and offline preview", "document.querySelector('.runtime-form').textContent.includes('original source repository is deliberately rejected') && document.querySelector('.runtime-form').textContent.includes('no provider call') && document.querySelector('.runtime-form').textContent.includes('Existing Encoder Gym history') && [...document.querySelectorAll('.runtime-form button')].find(b=>b.textContent === 'Bring existing history') && [...document.querySelectorAll('.runtime-form button')].find(b=>b.textContent === 'Connect runtime').disabled");
   await screenshot("managed-runtime-setup", 760, 760); window.setContentSize(1440, 960);
   await textButton("Cancel"); await until("!document.querySelector('#project-dialog[open]')");
   await textButton("Configure providers"); await until("document.querySelector('#project-dialog[open]')");
@@ -102,7 +102,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await screenshot("managed-provider-settings");
   await nav("models");
   await nav("runs");
-  await check("managed runs do not promise automatic CLI history import", "document.querySelector('.empty-state').textContent.includes('linking their CLI history') && document.querySelector('.empty-state').textContent.includes('not available')");
+  await check("managed runs point to explicit scientific history import", "document.querySelector('.empty-state').textContent.includes('Project settings') && document.querySelector('.empty-state').textContent.includes('verify and copy')");
   await nav("benchmarks");
   await check("managed benchmarks distinguish imports from evaluation", "document.querySelector('.empty-state').textContent.includes('does not create evaluation results')");
   await nav("datasets"); await textButton("Import dataset");

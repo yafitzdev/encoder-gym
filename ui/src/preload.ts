@@ -21,7 +21,8 @@ export interface EncoderGymBridge {
   removeProviderCredential(id: string, role: ProviderRole): Promise<ManagedProviderStatus>;
   chooseNomosRuntime(id: string): Promise<NativePathChoice | null>;
   chooseNomosPython(id: string): Promise<NativePathChoice | null>;
-  previewNomosBinding(id: string, runtimeToken: string, pythonToken: string): Promise<NomosBindingPreview>;
+  chooseNomosHistory(id: string): Promise<NativePathChoice | null>;
+  previewNomosBinding(id: string, runtimeToken: string, pythonToken: string, historyToken?: string): Promise<NomosBindingPreview>;
   bindNomos(id: string, previewToken: string): Promise<OpenedProject>;
   getProjects(): Promise<ProjectCollection>;
   addProjectFolder(): Promise<ProjectCollection | null>;
@@ -53,7 +54,8 @@ const bridge: EncoderGymBridge = {
   removeProviderCredential: (id, role) => ipcRenderer.invoke("encoder-gym:remove-provider-credential", id, role),
   chooseNomosRuntime: id => ipcRenderer.invoke("encoder-gym:choose-nomos-runtime", id),
   chooseNomosPython: id => ipcRenderer.invoke("encoder-gym:choose-nomos-python", id),
-  previewNomosBinding: (id, runtimeToken, pythonToken) => ipcRenderer.invoke("encoder-gym:preview-nomos-binding", id, runtimeToken, pythonToken),
+  chooseNomosHistory: id => ipcRenderer.invoke("encoder-gym:choose-nomos-history", id),
+  previewNomosBinding: (id, runtimeToken, pythonToken, historyToken) => ipcRenderer.invoke("encoder-gym:preview-nomos-binding", id, runtimeToken, pythonToken, historyToken),
   bindNomos: (id, previewToken) => ipcRenderer.invoke("encoder-gym:bind-nomos", id, previewToken),
   getProjects: () => ipcRenderer.invoke("encoder-gym:get-projects"),
   addProjectFolder: () => ipcRenderer.invoke("encoder-gym:add-project-folder"),

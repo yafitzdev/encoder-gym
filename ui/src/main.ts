@@ -192,8 +192,19 @@ ipcMain.handle("encoder-gym:choose-nomos-python", async (_event, value: unknown)
   const id = projectId(value), path = await pickExecutable("Choose the Python executable for this runtime");
   return path ? backend.chooseNomosPython(id, path) : null;
 });
-ipcMain.handle("encoder-gym:preview-nomos-binding", (_event, value: unknown, runtimeToken: unknown, pythonToken: unknown) =>
-  backend.previewNomosBinding(projectId(value), runtimeToken, pythonToken));
+ipcMain.handle("encoder-gym:choose-nomos-history", async (_event, value: unknown) => {
+  const id = projectId(value);
+  await backend.openRegistered(id);
+  let path: string | undefined;
+  if (smokeTest) { path = smokeFolderChoice; smokeFolderChoice = undefined; }
+  else {
+    const result = await dialog.showOpenDialog({ title: "Choose existing Encoder Gym scientific history", properties: ["openFile"], filters: [{ name: "Encoder Gym SQLite", extensions: ["sqlite", "db"] }] });
+    if (!result.canceled) path = result.filePaths[0];
+  }
+  return path ? backend.chooseNomosHistory(id, path) : null;
+});
+ipcMain.handle("encoder-gym:preview-nomos-binding", (_event, value: unknown, runtimeToken: unknown, pythonToken: unknown, historyToken: unknown) =>
+  backend.previewNomosBinding(projectId(value), runtimeToken, pythonToken, historyToken));
 ipcMain.handle("encoder-gym:bind-nomos", async (_event, value: unknown, previewToken: unknown) => {
   const id = projectId(value);
   return { project: registry.get(id), content: { state: "ready", workspace: managedSnapshot(await backend.bindNomos(id, previewToken)) } } satisfies OpenedProject;
