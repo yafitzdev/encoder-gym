@@ -30,6 +30,7 @@ export interface ModelArtifact {
   id: string; projectId: string; name: string; createdAt: string; origin: "imported" | "trained" | "transformed";
   path: string; format: string; bytes: number; fingerprint: string; parentModelId?: string;
   producingRun?: BoundIdentity; trainingSnapshot?: BoundIdentity; trainer?: BoundIdentity;
+  sourceModel?: BoundIdentity;
   effectiveConfigurationFingerprint?: string; tokenizerFingerprint?: string; sourceRevision?: string;
 }
 export interface BaselineRevision {

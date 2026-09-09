@@ -8,9 +8,9 @@ use std::{fs, path::Path};
 use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use project_workspace_core::{
-    BASELINE, BaselineChange, BaselineRevision, DATABASE, DIRECTORIES, DatasetImport, LocalModel,
-    MANIFEST, ModelArtifact, ModelCatalog, ModelOrigin, ProjectManifest, ProviderCatalog,
-    ScientificBinding, validate_name,
+    BASELINE, BaselineChange, BaselineRevision, BoundIdentity, DATABASE, DIRECTORIES,
+    DatasetImport, LocalModel, MANIFEST, ModelArtifact, ModelCatalog, ModelOrigin, ProjectManifest,
+    ProviderCatalog, ScientificBinding, validate_name,
 };
 use serde::Serialize;
 use sqlx::{Connection, Row, SqliteConnection, sqlite::SqliteConnectOptions};
@@ -19,6 +19,24 @@ use uuid::Uuid;
 pub use datasets::{DatasetPreview, backfill_nomos, import_dataset, inspect_dataset};
 use files::{canonical_plain, contained, copy_verified, hash, json, plain, write_new};
 pub use model::inspect_model;
+
+#[derive(Debug, Clone)]
+pub struct AcceptedModelPromotion {
+    pub expected_baseline_revision_id: Uuid,
+    pub name: String,
+    pub source_model: BoundIdentity,
+    pub source_model_format: String,
+    pub source_model_bytes: u64,
+    pub producing_run: BoundIdentity,
+    pub training_snapshot: BoundIdentity,
+    pub trainer: BoundIdentity,
+    pub effective_configuration_fingerprint: String,
+    pub source_revision: String,
+    pub decision_id: String,
+    pub decision_fingerprint: String,
+    pub actor: String,
+    pub reason: String,
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -241,6 +259,18 @@ pub async fn open_workspace(folder: &Path, verify: bool) -> Result<ManagedWorksp
             inspect_model(&root.join(BASELINE))?.fingerprint == manifest.baseline.fingerprint,
             "Managed baseline inventory changed."
         );
+        if let Some(catalog) = &model_catalog {
+            for artifact in &catalog.artifacts {
+                let inspected = inspect_model(&contained(&root, &artifact.path)?)?;
+                ensure!(
+                    inspected.format == artifact.format
+                        && inspected.bytes == artifact.bytes
+                        && inspected.fingerprint == artifact.fingerprint,
+                    "Managed model artifact changed: {}",
+                    artifact.path
+                );
+            }
+        }
     }
     Ok(ManagedWorkspace {
         folder: root.to_string_lossy().into_owned(),
@@ -410,6 +440,213 @@ pub async fn record_scientific_binding(
     transaction.commit().await?;
     database.close().await?;
     open_workspace(root, true).await
+}
+
+/// Copy one scientifically accepted checkpoint into managed custody and
+/// atomically advance the active baseline revision.
+///
+/// The caller owns acceptance-policy validation. This boundary independently
+/// verifies the source as a supported local encoder, publishes it under a
+/// content-addressed managed path, and compare-and-appends the catalog change.
+pub async fn record_accepted_model_promotion(
+    folder: &Path,
+    source: &Path,
+    request: AcceptedModelPromotion,
+) -> Result<ManagedWorkspace> {
+    let workspace = open_workspace(folder, false).await?;
+    let catalog = workspace
+        .model_catalog
+        .as_ref()
+        .context("Upgrade this managed workspace before promoting a model.")?;
+    if let Some(existing) = catalog.baseline_revisions.iter().find(|revision| {
+        matches!(
+            &revision.change,
+            BaselineChange::Promotion { decision_id, .. } if decision_id == &request.decision_id
+        )
+    }) {
+        ensure!(
+            existing.id == catalog.active_baseline_revision_id
+                && matches!(
+                    &existing.change,
+                    BaselineChange::Promotion { decision_fingerprint, .. }
+                        if decision_fingerprint == &request.decision_fingerprint
+                ),
+            "This promotion decision was already recorded with different or historical baseline state."
+        );
+        return open_workspace(Path::new(&workspace.folder), true).await;
+    }
+    ensure!(
+        catalog.active_baseline_revision_id == request.expected_baseline_revision_id,
+        "The active baseline changed after this candidate was accepted. Reload before promoting."
+    );
+    validate_name(&request.name)?;
+    validate_name(&request.actor)?;
+    validate_name(&request.reason)?;
+    request.source_model.validate("Accepted source model")?;
+    request.producing_run.validate("Producing run")?;
+    request.training_snapshot.validate("Training snapshot")?;
+    request.trainer.validate("Trainer")?;
+    project_workspace_core::validate_hash(&request.effective_configuration_fingerprint)?;
+    project_workspace_core::validate_hash(&request.decision_fingerprint)?;
+    let source_model = inspect_model(source)?;
+    ensure!(
+        source_model.format == request.source_model_format
+            && source_model.bytes == request.source_model_bytes,
+        "The accepted scientific model format or size differs from the selected checkpoint."
+    );
+    let digest = source_model
+        .fingerprint
+        .strip_prefix("sha256:")
+        .context("Managed model inventory has no SHA-256 identity.")?;
+    let relative = format!("models/candidates/{digest}");
+    let root = Path::new(&workspace.folder);
+    publish_model_copy(&source_model, root, &relative)?;
+    let artifact = ModelArtifact::trained(
+        workspace.manifest.id,
+        Uuid::new_v4(),
+        request.name,
+        relative,
+        &source_model,
+        catalog.active_model().id,
+        request.producing_run,
+        request.source_model,
+        request.training_snapshot,
+        request.trainer,
+        request.effective_configuration_fingerprint,
+        request.source_revision,
+        Utc::now(),
+    )?;
+    let next = catalog.with_promotion(
+        artifact,
+        Uuid::new_v4(),
+        request.decision_id,
+        request.decision_fingerprint,
+        request.actor,
+        request.reason,
+        Utc::now(),
+    )?;
+    let artifact = next
+        .artifacts
+        .last()
+        .expect("promotion appends an artifact");
+    let revision = next
+        .baseline_revisions
+        .last()
+        .expect("promotion appends a revision");
+    let mut database = connect(root, false, false).await?;
+    let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
+    let current = Uuid::parse_str(
+        &sqlx::query_scalar::<_, String>(
+            "SELECT active_baseline_revision_id FROM model_catalog_state WHERE singleton=1",
+        )
+        .fetch_one(&mut *transaction)
+        .await?,
+    )?;
+    ensure!(
+        current == request.expected_baseline_revision_id,
+        "The active baseline changed while the accepted model was being copied. Reload before promoting."
+    );
+    sqlx::query(
+        "INSERT INTO model_artifacts \
+         (id, project_id, content_fingerprint, origin, metadata_json) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(artifact.id.to_string())
+    .bind(artifact.project_id.to_string())
+    .bind(&artifact.fingerprint)
+    .bind(model_origin(artifact.origin))
+    .bind(serde_json::to_string(artifact)?)
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO baseline_revisions \
+         (id, project_id, sequence, model_artifact_id, previous_revision_id, change_kind, fingerprint, metadata_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(revision.id.to_string())
+    .bind(revision.project_id.to_string())
+    .bind(i64::try_from(revision.sequence)?)
+    .bind(revision.model_artifact_id.to_string())
+    .bind(revision.previous_revision_id.map(|value| value.to_string()))
+    .bind(baseline_change(&revision.change))
+    .bind(&revision.fingerprint)
+    .bind(serde_json::to_string(revision)?)
+    .execute(&mut *transaction)
+    .await?;
+    let updated = sqlx::query(
+        "UPDATE model_catalog_state SET active_baseline_revision_id=? \
+         WHERE singleton=1 AND project_id=? AND active_baseline_revision_id=?",
+    )
+    .bind(revision.id.to_string())
+    .bind(workspace.manifest.id.to_string())
+    .bind(current.to_string())
+    .execute(&mut *transaction)
+    .await?;
+    ensure!(
+        updated.rows_affected() == 1,
+        "The active baseline changed while promotion was committing."
+    );
+    transaction.commit().await?;
+    database.close().await?;
+    open_workspace(root, true).await
+}
+
+fn publish_model_copy(model: &LocalModel, root: &Path, relative: &str) -> Result<()> {
+    project_workspace_core::validate_relative(relative)?;
+    let unresolved = root.join(relative);
+    let leaf = unresolved
+        .file_name()
+        .context("Accepted model path has no final component.")?;
+    let parent = canonical_plain(
+        unresolved
+            .parent()
+            .context("Accepted model path has no parent directory.")?,
+    )?;
+    ensure!(
+        parent.starts_with(root),
+        "Accepted model path escaped the managed workspace."
+    );
+    let target = parent.join(leaf);
+    if target.exists() {
+        plain(&target)?;
+        let existing = inspect_model(&target)?;
+        ensure!(
+            existing.format == model.format
+                && existing.bytes == model.bytes
+                && existing.fingerprint == model.fingerprint,
+            "A different model already occupies the accepted checkpoint path."
+        );
+        return Ok(());
+    }
+    let staging = tempfile::Builder::new()
+        .prefix(".accepted-model-")
+        .tempdir_in(parent)?;
+    copy_model(model, staging.path())?;
+    let copied = inspect_model(staging.path())?;
+    ensure!(
+        copied.format == model.format
+            && copied.bytes == model.bytes
+            && copied.fingerprint == model.fingerprint,
+        "Accepted checkpoint changed while entering managed custody."
+    );
+    let staged = staging.keep();
+    match fs::rename(&staged, &target) {
+        Ok(()) => {}
+        Err(error) if target.exists() => {
+            let existing = inspect_model(&target)?;
+            fs::remove_dir_all(&staged)?;
+            ensure!(
+                existing.format == model.format
+                    && existing.bytes == model.bytes
+                    && existing.fingerprint == model.fingerprint,
+                "Another model occupied the accepted checkpoint path: {error}"
+            );
+        }
+        Err(error) => {
+            fs::remove_dir_all(&staged)?;
+            return Err(error.into());
+        }
+    }
+    Ok(())
 }
 
 /// Apply project-registry migrations and initialize the imported baseline catalog.

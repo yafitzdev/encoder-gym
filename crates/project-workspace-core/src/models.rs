@@ -55,6 +55,10 @@ pub struct ModelArtifact {
     pub parent_model_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub producing_run: Option<BoundIdentity>,
+    /// Identity used by the scientific store for this exact checkpoint. The
+    /// managed inventory fingerprint may use a different canonical scheme.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_model: Option<BoundIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub training_snapshot: Option<BoundIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -87,6 +91,7 @@ impl ModelArtifact {
             fingerprint: model.fingerprint.clone(),
             parent_model_id: None,
             producing_run: None,
+            source_model: None,
             training_snapshot: None,
             trainer: None,
             effective_configuration_fingerprint: None,
@@ -110,6 +115,7 @@ impl ModelArtifact {
         model: &LocalModel,
         parent_model_id: Uuid,
         producing_run: BoundIdentity,
+        source_model: BoundIdentity,
         training_snapshot: BoundIdentity,
         trainer: BoundIdentity,
         effective_configuration_fingerprint: String,
@@ -128,6 +134,7 @@ impl ModelArtifact {
             fingerprint: model.fingerprint.clone(),
             parent_model_id: Some(parent_model_id),
             producing_run: Some(producing_run),
+            source_model: Some(source_model),
             training_snapshot: Some(training_snapshot),
             trainer: Some(trainer),
             effective_configuration_fingerprint: Some(effective_configuration_fingerprint),
@@ -166,6 +173,9 @@ impl ModelArtifact {
         if let Some(value) = &self.producing_run {
             value.validate("Producing run")?;
         }
+        if let Some(value) = &self.source_model {
+            value.validate("Source model")?;
+        }
         if let Some(value) = &self.training_snapshot {
             value.validate("Training snapshot")?;
         }
@@ -195,6 +205,7 @@ impl ModelArtifact {
                 require(
                     self.parent_model_id.is_some()
                         && self.producing_run.is_some()
+                        && self.source_model.is_some()
                         && self.training_snapshot.is_some()
                         && self.trainer.is_some()
                         && self.effective_configuration_fingerprint.is_some(),
@@ -690,10 +701,14 @@ mod tests {
                 fingerprint: digest('5'),
             },
             BoundIdentity {
-                id: "nomos:v1".into(),
+                id: Uuid::new_v4().to_string(),
                 fingerprint: digest('6'),
             },
-            digest('7'),
+            BoundIdentity {
+                id: "nomos:v1".into(),
+                fingerprint: digest('7'),
+            },
+            digest('8'),
             "source-revision".into(),
             at(),
         )
@@ -704,7 +719,7 @@ mod tests {
                 candidate.clone(),
                 Uuid::new_v4(),
                 decision_id.clone(),
-                digest('8'),
+                digest('9'),
                 "operator",
                 "Accepted sealed result",
                 at(),
@@ -722,7 +737,7 @@ mod tests {
                     candidate,
                     Uuid::new_v4(),
                     decision_id,
-                    digest('8'),
+                    digest('9'),
                     "operator",
                     "Duplicate",
                     at(),
@@ -761,10 +776,14 @@ mod tests {
                 fingerprint: digest('5'),
             },
             BoundIdentity {
-                id: "nomos:v1".into(),
+                id: Uuid::new_v4().to_string(),
                 fingerprint: digest('6'),
             },
-            digest('7'),
+            BoundIdentity {
+                id: "nomos:v1".into(),
+                fingerprint: digest('7'),
+            },
+            digest('8'),
             "source-revision".into(),
             at(),
         )
@@ -775,7 +794,7 @@ mod tests {
                     candidate,
                     Uuid::new_v4(),
                     "decision".into(),
-                    digest('8'),
+                    digest('9'),
                     "operator",
                     "Wrong parent",
                     at(),
@@ -803,15 +822,19 @@ mod tests {
             id: Uuid::new_v4().to_string(),
             fingerprint: digest('4'),
         });
-        artifact.training_snapshot = Some(BoundIdentity {
+        artifact.source_model = Some(BoundIdentity {
             id: Uuid::new_v4().to_string(),
             fingerprint: digest('5'),
         });
-        artifact.trainer = Some(BoundIdentity {
-            id: "fake-trainer-v1".into(),
+        artifact.training_snapshot = Some(BoundIdentity {
+            id: Uuid::new_v4().to_string(),
             fingerprint: digest('6'),
         });
-        artifact.effective_configuration_fingerprint = Some(digest('7'));
+        artifact.trainer = Some(BoundIdentity {
+            id: "fake-trainer-v1".into(),
+            fingerprint: digest('7'),
+        });
+        artifact.effective_configuration_fingerprint = Some(digest('8'));
         assert!(artifact.validate().is_ok());
     }
 

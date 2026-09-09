@@ -5,8 +5,9 @@ use project_workspace_core::{
     RuntimeBinding, RuntimeKind, ScientificBinding, ScientificStoreBinding, SecretReference,
 };
 use project_workspace_local::{
-    backfill_nomos, create_workspace, import_dataset, inspect_dataset, inspect_model,
-    open_workspace, record_provider_catalog, record_scientific_binding, upgrade_workspace,
+    AcceptedModelPromotion, backfill_nomos, create_workspace, import_dataset, inspect_dataset,
+    inspect_model, open_workspace, record_accepted_model_promotion, record_provider_catalog,
+    record_scientific_binding, upgrade_workspace,
 };
 use serde_json::json;
 use std::fs;
@@ -238,6 +239,145 @@ async fn old_workspace_requires_and_survives_an_explicit_idempotent_catalog_upgr
             .model_catalog
             .unwrap(),
         catalog
+    );
+}
+
+#[tokio::test]
+async fn accepted_model_promotion_copies_once_and_advances_the_baseline_atomically() {
+    let temp = TempDir::new().unwrap();
+    let source = model(temp.path());
+    let preview = inspect_model(&source).unwrap();
+    let destination = temp.path().join("managed");
+    let created = create_workspace(
+        &destination,
+        "Promotion fixture",
+        &source,
+        &preview.fingerprint,
+        None,
+    )
+    .await
+    .unwrap();
+    let candidate = temp.path().join("candidate");
+    training_transformer::fixture::write_tiny_bert_bundle(&candidate).unwrap();
+    fs::write(candidate.join("candidate.json"), b"{\"accepted\":true}\n").unwrap();
+    let candidate_model = inspect_model(&candidate).unwrap();
+    let expected = created
+        .model_catalog
+        .as_ref()
+        .unwrap()
+        .active_baseline_revision_id;
+    let request = AcceptedModelPromotion {
+        expected_baseline_revision_id: expected,
+        name: "Accepted candidate".into(),
+        source_model: BoundIdentity {
+            id: uuid::Uuid::new_v4().to_string(),
+            fingerprint: digest('d'),
+        },
+        source_model_format: candidate_model.format.clone(),
+        source_model_bytes: candidate_model.bytes,
+        producing_run: BoundIdentity {
+            id: uuid::Uuid::new_v4().to_string(),
+            fingerprint: digest('e'),
+        },
+        training_snapshot: BoundIdentity {
+            id: uuid::Uuid::new_v4().to_string(),
+            fingerprint: digest('f'),
+        },
+        trainer: BoundIdentity {
+            id: "fixture-trainer:v1".into(),
+            fingerprint: digest('1'),
+        },
+        effective_configuration_fingerprint: digest('2'),
+        source_revision: "fixture-source-revision".into(),
+        decision_id: "experiment-final:fixture:9".into(),
+        decision_fingerprint: digest('3'),
+        actor: "fixture-operator".into(),
+        reason: "Passed explicit sealed acceptance".into(),
+    };
+    let promoted = record_accepted_model_promotion(&destination, &candidate, request.clone())
+        .await
+        .unwrap();
+    let catalog = promoted.model_catalog.as_ref().unwrap();
+    assert_eq!(catalog.baseline_revisions.len(), 2);
+    assert_eq!(catalog.active_model().name, "Accepted candidate");
+    assert_eq!(
+        catalog.active_model().fingerprint,
+        candidate_model.fingerprint
+    );
+    assert_eq!(
+        catalog.active_model().source_model.as_ref().unwrap(),
+        &request.source_model
+    );
+    assert!(destination.join(&catalog.active_model().path).is_dir());
+    let again = record_accepted_model_promotion(&destination, &candidate, request)
+        .await
+        .unwrap();
+    assert_eq!(again.model_catalog.unwrap(), *catalog);
+    fs::write(
+        destination
+            .join(&catalog.active_model().path)
+            .join("candidate.json"),
+        b"{\"accepted\":false}\n",
+    )
+    .unwrap();
+    assert!(open_workspace(&destination, true).await.is_err());
+}
+
+#[tokio::test]
+async fn stale_promotion_does_not_copy_or_change_catalog_state() {
+    let temp = TempDir::new().unwrap();
+    let source = model(temp.path());
+    let preview = inspect_model(&source).unwrap();
+    let destination = temp.path().join("managed");
+    let created = create_workspace(
+        &destination,
+        "Stale promotion fixture",
+        &source,
+        &preview.fingerprint,
+        None,
+    )
+    .await
+    .unwrap();
+    let request = AcceptedModelPromotion {
+        expected_baseline_revision_id: uuid::Uuid::new_v4(),
+        name: "Stale candidate".into(),
+        source_model: BoundIdentity {
+            id: "source-model".into(),
+            fingerprint: digest('d'),
+        },
+        source_model_format: preview.format.clone(),
+        source_model_bytes: preview.bytes,
+        producing_run: BoundIdentity {
+            id: "run".into(),
+            fingerprint: digest('e'),
+        },
+        training_snapshot: BoundIdentity {
+            id: "snapshot".into(),
+            fingerprint: digest('f'),
+        },
+        trainer: BoundIdentity {
+            id: "trainer".into(),
+            fingerprint: digest('1'),
+        },
+        effective_configuration_fingerprint: digest('2'),
+        source_revision: "revision".into(),
+        decision_id: "decision".into(),
+        decision_fingerprint: digest('3'),
+        actor: "operator".into(),
+        reason: "stale".into(),
+    };
+    assert!(
+        record_accepted_model_promotion(&destination, &source, request)
+            .await
+            .is_err()
+    );
+    let reopened = open_workspace(&destination, true).await.unwrap();
+    assert_eq!(reopened.model_catalog, created.model_catalog);
+    assert_eq!(
+        fs::read_dir(destination.join("models/candidates"))
+            .unwrap()
+            .count(),
+        0
     );
 }
 
