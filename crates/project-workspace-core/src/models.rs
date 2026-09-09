@@ -101,6 +101,47 @@ impl ModelArtifact {
         Ok(value)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn trained(
+        project_id: Uuid,
+        id: Uuid,
+        name: impl Into<String>,
+        path: impl Into<String>,
+        model: &LocalModel,
+        parent_model_id: Uuid,
+        producing_run: BoundIdentity,
+        training_snapshot: BoundIdentity,
+        trainer: BoundIdentity,
+        effective_configuration_fingerprint: String,
+        source_revision: String,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        let value = Self {
+            id,
+            project_id,
+            name: name.into(),
+            created_at,
+            origin: ModelOrigin::Trained,
+            path: path.into(),
+            format: model.format.clone(),
+            bytes: model.bytes,
+            fingerprint: model.fingerprint.clone(),
+            parent_model_id: Some(parent_model_id),
+            producing_run: Some(producing_run),
+            training_snapshot: Some(training_snapshot),
+            trainer: Some(trainer),
+            effective_configuration_fingerprint: Some(effective_configuration_fingerprint),
+            tokenizer_fingerprint: model
+                .files
+                .iter()
+                .find(|file| file.path == "tokenizer.json")
+                .map(|file| file.fingerprint.clone()),
+            source_revision: Some(source_revision),
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
     pub fn validate(&self) -> Result<(), Invalid> {
         require(
             !self.id.is_nil() && !self.project_id.is_nil(),
@@ -152,7 +193,8 @@ impl ModelArtifact {
             ModelOrigin::Imported => {}
             ModelOrigin::Trained => {
                 require(
-                    self.producing_run.is_some()
+                    self.parent_model_id.is_some()
+                        && self.producing_run.is_some()
                         && self.training_snapshot.is_some()
                         && self.trainer.is_some()
                         && self.effective_configuration_fingerprint.is_some(),
@@ -434,6 +476,53 @@ impl ModelCatalog {
             .expect("validated model catalog has an active model")
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_promotion(
+        &self,
+        artifact: ModelArtifact,
+        revision_id: Uuid,
+        decision_id: String,
+        decision_fingerprint: String,
+        actor: impl Into<String>,
+        reason: impl Into<String>,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        self.validate()?;
+        require(
+            artifact.project_id == self.project_id
+                && artifact.parent_model_id == Some(self.active_model().id)
+                && !self.artifacts.iter().any(|value| value.id == artifact.id)
+                && !self.baseline_revisions.iter().any(|revision| {
+                    matches!(
+                        &revision.change,
+                        BaselineChange::Promotion { decision_id: existing, .. } if existing == &decision_id
+                    )
+                }),
+            "A promoted model must be a new project-local child of the active baseline with a new decision.",
+        )?;
+        let revision = BaselineRevision::promotion(
+            revision_id,
+            self.project_id,
+            u64::try_from(self.baseline_revisions.len())
+                .map_err(|_| Invalid("Baseline revision count overflowed.".into()))?
+                .checked_add(1)
+                .ok_or_else(|| Invalid("Baseline revision count overflowed.".into()))?,
+            artifact.id,
+            self.active_baseline_revision_id,
+            decision_id,
+            decision_fingerprint,
+            actor,
+            reason,
+            created_at,
+        )?;
+        let mut next = self.clone();
+        next.artifacts.push(artifact);
+        next.baseline_revisions.push(revision);
+        next.active_baseline_revision_id = revision_id;
+        next.validate()?;
+        Ok(next)
+    }
+
     pub fn validate(&self) -> Result<(), Invalid> {
         require(
             !self.project_id.is_nil(),
@@ -567,6 +656,135 @@ mod tests {
     }
 
     #[test]
+    fn trained_candidate_promotion_advances_one_audited_baseline_chain() {
+        let project_id = Uuid::new_v4();
+        let baseline = ModelArtifact::imported_baseline(
+            project_id,
+            Uuid::new_v4(),
+            "Imported baseline",
+            &local_model(),
+            at(),
+        )
+        .unwrap();
+        let catalog = ModelCatalog::initialize(
+            project_id,
+            baseline.clone(),
+            Uuid::new_v4(),
+            baseline.fingerprint.clone(),
+            at(),
+        )
+        .unwrap();
+        let candidate = ModelArtifact::trained(
+            project_id,
+            Uuid::new_v4(),
+            "Accepted candidate",
+            "models/candidates/accepted",
+            &local_model(),
+            baseline.id,
+            BoundIdentity {
+                id: Uuid::new_v4().to_string(),
+                fingerprint: digest('4'),
+            },
+            BoundIdentity {
+                id: Uuid::new_v4().to_string(),
+                fingerprint: digest('5'),
+            },
+            BoundIdentity {
+                id: "nomos:v1".into(),
+                fingerprint: digest('6'),
+            },
+            digest('7'),
+            "source-revision".into(),
+            at(),
+        )
+        .unwrap();
+        let decision_id = format!("experiment-final:{}:9", Uuid::new_v4());
+        let promoted = catalog
+            .with_promotion(
+                candidate.clone(),
+                Uuid::new_v4(),
+                decision_id.clone(),
+                digest('8'),
+                "operator",
+                "Accepted sealed result",
+                at(),
+            )
+            .unwrap();
+        assert_eq!(promoted.active_model(), &candidate);
+        assert_eq!(promoted.baseline_revisions.len(), 2);
+        assert!(matches!(
+            &promoted.active_revision().change,
+            BaselineChange::Promotion { decision_id: value, .. } if value == &decision_id
+        ));
+        assert!(
+            promoted
+                .with_promotion(
+                    candidate,
+                    Uuid::new_v4(),
+                    decision_id,
+                    digest('8'),
+                    "operator",
+                    "Duplicate",
+                    at(),
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn promotion_rejects_a_candidate_from_another_baseline() {
+        let project_id = Uuid::new_v4();
+        let baseline = ModelArtifact::imported_baseline(
+            project_id,
+            Uuid::new_v4(),
+            "Imported baseline",
+            &local_model(),
+            at(),
+        )
+        .unwrap();
+        let catalog =
+            ModelCatalog::initialize(project_id, baseline, Uuid::new_v4(), digest('1'), at())
+                .unwrap();
+        let candidate = ModelArtifact::trained(
+            project_id,
+            Uuid::new_v4(),
+            "Foreign candidate",
+            "models/candidates/foreign",
+            &local_model(),
+            Uuid::new_v4(),
+            BoundIdentity {
+                id: Uuid::new_v4().to_string(),
+                fingerprint: digest('4'),
+            },
+            BoundIdentity {
+                id: Uuid::new_v4().to_string(),
+                fingerprint: digest('5'),
+            },
+            BoundIdentity {
+                id: "nomos:v1".into(),
+                fingerprint: digest('6'),
+            },
+            digest('7'),
+            "source-revision".into(),
+            at(),
+        )
+        .unwrap();
+        assert!(
+            catalog
+                .with_promotion(
+                    candidate,
+                    Uuid::new_v4(),
+                    "decision".into(),
+                    digest('8'),
+                    "operator",
+                    "Wrong parent",
+                    at(),
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
     fn trained_and_transformed_artifacts_require_reproducibility_bindings() {
         let project_id = Uuid::new_v4();
         let mut artifact = ModelArtifact::imported_baseline(
@@ -580,6 +798,7 @@ mod tests {
         artifact.path = format!("models/candidates/{}/model", artifact.id);
         artifact.origin = ModelOrigin::Trained;
         assert!(artifact.validate().is_err());
+        artifact.parent_model_id = Some(Uuid::new_v4());
         artifact.producing_run = Some(BoundIdentity {
             id: Uuid::new_v4().to_string(),
             fingerprint: digest('4'),
