@@ -63,6 +63,13 @@ Do not confuse custody with readiness:
   sealed-accepted source checkpoint, keeps runtime code immutable, creates a
   successor scientific project snapshot for the new baseline, and extends the
   existing scientific store instead of silently starting unrelated history.
+- Once reserved, the desktop now puts the active run and its one safe next
+  action above the frozen launch definition. Run supervision distinguishes
+  completed model/evaluation records from reserved and unreserved capacity,
+  exposes the latest durable transition across the parent, campaign, and
+  experiment journals, and labels the wall-clock journal span separately from
+  native compute time. Failed or uncertain work is never presented as unused
+  budget merely because it lacks a completion record.
 
 Treat these as product facts to resolve or explain, not presentation details to
 hide behind optimistic status text.
@@ -219,8 +226,10 @@ From a managed project, the user must be able to:
 3. Preview the immutable run definition and its expected external-call limits.
 4. Explicitly authorize external work within those limits and start exactly one
    run without entering IDs or using a terminal.
-5. Observe stage progress, persisted transitions, elapsed work, consumed and
-   remaining budgets, safe logs, and redacted diagnostics.
+5. Observe stage progress, persisted transitions, completed recorded work,
+   reserved and unreserved capacity, journal timing, safe logs, and redacted
+   diagnostics. Do not claim precise consumption for work that failed without
+   a durable completion record.
 6. Cancel where the underlying stage supports cancellation, resume recoverable
    work, and recover the truthful state after closing or restarting the app.
 7. Authorize sealed evaluation only when a selected candidate is eligible.

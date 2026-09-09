@@ -301,6 +301,14 @@ status intent and replaces its view only with newly replayed facts. Candidate
 build and development-suite units count only durable completions or durable
 failures; the UI never estimates the fraction of an in-flight native call.
 Cancellation is hidden while the local non-preemptible stage call is active.
+The status projection also derives completed model outputs, their recorded
+training seconds, development reports, sealed reports, and failed candidate
+records from the experiment journal. It presents those facts beside the
+campaign's reservation and unreserved remainder, never as a complete consumed
+cost ledger: work that failed before recording an output may have used time.
+The latest timestamp across the optimization, campaign, and experiment
+journals is exposed with the reservation timestamp. Their difference is a
+wall-clock journal span, not active CPU or GPU duration.
 
 Accepted-model promotion is a separate fixed intent, not another optimization
 event authored by the renderer. The command replays the optimization,
@@ -356,8 +364,11 @@ starting work immediately.
    sealed boundary, and artifacts that will be written.
 4. **Authorize and start** records the bounded external authorization and
    idempotently reserves one optimization run.
-5. **Run detail** shows persisted stages, journals, budgets, redacted logs, and
-   the exact safe next command. Resume advances at most one durable stage.
+5. **Run detail** is placed above the frozen launch definition once reservation
+   exists. It shows the exact safe next command first, then completed recorded
+   work versus reserved capacity, the reservation ledger, cross-journal timing,
+   redacted diagnostics, and immutable identities. Resume advances at most one
+   durable stage.
 6. **Sealed authorization** appears only for the development-selected eligible
    candidate and identifies that candidate and the one-use consequence.
 7. **Decision** shows retain or accepted-candidate outcome, supporting
@@ -576,6 +587,9 @@ Its prepared-run screenshot also verifies the decision hierarchy at desktop
 size: the reviewed objective, four hard limits, development/sealed boundary,
 external-work statement, and reservation action fit in the first viewport;
 candidate parameters and immutable IDs remain inspectable disclosures.
+The reserved-run screenshot separately verifies that the active stage and its
+action precede launch-reference material, and that completed output records are
+visually distinct from finite reserved capacity and journal timing.
 
 ## Delivery order
 

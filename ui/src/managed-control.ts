@@ -29,6 +29,21 @@ export interface OptimizationBudget {
   maximum_backend_operations: number;
   maximum_external_calls?: number;
 }
+export interface CampaignUsage {
+  iterations: number;
+  candidates: number;
+  training_seconds: number;
+  development_evaluations: number;
+  sealed_evaluations: number;
+  backend_operations: number;
+}
+export interface RecordedOptimizationUsage {
+  models_trained: number;
+  candidates_failed: number;
+  training_seconds: number;
+  development_evaluations: number;
+  sealed_evaluations: number;
+}
 export type OptimizationRunState = "planned" | "campaign_active" | "completed" | "cancelled" | "failed";
 export interface ManagedLaunchPreview {
   manifestFingerprint: string;
@@ -72,6 +87,8 @@ export interface PreparedOptimizationChoice {
 export interface ManagedRunStatus {
   run_id: string;
   existing: boolean;
+  created_at: string;
+  last_transition_at: string;
   state: OptimizationRunState;
   campaign_state?: string;
   experiment_state?: string;
@@ -84,7 +101,8 @@ export interface ManagedRunStatus {
   last_sequence: number;
   head_fingerprint: string;
   artifacts: Record<string, string>;
-  budgets: { maximum: OptimizationBudget; reserved?: OptimizationBudget; remaining_unreserved?: OptimizationBudget };
+  budgets: { maximum: OptimizationBudget; reserved?: CampaignUsage | null; remaining_unreserved?: CampaignUsage | null };
+  recorded_usage: RecordedOptimizationUsage;
   stage: {
     key: string; label: string; detail: string;
     execution: "quick" | "native" | "authorization" | "terminal" | "blocked";

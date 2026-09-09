@@ -26,7 +26,10 @@ use encoder_experiment_core::{
         ExternalProjectSnapshot, ModelArtifactIdentity, OptimizationBudget, ParameterValue,
         TrainingCandidate,
     },
-    journal::{CandidateExecutionState, ExperimentEventKind, ExperimentRunState, FinalDecision},
+    journal::{
+        CandidateExecutionState, ExperimentEventKind, ExperimentRunState, ExperimentView,
+        FinalDecision,
+    },
     metrics::CandidateVerdict,
     ports::{EncoderTaskBackend, ExperimentStore},
     protocol::{DevelopmentSelectionRule, ExperimentProtocol},
@@ -289,6 +292,15 @@ struct LaunchContext {
     definition: ProductionOptimizationDefinition,
     run: ProductionOptimizationRun,
     view: OptimizationView,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+struct RecordedOptimizationUsage {
+    models_trained: u64,
+    candidates_failed: u64,
+    training_seconds: u64,
+    development_evaluations: u64,
+    sealed_evaluations: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -2253,6 +2265,14 @@ fn print_status(
     };
     let reserved = campaign_view.map(|value| value.reserved_usage);
     let budget = &context.definition.campaign_budget;
+    let recorded_usage = recorded_optimization_usage(experiment)?;
+    let mut last_transition_at = context.view.updated_at;
+    if let Some(view) = campaign_view {
+        last_transition_at = last_transition_at.max(view.updated_at);
+    }
+    if let Some(view) = experiment {
+        last_transition_at = last_transition_at.max(view.updated_at);
+    }
     let remaining = reserved.map(|value| serde_json::json!({
         "iterations": budget.maximum_iterations.saturating_sub(value.iterations),
         "candidates": budget.maximum_candidates.saturating_sub(value.candidates),
@@ -2264,6 +2284,8 @@ fn print_status(
     presentation::print(&serde_json::json!({
         "run_id": context.run.id,
         "existing": existing,
+        "created_at": context.run.created_at,
+        "last_transition_at": last_transition_at,
         "state": context.view.state,
         "campaign_state": campaign_view.map(|value| value.state),
         "experiment_state": experiment.map(|value| value.state),
@@ -2287,9 +2309,49 @@ fn print_status(
             "reserved": reserved,
             "remaining_unreserved": remaining,
         },
+        "recorded_usage": recorded_usage,
         "stage": stage_status(context, campaign),
         "next_command": next_command(context, campaign),
     }))
+}
+
+fn recorded_optimization_usage(
+    experiment: Option<&ExperimentView>,
+) -> anyhow::Result<RecordedOptimizationUsage> {
+    let Some(experiment) = experiment else {
+        return Ok(RecordedOptimizationUsage::default());
+    };
+    let mut usage = RecordedOptimizationUsage {
+        sealed_evaluations: u64::from(experiment.sealed_report.is_some()),
+        ..RecordedOptimizationUsage::default()
+    };
+    for candidate in experiment.candidates.values() {
+        if let Some(output) = &candidate.train_output {
+            usage.models_trained = usage.models_trained.checked_add(1).context(
+                "recorded model output count overflowed while presenting optimization status",
+            )?;
+            usage.training_seconds = usage
+                .training_seconds
+                .checked_add(output.duration_seconds)
+                .context(
+                    "recorded training duration overflowed while presenting optimization status",
+                )?;
+        }
+        if candidate.state == CandidateExecutionState::Failed {
+            usage.candidates_failed = usage.candidates_failed.checked_add(1).context(
+                "failed candidate count overflowed while presenting optimization status",
+            )?;
+        }
+        usage.development_evaluations = usage
+            .development_evaluations
+            .checked_add(u64::try_from(candidate.development_reports.len()).context(
+                "development evaluation count does not fit the optimization status contract",
+            )?)
+            .context(
+                "development evaluation count overflowed while presenting optimization status",
+            )?;
+    }
+    Ok(usage)
 }
 
 fn stage_status(
@@ -2511,6 +2573,14 @@ surprise = true
         assert_eq!(
             visible.get("learning_rate"),
             Some(&ParameterValue::Number(0.000_02))
+        );
+    }
+
+    #[test]
+    fn recorded_usage_is_empty_before_an_experiment_exists() {
+        assert_eq!(
+            recorded_optimization_usage(None).unwrap(),
+            RecordedOptimizationUsage::default()
         );
     }
 

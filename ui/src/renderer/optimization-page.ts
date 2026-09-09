@@ -50,9 +50,15 @@ function launchMetric(label: string, value: string, detail: string): HTMLElement
   return h("div", { class: "launch-metric" }, h("dt", {}, label), h("dd", {}, value), h("span", {}, detail));
 }
 function durationLabel(seconds: number): string {
+  if (seconds === 0) return "0s";
   if (seconds % 3600 === 0) return `${seconds / 3600}h`;
   if (seconds % 60 === 0) return `${seconds / 60}m`;
   return `${seconds}s`;
+}
+function journalSpanLabel(createdAt: string, updatedAt: string): string {
+  const seconds = Math.max(0, Math.floor((Date.parse(updatedAt) - Date.parse(createdAt)) / 1000));
+  if (!Number.isFinite(seconds)) return "Unavailable";
+  return seconds === 0 ? "Under 1s" : durationLabel(seconds);
 }
 function parameterLabel(value: string | number | boolean): string {
   return typeof value === "string" ? value : String(value);
@@ -129,20 +135,40 @@ function runPanel(run: ManagedRunStatus, state: OptimizationPageState, actions: 
   const promote = accepted && !activeAcceptedModel ? button(busy ? "Promoting…" : "Promote accepted candidate", actions.promote, "primary", "arrow") : null;
   if (promote instanceof HTMLButtonElement) promote.disabled = busy;
   const progress = run.stage.development;
+  const recorded = run.recorded_usage;
+  const reserved = run.budgets.reserved;
+  const ceiling = run.budgets.maximum;
+  const limitKind = reserved ? "reserved" : "ceiling";
+  const incompleteAccounting = recorded.candidates_failed > 0 || Boolean(run.failed_or_uncertain);
   return h("section", { class: "run-control" }, sectionHeader("Reserved run", tag(run.state.replaceAll("_", " "))),
     h("div", { class: `run-stage ${busy ? "is-running" : ""}`, role: busy ? "status" : undefined },
       h("div", { class: "eyebrow" }, busy ? "Executing now" : terminal ? "Final state" : "Next safe stage"),
       h("h3", {}, run.stage.label), h("p", {}, run.stage.detail),
       progress && progress.total_units > 0 ? h("p", { class: "stage-progress" }, `${progress.completed_units} of ${progress.total_units} candidate build and development-evaluation steps durably recorded`) : null,
       busy && run.stage.execution === "native" ? h("p", { class: "stage-caution" }, "This native stage can take a while. The screen is reading the journal as new facts are committed; it does not estimate unfinished work.") : null),
+    next || !terminal && !busy ? h("div", { class: "run-actions" }, next, !terminal && !busy ? button("Cancel before next stage", actions.cancel, "secondary") : null) : null,
     accepted ? h("div", { class: `promotion-result ${activeAcceptedModel ? "is-active" : "is-pending"}` },
       h("div", {}, h("div", { class: "eyebrow" }, activeAcceptedModel ? "Baseline updated" : "Operator decision required"),
         h("h3", {}, activeAcceptedModel ? "The accepted candidate is now the project baseline" : "The candidate passed final acceptance"),
         h("p", {}, activeAcceptedModel ? "Its checkpoint is in managed custody. Reconnect a scientific runtime for this new baseline before starting another run." : "The run proved this exact checkpoint passed the sealed gates. It remains a candidate until you explicitly promote it.")),
       promote) : run.state === "completed" && run.decision === "retain_baseline" ? h("div", { class: "promotion-result is-retained" }, h("div", {}, h("div", { class: "eyebrow" }, "Final decision"), h("h3", {}, "The project baseline was retained"), h("p", {}, "No candidate met the complete acceptance contract, so the baseline pointer did not change."))) : null,
-    details("Run identity and journal", facts([["Run", run.run_id], ["Stopped because", run.stopped_reason.replaceAll("_", " ")], ["Durable transitions", String(run.last_sequence)], ["Journal head", run.head_fingerprint]])),
-    run.failed_or_uncertain ? h("p", { class: "form-error", role: "alert" }, run.failed_or_uncertain) : null,
-    h("div", { class: "inline-group" }, next, !terminal && !busy ? button("Cancel before next stage", actions.cancel, "secondary") : null));
+    h("section", { class: "run-usage", "aria-label": "Recorded work" },
+      h("div", { class: "run-usage-heading" }, h("div", {}, h("div", { class: "eyebrow" }, "Recorded work"), h("p", {}, `Completed outputs compared with the ${limitKind} capacity. These are durable records, not a live utilization estimate.`))),
+      h("dl", { class: "run-metrics" },
+        launchMetric("Models trained", `${recorded.models_trained} / ${reserved?.candidates ?? ceiling.maximum_candidates}`, `completed / ${limitKind}`),
+        launchMetric("Training time", `${durationLabel(recorded.training_seconds)} / ${durationLabel(reserved?.training_seconds ?? ceiling.maximum_training_seconds)}`, `completed outputs / ${limitKind}`),
+        launchMetric("Development", `${recorded.development_evaluations} / ${reserved?.development_evaluations ?? ceiling.maximum_development_evaluations}`, `reports / ${limitKind}`),
+        launchMetric("Sealed", `${recorded.sealed_evaluations} / ${reserved?.sealed_evaluations ?? ceiling.maximum_sealed_evaluations}`, `reports / ${limitKind}`)),
+      incompleteAccounting ? h("p", { class: "usage-caution" }, "Completed-output totals exclude work that ended without a durable completion record. Inspect the failure before treating the difference as unused capacity.") : null,
+      details("Inspect reservation ledger", facts([
+        ["Reserved iterations", reserved ? `${reserved.iterations} / ${ceiling.maximum_iterations}` : `Not attached / ${ceiling.maximum_iterations}`],
+        ["Reserved backend operations", reserved ? `${reserved.backend_operations} / ${ceiling.maximum_backend_operations}` : `Not attached / ${ceiling.maximum_backend_operations}`],
+        ["Unreserved candidates", String(run.budgets.remaining_unreserved?.candidates ?? ceiling.maximum_candidates)],
+        ["Unreserved training time", `${(run.budgets.remaining_unreserved?.training_seconds ?? ceiling.maximum_training_seconds).toLocaleString()} seconds`],
+        ["Failed candidate records", String(recorded.candidates_failed)],
+      ]))),
+    details("Run identity and journal", facts([["Run", run.run_id], ["Reserved at", localDateTimeLabel(run.created_at)], ["Last durable transition", localDateTimeLabel(run.last_transition_at)], ["Journal span", journalSpanLabel(run.created_at, run.last_transition_at)], ["Stopped because", run.stopped_reason.replaceAll("_", " ")], ["Durable transitions", String(run.last_sequence)], ["Journal head", run.head_fingerprint]])),
+    run.failed_or_uncertain ? h("p", { class: "form-error", role: "alert" }, run.failed_or_uncertain) : null);
 }
 
 function launchSummary(state: OptimizationPageState, readiness: ManagedReadiness | undefined, preview: ManagedLaunchPreview | undefined, unfinished: number, activeAcceptedModel: boolean): { title: string; detail: string; label: string; tone: "success" | "warning" | "danger" | "neutral" } {
@@ -183,6 +209,7 @@ export function renderOptimization(workspace: ManagedWorkspace, state: Optimizat
     report ? h("section", { class: "launch-summary" },
       h("div", {}, h("div", { class: "eyebrow" }, state.run ? "Run outcome" : "Launch status"), h("h2", {}, summary.title), h("p", {}, summary.detail)),
       status(summary.label, summary.tone)) : null,
+    state.run ? runPanel(state.run, state, actions, activeAcceptedModel) : null,
     readiness?.optimizationAuthority && !preview ? h("section", { class: "launch-definition" }, sectionHeader("Approved repair on record", tag("Recorded", "accent")),
       h("p", { class: "section-note" }, readiness.optimizationAuthority.hypotheses.join(" ")),
       facts([["Candidates", String(readiness.optimizationAuthority.candidateCount)], ["Qualified repair rows", readiness.optimizationAuthority.deltaRows.toLocaleString()], ["Training ceiling", `${readiness.optimizationAuthority.budget.maximum_training_seconds.toLocaleString()} seconds`], ["External calls", String(readiness.optimizationAuthority.budget.maximum_external_calls)], ["Sealed uses", String(readiness.optimizationAuthority.budget.maximum_sealed_uses)], ["Authority expires", localDateTimeLabel(readiness.optimizationAuthority.validUntil)]]),
@@ -204,6 +231,6 @@ export function renderOptimization(workspace: ManagedWorkspace, state: Optimizat
         details("Inspect immutable identities and complete limits", facts([["Baseline", runBaseline?.name ?? active?.name ?? workspace.manifest.name + " baseline"], ["Training snapshot", preview.trainingSnapshotId], ["Benchmark generation", preview.benchmarkGenerationId], ["Evaluation time ceiling", `${preview.maximumEvaluationSeconds.toLocaleString()} seconds`], ...budgetFacts(preview)]))),
       h("div", { class: "external-work" }, h("div", { class: "eyebrow" }, "External work"), h("p", {}, externalWork(workspace, state, readiness))),
       state.prepared ? h("p", { class: "section-note" }, state.prepared.createdTrainingSnapshot ? "The approved logical training snapshot was created during preparation." : "The existing approved logical training snapshot was reused exactly.") : null,
-      state.run ? runPanel(state.run, state, actions, activeAcceptedModel) : h("div", { class: "launch-actions" }, button(preview.existingRun ? "Open existing run" : "Reserve optimization run", actions.start, "primary", "runs"), h("p", {}, reservationCopy(state, Boolean(preview.existingRun))))) : null,
+      state.run ? null : h("div", { class: "launch-actions" }, button(preview.existingRun ? "Open existing run" : "Reserve optimization run", actions.start, "primary", "runs"), h("p", {}, reservationCopy(state, Boolean(preview.existingRun))))) : null,
   );
 }
