@@ -84,6 +84,7 @@ pub struct NomosBackend {
     root: PathBuf,
     python: PathBuf,
     manifest: NomosExperimentManifest,
+    baseline_override: Option<ModelArtifactIdentity>,
     identity: BackendIdentity,
     observer_identity: BackendIdentity,
     repair_delta_identity: BackendIdentity,
@@ -174,10 +175,32 @@ impl NomosBackend {
             root,
             python: python.into(),
             manifest,
+            baseline_override: None,
             identity,
             observer_identity,
             repair_delta_identity,
         })
+    }
+
+    /// Bind the immutable task runtime to a promoted checkpoint that already
+    /// exists inside its content-addressed candidate outputs. Runtime source
+    /// code and the checked-in experiment manifest remain unchanged.
+    pub fn with_baseline_model(
+        mut self,
+        model: ModelArtifactIdentity,
+    ) -> Result<Self, EncoderTaskAdapterError> {
+        model.validate().map_err(adapter_error)?;
+        if model.format != "sentence-transformers" {
+            return Err(adapter_error(
+                "Nomos promoted baselines must use sentence-transformers format",
+            ));
+        }
+        if model.key == self.manifest.baseline.pytorch_path {
+            return Ok(self);
+        }
+        self.model_path(&model)?;
+        self.baseline_override = Some(model);
+        Ok(self)
     }
 
     pub fn project_snapshot(&self) -> Result<ExternalProjectSnapshot, EncoderTaskAdapterError> {
@@ -185,7 +208,7 @@ impl NomosBackend {
         self.verify_clean_worktree()?;
         let revision = self.git_output(["rev-parse", "HEAD"])?;
         let manifest_fingerprint = sha256_file(&self.root.join(EXPERIMENT_MANIFEST_NAME))?;
-        let source_fingerprint = artifact_core::fingerprint(&json!({
+        let runtime_source_fingerprint = artifact_core::fingerprint(&json!({
             "experiment_revision": revision,
             "manifest_sha256": manifest_fingerprint,
             "source_commit": self.manifest.source.commit,
@@ -222,13 +245,23 @@ impl NomosBackend {
                 self.manifest.baseline.onnx_tree_sha256
             )));
         }
-        let baseline_model = ModelArtifactIdentity::new(
+        let manifest_baseline = ModelArtifactIdentity::new(
             self.manifest.baseline.pytorch_path.clone(),
             "sentence-transformers",
             baseline_bytes,
             prefixed(&baseline_digest),
         )
         .map_err(adapter_error)?;
+        let baseline_model = self
+            .baseline_override
+            .as_ref()
+            .unwrap_or(&manifest_baseline)
+            .clone();
+        if self.baseline_override.is_some() {
+            self.model_path(&baseline_model)?;
+        }
+        let source_fingerprint =
+            bound_source_fingerprint(runtime_source_fingerprint, self.baseline_override.as_ref())?;
         let mut reference_models = BTreeMap::new();
         for reference in &self.manifest.reference_models {
             let (bytes, digest) = self.verify_tree_artifact(
@@ -1140,6 +1173,20 @@ fn same_model_content(left: &ModelArtifactIdentity, right: &ModelArtifactIdentit
         && left.format == right.format
         && left.bytes == right.bytes
         && left.fingerprint == right.fingerprint
+}
+
+fn bound_source_fingerprint(
+    runtime_source_fingerprint: String,
+    baseline_override: Option<&ModelArtifactIdentity>,
+) -> Result<String, EncoderTaskAdapterError> {
+    match baseline_override {
+        Some(active_baseline) => artifact_core::fingerprint(&json!({
+            "runtime_source_fingerprint": runtime_source_fingerprint,
+            "active_baseline": active_baseline,
+        }))
+        .map_err(adapter_error),
+        None => Ok(runtime_source_fingerprint),
+    }
 }
 
 impl EncoderTaskBackend for NomosBackend {
@@ -3879,6 +3926,26 @@ mod tests {
         let changed =
             ModelArtifactIdentity::new("model", "format", 42, prefixed(&"b".repeat(64))).unwrap();
         assert!(!same_model_content(&left, &changed));
+    }
+
+    #[test]
+    fn promoted_baseline_gets_a_stable_successor_source_identity() {
+        let runtime = prefixed(&"1".repeat(64));
+        let promoted = ModelArtifactIdentity::new(
+            "runs/encoder-gym/candidates/promoted",
+            "sentence-transformers",
+            42,
+            prefixed(&"a".repeat(64)),
+        )
+        .unwrap();
+        assert_eq!(
+            bound_source_fingerprint(runtime.clone(), None).unwrap(),
+            runtime
+        );
+        let first = bound_source_fingerprint(runtime.clone(), Some(&promoted)).unwrap();
+        let second = bound_source_fingerprint(runtime, Some(&promoted)).unwrap();
+        assert_eq!(first, second);
+        assert_ne!(first, promoted.fingerprint);
     }
 
     #[test]

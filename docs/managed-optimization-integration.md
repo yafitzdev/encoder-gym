@@ -368,6 +368,18 @@ starting work immediately.
 No default can silently select sealed evidence, expand a budget, replace a
 baseline, or reuse stale authority.
 
+Promotion deliberately makes the prior scientific binding stale because its
+project snapshot names the old baseline. Rebinding Nomos does not mutate the
+clean runtime checkout or discard the existing scientific store. The adapter
+resolves the managed artifact's exact source-model and producing-run bindings
+against one sealed-accepted optimization, re-verifies that checkpoint in the
+runtime's content-addressed candidate outputs, and creates a successor
+scientific project snapshot whose baseline is that checkpoint. Its source
+identity binds both the unchanged runtime revision and promoted baseline, so it
+cannot collide with the predecessor project. The new binding reuses and extends
+the existing project-contained store. No folder scan, unreviewed checkpoint,
+or merely matching filename can become the next baseline.
+
 ## Page responsibilities
 
 - **Models**: active baseline revision, immutable artifacts, candidates grouped

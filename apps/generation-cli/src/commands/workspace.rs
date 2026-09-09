@@ -6,6 +6,7 @@ use crate::{
     },
     presentation::print,
 };
+use anyhow::Context;
 use chrono::Utc;
 use encoder_campaign_core::optimization::OptimizationRunState;
 use encoder_experiment_core::{
@@ -17,10 +18,10 @@ use encoder_experiment_sqlite::{
     SCHEMA_ID, ScientificStoreInventory, SqliteExperimentStore, schema_fingerprint,
 };
 use project_workspace_core::{
-    AdapterBinding, BoundIdentity, ProviderAuthentication, ProviderCatalog, ProviderConfiguration,
-    ProviderKind, ProviderLimits, ProviderRole, ReadinessAction, ReadinessCategory, ReadinessCheck,
-    ReadinessReport, ReadinessState, RuntimeBinding, RuntimeKind, ScientificBinding,
-    ScientificStoreBinding, SecretReference,
+    AdapterBinding, BoundIdentity, ModelArtifact, ModelOrigin, ProviderAuthentication,
+    ProviderCatalog, ProviderConfiguration, ProviderKind, ProviderLimits, ProviderRole,
+    ReadinessAction, ReadinessCategory, ReadinessCheck, ReadinessReport, ReadinessState,
+    RuntimeBinding, RuntimeKind, ScientificBinding, ScientificStoreBinding, SecretReference,
 };
 use project_workspace_local::{
     AcceptedModelPromotion, backfill_nomos, create_workspace, import_dataset, inspect_dataset,
@@ -144,6 +145,7 @@ struct VerifiedNomosBinding {
     runtime_root: PathBuf,
     python: PythonRuntimeInspection,
     history: Option<VerifiedScientificHistory>,
+    existing_store: Option<PathBuf>,
 }
 
 struct VerifiedScientificHistory {
@@ -1259,7 +1261,8 @@ fn open_nomos_binding(
     let executable = binding.runtime.executable.as_ref().ok_or_else(|| {
         anyhow::anyhow!("The runtime binding predates executable selection; rebind it.")
     })?;
-    let backend = NomosBackend::open(&binding.runtime.location, executable)?;
+    let backend = NomosBackend::open(&binding.runtime.location, executable)?
+        .with_baseline_model(project.baseline_model.clone())?;
     let identity = backend.identity();
     anyhow::ensure!(
         identity.name == binding.adapter.key
@@ -1324,13 +1327,20 @@ fn bound_store_url(
     workspace_root: &std::path::Path,
     binding: &ScientificBinding,
 ) -> anyhow::Result<String> {
+    Ok(sqlite_file_url(&bound_store_path(workspace_root, binding)?))
+}
+
+fn bound_store_path(
+    workspace_root: &std::path::Path,
+    binding: &ScientificBinding,
+) -> anyhow::Result<PathBuf> {
     let root = workspace_root.canonicalize()?;
     let path = root.join(&binding.store.database_path).canonicalize()?;
     anyhow::ensure!(
         path.starts_with(&root),
         "Scientific store escapes the managed project."
     );
-    Ok(sqlite_file_url(&path))
+    Ok(path)
 }
 
 fn sqlite_file_url(path: &std::path::Path) -> String {
@@ -1530,6 +1540,7 @@ async fn bind_nomos(
         runtime_root,
         python: python_inspection,
         history,
+        existing_store,
     } = verified;
     let catalog = workspace
         .model_catalog
@@ -1541,9 +1552,30 @@ async fn bind_nomos(
     );
 
     let root = Path::new(&workspace.folder);
-    let (store_path, store_fingerprint, store_bytes) = match history {
-        Some(history) => import_scientific_history(root, &backend, &history).await?,
-        None => {
+    let (store_path, store_fingerprint, store_bytes) = match (history, existing_store) {
+        (Some(history), None) => import_scientific_history(root, &backend, &history).await?,
+        (None, Some(path)) => {
+            let previous = workspace
+                .scientific_binding
+                .as_ref()
+                .context("The promoted baseline has no previous scientific binding.")?;
+            let store = SqliteExperimentStore::connect(&sqlite_file_url(&path)).await?;
+            if let Some(existing) = store.get_project(project.id).await? {
+                anyhow::ensure!(
+                    existing == project,
+                    "The reused scientific store contains a different promoted-baseline project at this identity."
+                );
+            } else {
+                store.create_project(project.clone()).await?;
+            }
+            store.pool().close().await;
+            (
+                path,
+                previous.store.snapshot_fingerprint.clone(),
+                previous.store.snapshot_bytes,
+            )
+        }
+        (None, None) => {
             let path = root.join("runs/scientific.sqlite");
             let database_url = sqlite_file_url(&path);
             let store = SqliteExperimentStore::connect(&database_url).await?;
@@ -1558,6 +1590,7 @@ async fn bind_nomos(
             store.pool().close().await;
             (path, None, None)
         }
+        (Some(_), Some(_)) => unreachable!("verified binding store source is exclusive"),
     };
     let database_path = store_path
         .strip_prefix(root)?
@@ -1621,7 +1654,8 @@ async fn preview_nomos_binding(
         .expect("verified model catalog");
     let active_model = catalog.active_model();
     let adapter = verified.backend.identity();
-    let store_path = Path::new(&verified.workspace.folder).join("runs/scientific.sqlite");
+    let default_store_path = Path::new(&verified.workspace.folder).join("runs/scientific.sqlite");
+    let existing_store_path = verified.existing_store.as_ref();
     let imported_history = verified
         .history
         .as_ref()
@@ -1662,14 +1696,21 @@ async fn preview_nomos_binding(
             fingerprint: verified.project.fingerprint.clone(),
         },
         store: BindingStorePreview {
-            database_path: if imported_history.is_some() {
-                "runs/scientific-<snapshot-sha256>.sqlite".into()
-            } else {
-                "runs/scientific.sqlite".into()
-            },
+            database_path: existing_store_path
+                .and_then(|path| path.strip_prefix(&verified.workspace.folder).ok())
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|| {
+                    if imported_history.is_some() {
+                        "runs/scientific-<snapshot-sha256>.sqlite".into()
+                    } else {
+                        "runs/scientific.sqlite".into()
+                    }
+                }),
             action: if imported_history.is_some() {
                 "import_verified_history"
-            } else if store_path.exists() {
+            } else if existing_store_path.is_some() {
+                "extend_existing_store_for_promoted_baseline"
+            } else if default_store_path.exists() {
                 "verify_existing_store"
             } else {
                 "initialize_new_store"
@@ -1703,12 +1744,19 @@ async fn verify_nomos_binding(
     let runtime_root = runtime.canonicalize()?;
     let runtime_baseline = inspect_model(&runtime_root.join(&current_project.baseline_model.key))?;
     let active_model = catalog.active_model();
-    anyhow::ensure!(
-        runtime_baseline.fingerprint == active_model.fingerprint
-            && runtime_baseline.bytes == active_model.bytes
-            && runtime_baseline.format == active_model.format,
-        "The isolated Nomos runtime baseline does not match this project's active model."
-    );
+    let (backend, current_project, existing_store) = if runtime_baseline.fingerprint
+        == active_model.fingerprint
+        && runtime_baseline.bytes == active_model.bytes
+        && runtime_baseline.format == active_model.format
+    {
+        (backend, current_project, None)
+    } else {
+        anyhow::ensure!(
+            history_database.is_none(),
+            "A promoted Nomos baseline must first be resolved from its existing accepted run; do not replace that history during rebind."
+        );
+        resolve_promoted_nomos_baseline(&workspace, backend, active_model).await?
+    };
     let history = match history_database {
         Some(source) => {
             let source = source.canonicalize()?;
@@ -1755,7 +1803,100 @@ async fn verify_nomos_binding(
         runtime_root,
         python,
         history,
+        existing_store,
     })
+}
+
+async fn resolve_promoted_nomos_baseline(
+    workspace: &project_workspace_local::ManagedWorkspace,
+    backend: NomosBackend,
+    active_model: &ModelArtifact,
+) -> anyhow::Result<(NomosBackend, ExternalProjectSnapshot, Option<PathBuf>)> {
+    anyhow::ensure!(
+        active_model.origin == ModelOrigin::Trained,
+        "The isolated Nomos runtime baseline does not match this project's active imported model."
+    );
+    let source_model = active_model
+        .source_model
+        .as_ref()
+        .context("The promoted baseline has no scientific checkpoint identity.")?;
+    let producing_run = active_model
+        .producing_run
+        .as_ref()
+        .context("The promoted baseline has no producing-run identity.")?;
+    let binding = workspace
+        .scientific_binding
+        .as_ref()
+        .context("The promoted baseline has no previous scientific binding to rebind.")?;
+    let store = open_bound_store(&workspace.folder, binding).await?;
+    let previous_project = load_bound_project(&store, binding).await?;
+    let backend = backend.with_baseline_model(previous_project.baseline_model.clone())?;
+    backend
+        .verify_current_snapshot(previous_project.clone())
+        .await?;
+    let store_path = bound_store_path(Path::new(&workspace.folder), binding)?;
+    let catalog = workspace
+        .model_catalog
+        .as_ref()
+        .context("The promoted baseline has no model catalog.")?;
+    if binding.baseline_revision_id == catalog.active_baseline_revision_id {
+        anyhow::ensure!(
+            previous_project.baseline_model.id.to_string() == source_model.id
+                && previous_project.baseline_model.fingerprint == source_model.fingerprint,
+            "The current scientific binding does not reference the managed promoted baseline."
+        );
+        let runtime_model =
+            inspect_model(&backend.verified_model_path(&previous_project.baseline_model)?)?;
+        anyhow::ensure!(
+            runtime_model.fingerprint == active_model.fingerprint
+                && runtime_model.bytes == active_model.bytes
+                && runtime_model.format == active_model.format,
+            "The promoted runtime checkpoint differs from the managed active baseline."
+        );
+        store.pool().close().await;
+        return Ok((backend, previous_project, Some(store_path)));
+    }
+
+    let mut matches = Vec::new();
+    for run_id in store
+        .optimization_run_ids_for_project(previous_project.id)
+        .await?
+    {
+        let Ok(evidence) =
+            super::encoder_optimize::accepted_promotion_evidence(&store, &backend, run_id).await
+        else {
+            continue;
+        };
+        if evidence.model.id.to_string() == source_model.id
+            && evidence.model.fingerprint == source_model.fingerprint
+            && evidence.model.bytes == active_model.bytes
+            && evidence.model.format == active_model.format
+            && evidence.experiment_run_id.to_string() == producing_run.id
+            && evidence.experiment_head_fingerprint == producing_run.fingerprint
+        {
+            let runtime_model = inspect_model(&backend.verified_model_path(&evidence.model)?)?;
+            if runtime_model.fingerprint == active_model.fingerprint
+                && runtime_model.bytes == active_model.bytes
+                && runtime_model.format == active_model.format
+            {
+                matches.push(evidence.model);
+            }
+        }
+    }
+    store.pool().close().await;
+    anyhow::ensure!(
+        matches.len() == 1,
+        "The promoted baseline does not resolve to exactly one sealed-accepted checkpoint in the existing scientific history."
+    );
+    let configured = backend.with_baseline_model(matches.pop().expect("one promoted model"))?;
+    let project = configured.project_snapshot()?;
+    anyhow::ensure!(
+        project.baseline_model.fingerprint == source_model.fingerprint
+            && project.baseline_model.bytes == active_model.bytes
+            && project.baseline_model.format == active_model.format,
+        "The promoted runtime checkpoint differs from the managed active baseline."
+    );
+    Ok((configured, project, Some(store_path)))
 }
 
 async fn import_scientific_history(

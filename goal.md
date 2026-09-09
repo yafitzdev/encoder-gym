@@ -55,6 +55,10 @@ Do not confuse custody with readiness:
   local mutation before the exact run can be reserved.
 - The desktop can launch, recover, finish, and promote that real bounded
   workflow after the operator explicitly prepares its immutable run definition.
+  After promotion, explicit Nomos rebind now resolves only the exact
+  sealed-accepted source checkpoint, keeps runtime code immutable, creates a
+  successor scientific project snapshot for the new baseline, and extends the
+  existing scientific store instead of silently starting unrelated history.
 
 Treat these as product facts to resolve or explain, not presentation details to
 hide behind optimistic status text.
