@@ -29,8 +29,10 @@ Do not confuse custody with readiness:
 - The platform now has an immutable model catalog, audited baseline revisions,
   explicit scientific-store/runtime bindings, history import, derived launch
   readiness, managed preparation, fixed run intents, durable progress, and
-  sealed-accepted checkpoint promotion. These capabilities remain generic
-  project infrastructure and do not fabricate missing Nomos facts.
+  sealed-accepted checkpoint promotion. Encrypted desktop credentials are
+  resolved only for native execution and injected under fixed project-role
+  child-environment names. These capabilities remain generic project
+  infrastructure and do not fabricate missing Nomos facts.
 - Existing historical Nomos experiments remain separate evidence unless the
   operator explicitly previews and imports a verified SQLite snapshot.
 - The real Nomos project is still not runnable in place: its chosen Python

@@ -21,12 +21,17 @@ const actualRegistryFile = join(app.getPath("userData"), "projects.json");
 if (smokeTest) app.setPath("userData", process.env.ENCODER_GYM_SMOKE_PROFILE ?? mkdtempSync(join(tmpdir(), "encoder-gym-renderer-")));
 if (verifyCurrent) app.setPath("userData", mkdtempSync(join(tmpdir(), "encoder-gym-current-check-")));
 const registry = new ProjectRegistry(verifyCurrent ? actualRegistryFile : join(app.getPath("userData"), "projects.json"));
-const backend = new ManagedBackend(app.isPackaged ? join(process.resourcesPath, "synth" + (process.platform === "win32" ? ".exe" : "")) : join(directory, "..", "..", "target", "debug", "synth" + (process.platform === "win32" ? ".exe" : "")), registry);
 const credentials = new CredentialStore(join(app.getPath("userData"), "credentials.json"), {
   available: () => safeStorage.isEncryptionAvailable(),
   encrypt: value => safeStorage.encryptString(value),
   decrypt: value => safeStorage.decryptString(value),
 });
+const backend = new ManagedBackend(
+  app.isPackaged ? join(process.resourcesPath, "synth" + (process.platform === "win32" ? ".exe" : "")) : join(directory, "..", "..", "target", "debug", "synth" + (process.platform === "win32" ? ".exe" : "")),
+  registry,
+  undefined,
+  { resolveCredential: (id, environmentFallback) => credentials.resolve(id, environmentFallback) },
+);
 let smokeFolderChoice: string | undefined;
 async function pickFolder(title: string, defaultPath?: string): Promise<string | undefined> {
   if (smokeTest) { const choice = smokeFolderChoice; smokeFolderChoice = undefined; return choice; }

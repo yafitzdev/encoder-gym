@@ -235,9 +235,13 @@ is atomic, binds the process ID to its operating-system start time, rejects a
 live owner across app/CLI processes, and safely replaces a dead owner's lease.
 This closes the duplicate native-training/evaluation window without changing
 the scientific schema or treating a UI flag as authority. CLI launch uses
-`execFile` without a shell and JSON stdout. Provider credential injection
-remains a later main-process lifecycle component for workflows whose reviewed
-definition permits external calls.
+`execFile` without a shell and JSON stdout. Only execution intents that can
+enter native/provider work (`resume` and sealed authorization) resolve encrypted
+project-role credentials. The main process maps those references to the three
+fixed `SYNTH_*_API_KEY` child-environment names; it never accepts an environment
+map from the renderer or places a secret in arguments. Passive readiness,
+preview, reservation, status, and authorization-recording commands do not
+decrypt desktop credentials.
 
 Managed preparation no longer requires the normal desktop user to author or
 pick that TOML manifest. Readiness asks the scientific store for approved native
@@ -472,10 +476,12 @@ tests prove content-addressed copying, append-only provenance, idempotent retry,
 stale-baseline rejection, orphan-copy recovery, and tamper detection. CLI tests
 prove a project without scientific authority cannot enter promotion, while the
 existing finite optimizer fixture proves the sealed accepted decision chain.
-The desktop contract test proves the renderer can send only validated project,
-run, and baseline-revision identities and that the main process constructs the
-fixed command. The full Rust all-feature suite, 44 UI contract tests, and the
-Electron acceptance flow at desktop and narrow widths passed after this stage.
+The desktop contract tests prove the renderer can send only validated project,
+run, and baseline-revision identities, that the main process constructs the
+fixed command, and that native execution receives only project-scoped secrets
+under the three fixed environment names. The full Rust all-feature suite, 45 UI
+contract tests, and the Electron acceptance flow at desktop and narrow widths
+passed after these stages.
 
 ## Delivery order
 

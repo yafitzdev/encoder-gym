@@ -78,14 +78,19 @@ export function redactBackendError(value: string): string {
     .trim();
 }
 
-export type CommandExecutor = (executable: string, args: string[]) => Promise<string>;
+export type CommandEnvironment = Readonly<Record<string, string>>;
+export type CommandExecutor = (executable: string, args: string[], environment?: CommandEnvironment) => Promise<string>;
+export interface ManagedBackendOptions {
+  /** Main-process-only resolver. Returned values are placed only in a child process environment. */
+  resolveCredential?: (id: string, environmentFallback?: string) => string | undefined;
+}
 interface PreparedOptimizationWire {
   manifestPath: string; manifestName: string; readiness: ManagedLaunchPreview;
   authority: ManagedOptimizationAuthority; createdTrainingSnapshot: boolean; externalCalls: number;
 }
 type ManagedReadinessWire = Omit<ManagedReadiness, "preparedOptimization"> & { preparedOptimization?: PreparedOptimizationWire };
-const executeCommand: CommandExecutor = (executable, args) => new Promise((resolve, reject) => {
-  execFile(executable, args, { windowsHide: true, shell: false, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+const executeCommand: CommandExecutor = (executable, args, environment) => new Promise((resolve, reject) => {
+  execFile(executable, args, { windowsHide: true, shell: false, maxBuffer: 16 * 1024 * 1024, ...(environment ? { env: { ...process.env, ...environment } } : {}) }, (error, stdout, stderr) => {
     if (error) {
       const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
       reject(new Error(missing ? "The local workspace backend is missing. Run npm run build:backend in ui, then retry." : redactBackendError(stderr) || redactBackendError(error.message)));
@@ -107,9 +112,9 @@ export class ManagedBackend {
   private bindingPreviews = new Map<string, { projectId: string; runtime: string; python: string; history?: string; ready: boolean }>();
   private activeProjects = new Set<string>();
   private busy = false;
-  constructor(readonly executable: string, private registry: ProjectRegistry, private executor: CommandExecutor = executeCommand) {}
-  private async command<T>(args: string[]): Promise<T> {
-    const stdout = await this.executor(this.executable, ["--output", "json", "workspace", ...args]);
+  constructor(readonly executable: string, private registry: ProjectRegistry, private executor: CommandExecutor = executeCommand, private options: ManagedBackendOptions = {}) {}
+  private async command<T>(args: string[], environment?: CommandEnvironment): Promise<T> {
+    const stdout = await this.executor(this.executable, ["--output", "json", "workspace", ...args], environment);
     try { return JSON.parse(stdout) as T; } catch { throw new Error("The workspace backend returned an unreadable response."); }
   }
   async chooseModel(path: string): Promise<ModelChoice> {
@@ -236,10 +241,34 @@ export class ManagedBackend {
       else if (request.action === "cancel") args = [request.action, runId, "--reason", text(request.reason, "cancellation reason", 240)];
       else throw new Error("Choose a supported optimization action.");
     }
-    const run = () => this.command<ManagedOptimizationResult>(["optimize", workspace.folder, ...args]);
+    // Only commands that can enter native/provider execution receive secrets.
+    // Preview, reservation, status, authorization recording, and other passive
+    // commands neither resolve nor inherit desktop-managed credentials.
+    const environment = request.action === "resume" || request.action === "authorize-sealed"
+      ? this.providerEnvironment(projectId, workspace)
+      : undefined;
+    const run = () => this.command<ManagedOptimizationResult>(["optimize", workspace.folder, ...args], environment);
     return ["start", "resume", "authorize-external", "authorize-sealed", "cancel"].includes(request.action)
       ? this.exclusiveProject(projectId, run)
       : run();
+  }
+
+  private providerEnvironment(projectId: string, workspace: ManagedWorkspace): CommandEnvironment {
+    const resolveCredential = this.options.resolveCredential;
+    if (!resolveCredential || !workspace.providerCatalog) return {};
+    const environment: Record<string, string> = {};
+    for (const provider of workspace.providerCatalog.providers) {
+      if (provider.authentication !== "bearer") continue;
+      const reference = provider.secret;
+      const expectedId = `${projectId}:${provider.role}`;
+      const expectedEnvironment = provider.role === "generation" ? "SYNTH_OPENAI_API_KEY" : provider.role === "advisor" ? "SYNTH_ADVISOR_API_KEY" : "SYNTH_EVALUATOR_API_KEY";
+      if (!reference || reference.id !== expectedId || reference.environmentFallback !== expectedEnvironment) {
+        throw new Error(`The ${provider.role} credential reference is not safe for desktop execution. Reconfigure project providers.`);
+      }
+      const secret = resolveCredential(reference.id, reference.environmentFallback);
+      if (secret) environment[expectedEnvironment] = secret;
+    }
+    return environment;
   }
 
   async promoteAccepted(projectId: string, value: unknown): Promise<ManagedWorkspace> {

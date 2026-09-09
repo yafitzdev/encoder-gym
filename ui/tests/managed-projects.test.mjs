@@ -183,6 +183,46 @@ test("managed control rejects a duplicate mutating operation for one project", a
   release(); await first;
 });
 
+test("native execution receives only project-scoped provider credentials in fixed child environment names", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gym-managed-secrets-")), folder = join(root, "project"); mkdirSync(folder);
+  const id = randomUUID(), runId = randomUUID();
+  const baseline = { source: folder, format: "safetensors-encoder", architecture: "bert", files: [], bytes: 10, fingerprint: "sha256:" + "e".repeat(64), execution: "not-configured" };
+  const provider = (role, environmentFallback) => ({
+    role, kind: "openai-compatible", endpoint: "https://api.example.test/v1", model: `${role}-model`, authentication: "bearer",
+    secret: { id: `${id}:${role}`, environmentFallback }, limits: { maximumRequests: 2, maximumInputTokens: 2000, maximumOutputTokens: 500, maximumCostMicrousd: 1000 },
+  });
+  const workspace = {
+    folder, verified: true, manifest: { version: 1, id, name: "Secret fixture", createdAt: new Date().toISOString(), task: "retrieval", baseline }, datasets: [],
+    providerCatalog: { id: randomUUID(), projectId: id, sequence: 1, providers: [provider("generation", "SYNTH_OPENAI_API_KEY"), provider("advisor", "SYNTH_ADVISOR_API_KEY"), provider("evaluator", "SYNTH_EVALUATOR_API_KEY")], actor: "test", reason: "test", createdAt: new Date().toISOString(), fingerprint: "sha256:" + "f".repeat(64) },
+  };
+  const registry = new ProjectRegistry(join(root, "profile", "projects.json")); registry.addManaged(workspace);
+  const calls = [], resolutions = [];
+  const secrets = { generation: "generation-secret-123", advisor: "advisor-secret-456", evaluator: "evaluator-secret-789" };
+  const executor = async (_executable, args, environment) => {
+    calls.push({ args, environment });
+    if (args[3] === "open") return JSON.stringify(workspace);
+    if (args[3] === "readiness") return JSON.stringify({ report: { projectId: id, computedAt: new Date().toISOString(), overall: "ready", runnable: true, checks: [] }, launchPreview: { projectId: id } });
+    if (args[3] === "optimize") return JSON.stringify({ run_id: runId, state: "planned" });
+    throw new Error("unexpected command");
+  };
+  const backend = new ManagedBackend("owned-synth", registry, executor, { resolveCredential: (credentialId, environmentFallback) => {
+    resolutions.push({ credentialId, environmentFallback });
+    return secrets[credentialId.split(":").at(-1)];
+  } });
+  const selected = await backend.chooseOptimizationManifest(id, join(root, "run.toml"));
+  await backend.optimize(id, { action: "start", manifestToken: selected.token });
+  assert.equal(resolutions.length, 0, "reservation must not decrypt credentials");
+  assert.equal(calls.find(call => call.args[5] === "start").environment, undefined);
+  await backend.optimize(id, { action: "resume", runId });
+  const execution = calls.find(call => call.args[5] === "resume");
+  assert.deepEqual(execution.environment, { SYNTH_OPENAI_API_KEY: secrets.generation, SYNTH_ADVISOR_API_KEY: secrets.advisor, SYNTH_EVALUATOR_API_KEY: secrets.evaluator });
+  assert.equal(JSON.stringify(execution.args).includes("secret-"), false);
+  assert.deepEqual(resolutions.map(item => item.credentialId).sort(), [`${id}:advisor`, `${id}:evaluator`, `${id}:generation`]);
+
+  workspace.providerCatalog.providers[0].secret = { id: `${randomUUID()}:generation`, environmentFallback: "SYNTH_OPENAI_API_KEY" };
+  await assert.rejects(() => backend.optimize(id, { action: "resume", runId }), /not safe for desktop execution/);
+});
+
 test("backend diagnostics redact bearer, key, and token shaped credentials", () => {
   const diagnostic = "Bearer secret-value-123 key-live-value-123 token-debug-value-456 sk-project-value-789";
   const redacted = redactBackendError(diagnostic);
