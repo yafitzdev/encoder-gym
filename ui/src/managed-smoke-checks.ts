@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import type { BrowserWindow } from "electron";
 import type { ProjectRegistry } from "./project-registry.js";
 import type { ManagedBackend } from "./managed-backend.js";
-import type { ManagedOptimizationRequest, ManagedPromotionRequest } from "./managed-control.js";
+import type { ManagedOptimizationRequest, ManagedPromotionRequest, ManagedReadiness } from "./managed-control.js";
 
 interface Harness { registry: ProjectRegistry; backend: ManagedBackend; chooseFolder(path?: string): void; restart: boolean }
 export async function runManagedSmokeChecks(window: BrowserWindow, output: string, harness: Harness): Promise<void> {
@@ -123,16 +123,16 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     candidateCount: 1, budget,
   };
   const authority = { proposalId: randomUUID(), selectionId: randomUUID(), trainingSnapshotId, benchmarkGenerationId, hypotheses: ["Repair the observed retrieval regression without weakening generic holdout behavior."], candidateCount: 1, baseTrainingInputs: 2, deltaRows: 24, budget: { maximum_total_rows: 7000, maximum_rows_per_target: 24, maximum_candidates: 1, maximum_training_seconds: 120, maximum_evaluation_seconds: 120, maximum_development_evaluations: 2, maximum_external_calls: 0, maximum_sealed_uses: 1 }, validUntil: new Date(Date.now() + 3_600_000).toISOString() };
-  const readiness = { report: { projectId: firstId, baselineRevisionId: catalog.activeBaselineRevisionId, computedAt: new Date().toISOString(), overall: "action_required" as const, runnable: false, checks: [{ key: "optimization.preview", category: "optimization" as const, state: "action_required" as const, required: true, summary: "Approved repair is ready to freeze", evidence: "One reviewed bounded repair remains current.", nextAction: { key: "prepare-optimization", label: "Prepare approved run" } }] }, optimizationAuthority: authority };
+  const readiness: ManagedReadiness = { report: { projectId: firstId, baselineRevisionId: catalog.activeBaselineRevisionId, computedAt: new Date().toISOString(), overall: "action_required" as const, runnable: false, checks: [{ key: "optimization.preview", category: "optimization" as const, state: "action_required" as const, required: true, summary: "Approved repair is ready to freeze", evidence: "One reviewed bounded repair remains current.", nextAction: { key: "prepare-optimization", label: "Prepare approved run" } }] }, optimizationAuthority: authority };
   const createdAt = "2026-03-01T12:00:00.000Z";
   const reserved = { iterations: 1, candidates: 1, training_seconds: 120, development_evaluations: 2, sealed_evaluations: 1, backend_operations: 4 };
   const noneRemaining = { iterations: 0, candidates: 0, training_seconds: 0, development_evaluations: 0, sealed_evaluations: 0, backend_operations: 0 };
-  const run = (state: "planned" | "campaign_active" | "completed", next: "resume" | "authorize-sealed" | "none", decision?: string) => ({
-    run_id: runId, existing: false, created_at: createdAt, last_transition_at: state === "planned" ? createdAt : state === "campaign_active" ? "2026-03-01T12:02:05.000Z" : "2026-03-01T12:02:19.000Z", state, ...(state !== "planned" ? { campaign_state: state === "completed" ? "completed" : "development_selected", experiment_state: state === "completed" ? "completed" : "development_selected" } : {}), ...(decision ? { decision, selected_candidate_id: candidateId } : {}),
-    completed: state === "planned" ? [] : ["candidate_training_completed", "candidate_development_completed"], stopped_reason: next === "authorize-sealed" ? "sealed_authorization_required" : state === "completed" ? "accepted_candidate" : "run_reserved", human_authorization_required: next === "authorize-sealed", last_sequence: state === "completed" ? 8 : state === "campaign_active" ? 5 : 1, head_fingerprint: "sha256:" + "4".repeat(64), artifacts: { experiment_run_id: experimentId, training_snapshot_id: trainingSnapshotId, benchmark_generation_id: benchmarkGenerationId },
-    budgets: { maximum: budget, ...(state === "planned" ? {} : { reserved, remaining_unreserved: noneRemaining }) },
-    recorded_usage: state === "planned" ? { models_trained: 0, candidates_failed: 0, training_seconds: 0, development_evaluations: 0, sealed_evaluations: 0 } : { models_trained: 1, candidates_failed: 0, training_seconds: 110, development_evaluations: 2, sealed_evaluations: state === "completed" ? 1 : 0 },
-    stage: next === "resume" ? { key: "development", label: "Build and evaluate the candidate", detail: "The next bounded native stage trains one candidate and records development evidence.", execution: "native" as const, development: { completed_units: 0, total_units: 2 } } : next === "authorize-sealed" ? { key: "sealed-authorization", label: "Review final acceptance", detail: "The selected candidate is eligible for one separately authorized sealed evaluation.", execution: "authorization" as const, development: { completed_units: 2, total_units: 2, active_candidate_id: candidateId } } : { key: "terminal", label: "Accepted candidate recorded", detail: "The exact checkpoint passed the final acceptance contract.", execution: "terminal" as const },
+  const run = (state: "planned" | "campaign_active" | "completed" | "cancelled" | "failed", next: "resume" | "authorize-sealed" | "none", decision?: string, terminalReason?: string) => ({
+    run_id: runId, existing: false, created_at: createdAt, last_transition_at: state === "planned" ? createdAt : state === "campaign_active" ? "2026-03-01T12:02:05.000Z" : "2026-03-01T12:02:19.000Z", state, ...(state !== "planned" && state !== "cancelled" ? { campaign_state: state === "completed" ? "completed" : state === "failed" ? "failed" : "development_selected", experiment_state: state === "completed" ? "completed" : state === "failed" ? "failed" : "development_selected" } : {}), ...(decision ? { decision, selected_candidate_id: candidateId } : {}), ...(terminalReason ? { failed_or_uncertain: terminalReason } : {}),
+    completed: state === "planned" || state === "cancelled" ? [] : ["candidate_training_completed", "candidate_development_completed"], stopped_reason: next === "authorize-sealed" ? "sealed_authorization_required" : state === "completed" ? "accepted_candidate" : state === "failed" ? "failed" : state === "cancelled" ? "cancelled_by_operator" : "run_reserved", human_authorization_required: next === "authorize-sealed", last_sequence: state === "completed" ? 8 : state === "campaign_active" || state === "failed" ? 5 : state === "cancelled" ? 2 : 1, head_fingerprint: "sha256:" + "4".repeat(64), artifacts: { experiment_run_id: experimentId, training_snapshot_id: trainingSnapshotId, benchmark_generation_id: benchmarkGenerationId },
+    budgets: { maximum: budget, ...(state === "planned" || state === "cancelled" ? {} : { reserved, remaining_unreserved: noneRemaining }) },
+    recorded_usage: state === "planned" || state === "cancelled" ? { models_trained: 0, candidates_failed: 0, training_seconds: 0, development_evaluations: 0, sealed_evaluations: 0 } : { models_trained: 1, candidates_failed: 0, training_seconds: 110, development_evaluations: 2, sealed_evaluations: state === "completed" ? 1 : 0 },
+    stage: state === "failed" ? { key: "terminal", label: "Candidate development failed", detail: "The candidate stage ended without a durable successful completion.", execution: "terminal" as const } : state === "cancelled" ? { key: "terminal", label: "Run cancelled", detail: "The operator stopped this run at a safe boundary.", execution: "terminal" as const } : next === "resume" ? { key: "development", label: "Build and evaluate the candidate", detail: "The next bounded native stage trains one candidate and records development evidence.", execution: "native" as const, development: { completed_units: 0, total_units: 2 } } : next === "authorize-sealed" ? { key: "sealed-authorization", label: "Review final acceptance", detail: "The selected candidate is eligible for one separately authorized sealed evaluation.", execution: "authorization" as const, development: { completed_units: 2, total_units: 2, active_candidate_id: candidateId } } : { key: "terminal", label: "Accepted candidate recorded", detail: "The exact checkpoint passed the final acceptance contract.", execution: "terminal" as const },
     next_command: next,
   });
   const report = {
@@ -156,6 +156,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
       if (intent.action === "start") currentRun = run("planned", "resume");
       else if (intent.action === "resume") currentRun = run("campaign_active", "authorize-sealed");
       else if (intent.action === "authorize-sealed") currentRun = run("completed", "none", "promote_candidate");
+      else if (intent.action === "cancel") currentRun = run("cancelled", "none", undefined, intent.reason);
       else if (intent.action === "report") return report;
       return currentRun;
     };
@@ -191,6 +192,22 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await textButton("Promote accepted candidate"); await until("document.querySelector('.promotion-result')?.textContent.includes('now the project baseline')");
     await check("promotion immediately updates the active managed baseline", "document.querySelector('.launch-summary h2').textContent === 'Baseline updated' && document.querySelector('.promotion-result').textContent.includes('managed custody') && document.getElementById('toast').textContent.includes('promoted')");
     await screenshot("managed-optimization-promoted");
+
+    currentRun = run("failed", "none", undefined, "Native trainer exited before the checkpoint was committed.");
+    readiness.launchPreview = { ...preview, existingRun: { runId, state: "failed" } };
+    await textButton("Refresh checks"); await until("document.querySelector('.run-stage.is-failed')");
+    await check("failed run leads with its durable diagnostic and no unsafe continuation", "document.querySelector('.launch-summary h2').textContent === 'Run needs attention' && document.querySelector('.run-stage.is-failed').textContent.includes('Native trainer exited') && ![...document.querySelectorAll('.run-actions button')].some(b=>b.textContent.includes('Build')) && document.querySelector('.usage-caution')");
+    await screenshot("managed-optimization-failed");
+
+    currentRun = run("cancelled", "none", undefined, "Stop before committing more local compute.");
+    readiness.launchPreview = { ...preview, existingRun: { runId, state: "cancelled" } };
+    await textButton("Refresh checks"); await until("document.querySelector('.run-stage.is-cancelled')");
+    await check("cancelled run presents the operator reason as a neutral terminal record", "document.querySelector('.launch-summary h2').textContent === 'Run cancelled' && document.querySelector('.run-stage.is-cancelled').textContent.includes('Stop before committing') && !document.querySelector('.run-stage.is-cancelled').matches('[role=alert]') && !document.querySelector('.run-actions')");
+    await screenshot("managed-optimization-cancelled");
+
+    currentRun = run("completed", "none", "promote_candidate");
+    readiness.launchPreview = { ...preview, existingRun: { runId, state: "completed" } };
+    await textButton("Refresh checks"); await until("document.querySelector('.launch-summary h2')?.textContent === 'Baseline updated'");
   } finally {
     harness.backend.readiness = readinessMethod;
     harness.backend.prepareOptimization = prepareMethod;

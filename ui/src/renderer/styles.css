@@ -568,8 +568,12 @@ dialog::backdrop { background: #0008; }
 .run-stage p { margin: 0; max-width: 760px; color: var(--muted); }
 .run-stage.is-running { border-left-color: var(--cyan); }
 .run-stage.is-running .eyebrow { color: var(--cyan); }
+.run-stage.is-failed { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 5%, var(--surface)); }
+.run-stage.is-cancelled { border-left-color: var(--subtle); }
 .run-stage .stage-progress { margin-top: 13px; color: var(--text); font: 12px var(--mono); }
 .run-stage .stage-caution { margin-top: 10px; font-size: 12px; }
+.run-stage .terminal-reason { margin-top: 12px; color: var(--text); font-weight: 650; }
+.run-stage .terminal-guidance { margin-top: 8px; }
 .run-actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .run-usage { margin-top: 14px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
 .run-usage-heading p { margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.5; }

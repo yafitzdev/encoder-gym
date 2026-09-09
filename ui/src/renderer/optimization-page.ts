@@ -172,11 +172,14 @@ function runPanel(run: ManagedRunStatus, state: OptimizationPageState, actions: 
   const incompleteAccounting = recorded.candidates_failed > 0 || Boolean(run.failed_or_uncertain);
   const finalDecisionCard = accepted || run.state === "completed" && run.decision === "retain_baseline";
   const inspectReport = terminal && !state.report ? button(state.executing === "report" ? "Loading report…" : "Inspect complete run report", actions.loadReport, "secondary") : null;
+  const terminalReason = run.failed_or_uncertain && (run.state === "failed" || run.state === "cancelled") ? run.failed_or_uncertain : undefined;
   if (inspectReport instanceof HTMLButtonElement) inspectReport.disabled = busy;
   return h("section", { class: "run-control" }, sectionHeader(terminal ? "Run record" : "Reserved run", tag(run.state.replaceAll("_", " "))),
-    !finalDecisionCard ? h("div", { class: `run-stage ${busy ? "is-running" : ""}`, role: busy ? "status" : undefined },
-      h("div", { class: "eyebrow" }, busy ? "Executing now" : terminal ? "Final state" : "Next safe stage"),
+    !finalDecisionCard ? h("div", { class: `run-stage ${busy ? "is-running" : ""} ${terminalReason ? `is-${run.state}` : ""}`, role: busy ? "status" : run.state === "failed" ? "alert" : undefined },
+      h("div", { class: "eyebrow" }, busy ? "Executing now" : run.state === "failed" ? "Recorded failure" : run.state === "cancelled" ? "Operator cancellation" : terminal ? "Final state" : "Next safe stage"),
       h("h3", {}, run.stage.label), h("p", {}, run.stage.detail),
+      terminalReason ? h("p", { class: "terminal-reason" }, terminalReason) : null,
+      run.state === "failed" && terminalReason ? h("p", { class: "terminal-guidance" }, "No further stage will execute automatically. Inspect the complete report and journal before deciding whether a successor run is safe.") : null,
       progress && progress.total_units > 0 ? h("p", { class: "stage-progress" }, `${progress.completed_units} of ${progress.total_units} candidate build and development-evaluation steps durably recorded`) : null,
       busy && run.stage.execution === "native" ? h("p", { class: "stage-caution" }, "This native stage can take a while. The screen is reading the journal as new facts are committed; it does not estimate unfinished work.") : null) : null,
     next || !terminal && !busy ? h("div", { class: "run-actions" }, next, !terminal && !busy ? button("Cancel before next stage", actions.cancel, "secondary") : null) : null,
@@ -202,8 +205,7 @@ function runPanel(run: ManagedRunStatus, state: OptimizationPageState, actions: 
         ["Failed candidate records", String(recorded.candidates_failed)],
       ]))),
     state.report ? reportPanel(state.report) : null,
-    details("Run identity and journal", facts([["Run", run.run_id], ["Reserved at", localDateTimeLabel(run.created_at)], ["Last durable transition", localDateTimeLabel(run.last_transition_at)], ["Journal span", journalSpanLabel(run.created_at, run.last_transition_at)], ["Stopped because", run.stopped_reason.replaceAll("_", " ")], ["Durable transitions", String(run.last_sequence)], ["Journal head", run.head_fingerprint]])),
-    run.failed_or_uncertain ? h("p", { class: "form-error", role: "alert" }, run.failed_or_uncertain) : null);
+    details("Run identity and journal", facts([["Run", run.run_id], ["Reserved at", localDateTimeLabel(run.created_at)], ["Last durable transition", localDateTimeLabel(run.last_transition_at)], ["Journal span", journalSpanLabel(run.created_at, run.last_transition_at)], ["Stopped because", run.stopped_reason.replaceAll("_", " ")], ["Durable transitions", String(run.last_sequence)], ["Journal head", run.head_fingerprint]])));
 }
 
 function launchSummary(state: OptimizationPageState, readiness: ManagedReadiness | undefined, preview: ManagedLaunchPreview | undefined, unfinished: number, activeAcceptedModel: boolean): { title: string; detail: string; label: string; tone: "success" | "warning" | "danger" | "neutral" } {

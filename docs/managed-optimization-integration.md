@@ -607,6 +607,11 @@ visually distinct from finite reserved capacity and journal timing.
 The terminal-report screenshot verifies that an accepted result remains a
 candidate until promotion and that aggregate development evidence and the
 complete inspectable provenance chain are available without sealed values.
+The same Electron journey now injects persisted failed and cancelled terminal
+states. A failure leads with the exact redacted diagnostic, makes the absence
+of automatic continuation explicit, and keeps incomplete-output accounting
+visible. A cancellation instead presents the operator's recorded reason as a
+neutral terminal fact. Neither state exposes an unsafe continuation action.
 
 ## Delivery order
 
