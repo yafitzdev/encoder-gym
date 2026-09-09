@@ -612,6 +612,9 @@ states. A failure leads with the exact redacted diagnostic, makes the absence
 of automatic continuation explicit, and keeps incomplete-output accounting
 visible. A cancellation instead presents the operator's recorded reason as a
 neutral terminal fact. Neither state exposes an unsafe continuation action.
+Passive readiness refresh and mutating preparation also have distinct progress
+states: only preparation may claim the expensive owner replay, while refresh
+describes itself as a read of persisted project state.
 
 ## Delivery order
 

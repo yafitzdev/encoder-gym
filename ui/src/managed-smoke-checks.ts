@@ -148,8 +148,8 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   };
   let currentRun = run("planned", "resume");
   try {
-    harness.backend.readiness = async projectId => { if (projectId !== firstId) return readinessMethod(projectId); return readiness; };
-    harness.backend.prepareOptimization = async projectId => { if (projectId !== firstId) return prepareMethod(projectId); return { token: "managed-smoke-definition", name: "Reviewed repair", launchPreview: preview, authority, createdTrainingSnapshot: false, externalCalls: 0 }; };
+    harness.backend.readiness = async projectId => { if (projectId !== firstId) return readinessMethod(projectId); await new Promise(resolve => setTimeout(resolve, 60)); return readiness; };
+    harness.backend.prepareOptimization = async projectId => { if (projectId !== firstId) return prepareMethod(projectId); await new Promise(resolve => setTimeout(resolve, 60)); return { token: "managed-smoke-definition", name: "Reviewed repair", launchPreview: preview, authority, createdTrainingSnapshot: false, externalCalls: 0 }; };
     harness.backend.optimize = async (projectId, request) => {
       if (projectId !== firstId) return optimizeMethod(projectId, request);
       const intent = request as ManagedOptimizationRequest;
@@ -170,9 +170,13 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
       return { ...managed, modelCatalog: { ...catalog, artifacts: [...catalog.artifacts, candidate], baselineRevisions: [...catalog.baselineRevisions, { id: revisionId, projectId: firstId, sequence: catalog.baselineRevisions.length + 1, modelArtifactId: candidate.id, previousRevisionId: catalog.activeBaselineRevisionId, change: { kind: "promotion" as const, decision_id: randomUUID(), decision_fingerprint: "sha256:" + "8".repeat(64) }, actor: "local-operator", reason: "Smoke accepted promotion", createdAt: new Date().toISOString(), fingerprint: "sha256:" + "9".repeat(64) }], activeBaselineRevisionId: revisionId } };
     };
 
-    await nav("models"); await textButton("Start optimization"); await textButton("Refresh checks"); await until("document.querySelector('.launch-definition')?.textContent.includes('Approved repair on record')");
+    await nav("models"); await textButton("Start optimization"); await textButton("Refresh checks");
+    await check("passive readiness refresh never claims to perform deep preparation", "document.querySelector('.workspace-progress').textContent.includes('Checking persisted project state') && !document.querySelector('.workspace-progress').textContent.includes('Replaying')");
+    await until("document.querySelector('.launch-definition')?.textContent.includes('Approved repair on record')");
     await check("approved repair is understandable before preparation", "document.querySelector('.launch-definition').textContent.includes('one candidate') || document.querySelector('.launch-definition').textContent.includes('Candidates') && document.querySelector('.launch-definition').textContent.includes('External calls')");
-    await textButton("Prepare approved run"); await until("document.querySelector('.launch-definition')?.textContent.includes('Exact run definition')");
+    await textButton("Prepare approved run");
+    await check("preparation alone describes the expensive integrity replay", "document.querySelector('.workspace-progress').textContent.includes('Replaying the approved native evidence')");
+    await until("document.querySelector('.launch-definition')?.textContent.includes('Exact run definition')");
     await check("prepared definition exposes the reviewed objective and exact execution recipe", "document.querySelector('.launch-definition').textContent.includes('Repair the observed retrieval regression') && document.querySelector('.launch-definition').textContent.includes('generic_holdout') && document.querySelector('.launch-definition').textContent.includes('nomos_sealed_acceptance') && document.querySelector('.launch-definition').textContent.includes('Learning rate')");
     await check("prepared definition exposes finite execution and external limits", "document.querySelector('.launch-definition').textContent.includes('120 seconds') && document.querySelector('.launch-definition').textContent.includes('Sealed evaluations') && document.querySelector('.external-work').textContent.includes('No external provider calls') && document.querySelector('.launch-actions').textContent.includes('0 external calls')");
     await screenshot("managed-optimization-prepared");

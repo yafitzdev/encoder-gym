@@ -212,12 +212,12 @@ export function mount(): void {
   async function prepareOptimization(): Promise<void> {
     const id = selection.selectedId;
     if (!id || view.optimization.loading) return;
-    const state = view.optimization; state.loading = true; state.error = undefined; state.errorTitle = undefined; render();
+    const state = view.optimization; state.loading = true; state.executing = "prepare"; state.error = undefined; state.errorTitle = undefined; render();
     try {
       const prepared = await bridge.prepareOptimization(id);
       if (selection.selectedId === id) { state.prepared = prepared; state.manifest = undefined; state.run = undefined; }
     } catch (error) { state.errorTitle = "Could not prepare the approved run"; state.error = message(error); }
-    finally { state.loading = false; if (selection.selectedId === id) render(); }
+    finally { state.loading = false; state.executing = undefined; if (selection.selectedId === id) render(); }
   }
   async function optimize(request: Parameters<typeof bridge.managedOptimize>[1]): Promise<void> {
     const id = selection.selectedId;
