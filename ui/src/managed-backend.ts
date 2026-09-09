@@ -78,6 +78,11 @@ export function redactBackendError(value: string): string {
 }
 
 export type CommandExecutor = (executable: string, args: string[]) => Promise<string>;
+interface PreparedOptimizationWire {
+  manifestPath: string; manifestName: string; readiness: ManagedLaunchPreview;
+  authority: ManagedOptimizationAuthority; createdTrainingSnapshot: boolean; externalCalls: number;
+}
+type ManagedReadinessWire = Omit<ManagedReadiness, "preparedOptimization"> & { preparedOptimization?: PreparedOptimizationWire };
 const executeCommand: CommandExecutor = (executable, args) => new Promise((resolve, reject) => {
   execFile(executable, args, { windowsHide: true, shell: false, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
     if (error) {
@@ -132,6 +137,16 @@ export class ManagedBackend {
     this.activeProjects.add(projectId);
     try { return await operation(); } finally { this.activeProjects.delete(projectId); }
   }
+  private retainPrepared(projectId: string, workspace: ManagedWorkspace, prepared: PreparedOptimizationWire): PreparedOptimizationChoice {
+    if (typeof prepared.manifestPath !== "string" || typeof prepared.manifestName !== "string" || prepared.readiness?.projectId !== projectId) {
+      throw new Error("The managed optimization preparation does not match this project.");
+    }
+    const root = resolve(workspace.folder), manifest = resolve(prepared.manifestPath);
+    if (manifest !== root && !manifest.startsWith(root + sep)) throw new Error("The managed optimization definition escaped its project workspace.");
+    const token = randomUUID();
+    this.manifests.set(token, { projectId, path: manifest, name: prepared.manifestName });
+    return { token, name: prepared.manifestName, launchPreview: prepared.readiness, authority: prepared.authority, createdTrainingSnapshot: prepared.createdTrainingSnapshot, externalCalls: prepared.externalCalls };
+  }
   async create(value: unknown) {
     const request = value as CreateProjectRequest;
     const model = this.models.get(request?.modelToken), parent = this.parents.get(request?.parentToken);
@@ -175,7 +190,12 @@ export class ManagedBackend {
       if (!selected || selected.projectId !== projectId) throw new Error("Choose the optimization definition for this project again.");
       args.push("--manifest", selected.path);
     }
-    return this.command<ManagedReadiness>(args);
+    const received = await this.command<ManagedReadinessWire>(args);
+    const { preparedOptimization, ...readiness } = received;
+    return {
+      ...readiness,
+      ...(preparedOptimization ? { preparedOptimization: this.retainPrepared(projectId, workspace, preparedOptimization) } : {}),
+    };
   }
 
   async chooseOptimizationManifest(projectId: string, path: string): Promise<OptimizationManifestChoice> {
@@ -194,12 +214,8 @@ export class ManagedBackend {
   async prepareOptimization(projectId: string): Promise<PreparedOptimizationChoice> {
     const workspace = await this.openRegistered(projectId);
     return this.exclusiveProject(projectId, async () => {
-      const prepared = await this.command<{ manifestPath: string; manifestName: string; readiness: ManagedLaunchPreview; authority: ManagedOptimizationAuthority; createdTrainingSnapshot: boolean; externalCalls: number }>(["prepare-optimization", workspace.folder]);
-      const root = resolve(workspace.folder), manifest = resolve(prepared.manifestPath);
-      if (manifest !== root && !manifest.startsWith(root + sep)) throw new Error("The managed optimization definition escaped its project workspace.");
-      const token = randomUUID();
-      this.manifests.set(token, { projectId, path: manifest, name: prepared.manifestName });
-      return { token, name: prepared.manifestName, launchPreview: prepared.readiness, authority: prepared.authority, createdTrainingSnapshot: prepared.createdTrainingSnapshot, externalCalls: prepared.externalCalls };
+      const prepared = await this.command<PreparedOptimizationWire>(["prepare-optimization", workspace.folder]);
+      return this.retainPrepared(projectId, workspace, prepared);
     });
   }
 

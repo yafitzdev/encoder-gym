@@ -184,6 +184,10 @@ export function mount(): void {
     try {
       state.readiness = await bridge.managedReadiness(id, state.manifest?.token);
       if (state.manifest) state.manifest = { ...state.manifest, readiness: state.readiness };
+      else {
+        state.prepared = state.readiness.preparedOptimization;
+        if (!state.prepared) state.run = undefined;
+      }
     } catch (error) { state.error = message(error); }
     finally { state.loading = false; if (selection.selectedId === id) render(); }
   }
@@ -221,7 +225,7 @@ export function mount(): void {
     chooseManifest: () => { void chooseOptimizationManifest(); },
     start: () => {
       const prepared = view.optimization.prepared;
-      const existing = prepared?.launchPreview.existingRun ?? view.optimization.manifest?.readiness.launchPreview?.existingRun;
+      const existing = prepared?.launchPreview.existingRun ?? view.optimization.manifest?.readiness.launchPreview?.existingRun ?? view.optimization.readiness?.launchPreview?.existingRun;
       if (existing) void optimize({ action: "status", runId: existing.runId });
       else if (prepared) void optimize({ action: "start", manifestToken: prepared.token });
       else if (view.optimization.manifest) void optimize({ action: "start", manifestToken: view.optimization.manifest.token });

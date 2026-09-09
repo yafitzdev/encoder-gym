@@ -219,7 +219,9 @@ sealed, cancel, and inspect. It never sends command arrays, paths outside a
 selected project/binding, SQL, environment maps, or shell text.
 
 Implemented boundary: the main process owns native manifest selection and keeps
-the chosen path behind a project-scoped, process-local token. It exposes fixed
+the chosen path behind a project-scoped token. Generated definitions are
+rediscovered from persisted authority after restart; manual compatibility
+selections remain process-local. It exposes fixed
 readiness, upgrade, preview/start, status/inspection, review, resume,
 authorization, cancellation, Doctor, provenance, and report intents. Every
 intent reopens the registered workspace and the Rust composition root
@@ -245,6 +247,33 @@ sealed exposure. The Electron main process validates that the returned path is
 inside the selected managed workspace and gives the renderer only an opaque
 project-scoped token plus the resolved readiness view. Manual manifest selection
 remains a compatibility/debugging boundary, not the primary journey.
+
+Prepared definitions are restart-recoverable without weakening the native
+verification boundary. Ordinary readiness derives the one current approved
+repair, reproduces its persisted logical training snapshot, computes the only
+strict content-addressed definition implied by those facts, and accepts it only
+when the exact file already exists below `runs/definitions/`. Electron then
+reissues a fresh project-scoped opaque token and removes the path before the
+response crosses into the renderer. A missing or changed definition is not
+silently adopted. Pressing **Prepare approved run** after a completed
+preparation uses the same recovery path and therefore does not repeat native
+artifact replay.
+
+After a run is reserved, its immutable optimization definition and journal—not
+the pre-launch proposal expiry—become recovery authority. Readiness queries run
+identities by the exact scientific project, replays the newest run through the
+optimization owner, and exposes its persisted state even if the native runtime
+is temporarily unavailable. An active current approval still takes precedence
+over unrelated historical terminal runs. Opening a recovered run needs only its
+validated run identity; it does not need the original manifest token.
+
+Passive readiness and persisted run inspection do not reproduce the complete
+native repository tree. They validate managed artifact custody, binding and
+adapter identity, scientific schema, project identity, and immutable owner
+graphs. Native replay remains mandatory at binding/repair verification, first
+snapshot preparation, native execution stages, and an explicit doctor. This
+keeps page loads and run recovery responsive without claiming a fresh deep
+verification that did not occur.
 
 The Electron main-process adapter:
 

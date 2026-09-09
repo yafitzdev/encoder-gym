@@ -186,6 +186,20 @@ approvals are never silently selected. Electron retains the definition path in
 the main process and returns only an opaque project-scoped token to the
 renderer.
 
+On a later application launch, readiness recomputes the expected definition
+from the current persisted authority and training snapshot. If and only if its
+exact content-addressed file still exists inside this project, the main process
+restores a fresh opaque token and the screen returns directly to the prepared
+preview or existing run. Recovery is read-only and does not repeat native delta
+replay. A missing, changed, stale, or ambiguous definition returns to an
+actionable preparation state instead.
+
+Once a run has been reserved, its append-only definition and event journal are
+the recovery authority even after the proposal's pre-launch expiry. The newest
+run for the exact bound scientific project is replayed through the optimization
+owner and can be opened without recovering a manifest path. A current approved
+successor still takes precedence over unrelated historical terminal runs.
+
 ## Provider settings and credentials
 
 Generation and advisor authorities are configured separately. An evaluator is

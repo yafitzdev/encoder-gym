@@ -44,6 +44,27 @@ impl SqliteExperimentStore {
         .map_err(store_error)
     }
 
+    /// Return optimization runs for one exact scientific project, newest
+    /// durable transition first. Callers still replay every returned run
+    /// through the optimization owner before presenting it.
+    pub async fn optimization_run_ids_for_project(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<Uuid>, ExperimentStoreError> {
+        sqlx::query_scalar(
+            "SELECT runs.id \
+             FROM encoder_production_optimization_runs AS runs \
+             JOIN encoder_production_optimization_definitions AS definitions \
+               ON definitions.id = runs.definition_id \
+             WHERE definitions.project_snapshot_id = ? \
+             ORDER BY runs.updated_at DESC, runs.id DESC",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store_error)
+    }
+
     /// Open an existing, current-schema database with SQLite-enforced read-only access.
     /// WAL remains visible: concurrent writers may commit while status/watch runs.
     pub async fn connect_read_only(database_url: &str) -> Result<Self, ExperimentStoreError> {

@@ -37,7 +37,9 @@ use std::{
     time::Duration,
 };
 
-use super::encoder_optimize::{ManagedOptimizationAuthority, ManagedOptimizationReadiness};
+use super::encoder_optimize::{
+    ManagedOptimizationAuthority, ManagedOptimizationPreparation, ManagedOptimizationReadiness,
+};
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,6 +49,10 @@ struct ManagedReadinessOutput {
     optimization_authority: Option<ManagedOptimizationAuthority>,
     #[serde(skip_serializing_if = "Option::is_none")]
     launch_preview: Option<ManagedOptimizationReadiness>,
+    /// Main-process recovery material. Electron replaces the contained path
+    /// with a project-scoped opaque token before returning data to a renderer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prepared_optimization: Option<ManagedOptimizationPreparation>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -420,6 +426,29 @@ async fn prepare_optimization(
         binding.baseline_revision_id == catalog.active_baseline_revision_id,
         "The scientific binding is stale for the active baseline; rebind it before optimization."
     );
+    // A completed preparation is a persisted, read-only recovery operation.
+    // Do not open the scientific store for mutation or require the native
+    // runtime merely to reissue the desktop's opaque definition token.
+    let passive = open_bound_store(&workspace.folder, binding).await?;
+    let passive_project = load_bound_project(&passive, binding).await?;
+    let authority = super::encoder_optimize::managed_authority(&passive, &passive_project).await?;
+    let recovered = match authority.as_ref() {
+        Some(authority) => {
+            super::encoder_optimize::recover_managed(
+                &passive,
+                &passive_project,
+                std::path::Path::new(&workspace.folder),
+                authority,
+            )
+            .await?
+        }
+        None => None,
+    };
+    passive.pool().close().await;
+    if let Some(recovered) = recovered {
+        return Ok(recovered);
+    }
+
     let store = open_bound_store_mutable(&workspace.folder, binding).await?;
     let project = load_bound_project(&store, binding).await?;
     let backend = open_nomos_binding(binding, &project)?;
@@ -453,7 +482,6 @@ async fn managed_optimize(
     );
     let store = open_bound_store(&workspace.folder, binding).await?;
     let project = load_bound_project(&store, binding).await?;
-    verify_nomos_runtime(binding, catalog, &project).await?;
     store.pool().close().await;
 
     let executable = binding
@@ -715,43 +743,49 @@ async fn readiness(
                 )),
             };
             let (project_matches, project_evidence) = match bound_project {
-                Ok(project) => match verify_nomos_runtime(binding, catalog, &project).await {
-                    Ok(()) => {
-                        checks.push(check(
+                Ok(project) => {
+                    runtime_project = Some(project.clone());
+                    match open_nomos_binding(binding, &project) {
+                        Ok(_) => {
+                            checks.push(check(
                             "scientific.runtime",
                             ReadinessCategory::Scientific,
                             ReadinessState::Ready,
                             true,
-                            "Compiled runtime matches the binding",
+                            "Compiled runtime binding is available",
                             format!(
-                                "Adapter {} {} reproduced persisted project snapshot {}.",
+                                "Adapter {} {} opens with persisted project snapshot {}. Deep native evidence is replayed only at its owning mutation or doctor boundary.",
                                 binding.adapter.key, binding.adapter.protocol, project.id
                             ),
                             None,
                         )?);
-                        runtime_project = Some(project);
-                        (
+                            (
                             true,
-                            "The persisted scientific project remains exact and the current runtime reproduces its content."
+                            "The persisted scientific project and configured adapter identities match the active binding."
                                 .into(),
                         )
+                        }
+                        Err(error) => {
+                            checks.push(check(
+                                "scientific.runtime",
+                                ReadinessCategory::Scientific,
+                                ReadinessState::Unavailable,
+                                true,
+                                "Compiled runtime cannot be verified",
+                                plain_error(&error),
+                                Some(action(
+                                    "rebind-scientific-runtime",
+                                    "Rebind scientific runtime",
+                                )?),
+                            )?);
+                            (
+                                true,
+                                "The persisted scientific project identity matches its binding; the configured native runtime is currently unavailable."
+                                    .into(),
+                            )
+                        }
                     }
-                    Err(error) => {
-                        checks.push(check(
-                            "scientific.runtime",
-                            ReadinessCategory::Scientific,
-                            ReadinessState::Unavailable,
-                            true,
-                            "Compiled runtime cannot be verified",
-                            plain_error(&error),
-                            Some(action(
-                                "rebind-scientific-runtime",
-                                "Rebind scientific runtime",
-                            )?),
-                        )?);
-                        (false, plain_error(&error))
-                    }
-                },
+                }
                 Err(error) => {
                     checks.push(check(
                         "scientific.runtime",
@@ -896,60 +930,159 @@ async fn readiness(
         }
         _ => (None, None),
     };
+    let latest_project_run = match (store.as_ref(), runtime_project.as_ref()) {
+        (Some(store), Some(project)) => {
+            super::encoder_optimize::managed_project_recovery(store, project).await
+        }
+        _ => Ok(None),
+    };
     let mut launch_preview = None;
+    let mut prepared_optimization = None;
     match (manifest, store.as_ref(), runtime_project.as_ref()) {
         (None, _, _) => {
-            let preparation_check = if let Some(authority) = &optimization_authority {
-                check(
+            let recovered = match (
+                optimization_authority.as_ref(),
+                store.as_ref(),
+                runtime_project.as_ref(),
+            ) {
+                (Some(authority), Some(store), Some(project)) => {
+                    super::encoder_optimize::recover_managed(
+                        store,
+                        project,
+                        std::path::Path::new(&workspace.folder),
+                        authority,
+                    )
+                    .await
+                }
+                _ => Ok(None),
+            };
+            if let Err(error) = &latest_project_run {
+                checks.push(check(
                     "optimization.preview",
                     ReadinessCategory::Optimization,
-                    ReadinessState::ActionRequired,
+                    ReadinessState::Stale,
                     true,
-                    if authority.training_snapshot_id.is_some() {
-                        "Approved optimization authority is ready to resolve"
-                    } else {
-                        "Approved repair is ready to freeze"
-                    },
-                    format!(
-                        "The current reviewed repair defines {} candidate(s), {} qualified delta rows, an active successor benchmark, and finite authority through {}. Preparing it makes no provider call and does not train or evaluate a model.",
-                        authority.candidate_count, authority.delta_rows, authority.valid_until
-                    ),
-                    Some(action("prepare-optimization", "Prepare approved run")?),
-                )?
-            } else if let Some(error) = &authority_error {
-                check(
-                    "optimization.preview",
-                    ReadinessCategory::Optimization,
-                    ReadinessState::Blocked,
-                    true,
-                    "Scientific optimization authority is ambiguous or invalid",
-                    error,
+                    "Existing optimization journal cannot be recovered",
+                    plain_error(error),
                     Some(action(
                         "inspect-scientific-history",
                         "Inspect scientific history",
                     )?),
-                )?
-            } else {
-                check(
+                )?);
+                checks.push(recovery_unavailable()?);
+            } else if let Ok(Some(prepared)) = recovered.as_ref() {
+                let prepared = prepared.clone();
+                checks.push(check(
                     "optimization.preview",
                     ReadinessCategory::Optimization,
-                    ReadinessState::ActionRequired,
+                    ReadinessState::Ready,
                     true,
-                    "No current approved repair is available",
-                    "Create and approve a task-compatible repair proposal and native delta against an active, unused benchmark generation before preparing a run.",
-                    Some(action("prepare-repair", "Prepare a repair hypothesis")?),
-                )?
-            };
-            checks.push(preparation_check);
-            checks.push(check(
-                "recovery.current-run",
-                ReadinessCategory::Recovery,
-                ReadinessState::Ready,
-                false,
-                "No selected run needs recovery",
-                "Run recovery is evaluated after an exact optimization request is selected.",
-                None,
-            )?);
+                    "Prepared optimization definition resolves exactly",
+                    format!(
+                        "Training snapshot {}, benchmark generation {}, and {} candidate(s) remain bound to specification {}.",
+                        prepared.readiness.training_snapshot_id,
+                        prepared.readiness.benchmark_generation_id,
+                        prepared.readiness.candidate_count,
+                        prepared.readiness.specification_fingerprint
+                    ),
+                    None,
+                )?);
+                checks.push(recovery_check(&prepared.readiness)?);
+                launch_preview = Some(prepared.readiness.clone());
+                prepared_optimization = Some(prepared);
+            } else if let Ok(Some(preview)) = latest_project_run.as_ref()
+                && (optimization_authority.is_none()
+                    || preview.existing_run.as_ref().is_some_and(|run| {
+                        matches!(
+                            run.state,
+                            OptimizationRunState::Planned | OptimizationRunState::CampaignActive
+                        )
+                    }))
+            {
+                let preview = preview.clone();
+                checks.push(check(
+                    "optimization.preview",
+                    ReadinessCategory::Optimization,
+                    ReadinessState::Ready,
+                    true,
+                    "Existing optimization journal recovered",
+                    format!(
+                        "Run {} retains training snapshot {}, benchmark generation {}, and specification {} without relying on an expired launch approval or a local manifest token.",
+                        preview.existing_run.as_ref().map(|run| run.run_id).ok_or_else(|| anyhow::anyhow!("recovered optimization has no run"))?,
+                        preview.training_snapshot_id,
+                        preview.benchmark_generation_id,
+                        preview.specification_fingerprint
+                    ),
+                    None,
+                )?);
+                checks.push(recovery_check(&preview)?);
+                launch_preview = Some(preview);
+            } else {
+                let preparation_check = if let Err(error) = &recovered {
+                    check(
+                        "optimization.preview",
+                        ReadinessCategory::Optimization,
+                        ReadinessState::Stale,
+                        true,
+                        "Prepared optimization definition is no longer valid",
+                        plain_error(&error),
+                        Some(action(
+                            "prepare-optimization",
+                            "Repair optimization preparation",
+                        )?),
+                    )?
+                } else if let Some(authority) = &optimization_authority {
+                    check(
+                        "optimization.preview",
+                        ReadinessCategory::Optimization,
+                        ReadinessState::ActionRequired,
+                        true,
+                        if authority.training_snapshot_id.is_some() {
+                            "Approved optimization authority is ready to resolve"
+                        } else {
+                            "Approved repair is ready to freeze"
+                        },
+                        format!(
+                            "The current reviewed repair defines {} candidate(s), {} qualified delta rows, an active successor benchmark, and finite authority through {}. Preparing it makes no provider call and does not train or evaluate a model.",
+                            authority.candidate_count, authority.delta_rows, authority.valid_until
+                        ),
+                        Some(action("prepare-optimization", "Prepare approved run")?),
+                    )?
+                } else if let Some(error) = &authority_error {
+                    check(
+                        "optimization.preview",
+                        ReadinessCategory::Optimization,
+                        ReadinessState::Blocked,
+                        true,
+                        "Scientific optimization authority is ambiguous or invalid",
+                        error,
+                        Some(action(
+                            "inspect-scientific-history",
+                            "Inspect scientific history",
+                        )?),
+                    )?
+                } else {
+                    check(
+                        "optimization.preview",
+                        ReadinessCategory::Optimization,
+                        ReadinessState::ActionRequired,
+                        true,
+                        "No current approved repair is available",
+                        "Create and approve a task-compatible repair proposal and native delta against an active, unused benchmark generation before preparing a run.",
+                        Some(action("prepare-repair", "Prepare a repair hypothesis")?),
+                    )?
+                };
+                checks.push(preparation_check);
+                checks.push(check(
+                    "recovery.current-run",
+                    ReadinessCategory::Recovery,
+                    ReadinessState::Ready,
+                    false,
+                    "No selected run needs recovery",
+                    "Run recovery is evaluated after an exact optimization request is selected.",
+                    None,
+                )?);
+            }
         }
         (Some(path), Some(store), Some(project)) => {
             match super::encoder_optimize::managed_readiness(store, path).await {
@@ -1034,26 +1167,8 @@ async fn readiness(
         report,
         optimization_authority,
         launch_preview,
+        prepared_optimization,
     })
-}
-
-async fn verify_nomos_runtime(
-    binding: &ScientificBinding,
-    catalog: &project_workspace_core::ModelCatalog,
-    project: &ExternalProjectSnapshot,
-) -> anyhow::Result<()> {
-    let backend = open_nomos_binding(binding, project)?;
-    backend.verify_current_snapshot(project.clone()).await?;
-    let runtime_root = std::path::Path::new(&binding.runtime.location).canonicalize()?;
-    let runtime_baseline = inspect_model(&runtime_root.join(&project.baseline_model.key))?;
-    let active = catalog.active_model();
-    anyhow::ensure!(
-        runtime_baseline.fingerprint == active.fingerprint
-            && runtime_baseline.bytes == active.bytes
-            && runtime_baseline.format == active.format,
-        "The runtime baseline no longer matches the active managed model."
-    );
-    Ok(())
 }
 
 fn open_nomos_binding(

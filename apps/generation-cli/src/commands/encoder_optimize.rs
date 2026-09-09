@@ -122,7 +122,7 @@ struct LaunchContext {
     view: OptimizationView,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ManagedOptimizationReadiness {
     pub manifest_fingerprint: String,
@@ -137,7 +137,7 @@ pub(crate) struct ManagedOptimizationReadiness {
     pub existing_run: Option<ManagedExistingOptimization>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ManagedExistingOptimization {
     pub run_id: Uuid,
@@ -160,7 +160,7 @@ pub(crate) struct ManagedOptimizationAuthority {
     pub valid_until: chrono::DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ManagedOptimizationPreparation {
     pub manifest_path: PathBuf,
@@ -216,6 +216,66 @@ async fn managed_readiness_from_resolved(
         budget: resolved.definition.campaign_budget.clone(),
         existing_run,
     })
+}
+
+/// Reproduce a persisted run's exact launch summary without requiring its
+/// source manifest file or an unexpired pre-launch approval. Once reserved,
+/// the immutable optimization journal is the recovery authority.
+pub(crate) async fn managed_run_readiness(
+    store: &SqliteExperimentStore,
+    run_id: Uuid,
+) -> anyhow::Result<ManagedOptimizationReadiness> {
+    let context = load_launch(store, run_id).await?;
+    Ok(ManagedOptimizationReadiness {
+        manifest_fingerprint: context.definition.manifest_fingerprint.clone(),
+        specification_fingerprint: context.definition.specification_fingerprint.clone(),
+        project_id: context.definition.project.id,
+        project_fingerprint: context.definition.project.fingerprint.clone(),
+        training_snapshot_id: context.definition.training_snapshot.id,
+        benchmark_generation_id: context.definition.benchmark.generation_id,
+        candidate_count: context.definition.candidates.len(),
+        budget: context.definition.campaign_budget.clone(),
+        existing_run: Some(ManagedExistingOptimization {
+            run_id: context.run.id,
+            state: context.view.state,
+        }),
+    })
+}
+
+/// Select recoverable project state without confusing recency with activity.
+/// There may be many historical terminal runs, but more than one active run is
+/// an invariant violation that must be resolved rather than hidden by the UI.
+pub(crate) async fn managed_project_recovery(
+    store: &SqliteExperimentStore,
+    project: &encoder_experiment_core::domain::ExternalProjectSnapshot,
+) -> anyhow::Result<Option<ManagedOptimizationReadiness>> {
+    let mut active = Vec::new();
+    let mut newest_terminal = None;
+    for run_id in store.optimization_run_ids_for_project(project.id).await? {
+        let preview = managed_run_readiness(store, run_id).await?;
+        anyhow::ensure!(
+            preview.project_id == project.id && preview.project_fingerprint == project.fingerprint,
+            "optimization recovery crossed scientific project authority"
+        );
+        let state = preview
+            .existing_run
+            .as_ref()
+            .context("persisted optimization recovery has no run state")?
+            .state;
+        if matches!(
+            state,
+            OptimizationRunState::Planned | OptimizationRunState::CampaignActive
+        ) {
+            active.push(preview);
+        } else if newest_terminal.is_none() {
+            newest_terminal = Some(preview);
+        }
+    }
+    anyhow::ensure!(
+        active.len() <= 1,
+        "More than one active optimization exists for this scientific project. Inspect and resolve the run journals before continuing."
+    );
+    Ok(active.pop().or(newest_terminal))
 }
 
 /// Derive the one approved successor repair that still binds the current,
@@ -309,6 +369,9 @@ pub(crate) async fn prepare_managed(
     let mut authority = managed_authority(store, project)
         .await?
         .context("No current approved repair is available for optimization preparation")?;
+    if let Some(recovered) = recover_managed(store, project, managed_root, &authority).await? {
+        return Ok(recovered);
+    }
     let created_training_snapshot = authority.training_snapshot_id.is_none();
     let prepared = build_training_snapshot(store, backend, authority.selection_id).await?;
     let snapshot = prepared.snapshot;
@@ -319,50 +382,9 @@ pub(crate) async fn prepare_managed(
     );
     authority.training_snapshot_id = Some(snapshot.id);
 
-    let name = optimization_name(&project.name, &approved.proposal.candidates);
-    let manifest = OptimizeManifest {
-        schema_version: MANIFEST_SCHEMA_VERSION,
-        name: name.clone(),
-        adapter: OptimizeAdapter::Nomos,
-        project_source_revision: project.source_revision.clone(),
-        training_snapshot_id: snapshot.id,
-        training_snapshot_fingerprint: snapshot.fingerprint.clone(),
-        training_snapshot_specification_fingerprint: snapshot.specification_fingerprint.clone(),
-        benchmark_generation_id: approved.proposal.context.benchmark.generation_id,
-        benchmark_generation_fingerprint: approved
-            .proposal
-            .context
-            .benchmark
-            .generation_fingerprint
-            .clone(),
-        approval_mode: ApprovalMode::ExplicitSealedUse,
-        selection_policy: DevelopmentSelectionRule::MaximizeWorstSuiteThenMean,
-        final_decision_policy: FinalDecisionPolicy::StrictMetricContract,
-        existing_experiment: None,
-    };
-    validate_manifest(&manifest)?;
-    let resolved = resolve_loaded(
-        store,
-        manifest.clone(),
-        snapshot,
-        &approved.project,
-        &approved.proposal,
-    )
-    .await?;
-    let readiness = managed_readiness_from_resolved(store, &resolved).await?;
-    let manifest_fingerprint = artifact_core::fingerprint(&manifest)?;
-    let manifest_name = format!(
-        "optimization-{}.toml",
-        manifest_fingerprint
-            .strip_prefix("sha256:")
-            .context("optimization manifest fingerprint is malformed")?
-    );
-    let definitions = managed_root.join("runs").join("definitions");
-    fs::create_dir_all(&definitions).context("could not create managed run definitions")?;
-    let manifest_path = definitions.join(&manifest_name);
-    let contents = toml::to_string_pretty(&manifest)
-        .context("could not encode the managed optimization definition")?;
-    write_content_addressed(&manifest_path, contents.as_bytes())?;
+    let (name, manifest) = managed_manifest(project, &snapshot, &approved.proposal);
+    let (manifest_path, readiness) =
+        publish_managed_manifest(store, managed_root, &manifest, snapshot, &approved).await?;
     Ok(ManagedOptimizationPreparation {
         manifest_path,
         manifest_name: name,
@@ -371,6 +393,170 @@ pub(crate) async fn prepare_managed(
         created_training_snapshot,
         external_calls: approved.proposal.budget.maximum_external_calls,
     })
+}
+
+/// Recover the exact generated definition after a desktop restart without
+/// replaying native artifacts or mutating scientific state. Persisted owner
+/// objects are still fully reproduced and the on-disk definition must be the
+/// exact content-addressed encoding implied by those facts.
+pub(crate) async fn recover_managed(
+    store: &SqliteExperimentStore,
+    project: &encoder_experiment_core::domain::ExternalProjectSnapshot,
+    managed_root: &Path,
+    authority: &ManagedOptimizationAuthority,
+) -> anyhow::Result<Option<ManagedOptimizationPreparation>> {
+    let Some(snapshot_id) = authority.training_snapshot_id else {
+        return Ok(None);
+    };
+    let approved = load_approved_delta_facts(store, authority.selection_id).await?;
+    anyhow::ensure!(
+        approved.project.id == project.id && approved.project.fingerprint == project.fingerprint,
+        "The current repair belongs to another scientific project snapshot."
+    );
+    let snapshot = store
+        .get_native_repair_training_snapshot(snapshot_id)
+        .await?
+        .context("The approved repair's training snapshot no longer exists")?;
+    snapshot.validate_against(
+        &approved.project,
+        &approved.proposal,
+        &approved.candidate_set,
+        &approved.report,
+        &approved.approval,
+        approved.approval_predecessor.as_ref(),
+        &approved.selection,
+    )?;
+    let (name, manifest) = managed_manifest(project, &snapshot, &approved.proposal);
+    let (manifest_path, contents) = managed_manifest_file(managed_root, &manifest)?;
+    if !manifest_path.exists() {
+        return Ok(None);
+    }
+    verify_managed_definitions_directory(managed_root, false)?;
+    anyhow::ensure!(
+        fs::read(&manifest_path)? == contents,
+        "The prepared optimization definition no longer matches its persisted scientific authority."
+    );
+    let resolved = resolve_loaded(
+        store,
+        manifest,
+        snapshot,
+        &approved.project,
+        &approved.proposal,
+    )
+    .await?;
+    let readiness = managed_readiness_from_resolved(store, &resolved).await?;
+    Ok(Some(ManagedOptimizationPreparation {
+        manifest_path,
+        manifest_name: name,
+        authority: authority.clone(),
+        readiness,
+        created_training_snapshot: false,
+        external_calls: approved.proposal.budget.maximum_external_calls,
+    }))
+}
+
+fn managed_manifest(
+    project: &encoder_experiment_core::domain::ExternalProjectSnapshot,
+    snapshot: &encoder_repair_core::training::NativeRepairTrainingSnapshot,
+    proposal: &RepairProposal,
+) -> (String, OptimizeManifest) {
+    let name = optimization_name(&project.name, &proposal.candidates);
+    let manifest = OptimizeManifest {
+        schema_version: MANIFEST_SCHEMA_VERSION,
+        name: name.clone(),
+        adapter: OptimizeAdapter::Nomos,
+        project_source_revision: project.source_revision.clone(),
+        training_snapshot_id: snapshot.id,
+        training_snapshot_fingerprint: snapshot.fingerprint.clone(),
+        training_snapshot_specification_fingerprint: snapshot.specification_fingerprint.clone(),
+        benchmark_generation_id: proposal.context.benchmark.generation_id,
+        benchmark_generation_fingerprint: proposal.context.benchmark.generation_fingerprint.clone(),
+        approval_mode: ApprovalMode::ExplicitSealedUse,
+        selection_policy: DevelopmentSelectionRule::MaximizeWorstSuiteThenMean,
+        final_decision_policy: FinalDecisionPolicy::StrictMetricContract,
+        existing_experiment: None,
+    };
+    (name, manifest)
+}
+
+async fn publish_managed_manifest(
+    store: &SqliteExperimentStore,
+    managed_root: &Path,
+    manifest: &OptimizeManifest,
+    snapshot: encoder_repair_core::training::NativeRepairTrainingSnapshot,
+    approved: &crate::commands::production_repair::ApprovedDeltaContext,
+) -> anyhow::Result<(PathBuf, ManagedOptimizationReadiness)> {
+    validate_manifest(manifest)?;
+    let resolved = resolve_loaded(
+        store,
+        manifest.to_owned(),
+        snapshot,
+        &approved.project,
+        &approved.proposal,
+    )
+    .await?;
+    let readiness = managed_readiness_from_resolved(store, &resolved).await?;
+    let (manifest_path, contents) = managed_manifest_file(managed_root, manifest)?;
+    let definitions = manifest_path
+        .parent()
+        .context("managed optimization definition has no parent")?;
+    verify_managed_definitions_directory(managed_root, true)?;
+    anyhow::ensure!(
+        definitions.is_dir(),
+        "managed run definitions are unavailable"
+    );
+    write_content_addressed(&manifest_path, &contents)?;
+    Ok((manifest_path, readiness))
+}
+
+fn managed_manifest_file(
+    managed_root: &Path,
+    manifest: &OptimizeManifest,
+) -> anyhow::Result<(PathBuf, Vec<u8>)> {
+    validate_manifest(manifest)?;
+    let manifest_fingerprint = artifact_core::fingerprint(manifest)?;
+    let manifest_name = format!(
+        "optimization-{}.toml",
+        manifest_fingerprint
+            .strip_prefix("sha256:")
+            .context("optimization manifest fingerprint is malformed")?
+    );
+    let contents = toml::to_string_pretty(manifest)
+        .context("could not encode the managed optimization definition")?
+        .into_bytes();
+    Ok((
+        managed_root
+            .join("runs")
+            .join("definitions")
+            .join(manifest_name),
+        contents,
+    ))
+}
+
+fn verify_managed_definitions_directory(managed_root: &Path, create: bool) -> anyhow::Result<()> {
+    let canonical_root = managed_root
+        .canonicalize()
+        .context("could not resolve managed project root")?;
+    let runs = managed_root.join("runs");
+    let definitions = runs.join("definitions");
+    for directory in [&runs, &definitions] {
+        if !directory.exists() {
+            if !create {
+                return Ok(());
+            }
+            fs::create_dir(directory).context("could not create managed run definitions")?;
+        }
+        let metadata = fs::symlink_metadata(directory)?;
+        anyhow::ensure!(
+            metadata.is_dir() && !metadata.file_type().is_symlink(),
+            "managed run definitions must be real project directories"
+        );
+        anyhow::ensure!(
+            directory.canonicalize()?.starts_with(&canonical_root),
+            "managed run definitions escaped the project workspace"
+        );
+    }
+    Ok(())
 }
 
 fn optimization_name(
@@ -1659,5 +1845,12 @@ surprise = true
         assert_eq!(std::fs::read(&path).unwrap(), b"first");
         assert!(write_content_addressed(&path, b"second").is_err());
         assert_eq!(std::fs::read(path).unwrap(), b"first");
+    }
+
+    #[test]
+    fn managed_definition_directory_rejects_non_directory_ancestor() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("runs"), b"not a directory").unwrap();
+        assert!(verify_managed_definitions_directory(project.path(), true).is_err());
     }
 }

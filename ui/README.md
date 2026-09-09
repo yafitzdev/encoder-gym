@@ -194,6 +194,9 @@ replays the approved delta, creates or adopts the immutable logical training
 snapshot, and publishes a content-addressed definition inside the managed
 workspace. The renderer receives only an opaque token and resolved preview. No
 model work, provider call, or sealed evaluation happens during preparation.
+After restart, the main process rediscovers only the exact definition implied
+by current persisted authority, reissues a fresh opaque token, and keeps the
+path out of renderer state. Restoring the screen does not repeat native replay.
 
 ## Validation
 

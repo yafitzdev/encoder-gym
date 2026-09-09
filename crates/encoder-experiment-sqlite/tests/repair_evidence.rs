@@ -743,6 +743,14 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
         .unwrap();
     assert_eq!(reloaded_definition, definition);
     assert_eq!(reloaded_run, optimization_run);
+    assert_eq!(
+        fixture
+            .store
+            .optimization_run_ids_for_project(fixture.project.id)
+            .await
+            .unwrap(),
+        vec![optimization_run.id]
+    );
     let events = fixture
         .store
         .list_optimization_events(optimization_run.id)

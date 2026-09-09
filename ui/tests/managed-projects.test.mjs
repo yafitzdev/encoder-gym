@@ -87,12 +87,13 @@ test("managed control accepts only native-picked manifests and fixed project-sco
   const calls = [];
   const readiness = { report: { projectId: id, computedAt: new Date().toISOString(), overall: "ready", runnable: true, checks: [] }, launchPreview: { projectId: id } };
   const generatedManifest = join(folder, "runs", "definitions", "optimization-fixed.toml");
-  let escapePrepared = false;
+  let escapePrepared = false, restorePrepared = false;
+  const preparedOutput = () => ({ manifestPath: escapePrepared ? join(root, "outside.toml") : generatedManifest, manifestName: "Approved repair", readiness: readiness.launchPreview, authority: { proposalId: randomUUID() }, createdTrainingSnapshot: false, externalCalls: 0 });
   const executor = async (_executable, args) => {
     calls.push(args);
     if (args[3] === "open") return JSON.stringify(workspace);
-    if (args[3] === "readiness") return JSON.stringify(readiness);
-    if (args[3] === "prepare-optimization") return JSON.stringify({ manifestPath: escapePrepared ? join(root, "outside.toml") : generatedManifest, manifestName: "Approved repair", readiness: readiness.launchPreview, authority: { proposalId: randomUUID() }, createdTrainingSnapshot: true, externalCalls: 0 });
+    if (args[3] === "readiness") return JSON.stringify(restorePrepared ? { ...readiness, preparedOptimization: preparedOutput() } : readiness);
+    if (args[3] === "prepare-optimization") return JSON.stringify({ ...preparedOutput(), createdTrainingSnapshot: true });
     if (args[3] === "optimize") return JSON.stringify({ run_id: randomUUID(), state: "planned" });
     throw new Error("unexpected command");
   };
@@ -106,6 +107,13 @@ test("managed control accepts only native-picked manifests and fixed project-sco
   assert.equal("path" in prepared, false);
   assert.deepEqual(calls.find(args => args[3] === "prepare-optimization"), ["--output", "json", "workspace", "prepare-optimization", folder]);
   await backend.optimize(id, { action: "start", manifestToken: prepared.token });
+  restorePrepared = true;
+  const restarted = new ManagedBackend("owned-synth", registry, executor);
+  const restored = await restarted.readiness(id);
+  assert.equal(restored.preparedOptimization.name, "Approved repair");
+  assert.equal("path" in restored.preparedOptimization, false);
+  await restarted.optimize(id, { action: "start", manifestToken: restored.preparedOptimization.token });
+  restorePrepared = false;
   escapePrepared = true;
   await assert.rejects(() => backend.prepareOptimization(id), /escaped its project workspace/);
   escapePrepared = false;
@@ -117,8 +125,9 @@ test("managed control accepts only native-picked manifests and fixed project-sco
   await backend.optimize(id, { action: "status", runId: id });
   const optimizationCalls = calls.filter(args => args[3] === "optimize");
   assert.deepEqual(optimizationCalls[0], ["--output", "json", "workspace", "optimize", folder, "start", "--manifest", generatedManifest]);
-  assert.deepEqual(optimizationCalls[1], ["--output", "json", "workspace", "optimize", folder, "start", "--manifest", manifest]);
-  assert.deepEqual(optimizationCalls[2], ["--output", "json", "workspace", "optimize", folder, "status", id]);
+  assert.deepEqual(optimizationCalls[1], ["--output", "json", "workspace", "optimize", folder, "start", "--manifest", generatedManifest]);
+  assert.deepEqual(optimizationCalls[2], ["--output", "json", "workspace", "optimize", folder, "start", "--manifest", manifest]);
+  assert.deepEqual(optimizationCalls[3], ["--output", "json", "workspace", "optimize", folder, "status", id]);
   await assert.rejects(() => backend.optimize(id, { action: "shell", runId: id }), /supported optimization action/);
   await assert.rejects(() => backend.optimize(id, { action: "status", runId: "../other" }), /Invalid run identity/);
 });
