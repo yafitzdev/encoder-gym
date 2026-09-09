@@ -55,6 +55,10 @@ Do not confuse custody with readiness:
   local mutation before the exact run can be reserved.
 - The desktop can launch, recover, finish, and promote that real bounded
   workflow after the operator explicitly prepares its immutable run definition.
+  The final reservation review now keeps the human objective visible and names
+  the candidate recipe, development suites, sealed suite, execution ceilings,
+  external-call allowance, and exact persistence boundary. Sealed use requires
+  a separate single-use confirmation after development eligibility.
   After promotion, explicit Nomos rebind now resolves only the exact
   sealed-accepted source checkpoint, keeps runtime code immutable, creates a
   successor scientific project snapshot for the new baseline, and extends the

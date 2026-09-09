@@ -279,7 +279,12 @@ export function mount(): void {
       else if (view.optimization.manifest) void optimize({ action: "start", manifestToken: view.optimization.manifest.token });
     },
     resume: () => { const id = view.optimization.run?.run_id; if (id) void optimize({ action: "resume", runId: id }); },
-    authorizeSealed: () => { const id = view.optimization.run?.run_id; if (id) void optimize({ action: "authorize-sealed", runId: id }); },
+    authorizeSealed: () => {
+      const id = view.optimization.run?.run_id;
+      if (!id) return;
+      if (!window.confirm("Authorize exactly one sealed evaluation for this selected candidate? Its aggregate result will decide final acceptance. Sealed rows remain hidden and this authorization cannot be reused.")) return;
+      void optimize({ action: "authorize-sealed", runId: id });
+    },
     promote: () => { void promoteAccepted(); },
     cancel: () => {
       const id = view.optimization.run?.run_id;

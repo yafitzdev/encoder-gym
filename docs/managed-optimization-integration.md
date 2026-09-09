@@ -368,6 +368,17 @@ starting work immediately.
 No default can silently select sealed evidence, expand a budget, replace a
 baseline, or reuse stale authority.
 
+The final reservation screen is a review surface, not an ID dump. Its owner
+projection includes the reviewed run name, hypothesis (when preparation
+authority is available), every bounded candidate recipe, named development
+suites, the separately named sealed suite, training and evaluation ceilings,
+and the external-call allowance. The desktop states separately that reserving
+persists only the immutable definition and run identity; it cannot train,
+evaluate, or contact a provider. When development later makes one candidate
+eligible, the sealed-use action names the one permitted evaluation and requires
+a second explicit confirmation that the authorization is single-use before the
+main process records it.
+
 Promotion deliberately makes the prior scientific binding stale because its
 project snapshot names the old baseline. Rebinding Nomos does not mutate the
 clean runtime checkout or discard the existing scientific store. The adapter
@@ -555,12 +566,16 @@ existing finite optimizer fixture proves the sealed accepted decision chain.
 The desktop contract tests prove the renderer can send only validated project,
 run, and baseline-revision identities, that the main process constructs the
 fixed command, and that native execution receives only project-scoped secrets
-under the three fixed environment names. The full Rust all-feature suite, 45 UI
+under the three fixed environment names. The full Rust all-feature suite, 46 UI
 contract tests, and the Electron acceptance flow at desktop and narrow widths
 passed after these stages. The managed Electron flow now exercises preparation,
 reservation, native-stage resume, sealed authorization, accepted-result copy,
 and explicit promotion through the real preload/main-process IPC. Deterministic
 Rust fixtures remain authoritative for the underlying lifecycle transitions.
+Its prepared-run screenshot also verifies the decision hierarchy at desktop
+size: the reviewed objective, four hard limits, development/sealed boundary,
+external-work statement, and reservation action fit in the first viewport;
+candidate parameters and immutable IDs remain inspectable disclosures.
 
 ## Delivery order
 

@@ -37,6 +37,15 @@ export interface ManagedLaunchPreview {
   projectFingerprint: string;
   trainingSnapshotId: string;
   benchmarkGenerationId: string;
+  runName: string;
+  developmentSuites: string[];
+  sealedSuite: string;
+  candidateRecipes: Array<{
+    sequence: number;
+    maximumTrainingSeconds: number;
+    parameters: Record<string, string | number | boolean>;
+  }>;
+  maximumEvaluationSeconds: number;
   candidateCount: number;
   budget: OptimizationBudget;
   existingRun?: { runId: string; state: OptimizationRunState };
@@ -126,7 +135,7 @@ export interface NomosBindingPreview {
   projectSnapshot: { id: string; fingerprint: string };
   python: { executable: string; version: string; compatibleVersion: boolean; capabilities: PythonCapability[]; ready: boolean };
   store: {
-    databasePath: string; action: "initialize_new_store" | "verify_existing_store" | "import_verified_history";
+    databasePath: string; action: "initialize_new_store" | "verify_existing_store" | "import_verified_history" | "extend_existing_store_for_promoted_baseline";
     importedHistory?: { sourceName: string; projectSnapshot: { id: string; fingerprint: string }; inventory: ScientificStoreInventory; verification: string };
   };
   previousBindingId?: string; ready: boolean;

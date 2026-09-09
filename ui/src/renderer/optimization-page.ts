@@ -46,6 +46,40 @@ function budgetFacts(preview: ManagedLaunchPreview): [string, string][] {
     ["Backend operations", String(budget.maximum_backend_operations)],
   ];
 }
+function launchMetric(label: string, value: string, detail: string): HTMLElement {
+  return h("div", { class: "launch-metric" }, h("dt", {}, label), h("dd", {}, value), h("span", {}, detail));
+}
+function durationLabel(seconds: number): string {
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`;
+  if (seconds % 60 === 0) return `${seconds / 60}m`;
+  return `${seconds}s`;
+}
+function parameterLabel(value: string | number | boolean): string {
+  return typeof value === "string" ? value : String(value);
+}
+function fieldLabel(value: string): string {
+  return value.replaceAll("_", " ").replace(/^./, first => first.toUpperCase());
+}
+function candidateRecipe(preview: ManagedLaunchPreview): HTMLElement {
+  return details(`Inspect ${preview.candidateRecipes.length === 1 ? "the candidate recipe" : `${preview.candidateRecipes.length} candidate recipes`}`,
+    h("div", { class: "readiness-details" }, ...preview.candidateRecipes.map(recipe => h("section", { class: "candidate-recipe" },
+      h("strong", {}, `Candidate ${recipe.sequence}`),
+      facts([["Training ceiling", `${recipe.maximumTrainingSeconds.toLocaleString()} seconds`], ...Object.entries(recipe.parameters).map(([key, value]) => [fieldLabel(key), parameterLabel(value)] as [string, string])])))));
+}
+function externalWork(workspace: ManagedWorkspace, state: OptimizationPageState, readiness: ManagedReadiness | undefined): string {
+  const authorizedCalls = state.prepared?.externalCalls ?? readiness?.optimizationAuthority?.budget.maximum_external_calls;
+  if (authorizedCalls === 0) return "No external provider calls are authorized for this run. Reserving it will not read a provider credential.";
+  if (authorizedCalls === undefined) return "No provider operation is part of reservation. Any external prerequisite must already be approved and frozen by its owning workflow.";
+  const configured = workspace.providerCatalog?.providers.map(provider => `${fieldLabel(provider.role)}: ${provider.model}`).join(" · ");
+  return `The frozen repair authority records a ceiling of ${authorizedCalls} external ${authorizedCalls === 1 ? "call" : "calls"}; reservation does not execute them.${configured ? ` Configured providers: ${configured}.` : " Required provider configuration must be completed before any external work."}`;
+}
+function reservationCopy(state: OptimizationPageState, existing: boolean): string {
+  if (existing) return "This definition already owns a run; no duplicate will be created.";
+  const externalCalls = state.prepared?.externalCalls;
+  return externalCalls === undefined
+    ? "This persists the immutable definition and one run identity. Reservation does not train, evaluate, or contact a provider."
+    : `This persists the immutable definition and one run identity. The frozen authority records ${externalCalls} external ${externalCalls === 1 ? "call" : "calls"}; reservation does not execute them.`;
+}
 function actionFor(check: ReadinessCheck, actions: OptimizationPageActions): HTMLElement | null {
   const key = check.nextAction?.key;
   if (!key) return null;
@@ -89,7 +123,7 @@ function runPanel(run: ManagedRunStatus, state: OptimizationPageState, actions: 
   const terminal = ["completed", "cancelled", "failed"].includes(run.state);
   const busy = Boolean(state.executing);
   const accepted = run.state === "completed" && run.decision === "promote_candidate";
-  const nextLabel = run.next_command === "authorize-sealed" ? "Review sealed authorization" : run.stage.label;
+  const nextLabel = run.next_command === "authorize-sealed" ? "Authorize one sealed evaluation" : run.stage.label;
   const next = run.next_command === "resume" ? button(busy ? "Stage running…" : nextLabel, actions.resume, "primary") : run.next_command === "authorize-sealed" ? button(nextLabel, actions.authorizeSealed, "primary") : null;
   if (next instanceof HTMLButtonElement) next.disabled = busy;
   const promote = accepted && !activeAcceptedModel ? button(busy ? "Promoting…" : "Promote accepted candidate", actions.promote, "primary", "arrow") : null;
@@ -138,6 +172,7 @@ export function renderOptimization(workspace: ManagedWorkspace, state: Optimizat
   const active = workspace.modelCatalog?.artifacts.find(model => model.id === workspace.modelCatalog?.baselineRevisions.find(revision => revision.id === workspace.modelCatalog?.activeBaselineRevisionId)?.modelArtifactId);
   const runBaseline = workspace.modelCatalog?.artifacts.find(model => model.id === workspace.modelCatalog?.baselineRevisions.find(revision => revision.id === workspace.scientificBinding?.baselineRevisionId)?.modelArtifactId);
   const activeAcceptedModel = Boolean(state.run && active?.producingRun?.id === state.run.artifacts.experiment_run_id);
+  const authority = state.prepared?.authority ?? readiness?.optimizationAuthority;
   const summary = launchSummary(state, readiness, preview, unfinished, activeAcceptedModel);
   return h("div", { class: "page-content optimization-page" },
     pageHeader(state.run ? "Optimization run" : "Start optimization", state.run ? "Follow one finite run from reservation through evidence-backed baseline decision." : "Turn this project's reviewed scientific inputs into one finite, recoverable run.", button("Refresh checks", actions.refresh, "ghost", "refresh")),
@@ -155,9 +190,20 @@ export function renderOptimization(workspace: ManagedWorkspace, state: Optimizat
       button(state.loading ? "Preparing…" : "Prepare approved run", actions.prepare, "primary", "arrow")) : null,
     readiness && !preview ? readinessList(readiness, actions, readiness.optimizationAuthority ? new Set(["optimization.preview"]) : new Set()) : null,
     preview ? h("section", { class: "launch-definition" }, sectionHeader("Exact run definition", tag(state.prepared?.name ?? state.manifest?.name ?? "Reviewed selection", "accent")),
-      facts([["Baseline at reservation", runBaseline?.name ?? active?.name ?? workspace.manifest.name + " baseline"], ["Training snapshot", preview.trainingSnapshotId], ["Benchmark generation", preview.benchmarkGenerationId], ...budgetFacts(preview)]),
-      h("p", { class: "section-note" }, "Sealed evidence remains unavailable to generation, training, development analysis, and the advisor. Its single use requires a later explicit authorization."),
+      h("div", { class: "launch-objective" }, h("div", { class: "eyebrow" }, "Reviewed objective"), h("h3", {}, preview.runName),
+        authority?.hypotheses.length ? h("p", {}, authority.hypotheses.join(" ")) : h("p", {}, "The immutable definition references its reviewed proposal; no editable hypothesis is accepted at reservation.")),
+      h("dl", { class: "launch-metrics", "aria-label": "Hard run limits" },
+        launchMetric("Candidates", `${preview.candidateCount}`, `${preview.candidateRecipes.length} frozen ${preview.candidateRecipes.length === 1 ? "recipe" : "recipes"}`),
+        launchMetric("Iterations", `${preview.budget.maximum_iterations}`, "finite campaign"),
+        launchMetric("Training", durationLabel(preview.budget.maximum_training_seconds), `${preview.budget.maximum_training_seconds.toLocaleString()} seconds ceiling`),
+        launchMetric("Development", `${preview.budget.maximum_development_evaluations}`, "evaluations maximum")),
+      h("div", { class: "launch-boundaries" },
+        h("section", {}, h("div", { class: "eyebrow" }, "Development evidence"), h("strong", {}, `${preview.developmentSuites.length} ${preview.developmentSuites.length === 1 ? "suite" : "suites"}`), h("p", {}, preview.developmentSuites.join(" · "))),
+        h("section", {}, h("div", { class: "eyebrow" }, "Final acceptance"), h("strong", {}, preview.sealedSuite), h("p", {}, "One separately confirmed sealed use after development eligibility."))),
+      h("div", { class: "launch-disclosures" }, candidateRecipe(preview),
+        details("Inspect immutable identities and complete limits", facts([["Baseline", runBaseline?.name ?? active?.name ?? workspace.manifest.name + " baseline"], ["Training snapshot", preview.trainingSnapshotId], ["Benchmark generation", preview.benchmarkGenerationId], ["Evaluation time ceiling", `${preview.maximumEvaluationSeconds.toLocaleString()} seconds`], ...budgetFacts(preview)]))),
+      h("div", { class: "external-work" }, h("div", { class: "eyebrow" }, "External work"), h("p", {}, externalWork(workspace, state, readiness))),
       state.prepared ? h("p", { class: "section-note" }, state.prepared.createdTrainingSnapshot ? "The approved logical training snapshot was created during preparation." : "The existing approved logical training snapshot was reused exactly.") : null,
-      state.run ? runPanel(state.run, state, actions, activeAcceptedModel) : h("div", { class: "launch-actions" }, button(preview.existingRun ? "Open existing run" : "Reserve optimization run", actions.start, "primary", "runs"), h("p", {}, preview.existingRun ? "This definition already owns a run; no duplicate will be created." : `This persists the immutable definition and run identity. Preparation authorized ${state.prepared?.externalCalls ?? 0} external calls; reserving does not execute them.`))) : null,
+      state.run ? runPanel(state.run, state, actions, activeAcceptedModel) : h("div", { class: "launch-actions" }, button(preview.existingRun ? "Open existing run" : "Reserve optimization run", actions.start, "primary", "runs"), h("p", {}, reservationCopy(state, Boolean(preview.existingRun))))) : null,
   );
 }

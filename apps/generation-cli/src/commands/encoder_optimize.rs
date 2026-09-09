@@ -1,6 +1,7 @@
 mod report;
 
 use std::{
+    collections::BTreeMap,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -22,7 +23,8 @@ use encoder_campaign_core::{
 };
 use encoder_experiment_core::{
     domain::{
-        ExternalProjectSnapshot, ModelArtifactIdentity, OptimizationBudget, TrainingCandidate,
+        ExternalProjectSnapshot, ModelArtifactIdentity, OptimizationBudget, ParameterValue,
+        TrainingCandidate,
     },
     journal::{CandidateExecutionState, ExperimentEventKind, ExperimentRunState, FinalDecision},
     metrics::CandidateVerdict,
@@ -35,6 +37,15 @@ use encoder_experiment_sqlite::SqliteExperimentStore;
 use encoder_repair_core::{
     ports::NativeRepairTrainingStore,
     proposal::{RepairBudget, RepairProposal},
+    training::{
+        REPAIR_BASE_ROWS_PARAMETER, REPAIR_COMBINED_MEMBERSHIP_PARAMETER,
+        REPAIR_DELTA_BYTES_PARAMETER, REPAIR_DELTA_FINGERPRINT_PARAMETER,
+        REPAIR_DELTA_KEY_PARAMETER, REPAIR_DELTA_ROWS_PARAMETER,
+        REPAIR_INPUTS_FINGERPRINT_PARAMETER, REPAIR_SELECTION_FINGERPRINT_PARAMETER,
+        REPAIR_SELECTION_ID_PARAMETER, REPAIR_SNAPSHOT_FINGERPRINT_PARAMETER,
+        REPAIR_SNAPSHOT_ID_PARAMETER, REPAIR_SNAPSHOT_SPECIFICATION_PARAMETER,
+        REPAIR_TOTAL_ROWS_PARAMETER,
+    },
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -302,10 +313,23 @@ pub(crate) struct ManagedOptimizationReadiness {
     pub project_fingerprint: String,
     pub training_snapshot_id: Uuid,
     pub benchmark_generation_id: Uuid,
+    pub run_name: String,
+    pub development_suites: Vec<String>,
+    pub sealed_suite: String,
+    pub candidate_recipes: Vec<ManagedCandidateRecipe>,
+    pub maximum_evaluation_seconds: u64,
     pub candidate_count: usize,
     pub budget: CampaignBudget,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub existing_run: Option<ManagedExistingOptimization>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ManagedCandidateRecipe {
+    pub sequence: u32,
+    pub maximum_training_seconds: u64,
+    pub parameters: BTreeMap<String, ParameterValue>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -376,17 +400,10 @@ async fn managed_readiness_from_resolved(
         }
         None => None,
     };
-    Ok(ManagedOptimizationReadiness {
-        manifest_fingerprint: resolved.manifest_fingerprint.clone(),
-        specification_fingerprint: resolved.definition.specification_fingerprint.clone(),
-        project_id: resolved.definition.project.id,
-        project_fingerprint: resolved.definition.project.fingerprint.clone(),
-        training_snapshot_id: resolved.definition.training_snapshot.id,
-        benchmark_generation_id: resolved.definition.benchmark.generation_id,
-        candidate_count: resolved.definition.candidates.len(),
-        budget: resolved.definition.campaign_budget.clone(),
+    Ok(managed_readiness_for_definition(
+        &resolved.definition,
         existing_run,
-    })
+    ))
 }
 
 /// Reproduce a persisted run's exact launch summary without requiring its
@@ -397,20 +414,68 @@ pub(crate) async fn managed_run_readiness(
     run_id: Uuid,
 ) -> anyhow::Result<ManagedOptimizationReadiness> {
     let context = load_launch(store, run_id).await?;
-    Ok(ManagedOptimizationReadiness {
-        manifest_fingerprint: context.definition.manifest_fingerprint.clone(),
-        specification_fingerprint: context.definition.specification_fingerprint.clone(),
-        project_id: context.definition.project.id,
-        project_fingerprint: context.definition.project.fingerprint.clone(),
-        training_snapshot_id: context.definition.training_snapshot.id,
-        benchmark_generation_id: context.definition.benchmark.generation_id,
-        candidate_count: context.definition.candidates.len(),
-        budget: context.definition.campaign_budget.clone(),
-        existing_run: Some(ManagedExistingOptimization {
+    Ok(managed_readiness_for_definition(
+        &context.definition,
+        Some(ManagedExistingOptimization {
             run_id: context.run.id,
             state: context.view.state,
         }),
-    })
+    ))
+}
+
+fn managed_readiness_for_definition(
+    definition: &ProductionOptimizationDefinition,
+    existing_run: Option<ManagedExistingOptimization>,
+) -> ManagedOptimizationReadiness {
+    ManagedOptimizationReadiness {
+        manifest_fingerprint: definition.manifest_fingerprint.clone(),
+        specification_fingerprint: definition.specification_fingerprint.clone(),
+        project_id: definition.project.id,
+        project_fingerprint: definition.project.fingerprint.clone(),
+        training_snapshot_id: definition.training_snapshot.id,
+        benchmark_generation_id: definition.benchmark.generation_id,
+        run_name: definition.name.clone(),
+        development_suites: definition.development_suite_keys.clone(),
+        sealed_suite: definition.sealed_suite_key.clone(),
+        candidate_recipes: definition
+            .candidates
+            .iter()
+            .map(|candidate| ManagedCandidateRecipe {
+                sequence: candidate.sequence,
+                maximum_training_seconds: candidate.maximum_training_seconds,
+                parameters: visible_candidate_parameters(&candidate.parameters),
+            })
+            .collect(),
+        maximum_evaluation_seconds: definition.maximum_evaluation_seconds,
+        candidate_count: definition.candidates.len(),
+        budget: definition.campaign_budget.clone(),
+        existing_run,
+    }
+}
+
+fn visible_candidate_parameters(
+    parameters: &BTreeMap<String, ParameterValue>,
+) -> BTreeMap<String, ParameterValue> {
+    const INTERNAL_BINDINGS: [&str; 13] = [
+        REPAIR_SNAPSHOT_ID_PARAMETER,
+        REPAIR_SNAPSHOT_FINGERPRINT_PARAMETER,
+        REPAIR_SNAPSHOT_SPECIFICATION_PARAMETER,
+        REPAIR_COMBINED_MEMBERSHIP_PARAMETER,
+        REPAIR_INPUTS_FINGERPRINT_PARAMETER,
+        REPAIR_SELECTION_ID_PARAMETER,
+        REPAIR_SELECTION_FINGERPRINT_PARAMETER,
+        REPAIR_DELTA_KEY_PARAMETER,
+        REPAIR_DELTA_BYTES_PARAMETER,
+        REPAIR_DELTA_FINGERPRINT_PARAMETER,
+        REPAIR_BASE_ROWS_PARAMETER,
+        REPAIR_DELTA_ROWS_PARAMETER,
+        REPAIR_TOTAL_ROWS_PARAMETER,
+    ];
+    parameters
+        .iter()
+        .filter(|(key, _)| !INTERNAL_BINDINGS.contains(&key.as_str()))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
 }
 
 /// Select recoverable project state without confusing recency with activity.
@@ -2426,6 +2491,27 @@ surprise = true
         assert_eq!(first, deterministic_uuid("sha256:test", "candidate", 1));
         assert_ne!(first, deterministic_uuid("sha256:test", "candidate", 2));
         assert!(!first.is_nil());
+    }
+
+    #[test]
+    fn launch_recipe_omits_internal_provenance_bindings() {
+        let parameters = BTreeMap::from([
+            ("learning_rate".into(), ParameterValue::Number(0.000_02)),
+            (
+                REPAIR_SNAPSHOT_ID_PARAMETER.into(),
+                ParameterValue::Text(Uuid::new_v4().to_string()),
+            ),
+            (
+                REPAIR_DELTA_FINGERPRINT_PARAMETER.into(),
+                ParameterValue::Text(format!("sha256:{}", "a".repeat(64))),
+            ),
+        ]);
+        let visible = visible_candidate_parameters(&parameters);
+        assert_eq!(visible.len(), 1);
+        assert_eq!(
+            visible.get("learning_rate"),
+            Some(&ParameterValue::Number(0.000_02))
+        );
     }
 
     #[test]
