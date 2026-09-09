@@ -23,6 +23,7 @@ export interface EncoderGymBridge {
   chooseNomosPython(id: string): Promise<NativePathChoice | null>;
   chooseNomosHistory(id: string): Promise<NativePathChoice | null>;
   previewNomosBinding(id: string, runtimeToken: string, pythonToken: string, historyToken?: string): Promise<NomosBindingPreview>;
+  prepareNomosPython(id: string, previewToken: string): Promise<void>;
   bindNomos(id: string, previewToken: string): Promise<OpenedProject>;
   getProjects(): Promise<ProjectCollection>;
   addProjectFolder(): Promise<ProjectCollection | null>;
@@ -56,6 +57,7 @@ const bridge: EncoderGymBridge = {
   chooseNomosPython: id => ipcRenderer.invoke("encoder-gym:choose-nomos-python", id),
   chooseNomosHistory: id => ipcRenderer.invoke("encoder-gym:choose-nomos-history", id),
   previewNomosBinding: (id, runtimeToken, pythonToken, historyToken) => ipcRenderer.invoke("encoder-gym:preview-nomos-binding", id, runtimeToken, pythonToken, historyToken),
+  prepareNomosPython: (id, previewToken) => ipcRenderer.invoke("encoder-gym:prepare-nomos-python", id, previewToken),
   bindNomos: (id, previewToken) => ipcRenderer.invoke("encoder-gym:bind-nomos", id, previewToken),
   getProjects: () => ipcRenderer.invoke("encoder-gym:get-projects"),
   addProjectFolder: () => ipcRenderer.invoke("encoder-gym:add-project-folder"),

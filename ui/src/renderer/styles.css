@@ -507,6 +507,11 @@ dialog::backdrop { background: #0008; }
 .history-preview > strong { font-size: 12px; }
 .history-preview > p { color: var(--muted); font-size: 11px; line-height: 1.55; margin-top: 5px; }
 .history-preview > .disclosure { margin: 8px 0 0; padding-bottom: 0; }
+.runtime-repair { margin-top: 15px; }
+.installation-confirm { padding: 12px 13px; border: 1px solid var(--warning); border-radius: 5px; background: color-mix(in srgb, var(--warning) 5%, transparent); }
+.installation-confirm > strong { font-size: 12px; }
+.installation-confirm > p { color: var(--muted); font-size: 11px; line-height: 1.55; margin-top: 5px; }
+.installation-confirm > .inline-group { justify-content: end; margin-top: 11px; }
 .capability-list { margin-top: 15px; border-top: 1px solid var(--line); }
 .capability-row { display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .capability-row strong { display: block; font-size: 12px; }

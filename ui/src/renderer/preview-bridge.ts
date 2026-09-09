@@ -11,7 +11,7 @@ export function previewBridge(): EncoderGymBridge {
     chooseDataset: unavailable, importDataset: unavailable, verifyManagedProject: unavailable,
     upgradeManagedProject: unavailable, managedReadiness: unavailable, chooseOptimizationManifest: unavailable, managedOptimize: unavailable,
     managedProviders: unavailable, configureManagedProviders: unavailable, setProviderCredential: unavailable, removeProviderCredential: unavailable,
-    chooseNomosRuntime: unavailable, chooseNomosPython: unavailable, chooseNomosHistory: unavailable, previewNomosBinding: unavailable, bindNomos: unavailable,
+    chooseNomosRuntime: unavailable, chooseNomosPython: unavailable, chooseNomosHistory: unavailable, previewNomosBinding: unavailable, prepareNomosPython: unavailable, bindNomos: unavailable,
     getProjects: async () => structuredClone(collection),
     addProjectFolder: unavailable, relocateProject: unavailable, renameProject: unavailable,
     openExample: async () => {

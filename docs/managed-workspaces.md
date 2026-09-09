@@ -105,6 +105,23 @@ isolated runtime, proves that its baseline matches the active model, and runs a
 diagnostic modules used by the compiled Nomos adapter. It writes nothing and
 makes no network or provider call.
 
+If the selected interpreter is compatible but incomplete, the desktop can
+explicitly install only the compiled adapter's fixed missing package mapping.
+The equivalent CLI boundary requires an unmistakable authorization:
+
+```powershell
+synth workspace prepare-nomos-python C:\EncoderGym\Projects\Nomos --runtime C:\isolated\nomos-runtime --python C:\path\to\python.exe --allow-network-install
+```
+
+The command re-verifies the workspace, runtime, active baseline, Python version,
+and missing modules before invoking that interpreter's pip with no input,
+version-check disabled, and binary distributions only. The renderer supplies no
+package name, index, executable path, environment map, or shell text. Pip may
+use the configured package index and install transitive dependencies into the
+selected environment; the confirmation states that mutation and network
+boundary before it runs. Installer output is not relayed into application errors
+where authenticated index URLs could leak.
+
 Without a history selection, the binding command repeats every check, rejects
 an incomplete interpreter, and initializes a new production scientific store
 at `runs/scientific.sqlite`. With a history selection it additionally requires

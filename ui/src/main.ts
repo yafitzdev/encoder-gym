@@ -205,6 +205,8 @@ ipcMain.handle("encoder-gym:choose-nomos-history", async (_event, value: unknown
 });
 ipcMain.handle("encoder-gym:preview-nomos-binding", (_event, value: unknown, runtimeToken: unknown, pythonToken: unknown, historyToken: unknown) =>
   backend.previewNomosBinding(projectId(value), runtimeToken, pythonToken, historyToken));
+ipcMain.handle("encoder-gym:prepare-nomos-python", (_event, value: unknown, previewToken: unknown) =>
+  backend.prepareNomosPython(projectId(value), previewToken));
 ipcMain.handle("encoder-gym:bind-nomos", async (_event, value: unknown, previewToken: unknown) => {
   const id = projectId(value);
   return { project: registry.get(id), content: { state: "ready", workspace: managedSnapshot(await backend.bindNomos(id, previewToken)) } } satisfies OpenedProject;

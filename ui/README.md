@@ -112,6 +112,15 @@ schema, SQLite integrity, and current runtime project, then connection creates a
 transactionally consistent, content-addressed copy below the managed `runs/`
 folder. It never attaches or changes the selected database in place.
 
+When preview finds missing Python modules, the same dialog can repair the
+explicitly selected environment after a second confirmation. The main process
+accepts only the blocked preview token and invokes the fixed
+`workspace prepare-nomos-python` intent. Package names are compiled into the
+backend mapping, pip is non-interactive and binary-only, and the dialog states
+that the chosen environment will change and network downloads may occur. The
+runtime is automatically re-previewed after installation; storing a provider
+credential does not authorize this operation.
+
 `project.sqlite` is the workspace custody registry, not a legacy slice-run
 database. Source datasets still need normal task-compatible admission, snapshot
 and evaluation contracts before training. **Start optimization** now shows the

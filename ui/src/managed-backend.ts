@@ -269,6 +269,15 @@ export class ManagedBackend {
     });
   }
 
+  async prepareNomosPython(projectId: string, previewToken: unknown): Promise<void> {
+    const selected = typeof previewToken === "string" ? this.bindingPreviews.get(previewToken) : undefined;
+    if (!selected || selected.projectId !== projectId) throw new Error("Preview the scientific runtime for this project again.");
+    if (selected.ready) throw new Error("The selected Python environment already provides every required capability.");
+    const workspace = await this.openRegistered(projectId);
+    await this.exclusiveProject(projectId, () => this.command(["prepare-nomos-python", workspace.folder, "--runtime", selected.runtime, "--python", selected.python, "--allow-network-install"]));
+    this.bindingPreviews.delete(previewToken as string);
+  }
+
   async configureProviders(projectId: string, value: unknown): Promise<ManagedProviderStatus> {
     const settings = providerSettings(value);
     const workspace = await this.openRegistered(projectId);

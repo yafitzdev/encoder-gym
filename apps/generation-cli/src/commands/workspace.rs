@@ -30,7 +30,7 @@ use uuid::Uuid;
 
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs::File,
     io::Read,
     path::{Path, PathBuf},
@@ -72,6 +72,14 @@ struct PythonRuntimeInspection {
     compatible_version: bool,
     capabilities: Vec<PythonCapability>,
     ready: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PythonPreparationResult {
+    installed_packages: Vec<&'static str>,
+    python: PythonRuntimeInspection,
+    network_used: bool,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -249,6 +257,12 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
             )
             .await
         }
+        WorkspaceCommand::PrepareNomosPython {
+            folder,
+            runtime,
+            python,
+            allow_network_install,
+        } => prepare_nomos_python(&folder, &runtime, &python, allow_network_install).await,
         WorkspaceCommand::InspectDataset { source, purpose } => {
             print(&inspect_dataset(&source, purpose.into())?)
         }
@@ -1555,6 +1569,95 @@ print(json.dumps({'version':'.'.join(map(str,sys.version_info[:3])),'major':sys.
     ))
 }
 
+async fn prepare_nomos_python(
+    folder: &Path,
+    runtime: &Path,
+    python: &Path,
+    allow_network_install: bool,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        allow_network_install,
+        "Installing Python packages requires explicit --allow-network-install authorization."
+    );
+    let verified = verify_nomos_binding(folder, runtime, python, None).await?;
+    anyhow::ensure!(
+        verified.python.compatible_version,
+        "Choose Python 3.11 or 3.12 before installing runtime packages."
+    );
+    let packages = missing_python_packages(&verified.python)?;
+    anyhow::ensure!(
+        !packages.is_empty(),
+        "The selected Python runtime already provides every required capability."
+    );
+    eprintln!(
+        "Installing the fixed missing Nomos runtime package set into the explicitly selected Python environment; this may use the network."
+    );
+    let mut command = tokio::process::Command::new(python);
+    command
+        .args([
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-input",
+            "--only-binary=:all:",
+        ])
+        .args(&packages)
+        .current_dir(&verified.runtime_root)
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(Duration::from_secs(30 * 60), command.output())
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "The fixed Python package installation exceeded 30 minutes and was stopped."
+            )
+        })?
+        .map_err(|error| {
+            anyhow::anyhow!("Could not start pip through the selected Python executable: {error}")
+        })?;
+    anyhow::ensure!(
+        output.status.success(),
+        "The fixed Python package installation failed with status {}. Check this interpreter's pip and network configuration, then retry.",
+        output.status
+    );
+    let inspection = inspect_python_runtime(python, &verified.runtime_root).await?;
+    anyhow::ensure!(
+        inspection.ready,
+        "Package installation completed, but the selected runtime still lacks a required capability. Verify the environment again."
+    );
+    print(&PythonPreparationResult {
+        installed_packages: packages,
+        python: inspection,
+        network_used: true,
+    })
+}
+
+fn missing_python_packages(
+    inspection: &PythonRuntimeInspection,
+) -> anyhow::Result<Vec<&'static str>> {
+    let mut packages = BTreeSet::new();
+    for module in inspection
+        .capabilities
+        .iter()
+        .flat_map(|capability| capability.missing_modules.iter())
+    {
+        let package = match module.as_str() {
+            "torch" => "torch",
+            "sentence_transformers" => "sentence-transformers",
+            "transformers" => "transformers>=4.48",
+            "datasets" => "datasets",
+            "accelerate" => "accelerate",
+            "numpy" => "numpy",
+            "sklearn" => "scikit-learn",
+            "psutil" => "psutil",
+            "onnxruntime_genai" => "onnxruntime-genai>=0.8",
+            _ => anyhow::bail!("The runtime reported an unsupported missing Python module."),
+        };
+        packages.insert(package);
+    }
+    Ok(packages.into_iter().collect())
+}
+
 fn python_runtime_inspection(
     executable: String,
     raw: RawPythonInspection,
@@ -1756,6 +1859,10 @@ mod tests {
             .unwrap();
         assert!(!agent.ready);
         assert_eq!(agent.missing_modules, ["onnxruntime_genai"]);
+        assert_eq!(
+            missing_python_packages(&incomplete).unwrap(),
+            ["onnxruntime-genai>=0.8"]
+        );
     }
 
     #[tokio::test]

@@ -186,10 +186,12 @@ test("scientific binding uses only native-picked runtime tokens and requires a s
     python: { executable: join(root, "python.exe"), version: "3.12.4", compatibleVersion: true, capabilities: [], ready: true },
     store: { databasePath: "runs/scientific-<snapshot-sha256>.sqlite", action: "import_verified_history", importedHistory: { sourceName: "history.sqlite", projectSnapshot: { id: randomUUID(), fingerprint: "sha256:" + "d".repeat(64) }, inventory: { projects: 1, protocols: 1, experimentRuns: 1, benchmarkGenerations: 2, diagnoses: 1, proposals: 2, approvedDeltaSelections: 2, trainingSnapshots: 1, optimizationRuns: 1 }, verification: "current_schema_integrity_and_runtime_project_match" } }, ready: true,
   };
+  let runtimeReady = false;
   const executor = async (_executable, args) => {
     calls.push(args);
     if (args[3] === "open") return JSON.stringify(workspace);
-    if (args[3] === "preview-nomos-binding") return JSON.stringify(previewOutput);
+    if (args[3] === "preview-nomos-binding") return JSON.stringify({ ...previewOutput, ready: runtimeReady, python: { ...previewOutput.python, ready: runtimeReady } });
+    if (args[3] === "prepare-nomos-python") { runtimeReady = true; return JSON.stringify({ networkUsed: true }); }
     if (args[3] === "bind-nomos") return JSON.stringify({ ...workspace, scientificBinding: { id: randomUUID() } });
     throw new Error("unexpected command");
   };
@@ -199,6 +201,11 @@ test("scientific binding uses only native-picked runtime tokens and requires a s
   const history = await backend.chooseNomosHistory(id, join(root, "history.sqlite"));
   await assert.rejects(() => backend.previewNomosBinding(id, "renderer-path", python.token), /Choose the isolated runtime/);
   await assert.rejects(() => backend.previewNomosBinding(id, runtime.token, python.token, "renderer-path"), /Choose the existing scientific history/);
+  const blocked = await backend.previewNomosBinding(id, runtime.token, python.token, history.token);
+  await assert.rejects(() => backend.prepareNomosPython(id, "renderer-path"), /Preview the scientific runtime/);
+  await backend.prepareNomosPython(id, blocked.token);
+  const installArgs = calls.find(args => args[3] === "prepare-nomos-python");
+  assert.deepEqual(installArgs.slice(3), ["prepare-nomos-python", folder, "--runtime", join(root, "isolated"), "--python", join(root, "python.exe"), "--allow-network-install"]);
   const preview = await backend.previewNomosBinding(id, runtime.token, python.token, history.token);
   await assert.rejects(() => backend.bindNomos(id, "renderer-path"), /Preview the scientific runtime/);
   await backend.bindNomos(id, preview.token);

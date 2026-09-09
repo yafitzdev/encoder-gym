@@ -130,6 +130,17 @@ preview token can reach the fixed binding intent. Binding repeats all checks,
 then creates or verifies the contained scientific store and appends the binding;
 preview never writes, contacts a provider, trains, or evaluates.
 
+An incomplete but version-compatible interpreter exposes a separate explicit
+repair boundary. The blocked preview token—not renderer-authored paths or
+packages—authorizes `workspace prepare-nomos-python`. The CLI repeats runtime
+and baseline verification, derives missing modules from the compiled capability
+groups, maps them to a fixed package allowlist, and invokes the selected
+interpreter's pip without a shell, input prompts, source distributions, or
+version-check traffic. The UI confirms that this mutates the selected Python
+environment and may contact its configured package index. Captured installer
+output is never relayed into renderer diagnostics because it may contain an
+authenticated index URL. A fresh offline preview must pass before binding.
+
 Historical Nomos databases and journals are never automatically bound. Project
 settings may explicitly select an existing Encoder Gym production database
 through a separate opaque native-picker token. Preview opens it read-only,

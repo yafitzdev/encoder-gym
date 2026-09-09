@@ -154,6 +154,17 @@ pub enum WorkspaceCommand {
         #[arg(long, default_value = "Configure verified Nomos runtime")]
         reason: String,
     },
+    /// Install only the compiled Nomos adapter's missing Python packages.
+    PrepareNomosPython {
+        folder: PathBuf,
+        #[arg(long)]
+        runtime: PathBuf,
+        #[arg(long)]
+        python: PathBuf,
+        /// Explicitly authorize a networked package install into this interpreter.
+        #[arg(long)]
+        allow_network_install: bool,
+    },
     /// Preview local JSONL data without altering its native structure.
     InspectDataset {
         source: PathBuf,
