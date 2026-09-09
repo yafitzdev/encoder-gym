@@ -248,6 +248,10 @@ input::placeholder { color: var(--subtle); opacity: 1; }
 .run-list-name strong { font-size: 14px; }
 .run-list-name small { color: var(--muted); font-size: 11px; }
 .run-list-item time { font-size: 11px; color: var(--muted); text-align: right; }
+.optimization-run-row { display: flex; align-items: center; justify-content: space-between; gap: 28px; margin: 26px 0 18px; padding: 18px 20px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; background: var(--surface); }
+.optimization-run-row h2 { margin: 5px 0 6px; font-size: 18px; }
+.optimization-run-row p { max-width: 720px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.optimization-run-row .facts { margin-top: 12px; }
 .run-summary { display: flex; justify-content: space-between; gap: 35px; padding: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 30px; }
 .run-summary h2 { font-size: 22px; margin-top: 8px; }
 .run-summary p { font-size: 13px; color: var(--muted); max-width: 550px; margin-top: 8px; }
@@ -363,7 +367,7 @@ dialog::backdrop { background: #0008; }
   .result-banner h2 { font-size: 18px; }
   .tabs { gap: 18px; }
   .tabs button { font-size: 12px; }
-  .run-candidate { flex-direction: column; align-items: start; }
+  .run-candidate, .optimization-run-row { flex-direction: column; align-items: start; }
   .facts > div { grid-template-columns: 1fr; gap: 5px; }
   .project-info, .benchmark-section { padding: 16px; }
   .activity-list li { gap: 8px; }

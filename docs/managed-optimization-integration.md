@@ -427,6 +427,13 @@ Model, run, and evaluation details are deeper routes. They expose provenance
 without requiring the user to navigate raw hashes first. Empty pages state the
 true missing object and link to its real creation/readiness action.
 
+The Runs collection treats the optimization parent as the user-facing run and
+its experiment journal as an owned evidence record. A reserved parent remains
+visible before child creation. Once linked, the parent and child contribute one
+sidebar count rather than two. Entering Runs after restart invokes passive
+readiness and status recovery so an existing parent's safe next action is not
+hidden behind an empty experiment list.
+
 ## Migration and recovery
 
 Managed-registry migrations are versioned and idempotent. Opening remains

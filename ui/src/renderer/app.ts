@@ -59,6 +59,7 @@ export function mount(): void {
     view.history.remember(location, main.scrollTop, contentFocus());
     render(); main.scrollTop = 0; focusHeading();
     if (location.page === "project" && workspace()?.managed && !view.providers.status) void refreshProviders();
+    if (location.page === "runs" && workspace()?.managed && !view.optimization.run && !view.optimization.loading) void refreshOptimization();
   }
   async function selectProject(id: string): Promise<void> {
     if (collectionBusy) return;
@@ -191,8 +192,10 @@ export function mount(): void {
       if (state.manifest) state.manifest = { ...state.manifest, readiness: state.readiness };
       else {
         state.prepared = state.readiness.preparedOptimization;
-        if (!state.prepared) state.run = undefined;
       }
+      const existing = state.manifest?.readiness.launchPreview?.existingRun ?? state.prepared?.launchPreview.existingRun ?? state.readiness.launchPreview?.existingRun;
+      if (existing) state.run = runStatus(await bridge.managedOptimize(id, { action: "status", runId: existing.runId }));
+      else if (!state.prepared) state.run = undefined;
     } catch (error) { state.errorTitle = "Could not refresh launch readiness"; state.error = message(error); }
     finally { state.loading = false; if (selection.selectedId === id) render(); }
   }
@@ -391,6 +394,8 @@ export function mount(): void {
   function render(): void {
     const current = view.history.current, data = workspace();
     const project = collection.projects.find(p => p.id === selection.selectedId);
+    const linkedOptimizationIds = new Set(data?.runs.flatMap(run => run.optimizationId ? [run.optimizationId] : []) ?? []);
+    const runCount = (data?.runs.filter(run => !run.optimizationId).length ?? 0) + linkedOptimizationIds.size + (view.optimization.run && !linkedOptimizationIds.has(view.optimization.run.run_id) ? 1 : 0);
     const activePage = ["candidate", "baseline", "compare"].includes(current.page) ? "models" : ["run", "optimization"].includes(current.page) ? "runs" : current.page;
     const focus = document.activeElement, focusId = focus?.id;
     const caret = focus instanceof HTMLInputElement && ["text", "search"].includes(focus.type) ? [focus.selectionStart, focus.selectionEnd] : undefined;
@@ -400,7 +405,7 @@ export function mount(): void {
         if (p.id === selection.selectedId) navigate({ page: "models" }); else projects.select(p.id);
       } }, icon("project"), h("span", {}, p.name), p.source.kind === "example" ? h("small", {}, "Example") : !p.source.workspaceId ? h("small", {}, "Legacy") : null),
       p.id === project?.id ? h("div", { class: "project-pages" }, ...pages.filter(([page]) => page !== "datasets" || (p.source.kind === "folder" && p.source.workspaceId)).map(([page, label, symbol]) => h("button", { type: "button", id: "nav-" + page, disabled: collectionBusy, class: "nav-item" + (page === activePage ? " active" : ""), "aria-current": page === activePage ? "page" : null, "data-page": page, onClick: () => navigate({ page }) }, icon(symbol), label,
-        data && ["models", "runs"].includes(page) ? h("span", { class: "nav-count" }, page === "models" ? candidateRows(data).length + 1 : data.runs.length) : null))) : null)));
+        data && ["models", "runs"].includes(page) ? h("span", { class: "nav-count" }, page === "models" ? candidateRows(data).length + 1 : runCount) : null))) : null)));
     const candidate = data ? candidateRows(data).find(r => r.candidate.id === current.id)?.candidate : undefined;
     const run = data?.runs.find(r => r.id === current.id);
     const title = !project ? "Projects" : current.page === "candidate" ? candidate ? candidateName(candidate) : "Candidate not found" :
@@ -427,7 +432,7 @@ export function mount(): void {
       else if (current.page === "optimization" && data.managed) content = renderOptimization(data.managed, view.optimization, optimizationActions);
       else if (current.page === "candidate") content = renderCandidate(data, current.id ?? "", current.tab ?? "results", detail, actions, current.runId);
       else if (current.page === "run") content = renderRun(data, current.id ?? "", current.tab ?? "overview", actions);
-      else if (current.page === "runs") content = renderRuns(data, actions);
+      else if (current.page === "runs") content = renderRuns(data, actions, view.optimization.run);
       else if (current.page === "benchmarks") content = renderBenchmarks(data, actions);
       else if (current.page === "baseline") content = renderBaseline(data, actions);
       else content = renderCompare(data, candidateRows(data).filter(r => current.candidateIds?.includes(r.candidate.id)), actions);

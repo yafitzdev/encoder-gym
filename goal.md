@@ -75,6 +75,11 @@ Do not confuse custody with readiness:
   candidate metrics, assessment identities, training-snapshot and repair
   provenance, journal counts, sealed-use status, and known evidence limits.
   Sealed rows and sealed metric values remain outside the renderer.
+- The Runs collection now counts and presents the persisted optimization parent
+  independently from its child experiment journal, keeps the current safe stage
+  reachable after navigation, and passively recovers the parent status from
+  readiness after restart. Linked parent/child records count as one run rather
+  than disappearing before child creation or appearing twice afterward.
 
 Treat these as product facts to resolve or explain, not presentation details to
 hide behind optimistic status text.

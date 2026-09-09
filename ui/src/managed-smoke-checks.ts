@@ -176,7 +176,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await check("prepared definition exposes finite execution and external limits", "document.querySelector('.launch-definition').textContent.includes('120 seconds') && document.querySelector('.launch-definition').textContent.includes('Sealed evaluations') && document.querySelector('.external-work').textContent.includes('No external provider calls') && document.querySelector('.launch-actions').textContent.includes('0 external calls')");
     await screenshot("managed-optimization-prepared");
     await textButton("Reserve optimization run"); await until("document.querySelector('.run-control')?.textContent.includes('Build and evaluate the candidate')");
-    await check("reservation exposes only the next durable stage", "document.querySelector('.run-control').textContent.includes('Reserved run') && [...document.querySelectorAll('.run-control button')].some(b=>b.textContent === 'Build and evaluate the candidate')");
+    await check("reservation exposes only the next durable stage", "document.querySelector('.run-control').textContent.includes('Reserved run') && [...document.querySelectorAll('.run-control button')].some(b=>b.textContent === 'Build and evaluate the candidate') && document.querySelector('#nav-runs .nav-count').textContent === '1'");
     await textButton("Build and evaluate the candidate"); await until("document.querySelector('.run-control')?.textContent.includes('Review final acceptance')");
     await check("run supervision distinguishes completed records from reserved capacity", "document.querySelector('.run-usage').textContent.includes('Recorded work') && document.querySelector('.run-usage').textContent.includes('110s / 2m') && document.querySelector('.run-usage').textContent.includes('2 / 2') && document.querySelector('.run-control').textContent.includes('Journal span')");
     await check("sealed evidence requires its own visible authorization", "document.querySelector('.run-control').textContent.includes('one separately authorized sealed evaluation') && [...document.querySelectorAll('.run-control button')].some(b=>b.textContent === 'Authorize one sealed evaluation')");
@@ -200,7 +200,8 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
 
   await nav("models");
   await nav("runs");
-  await check("managed runs own the optimization launch action", "document.querySelector('.empty-state').textContent.includes('launch requirements') && [...document.querySelectorAll('#page button')].filter(b=>b.textContent.includes('optimization') || b.textContent.includes('launch requirements')).length >= 2");
+  await check("managed runs keep their optimization parent visible", "document.querySelector('.optimization-run-row').textContent.includes('Latest optimization') && document.querySelector('.optimization-run-row').textContent.includes('promote candidate') && document.querySelector('#nav-runs .nav-count').textContent === '1' && [...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Inspect run')");
+  await screenshot("managed-runs-parent");
   await nav("benchmarks");
   await check("managed benchmarks distinguish imports from evaluation", "document.querySelector('.empty-state').textContent.includes('does not create evaluation results')");
   await nav("datasets"); await textButton("Import dataset");
