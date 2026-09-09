@@ -79,7 +79,7 @@ export function runListItem(run: RunRecord, workspace: WorkspaceSnapshot, action
   const failed = run.candidates.filter(c => c.failure).length;
   return h("button", { type: "button", id: "run-" + run.id, class: "run-list-item", onClick: () => actions.navigate({ page: "run", id: run.id }) },
     h("span", { class: "run-number" }, runLabel(run, workspace)), h("span", { class: "run-list-name" }, h("strong", {}, runName(run)), h("small", {}, `${run.candidates.length} ${run.candidates.length === 1 ? "candidate" : "candidates"} · ${setupName(run)}`)),
-    h("span", {}, status(failed ? "Execution errors" : run.decision === "retain_baseline" ? "Baseline kept" : run.decision === "promote_candidate" ? "Candidate promoted" : "No final decision", failed ? "danger" : "neutral")),
+    h("span", {}, status(failed ? "Execution errors" : run.decision === "retain_baseline" ? "Baseline kept" : run.decision === "promote_candidate" ? "Candidate accepted" : "No final decision", failed ? "danger" : "neutral")),
     h("time", {}, dateLabel(run.createdAt)),
   );
 }
@@ -105,7 +105,7 @@ export function renderRun(workspace: WorkspaceSnapshot, id: string, tab: string,
     tabs([["overview", "Overview"], ["activity", "Activity"], ["record", "Budget & record"]], tab, changeTab),
     h("div", { id: "detail-panel", role: "tabpanel", "aria-labelledby": `tab-${tab}` },
       tab === "activity" ? h("ol", { class: "activity-list" }, ...run.activity.map(e => h("li", {}, h("span", { class: "activity-sequence" }, e.sequence), h("div", {}, h("strong", {}, eventLabel(e.kind)), e.candidateId ? h("span", {}, run.candidates.find(c => c.id === e.candidateId) ? candidateName(run.candidates.find(c => c.id === e.candidateId)!) : e.candidateId) : null), h("time", {}, timeLabel(e.at))))) : tab === "record" ? runRecord(run, workspace, actions) : h("div", {},
-        h("div", { class: "run-summary" }, h("div", {}, h("div", { class: "eyebrow" }, "Recorded outcome"), h("h2", {}, run.decision === "retain_baseline" ? "The baseline was kept" : run.decision === "promote_candidate" ? "A candidate was promoted" : "No final decision recorded"),
+        h("div", { class: "run-summary" }, h("div", {}, h("div", { class: "eyebrow" }, "Recorded outcome"), h("h2", {}, run.decision === "retain_baseline" ? "The baseline was kept" : run.decision === "promote_candidate" ? "A candidate passed final acceptance" : "No final decision recorded"),
           h("p", {}, failures.length ? "Execution errors were recorded. Open the candidate history for recovered attempts." : usedSealed ? "Development selected a candidate for final acceptance. The final assessment determined this outcome." : run.selectedCandidateId ? "A candidate was selected in development. Final acceptance has not completed." : run.decision ? "No candidate was selected for final acceptance. The sealed evaluation was not run." : "The run has not recorded a final decision. Inspect activity for its last persisted stage.")),
           h("div", { class: "run-summary-facts" }, h("strong", {}, String(run.candidates.length)), h("span", {}, "candidates"), h("strong", {}, String(run.baselines.length)), h("span", {}, "development suites"))),
         sectionHeader("Candidates in this run"),

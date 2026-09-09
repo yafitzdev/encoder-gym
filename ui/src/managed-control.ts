@@ -92,6 +92,13 @@ export type ManagedOptimizationRequest =
 
 export type ManagedOptimizationResult = ManagedRunStatus | Record<string, unknown>;
 
+export interface ManagedPromotionRequest {
+  runId: string;
+  expectedBaselineRevisionId: string;
+  actor?: string;
+  reason?: string;
+}
+
 export type ProviderRole = "generation" | "advisor" | "evaluator";
 export interface ProviderLimitsInput { maximumRequests: number; maximumInputTokens: number; maximumOutputTokens: number; maximumCostMicrousd: number }
 export interface ProviderInput {

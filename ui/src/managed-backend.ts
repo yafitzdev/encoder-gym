@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
-import type { ManagedLaunchPreview, ManagedOptimizationAuthority, ManagedOptimizationRequest, ManagedOptimizationResult, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, PreparedOptimizationChoice, ProviderInput, ProviderSettingsRequest } from "./managed-control.js";
+import type { ManagedLaunchPreview, ManagedOptimizationAuthority, ManagedOptimizationRequest, ManagedOptimizationResult, ManagedPromotionRequest, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, PreparedOptimizationChoice, ProviderInput, ProviderSettingsRequest } from "./managed-control.js";
 import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, LocalModel, ManagedWorkspace, ModelChoice } from "./managed-workspace.js";
 import type { ProjectRegistry } from "./project-registry.js";
 import type { WorkspaceSnapshot } from "./workspace.js";
@@ -240,6 +240,19 @@ export class ManagedBackend {
     return ["start", "resume", "authorize-external", "authorize-sealed", "cancel"].includes(request.action)
       ? this.exclusiveProject(projectId, run)
       : run();
+  }
+
+  async promoteAccepted(projectId: string, value: unknown): Promise<ManagedWorkspace> {
+    const request = object(value, "promotion request", ["runId", "expectedBaselineRevisionId", "actor", "reason"]) as unknown as ManagedPromotionRequest;
+    const runId = uuid(request.runId, "run identity");
+    const expected = uuid(request.expectedBaselineRevisionId, "baseline revision identity");
+    const actor = text(request.actor ?? "local-operator", "promotion actor");
+    const reason = text(request.reason ?? "Promote sealed-accepted optimization candidate", "promotion reason");
+    const workspace = await this.openRegistered(projectId);
+    return this.exclusiveProject(projectId, () => this.command<ManagedWorkspace>([
+      "promote", workspace.folder, "--run-id", runId,
+      "--expected-baseline-revision-id", expected, "--actor", actor, "--reason", reason,
+    ]));
   }
 
   async providerStatus(projectId: string): Promise<ManagedProviderStatus> {

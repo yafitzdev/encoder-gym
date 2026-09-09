@@ -173,6 +173,10 @@ ipcMain.handle("encoder-gym:choose-optimization-manifest", async (_event, value:
   return { ...selected, readiness: withDesktopCredentialAvailability(selected.readiness, desktopProviderStatus(await backend.providerStatus(id))) };
 });
 ipcMain.handle("encoder-gym:managed-optimize", (_event, value: unknown, request: unknown) => backend.optimize(projectId(value), request));
+ipcMain.handle("encoder-gym:promote-accepted", async (_event, value: unknown, request: unknown) => {
+  const id = projectId(value);
+  return { project: registry.get(id), content: { state: "ready", workspace: managedSnapshot(await backend.promoteAccepted(id, request)) } } satisfies OpenedProject;
+});
 ipcMain.handle("encoder-gym:managed-providers", async (_event, value: unknown) => desktopProviderStatus(await backend.providerStatus(projectId(value))));
 ipcMain.handle("encoder-gym:configure-managed-providers", async (_event, value: unknown, settings: unknown) => desktopProviderStatus(await backend.configureProviders(projectId(value), settings)));
 ipcMain.handle("encoder-gym:set-provider-credential", async (_event, value: unknown, roleValue: unknown, secret: unknown) => {

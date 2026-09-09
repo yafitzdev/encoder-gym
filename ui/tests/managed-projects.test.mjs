@@ -113,6 +113,7 @@ test("managed control accepts only native-picked manifests and fixed project-sco
   const calls = [];
   const readiness = { report: { projectId: id, computedAt: new Date().toISOString(), overall: "ready", runnable: true, checks: [] }, launchPreview: { projectId: id } };
   const generatedManifest = join(folder, "runs", "definitions", "optimization-fixed.toml");
+  const baselineRevision = randomUUID();
   let escapePrepared = false, restorePrepared = false;
   const preparedOutput = () => ({ manifestPath: escapePrepared ? join(root, "outside.toml") : generatedManifest, manifestName: "Approved repair", readiness: readiness.launchPreview, authority: { proposalId: randomUUID() }, createdTrainingSnapshot: false, externalCalls: 0 });
   const executor = async (_executable, args) => {
@@ -121,6 +122,7 @@ test("managed control accepts only native-picked manifests and fixed project-sco
     if (args[3] === "readiness") return JSON.stringify(restorePrepared ? { ...readiness, preparedOptimization: preparedOutput() } : readiness);
     if (args[3] === "prepare-optimization") return JSON.stringify({ ...preparedOutput(), createdTrainingSnapshot: true });
     if (args[3] === "optimize") return JSON.stringify({ run_id: randomUUID(), state: "planned" });
+    if (args[3] === "promote") return JSON.stringify(workspace);
     throw new Error("unexpected command");
   };
   const backend = new ManagedBackend("owned-synth", registry, executor);
@@ -154,6 +156,9 @@ test("managed control accepts only native-picked manifests and fixed project-sco
   assert.deepEqual(optimizationCalls[1], ["--output", "json", "workspace", "optimize", folder, "start", "--manifest", generatedManifest]);
   assert.deepEqual(optimizationCalls[2], ["--output", "json", "workspace", "optimize", folder, "start", "--manifest", manifest]);
   assert.deepEqual(optimizationCalls[3], ["--output", "json", "workspace", "optimize", folder, "status", id]);
+  await backend.promoteAccepted(id, { runId: id, expectedBaselineRevisionId: baselineRevision });
+  assert.deepEqual(calls.find(args => args[3] === "promote"), ["--output", "json", "workspace", "promote", folder, "--run-id", id, "--expected-baseline-revision-id", baselineRevision, "--actor", "local-operator", "--reason", "Promote sealed-accepted optimization candidate"]);
+  await assert.rejects(() => backend.promoteAccepted(id, { runId: "../other", expectedBaselineRevisionId: baselineRevision }), /Invalid run identity/);
   await assert.rejects(() => backend.optimize(id, { action: "shell", runId: id }), /supported optimization action/);
   await assert.rejects(() => backend.optimize(id, { action: "status", runId: "../other" }), /Invalid run identity/);
 });

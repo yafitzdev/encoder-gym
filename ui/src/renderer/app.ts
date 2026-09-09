@@ -248,6 +248,25 @@ export function mount(): void {
     }
     finally { polling = false; state.loading = false; state.executing = undefined; if (selection.selectedId === id) render(); }
   }
+  async function promoteAccepted(): Promise<void> {
+    const id = selection.selectedId, run = view.optimization.run, managed = workspace()?.managed;
+    const expectedBaselineRevisionId = managed?.modelCatalog?.activeBaselineRevisionId;
+    if (!id || !run || !expectedBaselineRevisionId || view.optimization.loading) return;
+    if (!window.confirm("Promote this sealed-accepted checkpoint to the project baseline? The current baseline remains in immutable history.")) return;
+    const state = view.optimization; state.loading = true; state.executing = "promote"; state.error = undefined; state.errorTitle = undefined; render();
+    try {
+      const latest = await bridge.promoteAccepted(id, { runId: run.run_id, expectedBaselineRevisionId });
+      if (selection.selectedId === id) {
+        opened = latest;
+        notify("Accepted checkpoint promoted. Reconnect the scientific runtime before the next run.");
+      }
+    } catch (error) {
+      state.errorTitle = "Could not promote the accepted checkpoint";
+      state.error = message(error);
+    } finally {
+      state.loading = false; state.executing = undefined; if (selection.selectedId === id) render();
+    }
+  }
   const optimizationActions: OptimizationPageActions = {
     refresh: () => { void refreshOptimization(); },
     prepare: () => { void prepareOptimization(); },
@@ -261,6 +280,7 @@ export function mount(): void {
     },
     resume: () => { const id = view.optimization.run?.run_id; if (id) void optimize({ action: "resume", runId: id }); },
     authorizeSealed: () => { const id = view.optimization.run?.run_id; if (id) void optimize({ action: "authorize-sealed", runId: id }); },
+    promote: () => { void promoteAccepted(); },
     cancel: () => {
       const id = view.optimization.run?.run_id;
       if (!id) return;

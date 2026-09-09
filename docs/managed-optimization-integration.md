@@ -14,7 +14,7 @@ Nomos is the first compiled task adapter. The project-facing concepts remain
 task-neutral so another statically composed encoder adapter can implement the
 same boundary without adopting Nomos row shapes or metrics.
 
-## Current gap
+## Initial gap and current integration state
 
 Managed workspaces currently prove only custody:
 
@@ -26,10 +26,12 @@ Managed workspaces currently prove only custody:
 - the desktop reads the baseline and imports, but cannot create snapshots,
   suites, repair authority, workflow definitions, or runs.
 
-The current Nomos managed workspace therefore truthfully has one imported
-baseline and two imported training sources, but no candidates, approved repair
-snapshot, executable benchmark authority, optimization run, or managed
-evaluation evidence.
+That was the initial managed-workspace gap. The implementation now supports an
+explicit scientific binding, verified history import, derived readiness,
+owner-generated optimization preparation, fixed lifecycle intents, durable run
+status, and audited accepted-model promotion. A particular project still shows
+only the facts actually present in its bound stores; these capabilities do not
+manufacture a candidate, approval, or evaluation.
 
 The compiled Nomos adapter has an additional dependency that custody cannot
 infer. `NomosBackend` opens a clean, no-remote, isolated Git checkout containing
@@ -288,6 +290,25 @@ build and development-suite units count only durable completions or durable
 failures; the UI never estimates the fraction of an in-flight native call.
 Cancellation is hidden while the local non-preemptible stage call is active.
 
+Accepted-model promotion is a separate fixed intent, not another optimization
+event authored by the renderer. The command replays the optimization,
+campaign, and experiment journals; requires a completed promote-candidate
+decision, exactly one matching campaign finalization, the selected checkpoint's
+passing sealed assessment, and the original immutable training snapshot; then
+asks the bound native adapter to re-hash the exact checkpoint tree. Only after
+those checks does project custody copy the checkpoint to a content-addressed
+candidate path and compare-and-append the model artifact and baseline revision
+in one database transaction. A stale baseline fails before copying. Retrying
+the same accepted decision is idempotent. The old baseline and scientific
+journals remain immutable.
+
+The renderer distinguishes scientific acceptance from project promotion. A
+completed accepted run says that the checkpoint passed final acceptance and
+offers **Promote accepted candidate**. It says **active baseline** only after
+the managed catalog's active artifact is bound to that experiment run. Because
+the prior scientific binding is scoped to the prior baseline revision, the UI
+then requires a verified rebind before another optimization can start.
+
 The Electron main-process adapter:
 
 1. reopens and verifies the selected managed project;
@@ -327,9 +348,10 @@ starting work immediately.
    the exact safe next command. Resume advances at most one durable stage.
 6. **Sealed authorization** appears only for the development-selected eligible
    candidate and identifies that candidate and the one-use consequence.
-7. **Decision** shows retain/reject/promote, supporting comparable evidence,
-   and limitations. A promotable decision may atomically create a new managed
-   baseline revision.
+7. **Decision** shows retain or accepted-candidate outcome, supporting
+   comparable evidence, and limitations. An explicit promotion copies the
+   verified checkpoint into managed custody and atomically creates the new
+   active baseline revision.
 
 No default can silently select sealed evidence, expand a budget, replace a
 baseline, or reuse stale authority.
@@ -444,6 +466,16 @@ UI therefore describes it as an indeterminate, one-time integrity operation;
 it never displays a fabricated percentage. Redundant post-write graph reloads
 and duplicate managed/native project verification were removed, leaving the
 production-repair owner replay as the sole expensive boundary.
+
+The accepted-promotion implementation is covered at three boundaries. Workspace
+tests prove content-addressed copying, append-only provenance, idempotent retry,
+stale-baseline rejection, orphan-copy recovery, and tamper detection. CLI tests
+prove a project without scientific authority cannot enter promotion, while the
+existing finite optimizer fixture proves the sealed accepted decision chain.
+The desktop contract test proves the renderer can send only validated project,
+run, and baseline-revision identities and that the main process constructs the
+fixed command. The full Rust all-feature suite, 44 UI contract tests, and the
+Electron acceptance flow at desktop and narrow widths passed after this stage.
 
 ## Delivery order
 

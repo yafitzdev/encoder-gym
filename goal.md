@@ -17,7 +17,7 @@ URLs, or assemble CLI commands to run the normal workflow. The application must
 make scientific readiness, costs, authorization, progress, evidence, and the
 next safe action understandable before execution begins.
 
-## Starting reality
+## Current reality
 
 Preserve the managed-workspace, local dataset-import, project-navigation, and
 real Nomos onboarding work already delivered.
@@ -26,12 +26,19 @@ Do not confuse custody with readiness:
 
 - The managed Nomos workspace has a verified imported baseline and two imported
   source files containing approximately 6,800 rows.
-- It does not yet have managed candidates, managed optimization runs, approved
-  training snapshots, managed evaluation evidence, or an explicit binding to
-  the scientific stores that own those artifacts.
-- Existing historical Nomos experiments are separate evidence. Do not silently
-  attach them to the managed project or use them to declare the project ready.
-- The current desktop application cannot yet launch the scientific workflow.
+- The platform now has an immutable model catalog, audited baseline revisions,
+  explicit scientific-store/runtime bindings, history import, derived launch
+  readiness, managed preparation, fixed run intents, durable progress, and
+  sealed-accepted checkpoint promotion. These capabilities remain generic
+  project infrastructure and do not fabricate missing Nomos facts.
+- Existing historical Nomos experiments remain separate evidence unless the
+  operator explicitly previews and imports a verified SQLite snapshot.
+- The real Nomos project is still not runnable in place: its chosen Python
+  environment lacks `onnxruntime_genai`, and the actual managed workspace has
+  not been upgraded and bound to the verified isolated runtime/history. Those
+  operations mutate real local state and require explicit operator approval.
+- The desktop can launch, recover, finish, and promote the real bounded
+  workflow once its project-specific readiness report is green.
 
 Treat these as product facts to resolve or explain, not presentation details to
 hide behind optimistic status text.

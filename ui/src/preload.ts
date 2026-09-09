@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, PreparedOptimizationChoice, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
+import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedPromotionRequest, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, PreparedOptimizationChoice, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
 import type { OpenedProject, ProjectCollection } from "./projects.js";
 import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, ModelChoice } from "./managed-workspace.js";
 
@@ -16,6 +16,7 @@ export interface EncoderGymBridge {
   prepareOptimization(id: string): Promise<PreparedOptimizationChoice>;
   chooseOptimizationManifest(id: string): Promise<OptimizationManifestChoice | null>;
   managedOptimize(id: string, request: ManagedOptimizationRequest): Promise<ManagedOptimizationResult>;
+  promoteAccepted(id: string, request: ManagedPromotionRequest): Promise<OpenedProject>;
   managedProviders(id: string): Promise<ManagedProviderStatus>;
   configureManagedProviders(id: string, request: ProviderSettingsRequest): Promise<ManagedProviderStatus>;
   setProviderCredential(id: string, role: ProviderRole, secret: string): Promise<ManagedProviderStatus>;
@@ -51,6 +52,7 @@ const bridge: EncoderGymBridge = {
   prepareOptimization: id => ipcRenderer.invoke("encoder-gym:prepare-optimization", id),
   chooseOptimizationManifest: id => ipcRenderer.invoke("encoder-gym:choose-optimization-manifest", id),
   managedOptimize: (id, request) => ipcRenderer.invoke("encoder-gym:managed-optimize", id, request),
+  promoteAccepted: (id, request) => ipcRenderer.invoke("encoder-gym:promote-accepted", id, request),
   managedProviders: id => ipcRenderer.invoke("encoder-gym:managed-providers", id),
   configureManagedProviders: (id, request) => ipcRenderer.invoke("encoder-gym:configure-managed-providers", id, request),
   setProviderCredential: (id, role, secret) => ipcRenderer.invoke("encoder-gym:set-provider-credential", id, role, secret),

@@ -548,6 +548,11 @@ dialog::backdrop { background: #0008; }
 .run-stage.is-running .eyebrow { color: var(--cyan); }
 .run-stage .stage-progress { margin-top: 13px; color: var(--text); font: 12px var(--mono); }
 .run-stage .stage-caution { margin-top: 10px; font-size: 12px; }
+.promotion-result { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 14px; padding: 18px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 5px; background: var(--surface); }
+.promotion-result h3 { margin: 5px 0 6px; font-size: 16px; }
+.promotion-result p { max-width: 720px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.promotion-result.is-active { border-left-color: var(--success); background: color-mix(in srgb, var(--success) 5%, var(--surface)); }
+.promotion-result.is-retained { border-left-color: var(--subtle); }
 @media (max-width: 1100px) {
   .candidate-table td.numeric { min-width: 90px; }
   .candidate-table tbody th { min-width: 175px; }
@@ -564,7 +569,7 @@ dialog::backdrop { background: #0008; }
   .runtime-selection, .runtime-preview-heading { align-items: start; flex-direction: column; }
   .runtime-selection .button { width: 100%; }
   .runtime-notice { margin-inline: 17px; }
-  .launch-summary, .readiness-row, .launch-actions { flex-direction: column; align-items: start; gap: 12px; }
+  .launch-summary, .readiness-row, .launch-actions, .promotion-result { flex-direction: column; align-items: start; gap: 12px; }
   .dataset-row { flex-direction: column; gap: 12px; }
   .dataset-purpose { display: flex; align-items: center; gap: 9px; }
   .next-step { flex-direction: column; align-items: start; gap: 15px; }
