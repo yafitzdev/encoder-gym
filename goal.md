@@ -70,6 +70,11 @@ Do not confuse custody with readiness:
   experiment journals, and labels the wall-clock journal span separately from
   native compute time. Failed or uncertain work is never presented as unused
   budget merely because it lacks a completion record.
+- Terminal runs now expose the existing aggregate owner report directly in the
+  desktop: candidate checkpoint facts, per-development-suite baseline and
+  candidate metrics, assessment identities, training-snapshot and repair
+  provenance, journal counts, sealed-use status, and known evidence limits.
+  Sealed rows and sealed metric values remain outside the renderer.
 
 Treat these as product facts to resolve or explain, not presentation details to
 hide behind optimistic status text.

@@ -573,6 +573,23 @@ dialog::backdrop { background: #0008; }
 .run-metrics .launch-metric:first-child { padding-left: 0; }
 .run-usage .usage-caution { margin-top: 12px; padding-left: 10px; border-left: 2px solid var(--danger); color: var(--muted); font-size: 11px; line-height: 1.5; }
 .run-usage > .disclosure { margin: 10px 0 0; }
+.report-action { display: flex; align-items: center; gap: 14px; margin-top: 12px; }
+.report-action p { max-width: 660px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.run-report { margin-top: 14px; padding: 18px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
+.report-outcome { margin-top: 15px; padding: 15px; border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.report-outcome h3 { margin: 4px 0 5px; font-size: 17px; text-transform: capitalize; }
+.report-outcome p { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.report-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.report-candidates { margin-top: 18px; border-top: 1px solid var(--line); }
+.report-candidate { padding: 17px 0; border-bottom: 1px solid var(--line); }
+.report-candidate-heading { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
+.report-candidate-heading h3 { margin-top: 4px; font-size: 15px; overflow-wrap: anywhere; }
+.report-candidate > .facts { margin-top: 13px; }
+.report-candidate > .disclosure { margin: 12px 0 0; }
+.report-suite { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.run-report > .disclosure { margin: 14px 0 0; }
+.evidence-limits { margin-top: 14px; padding: 13px 15px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); }
+.evidence-limits ul { display: grid; gap: 5px; margin: 8px 0 0 18px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .promotion-result { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 14px; padding: 18px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 5px; background: var(--surface); }
 .promotion-result h3 { margin: 5px 0 6px; font-size: 16px; }
 .promotion-result p { max-width: 720px; color: var(--muted); font-size: 12px; line-height: 1.6; }
@@ -597,8 +614,8 @@ dialog::backdrop { background: #0008; }
   .runtime-selection, .runtime-preview-heading { align-items: start; flex-direction: column; }
   .runtime-selection .button { width: 100%; }
   .runtime-notice { margin-inline: 17px; }
-  .launch-summary, .readiness-row, .launch-actions, .run-actions, .promotion-result { flex-direction: column; align-items: start; gap: 12px; }
-  .launch-boundaries, .launch-disclosures { grid-template-columns: 1fr; }
+  .launch-summary, .readiness-row, .launch-actions, .run-actions, .report-action, .promotion-result { flex-direction: column; align-items: start; gap: 12px; }
+  .launch-boundaries, .launch-disclosures, .report-summary, .report-suite { grid-template-columns: 1fr; }
   .dataset-row { flex-direction: column; gap: 12px; }
   .dataset-purpose { display: flex; align-items: center; gap: 9px; }
   .next-step { flex-direction: column; align-items: start; gap: 15px; }

@@ -1,5 +1,5 @@
 import type { WorkspaceSnapshot } from "../workspace.js";
-import type { ManagedOptimizationResult, ManagedRunStatus } from "../managed-control.js";
+import type { ManagedOptimizationReport, ManagedOptimizationResult, ManagedRunStatus } from "../managed-control.js";
 import { ProjectSelection, type OpenedProject, type ProjectCollection } from "../projects.js";
 import type { Actions, Location, Page, ProjectActions } from "./actions.js";
 import { candidateName, candidateRows, dateLabel, initialFilter, metricInfo, runName, setupId } from "./catalog.js";
@@ -36,6 +36,11 @@ export function mount(): void {
   const runStatus = (value: ManagedOptimizationResult): ManagedRunStatus => {
     if (!value || typeof value !== "object" || typeof (value as Partial<ManagedRunStatus>).run_id !== "string" || typeof (value as Partial<ManagedRunStatus>).state !== "string") throw new Error("The optimizer returned an unreadable run status.");
     return value as ManagedRunStatus;
+  };
+  const runReport = (value: ManagedOptimizationResult): ManagedOptimizationReport => {
+    const report = value as Partial<ManagedOptimizationReport>;
+    if (!report || report.schema_version !== 1 || typeof report.run_id !== "string" || !Array.isArray(report.candidate_results) || !Array.isArray(report.known_evidence_limits)) throw new Error("The optimizer returned an unreadable run report.");
+    return report as ManagedOptimizationReport;
   };
   const updateSidebar = () => element("sidebar-menu").setAttribute("aria-expanded", String(window.innerWidth <= 600 ? shell.classList.contains("mobile-sidebar-open") : !shell.classList.contains("sidebar-collapsed")));
   const focusHeading = () => main.querySelector<HTMLElement>("h1")?.focus({ preventScroll: true });
@@ -214,7 +219,10 @@ export function mount(): void {
   async function optimize(request: Parameters<typeof bridge.managedOptimize>[1]): Promise<void> {
     const id = selection.selectedId;
     if (!id || view.optimization.loading) return;
-    const state = view.optimization; state.loading = true; state.executing = request.action; state.error = undefined; state.errorTitle = undefined; render();
+    const state = view.optimization;
+    state.loading = true; state.executing = request.action; state.error = undefined; state.errorTitle = undefined;
+    if (request.action !== "status") state.report = undefined;
+    render();
     let polling = request.action === "resume";
     const poll = async (): Promise<void> => {
       if (request.action !== "resume") return;
@@ -267,6 +275,19 @@ export function mount(): void {
       state.loading = false; state.executing = undefined; if (selection.selectedId === id) render();
     }
   }
+  async function loadOptimizationReport(): Promise<void> {
+    const id = selection.selectedId, runId = view.optimization.run?.run_id;
+    if (!id || !runId || view.optimization.loading) return;
+    const state = view.optimization; state.loading = true; state.executing = "report"; state.error = undefined; state.errorTitle = undefined; render();
+    try {
+      state.report = runReport(await bridge.managedOptimize(id, { action: "report", runId }));
+    } catch (error) {
+      state.errorTitle = "Could not load the complete run report";
+      state.error = message(error);
+    } finally {
+      state.loading = false; state.executing = undefined; if (selection.selectedId === id) render();
+    }
+  }
   const optimizationActions: OptimizationPageActions = {
     refresh: () => { void refreshOptimization(); },
     prepare: () => { void prepareOptimization(); },
@@ -285,6 +306,7 @@ export function mount(): void {
       if (!window.confirm("Authorize exactly one sealed evaluation for this selected candidate? Its aggregate result will decide final acceptance. Sealed rows remain hidden and this authorization cannot be reused.")) return;
       void optimize({ action: "authorize-sealed", runId: id });
     },
+    loadReport: () => { void loadOptimizationReport(); },
     promote: () => { void promoteAccepted(); },
     cancel: () => {
       const id = view.optimization.run?.run_id;

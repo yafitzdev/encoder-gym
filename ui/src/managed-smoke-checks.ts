@@ -135,6 +135,17 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     stage: next === "resume" ? { key: "development", label: "Build and evaluate the candidate", detail: "The next bounded native stage trains one candidate and records development evidence.", execution: "native" as const, development: { completed_units: 0, total_units: 2 } } : next === "authorize-sealed" ? { key: "sealed-authorization", label: "Review final acceptance", detail: "The selected candidate is eligible for one separately authorized sealed evaluation.", execution: "authorization" as const, development: { completed_units: 2, total_units: 2, active_candidate_id: candidateId } } : { key: "terminal", label: "Accepted candidate recorded", detail: "The exact checkpoint passed the final acceptance contract.", execution: "terminal" as const },
     next_command: next,
   });
+  const report = {
+    schema_version: 1 as const, run_id: runId, name: preview.runName, state: "completed" as const, decision: "promote_candidate",
+    project: { id: firstId, revision: "smoke-revision", fingerprint: "sha256:" + "a".repeat(64), baseline_model: { id: catalog.artifacts[0]!.id, key: "routing-baseline", fingerprint: catalog.artifacts[0]!.fingerprint } },
+    diagnosis: { id: randomUUID(), fingerprint: "sha256:" + "b".repeat(64), weaknesses: [{ key: "generic-retrieval" }], source_campaign_id: randomUUID(), source_experiment_run_id: randomUUID() },
+    approved_repair: { proposal_id: authority.proposalId, proposal_fingerprint: "sha256:" + "c".repeat(64), targets: [{}], actions: [{}], candidate_hypotheses: authority.hypotheses, delta_selection_id: authority.selectionId, delta_selection_fingerprint: "sha256:" + "d".repeat(64) },
+    training_data_change: { snapshot_id: trainingSnapshotId, snapshot_fingerprint: "sha256:" + "e".repeat(64), base_rows: 6800, delta_rows: 24, total_rows: 6824, combined_membership_fingerprint: "sha256:" + "f".repeat(64) },
+    selected_candidate_id: candidateId, sealed_evidence: { used: true, candidate_exposures: 1, generation_id: benchmarkGenerationId, generation_state: "exhausted", authorization: "local-operator" },
+    candidate_results: [{ candidate_id: candidateId, state: "development_completed", checkpoint: { key: "routing-repair-candidate", format: "onnx", bytes: 8192, fingerprint: "sha256:" + "1".repeat(64), training_duration_seconds: 110 }, development_suites: [{ suite: "generic_holdout", baseline_report_id: randomUUID(), baseline_metrics: { mrr: 0.81 }, candidate_report_id: randomUUID(), candidate_metrics: { mrr: 0.84 }, assessment_id: randomUUID(), verdict: "passed", primary_improvement: 0.03, failed_gates: [] }, { suite: "retired_post_scaling", baseline_report_id: randomUUID(), baseline_metrics: { mrr: 0.76 }, candidate_report_id: randomUUID(), candidate_metrics: { mrr: 0.77 }, assessment_id: randomUUID(), verdict: "passed", primary_improvement: 0.01, failed_gates: [] }] }],
+    budget_and_recovery: { maximum: budget, observed_training_seconds: 110, observed_development_evaluations: 2, observed_sealed_evaluations: 1, candidate_failure_events: 0, adopted_previously_proven_run: false, optimization_event_count: 8, campaign_event_count: 7, experiment_event_count: 9 },
+    known_evidence_limits: ["Results apply only to the pinned project and benchmark generation.", "Candidate sealed evidence covers only the development-selected candidate."], provenance_head: "sha256:" + "4".repeat(64),
+  };
   let currentRun = run("planned", "resume");
   try {
     harness.backend.readiness = async projectId => { if (projectId !== firstId) return readinessMethod(projectId); return readiness; };
@@ -145,6 +156,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
       if (intent.action === "start") currentRun = run("planned", "resume");
       else if (intent.action === "resume") currentRun = run("campaign_active", "authorize-sealed");
       else if (intent.action === "authorize-sealed") currentRun = run("completed", "none", "promote_candidate");
+      else if (intent.action === "report") return report;
       return currentRun;
     };
     harness.backend.promoteAccepted = async (projectId, request) => {
@@ -173,6 +185,9 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await textButton("Authorize one sealed evaluation"); await until("document.querySelector('.promotion-result')?.textContent.includes('passed final acceptance')");
     await check("sealed authorization explains scope before recording consent", "window.__sealedPrompt.includes('exactly one sealed evaluation') && window.__sealedPrompt.includes('cannot be reused')");
     await check("accepted result remains a candidate pending operator promotion", "document.querySelector('.promotion-result').textContent.includes('remains a candidate') && [...document.querySelectorAll('.promotion-result button')].some(b=>b.textContent === 'Promote accepted candidate')");
+    await textButton("Inspect complete run report"); await until("document.querySelector('.run-report')");
+    await check("terminal report exposes aggregate evidence and provenance without sealed values", "document.querySelector('.run-report').textContent.includes('6,824 rows') && document.querySelector('.run-report').textContent.includes('generic_holdout') && document.querySelector('.run-report').textContent.includes('0.81 baseline') && document.querySelector('.run-report').textContent.includes('Known evidence limits') && !document.querySelector('.run-report').textContent.includes('sealed score')");
+    await screenshot("managed-optimization-report");
     await textButton("Promote accepted candidate"); await until("document.querySelector('.promotion-result')?.textContent.includes('now the project baseline')");
     await check("promotion immediately updates the active managed baseline", "document.querySelector('.launch-summary h2').textContent === 'Baseline updated' && document.querySelector('.promotion-result').textContent.includes('managed custody') && document.getElementById('toast').textContent.includes('promoted')");
     await screenshot("managed-optimization-promoted");

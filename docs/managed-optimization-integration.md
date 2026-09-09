@@ -376,6 +376,13 @@ starting work immediately.
    verified checkpoint into managed custody and atomically creates the new
    active baseline revision.
 
+Terminal run inspection uses the existing passive `report` intent. The desktop
+renders its candidate checkpoint, development-suite baseline/candidate metrics,
+assessment and report identities, training-population change, repair and
+snapshot lineage, journal counts, sealed-use status, and explicit evidence
+limits. It does not request `provenance` merely to dump a raw owner bundle, and
+it never projects sealed rows or sealed metric values into the renderer.
+
 No default can silently select sealed evidence, expand a budget, replace a
 baseline, or reuse stale authority.
 
@@ -590,6 +597,9 @@ candidate parameters and immutable IDs remain inspectable disclosures.
 The reserved-run screenshot separately verifies that the active stage and its
 action precede launch-reference material, and that completed output records are
 visually distinct from finite reserved capacity and journal timing.
+The terminal-report screenshot verifies that an accepted result remains a
+candidate until promotion and that aggregate development evidence and the
+complete inspectable provenance chain are available without sealed values.
 
 ## Delivery order
 

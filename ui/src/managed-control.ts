@@ -111,6 +111,57 @@ export interface ManagedRunStatus {
   next_command: "resume" | "authorize-sealed" | "none";
 }
 
+export interface ManagedOptimizationReport {
+  schema_version: 1;
+  run_id: string;
+  name: string;
+  state: OptimizationRunState;
+  decision?: string | null;
+  project: { id: string; revision: string; fingerprint: string; baseline_model: { id: string; key: string; fingerprint: string } };
+  diagnosis: { id: string; fingerprint: string; weaknesses: unknown[]; source_campaign_id: string; source_experiment_run_id: string };
+  approved_repair: {
+    proposal_id: string;
+    proposal_fingerprint: string;
+    targets: unknown[];
+    actions: unknown[];
+    candidate_hypotheses: unknown[];
+    delta_selection_id: string;
+    delta_selection_fingerprint: string;
+  };
+  training_data_change: { snapshot_id: string; snapshot_fingerprint: string; base_rows: number; delta_rows: number; total_rows: number; combined_membership_fingerprint: string };
+  selected_candidate_id?: string | null;
+  sealed_evidence: { used: boolean; candidate_exposures: number; generation_id: string; generation_state?: string | null; authorization?: string | null };
+  candidate_results: Array<{
+    candidate_id: string;
+    state: string;
+    checkpoint?: { key: string; format: string; bytes: number; fingerprint: string; training_duration_seconds: number } | null;
+    development_suites: Array<{
+      suite: string;
+      baseline_report_id: string;
+      baseline_metrics: Record<string, number>;
+      candidate_report_id: string;
+      candidate_metrics: Record<string, number>;
+      assessment_id: string;
+      verdict: string;
+      primary_improvement?: number | null;
+      failed_gates: unknown[];
+    }>;
+  }>;
+  budget_and_recovery: {
+    maximum: OptimizationBudget;
+    observed_training_seconds: number;
+    observed_development_evaluations: number;
+    observed_sealed_evaluations: number;
+    candidate_failure_events: number;
+    adopted_previously_proven_run: boolean;
+    optimization_event_count: number;
+    campaign_event_count: number;
+    experiment_event_count: number;
+  };
+  known_evidence_limits: string[];
+  provenance_head: string;
+}
+
 export type ManagedOptimizationRequest =
   | { action: "preview" | "start"; manifestToken: string }
   | { action: "status" | "inspect" | "review-repair" | "review-delta" | "resume" | "doctor" | "provenance" | "report"; runId: string }

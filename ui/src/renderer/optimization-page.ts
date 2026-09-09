@@ -1,4 +1,4 @@
-import type { ManagedLaunchPreview, ManagedReadiness, ManagedRunStatus, OptimizationManifestChoice, PreparedOptimizationChoice, ReadinessCheck, ReadinessState } from "../managed-control.js";
+import type { ManagedLaunchPreview, ManagedOptimizationReport, ManagedReadiness, ManagedRunStatus, OptimizationManifestChoice, PreparedOptimizationChoice, ReadinessCheck, ReadinessState } from "../managed-control.js";
 import type { ManagedWorkspace } from "../managed-workspace.js";
 import { localDateTimeLabel } from "./catalog.js";
 import { button, details, facts, pageHeader, sectionHeader, status, tag } from "./components.js";
@@ -13,6 +13,7 @@ export interface OptimizationPageState {
   manifest?: OptimizationManifestChoice;
   prepared?: PreparedOptimizationChoice;
   run?: ManagedRunStatus;
+  report?: ManagedOptimizationReport;
 }
 export interface OptimizationPageActions {
   refresh(): void;
@@ -21,6 +22,7 @@ export interface OptimizationPageActions {
   start(): void;
   resume(): void;
   authorizeSealed(): void;
+  loadReport(): void;
   promote(): void;
   cancel(): void;
   openSettings(): void;
@@ -65,6 +67,34 @@ function parameterLabel(value: string | number | boolean): string {
 }
 function fieldLabel(value: string): string {
   return value.replaceAll("_", " ").replace(/^./, first => first.toUpperCase());
+}
+function reportMetricValue(value: number | undefined): string {
+  return value === undefined ? "Not recorded" : value.toLocaleString(undefined, { maximumSignificantDigits: 7 });
+}
+function reportPanel(report: ManagedOptimizationReport): HTMLElement {
+  const decision = report.decision?.replaceAll("_", " ") ?? "No final decision";
+  return h("section", { class: "run-report", "aria-label": "Complete run report" },
+    sectionHeader("Complete run report", tag("Aggregate evidence", "accent")),
+    h("div", { class: "report-outcome" }, h("div", { class: "eyebrow" }, "Persisted decision"), h("h3", {}, decision),
+      h("p", {}, report.sealed_evidence.used ? "One authorized sealed result informed the terminal decision. Sealed rows and scores remain outside this report." : "No sealed result was used in this run.")),
+    h("div", { class: "report-summary" },
+      facts([["Training population", `${report.training_data_change.total_rows.toLocaleString()} rows`], ["Approved change", `+${report.training_data_change.delta_rows.toLocaleString()} rows over ${report.training_data_change.base_rows.toLocaleString()} base`], ["Candidate hypotheses", String(report.approved_repair.candidate_hypotheses.length)], ["Recorded failures", String(report.budget_and_recovery.candidate_failure_events)]]),
+      facts([["Training recorded", durationLabel(report.budget_and_recovery.observed_training_seconds)], ["Development reports", String(report.budget_and_recovery.observed_development_evaluations)], ["Sealed reports", String(report.budget_and_recovery.observed_sealed_evaluations)], ["Journal events", String(report.budget_and_recovery.optimization_event_count + report.budget_and_recovery.campaign_event_count + report.budget_and_recovery.experiment_event_count)]])),
+    h("div", { class: "report-candidates" }, ...report.candidate_results.map((candidate, index) => h("section", { class: "report-candidate" },
+      h("div", { class: "report-candidate-heading" }, h("div", {}, h("div", { class: "eyebrow" }, `Candidate ${index + 1}`), h("h3", {}, candidate.checkpoint?.key ?? candidate.candidate_id)), status(candidate.state.replaceAll("_", " "), candidate.state === "failed" ? "danger" : "neutral")),
+      candidate.checkpoint ? facts([["Format", candidate.checkpoint.format], ["Artifact size", `${candidate.checkpoint.bytes.toLocaleString()} bytes`], ["Completed training", durationLabel(candidate.checkpoint.training_duration_seconds)], ["Checkpoint fingerprint", candidate.checkpoint.fingerprint]]) : h("p", { class: "section-note" }, "No completed checkpoint was recorded for this candidate."),
+      ...candidate.development_suites.map(suite => {
+        const keys = [...new Set([...Object.keys(suite.baseline_metrics), ...Object.keys(suite.candidate_metrics)])];
+        return details(`${suite.suite} · ${suite.verdict.replaceAll("_", " ")}`, h("div", { class: "report-suite" },
+          facts(keys.map(key => [fieldLabel(key), `${reportMetricValue(suite.baseline_metrics[key])} baseline → ${reportMetricValue(suite.candidate_metrics[key])} candidate`] as [string, string])),
+          facts([["Baseline report", suite.baseline_report_id], ["Candidate report", suite.candidate_report_id], ["Assessment", suite.assessment_id], ["Failed gates", String(suite.failed_gates.length)]])));
+      })))),
+    details("Inspect provenance chain", facts([
+      ["Project", report.project.id], ["Project revision", report.project.revision], ["Baseline model", report.project.baseline_model.fingerprint],
+      ["Diagnosis", report.diagnosis.fingerprint], ["Repair proposal", report.approved_repair.proposal_fingerprint], ["Delta selection", report.approved_repair.delta_selection_fingerprint],
+      ["Training snapshot", report.training_data_change.snapshot_fingerprint], ["Benchmark generation", report.sealed_evidence.generation_id], ["Optimization journal", report.provenance_head],
+    ])),
+    h("div", { class: "evidence-limits" }, h("div", { class: "eyebrow" }, "Known evidence limits"), h("ul", {}, ...report.known_evidence_limits.map(limit => h("li", {}, limit)))));
 }
 function candidateRecipe(preview: ManagedLaunchPreview): HTMLElement {
   return details(`Inspect ${preview.candidateRecipes.length === 1 ? "the candidate recipe" : `${preview.candidateRecipes.length} candidate recipes`}`,
@@ -140,18 +170,22 @@ function runPanel(run: ManagedRunStatus, state: OptimizationPageState, actions: 
   const ceiling = run.budgets.maximum;
   const limitKind = reserved ? "reserved" : "ceiling";
   const incompleteAccounting = recorded.candidates_failed > 0 || Boolean(run.failed_or_uncertain);
-  return h("section", { class: "run-control" }, sectionHeader("Reserved run", tag(run.state.replaceAll("_", " "))),
-    h("div", { class: `run-stage ${busy ? "is-running" : ""}`, role: busy ? "status" : undefined },
+  const finalDecisionCard = accepted || run.state === "completed" && run.decision === "retain_baseline";
+  const inspectReport = terminal && !state.report ? button(state.executing === "report" ? "Loading report…" : "Inspect complete run report", actions.loadReport, "secondary") : null;
+  if (inspectReport instanceof HTMLButtonElement) inspectReport.disabled = busy;
+  return h("section", { class: "run-control" }, sectionHeader(terminal ? "Run record" : "Reserved run", tag(run.state.replaceAll("_", " "))),
+    !finalDecisionCard ? h("div", { class: `run-stage ${busy ? "is-running" : ""}`, role: busy ? "status" : undefined },
       h("div", { class: "eyebrow" }, busy ? "Executing now" : terminal ? "Final state" : "Next safe stage"),
       h("h3", {}, run.stage.label), h("p", {}, run.stage.detail),
       progress && progress.total_units > 0 ? h("p", { class: "stage-progress" }, `${progress.completed_units} of ${progress.total_units} candidate build and development-evaluation steps durably recorded`) : null,
-      busy && run.stage.execution === "native" ? h("p", { class: "stage-caution" }, "This native stage can take a while. The screen is reading the journal as new facts are committed; it does not estimate unfinished work.") : null),
+      busy && run.stage.execution === "native" ? h("p", { class: "stage-caution" }, "This native stage can take a while. The screen is reading the journal as new facts are committed; it does not estimate unfinished work.") : null) : null,
     next || !terminal && !busy ? h("div", { class: "run-actions" }, next, !terminal && !busy ? button("Cancel before next stage", actions.cancel, "secondary") : null) : null,
     accepted ? h("div", { class: `promotion-result ${activeAcceptedModel ? "is-active" : "is-pending"}` },
       h("div", {}, h("div", { class: "eyebrow" }, activeAcceptedModel ? "Baseline updated" : "Operator decision required"),
         h("h3", {}, activeAcceptedModel ? "The accepted candidate is now the project baseline" : "The candidate passed final acceptance"),
         h("p", {}, activeAcceptedModel ? "Its checkpoint is in managed custody. Reconnect a scientific runtime for this new baseline before starting another run." : "The run proved this exact checkpoint passed the sealed gates. It remains a candidate until you explicitly promote it.")),
       promote) : run.state === "completed" && run.decision === "retain_baseline" ? h("div", { class: "promotion-result is-retained" }, h("div", {}, h("div", { class: "eyebrow" }, "Final decision"), h("h3", {}, "The project baseline was retained"), h("p", {}, "No candidate met the complete acceptance contract, so the baseline pointer did not change."))) : null,
+    inspectReport ? h("div", { class: "report-action" }, inspectReport, h("p", {}, "Loads the persisted aggregate development evidence and provenance. It never reveals sealed rows or sealed scores.")) : null,
     h("section", { class: "run-usage", "aria-label": "Recorded work" },
       h("div", { class: "run-usage-heading" }, h("div", {}, h("div", { class: "eyebrow" }, "Recorded work"), h("p", {}, `Completed outputs compared with the ${limitKind} capacity. These are durable records, not a live utilization estimate.`))),
       h("dl", { class: "run-metrics" },
@@ -167,6 +201,7 @@ function runPanel(run: ManagedRunStatus, state: OptimizationPageState, actions: 
         ["Unreserved training time", `${(run.budgets.remaining_unreserved?.training_seconds ?? ceiling.maximum_training_seconds).toLocaleString()} seconds`],
         ["Failed candidate records", String(recorded.candidates_failed)],
       ]))),
+    state.report ? reportPanel(state.report) : null,
     details("Run identity and journal", facts([["Run", run.run_id], ["Reserved at", localDateTimeLabel(run.created_at)], ["Last durable transition", localDateTimeLabel(run.last_transition_at)], ["Journal span", journalSpanLabel(run.created_at, run.last_transition_at)], ["Stopped because", run.stopped_reason.replaceAll("_", " ")], ["Durable transitions", String(run.last_sequence)], ["Journal head", run.head_fingerprint]])),
     run.failed_or_uncertain ? h("p", { class: "form-error", role: "alert" }, run.failed_or_uncertain) : null);
 }
