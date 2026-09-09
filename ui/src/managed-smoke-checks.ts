@@ -102,7 +102,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await screenshot("managed-provider-settings");
   await nav("models");
   await nav("runs");
-  await check("managed runs point to explicit scientific history import", "document.querySelector('.empty-state').textContent.includes('Project settings') && document.querySelector('.empty-state').textContent.includes('verify and copy')");
+  await check("managed runs own the optimization launch action", "document.querySelector('.empty-state').textContent.includes('launch requirements') && [...document.querySelectorAll('#page button')].filter(b=>b.textContent.includes('optimization') || b.textContent.includes('launch requirements')).length >= 2");
   await nav("benchmarks");
   await check("managed benchmarks distinguish imports from evaluation", "document.querySelector('.empty-state').textContent.includes('does not create evaluation results')");
   await nav("datasets"); await textButton("Import dataset");

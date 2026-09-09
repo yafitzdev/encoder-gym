@@ -7,6 +7,7 @@ import type { ManagedLaunchPreview, ManagedOptimizationAuthority, ManagedOptimiz
 import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, LocalModel, ManagedWorkspace, ModelChoice } from "./managed-workspace.js";
 import type { ProjectRegistry } from "./project-registry.js";
 import type { WorkspaceSnapshot } from "./workspace.js";
+import { readWorkspaceDatabase } from "./evidence/read-workspace.js";
 
 const purposes = new Set<DatasetPurpose>(["unassigned", "training", "development", "sealed"]);
 export function datasetPurpose(value: unknown): DatasetPurpose {
@@ -330,12 +331,21 @@ export function managedSnapshot(managed: ManagedWorkspace): WorkspaceSnapshot {
   const catalog = managed.modelCatalog;
   const activeRevision = catalog?.baselineRevisions.find(revision => revision.id === catalog.activeBaselineRevisionId);
   const active = catalog?.artifacts.find(artifact => artifact.id === activeRevision?.modelArtifactId);
+  const root = resolve(managed.folder);
+  let scientific: WorkspaceSnapshot | undefined;
+  if (managed.scientificBinding?.store?.databasePath) {
+    const database = resolve(root, managed.scientificBinding.store.databasePath);
+    if (database === root || !database.startsWith(root + sep)) throw new Error("The bound scientific store escaped its managed project workspace.");
+    scientific = readWorkspaceDatabase(database);
+  }
   return {
     schemaVersion: 1, capturedAt: new Date().toISOString(), source: "local", folder: managed.folder,
     name: manifest.name, task: manifest.task ?? "Task not configured",
     baseline: active
       ? { id: active.id, key: active.name, format: active.format, bytes: active.bytes, fingerprint: active.fingerprint }
       : { id: model.fingerprint, key: `${manifest.name} baseline`, format: model.format, bytes: model.bytes, fingerprint: model.fingerprint },
-    runs: [], databases: ["project.sqlite"], managed,
+    baselineEvaluations: scientific?.baselineEvaluations,
+    deployment: scientific?.deployment,
+    runs: scientific?.runs ?? [], databases: ["project.sqlite", ...(scientific?.databases ?? [])], managed,
   };
 }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { readWorkspace, readProjectContent } from "../dist/evidence/read-workspace.js";
+import { readWorkspace, readWorkspaceDatabase, readProjectContent } from "../dist/evidence/read-workspace.js";
 import { experimentFixture, writeExperimentDatabase } from "./fixtures/experiment.mjs";
 
 const folder = () => mkdtempSync(join(tmpdir(), "encoder-gym-evidence-"));
@@ -36,6 +36,16 @@ test("non-Nomos task, model identity, primary metric and safe parameters come fr
   assert.equal(result.runs[0].candidates[0].parameters.head_width, 64);
   assert.ok(!JSON.stringify(result).includes("DO-NOT-PROJECT"));
   assert.deepEqual(readFileSync(file), before, "reading evidence must leave its database unchanged");
+});
+
+test("an exact bound database is projected without scanning sibling files", () => {
+  const root = folder(), bound = join(root, "scientific.sqlite"), unrelated = join(root, "unrelated.db");
+  writeExperimentDatabase(bound, experimentFixture("bound"));
+  writeFileSync(unrelated, "not a database");
+  const result = readWorkspaceDatabase(bound);
+  assert.equal(result.runs.length, 1);
+  assert.equal(result.runs[0].id, "bound-run");
+  assert.deepEqual(result.databases, ["scientific.sqlite"]);
 });
 
 test("a newer registered baseline is visible before its first run without relabelling older results", () => {

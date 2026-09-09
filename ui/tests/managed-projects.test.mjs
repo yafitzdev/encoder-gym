@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { ManagedBackend, managedSnapshot, redactBackendError } from "../dist/evidence/managed-backend.js";
 import { ProjectRegistry } from "../dist/evidence/project-registry.js";
 import { writeLocalModel } from "./fixtures/local-model.mjs";
+import { experimentFixture, writeExperimentDatabase } from "./fixtures/experiment.mjs";
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "gym-managed-ui-"));
@@ -37,6 +38,31 @@ test("managed project identity survives independent profiles, move, rename, forg
   f.registry.remove(id);
   assert.ok(existsSync(join(moved, "encoder-gym.json")));
   assert.equal(f.registry.addManaged(await f.backend.open(moved)).selectedId, id);
+});
+
+test("managed snapshots project only their bound scientific experiment store", () => {
+  const f = fixture(), project = join(f.root, "bound-project"), runs = join(project, "runs");
+  mkdirSync(runs, { recursive: true });
+  const scientific = join(runs, "scientific.sqlite");
+  writeExperimentDatabase(scientific, experimentFixture("managed"));
+  writeFileSync(join(project, "foreign.db"), "not a database");
+  const id = randomUUID(), revisionId = randomUUID(), modelId = randomUUID(), baseline = { source: project, format: "safetensors-encoder", architecture: "bert", files: [], bytes: 10, fingerprint: "sha256:" + "a".repeat(64), execution: "not-configured" };
+  const managed = {
+    folder: project, verified: true, manifest: { version: 1, id, name: "Managed evidence", createdAt: new Date().toISOString(), task: "retrieval", baseline }, datasets: [],
+    modelCatalog: { projectId: id, artifacts: [{ id: modelId, projectId: id, name: "Managed baseline", createdAt: new Date().toISOString(), origin: "imported", path: "models/baseline", format: baseline.format, bytes: baseline.bytes, fingerprint: baseline.fingerprint }], baselineRevisions: [{ id: revisionId, projectId: id, sequence: 1, modelArtifactId: modelId, change: { kind: "initialization", source_fingerprint: baseline.fingerprint }, actor: "test", reason: "test", createdAt: new Date().toISOString(), fingerprint: "revision" }], activeBaselineRevisionId: revisionId },
+    scientificBinding: { id: randomUUID(), projectId: id, baselineRevisionId: revisionId, adapter: { key: "fixture", protocol: "v1", configurationFingerprint: "adapter" }, runtime: { kind: "external-isolated", location: "runtime", projectSnapshot: { id: "managed-project", fingerprint: "sha256:" + "3".repeat(64) } }, store: { databasePath: "runs/scientific.sqlite", schema: { id: "schema", fingerprint: "schema" } }, actor: "test", reason: "test", createdAt: new Date().toISOString(), specificationFingerprint: "spec", fingerprint: "binding" },
+  };
+  const snapshot = managedSnapshot(managed);
+  assert.equal(snapshot.baseline.key, "Managed baseline");
+  assert.equal(snapshot.runs.length, 1);
+  assert.equal(snapshot.runs[0].id, "managed-run");
+  assert.deepEqual(snapshot.databases, ["project.sqlite", "scientific.sqlite"]);
+});
+
+test("managed snapshots reject scientific store paths outside the project", () => {
+  const f = fixture(), id = randomUUID(), baseline = { source: f.root, format: "safetensors-encoder", architecture: "bert", files: [], bytes: 10, fingerprint: "sha256:" + "a".repeat(64), execution: "not-configured" };
+  const managed = { folder: join(f.root, "project"), verified: true, manifest: { version: 1, id, name: "Escape", createdAt: new Date().toISOString(), task: null, baseline }, datasets: [], scientificBinding: { store: { databasePath: "../outside.sqlite" } } };
+  assert.throws(() => managedSnapshot(managed), /escaped its managed project workspace/);
 });
 
 test("model confirmation and dataset choices are fenced to native-picked inputs and their own project", async () => {

@@ -230,7 +230,18 @@ export function mount(): void {
       }
     };
     void poll();
-    try { state.run = runStatus(await bridge.managedOptimize(id, request)); }
+    try {
+      state.run = runStatus(await bridge.managedOptimize(id, request));
+      if (request.action !== "status" && selection.selectedId === id) {
+        try {
+          const latest = await bridge.selectProject(id);
+          if (selection.selectedId === id) opened = latest;
+        } catch (error) {
+          state.errorTitle = "The run changed, but its evidence could not be reloaded";
+          state.error = message(error);
+        }
+      }
+    }
     catch (error) {
       state.errorTitle = ({ start: "Could not reserve the optimization run", resume: "Could not execute this stage", "authorize-sealed": "Could not authorize final acceptance", cancel: "Could not cancel the run" } as Record<string, string>)[request.action] ?? "Could not update the optimization run";
       state.error = message(error);

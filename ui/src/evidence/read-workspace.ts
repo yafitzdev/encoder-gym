@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { readdirSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { CandidateAttempt, DevelopmentReport, DevelopmentResult, ModelArtifact, RunRecord, WorkspaceSnapshot } from "../workspace.js";
 import type { ProjectContent } from "../projects.js";
 
@@ -142,19 +142,30 @@ export function readProjectContent(folder: string): ProjectContent {
 /** Reads only SQLite files directly inside the selected folder; never native payloads. */
 export function readWorkspace(folder: string): WorkspaceSnapshot {
   const root = resolve(folder);
-  const files = readdirSync(root, { withFileTypes: true }).filter(f => f.isFile() && /\.(sqlite3?|db)$/i.test(f.name)).map(f => f.name).sort();
+  const files = readdirSync(root, { withFileTypes: true }).filter(f => f.isFile() && /\.(sqlite3?|db)$/i.test(f.name)).map(f => ({ name: f.name, path: join(root, f.name) })).sort((a, b) => a.name.localeCompare(b.name));
   if (!files.length) throw new EmptyWorkspaceError([]);
+  return readWorkspaceFiles(root, files);
+}
+
+/** Reads one exact, already-authorized scientific store without scanning siblings. */
+export function readWorkspaceDatabase(database: string): WorkspaceSnapshot {
+  const path = resolve(database), name = basename(path);
+  if (!/\.(sqlite3?|db)$/i.test(name)) throw new Error("The bound scientific store is not a supported SQLite file.");
+  return readWorkspaceFiles(dirname(path), [{ name, path }]);
+}
+
+function readWorkspaceFiles(root: string, files: { name: string; path: string }[]): WorkspaceSnapshot {
   const runs = new Map<string, RunRecord>();
   const projects = new Map<string, Json>();
   const optimizations = new Map<string, string>();
   const databases: string[] = [];
   for (const file of files) {
-    const db = new DatabaseSync(join(root, file), { readOnly: true });
+    const db = new DatabaseSync(file.path, { readOnly: true });
     try {
       db.exec("PRAGMA query_only = ON; BEGIN");
       const hasTable = (name: string): boolean => Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name));
       if (!hasTable("encoder_experiment_projects")) continue;
-      databases.push(file);
+      databases.push(file.name);
       const read = (table: string): Json[] => db.prepare(`SELECT artifact_json FROM ${table}`).all().map(row => object(JSON.parse(string(row.artifact_json)), table));
       const localProjects = new Map<string, Json>();
       for (const p of read("encoder_experiment_projects")) {
@@ -170,7 +181,7 @@ export function readWorkspace(folder: string): WorkspaceSnapshot {
         if (!protocol) throw new Error("Run protocol is missing.");
         const project = localProjects.get(protocol.project_snapshot_id);
         if (!project) throw new Error("Run project is missing.");
-        const run = projectRun(protocol, project, journal, file);
+        const run = projectRun(protocol, project, journal, file.name);
         const previous = runs.get(id);
         if (previous && previous.journalHead !== run.journalHead) throw new Error("Conflicting copies of a run. Open one unambiguous workspace.");
         runs.set(id, run);
