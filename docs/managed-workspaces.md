@@ -115,12 +115,15 @@ synth workspace prepare-nomos-python C:\EncoderGym\Projects\Nomos --runtime C:\i
 
 The command re-verifies the workspace, runtime, active baseline, Python version,
 and missing modules before invoking that interpreter's pip with no input,
-version-check disabled, and binary distributions only. The renderer supplies no
-package name, index, executable path, environment map, or shell text. Pip may
-use the configured package index and install transitive dependencies into the
-selected environment; the confirmation states that mutation and network
-boundary before it runs. Installer output is not relayed into application errors
-where authenticated index URLs could leak.
+version-check disabled, and binary distributions only. If pip itself is absent
+or unusable, the same intent first restores it through Python's bundled offline
+`ensurepip` module and reports `pipBootstrapped: true`; it still accepts no
+renderer-authored package. The renderer supplies no package name, index,
+executable path, environment map, or shell text. Pip may use the configured
+package index and install transitive dependencies into the selected environment;
+the confirmation states that mutation and network boundary before it runs.
+Installer output is not relayed into application errors where authenticated
+index URLs could leak.
 
 Without a history selection, the binding command repeats every check, rejects
 an incomplete interpreter, and initializes a new production scientific store

@@ -33,14 +33,24 @@ Do not confuse custody with readiness:
   resolved only for native execution and injected under fixed project-role
   child-environment names. These capabilities remain generic project
   infrastructure and do not fabricate missing Nomos facts.
-- Existing historical Nomos experiments remain separate evidence unless the
-  operator explicitly previews and imports a verified SQLite snapshot.
-- The real Nomos project is still not runnable in place: its chosen Python
-  environment lacks `onnxruntime_genai`, and the actual managed workspace has
-  not been upgraded and bound to the verified isolated runtime/history. Those
-  operations mutate real local state and require explicit operator approval.
-- The desktop can launch, recover, finish, and promote the real bounded
-  workflow once its project-specific readiness report is green.
+- The operator explicitly approved the real Nomos setup on 2026-09-09. The
+  managed registry now has an immutable model catalog; the selected Python
+  3.12 environment provides every compiled Nomos capability, including
+  `onnxruntime_genai`; and the clean isolated runtime at revision
+  `4450ab3f1de8a1fc64bcbe5d77c67d0fb0f99af9` is bound to a verified,
+  content-addressed copy of the selected historical SQLite database.
+- Historical experiment rows remain scientific run/evaluation evidence. They
+  do not become managed candidate artifacts merely because their database was
+  imported. The real Models page therefore truthfully shows one baseline and
+  no managed candidates.
+- The final read-only Electron preflight verifies every required scientific
+  foundation. Its sole required next action is **Prepare approved run** for one
+  reviewed candidate over 192 approved delta rows, with 7,200 seconds maximum
+  training, two development evaluations, one separately authorized sealed use,
+  and zero external calls. Preparation—not runtime setup—is now the remaining
+  local mutation before the exact run can be reserved.
+- The desktop can launch, recover, finish, and promote that real bounded
+  workflow after the operator explicitly prepares its immutable run definition.
 
 Treat these as product facts to resolve or explain, not presentation details to
 hide behind optimistic status text.

@@ -141,7 +141,10 @@ interpreter's pip without a shell, input prompts, source distributions, or
 version-check traffic. The UI confirms that this mutates the selected Python
 environment and may contact its configured package index. Captured installer
 output is never relayed into renderer diagnostics because it may contain an
-authenticated index URL. A fresh offline preview must pass before binding.
+authenticated index URL. If the selected environment has no usable pip, this
+same fixed intent first restores it from Python's bundled offline `ensurepip`
+module and reports that fact; the user is not sent to a terminal. A fresh
+offline preview must pass before binding.
 
 Historical Nomos databases and journals are never automatically bound. Project
 settings may explicitly select an existing Encoder Gym production database
@@ -433,6 +436,43 @@ proved the saved library, managed manifest, custody database, model/data
 fingerprints, and projected workspace facts remained unchanged. It performed
 no upgrade, binding, scientific-store write, provider call, training, or
 evaluation.
+
+That paragraph records the initial, pre-authorization state. On 2026-09-09 the
+operator then explicitly authorized the in-place setup only. The real registry
+was upgraded to one immutable imported artifact and one active baseline
+revision. The selected Python 3.12.10 environment initially had no pip module;
+pip was restored from bundled `ensurepip`, after which the fixed
+`onnxruntime-genai>=0.8` installation made training, retrieval evaluation,
+local agent evaluation, and diagnostics all ready. A fresh binding preview
+reproduced the 134,211,908-byte baseline, clean isolated source revision
+`4450ab3f1de8a1fc64bcbe5d77c67d0fb0f99af9`, task-adapter configuration, and
+historical project snapshot.
+
+The approved bind imported a 7,180,288-byte standalone SQLite image with
+fingerprint
+`sha256:12586ad5146d9a95901748fa914931c7cb8acef2421654d73579c592c6ec6fdd`
+under the managed `runs/` directory and persisted binding
+`935f5d8c-dd8b-4c1b-ae1f-dd149c39b014`. The binding is scoped to baseline
+revision `a1aa8b5b-109c-4423-be7c-aa07c3e02caf`, the exact adapter protocol,
+runtime snapshot, executable, store schema, actor, and reason.
+
+The post-bind real Electron preflight passed without training, provider access,
+sealed exposure, or persistence. It reverified two managed source imports and
+6,800 rows, then proved the saved library, manifest, custody database, and
+reopened workspace facts unchanged. Every required workspace, model, runtime,
+store, project, training-input, development, and sealed-authority check is
+ready. The sole required next action is `Prepare approved run`. Current reviewed
+authority defines one candidate over 192 approved delta rows, at most 7,200
+training seconds, two development evaluations, one sealed use, and zero
+external calls, valid through 2026-11-30. No exact run definition was written
+and no run was reserved.
+
+This real transition also exposed two presentation/verification defects. The
+Models catalog now excludes scientific-history checkpoints that have not been
+registered as managed candidate artifacts; Runs and Evaluation retain that
+history. The real Electron preflight resolves expensive owner readiness exactly
+once and renders that immutable response, rather than replaying the same
+roughly nine-minute authority computation twice.
 
 The 2026-09-09 binding preflight copied the real managed workspace to a temporary
 directory, upgraded only that copy, and matched its 134,211,908-byte baseline to
