@@ -1010,6 +1010,18 @@ impl NomosBackend {
         }
         Ok(path)
     }
+
+    /// Resolve an immutable model identity to its verified native checkpoint.
+    ///
+    /// This is intentionally adapter-specific: callers may transfer an
+    /// accepted checkpoint into managed custody only after the native adapter
+    /// has reproduced the scientific tree identity.
+    pub fn verified_model_path(
+        &self,
+        model: &ModelArtifactIdentity,
+    ) -> Result<PathBuf, EncoderTaskAdapterError> {
+        self.model_path(model)
+    }
 }
 
 impl DevelopmentObservationBackend for NomosBackend {

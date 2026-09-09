@@ -159,6 +159,33 @@ fn local_onboarding_import_and_portable_reopen_are_real_cli_operations() {
     assert!(checks.iter().any(|check| {
         check["key"] == "optimization.preview" && check["state"] == "action_required"
     }));
+    let unknown_run = uuid::Uuid::new_v4().to_string();
+    let rejected_promotion = Command::new(env!("CARGO_BIN_EXE_synth"))
+        .current_dir(root)
+        .args([
+            "--output",
+            "json",
+            "workspace",
+            "promote",
+            "project-one",
+            "--run-id",
+            &unknown_run,
+            "--expected-baseline-revision-id",
+            first["modelCatalog"]["activeBaselineRevisionId"]
+                .as_str()
+                .unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!rejected_promotion.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected_promotion.stderr)
+            .contains("Configure a scientific binding before promotion")
+    );
+    assert_eq!(
+        run(root, &["verify", "project-one"])["modelCatalog"]["activeBaselineRevisionId"],
+        first["modelCatalog"]["activeBaselineRevisionId"]
+    );
     fs::rename(root.join("project-one"), root.join("moved")).unwrap();
     fs::remove_dir_all(root.join("checkpoint")).unwrap();
     fs::remove_file(root.join("local.jsonl")).unwrap();

@@ -23,8 +23,9 @@ use project_workspace_core::{
     ScientificStoreBinding, SecretReference,
 };
 use project_workspace_local::{
-    backfill_nomos, create_workspace, import_dataset, inspect_dataset, inspect_model,
-    open_workspace, record_provider_catalog, record_scientific_binding, upgrade_workspace,
+    AcceptedModelPromotion, backfill_nomos, create_workspace, import_dataset, inspect_dataset,
+    inspect_model, open_workspace, record_accepted_model_promotion, record_provider_catalog,
+    record_scientific_binding, upgrade_workspace,
 };
 use uuid::Uuid;
 
@@ -243,6 +244,22 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
             print(&prepare_optimization(&folder).await?)
         }
         WorkspaceCommand::Optimize { folder, command } => managed_optimize(&folder, *command).await,
+        WorkspaceCommand::Promote {
+            folder,
+            run_id,
+            expected_baseline_revision_id,
+            actor,
+            reason,
+        } => {
+            promote_accepted(
+                &folder,
+                run_id,
+                expected_baseline_revision_id,
+                actor,
+                reason,
+            )
+            .await
+        }
         WorkspaceCommand::Providers { folder, command } => providers(&folder, command).await,
         WorkspaceCommand::PreviewNomosBinding {
             folder,
@@ -504,6 +521,72 @@ async fn managed_optimize(
         &project.fingerprint,
     )
     .await
+}
+
+async fn promote_accepted(
+    folder: &std::path::Path,
+    run_id: Uuid,
+    expected_baseline_revision_id: Uuid,
+    actor: String,
+    reason: String,
+) -> anyhow::Result<()> {
+    let workspace = open_workspace(folder, true).await?;
+    workspace
+        .model_catalog
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Upgrade this managed workspace before promotion."))?;
+    let binding = workspace
+        .scientific_binding
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Configure a scientific binding before promotion."))?;
+    anyhow::ensure!(
+        binding.baseline_revision_id == expected_baseline_revision_id,
+        "The accepted run was not evaluated against the requested baseline revision."
+    );
+    let store = open_bound_store(&workspace.folder, binding).await?;
+    let project = load_bound_project(&store, binding).await?;
+    let backend = open_nomos_binding(binding, &project)?;
+    let evidence =
+        super::encoder_optimize::accepted_promotion_evidence(&store, &backend, run_id).await?;
+    store.pool().close().await;
+    anyhow::ensure!(
+        evidence.project.id.to_string() == binding.runtime.project_snapshot.id
+            && evidence.project.fingerprint == binding.runtime.project_snapshot.fingerprint,
+        "The accepted run belongs to another bound scientific project."
+    );
+    let source = backend.verified_model_path(&evidence.model)?;
+    let request = AcceptedModelPromotion {
+        expected_baseline_revision_id,
+        name: format!("Accepted candidate {}", evidence.candidate.sequence),
+        source_model: BoundIdentity {
+            id: evidence.model.id.to_string(),
+            fingerprint: evidence.model.fingerprint.clone(),
+        },
+        source_model_format: evidence.model.format,
+        source_model_bytes: evidence.model.bytes,
+        producing_run: BoundIdentity {
+            id: evidence.experiment_run_id.to_string(),
+            fingerprint: evidence.experiment_head_fingerprint,
+        },
+        training_snapshot: BoundIdentity {
+            id: evidence.training_snapshot_id.to_string(),
+            fingerprint: evidence.training_snapshot_fingerprint,
+        },
+        trainer: BoundIdentity {
+            id: format!("{}:{}", binding.adapter.key, binding.adapter.protocol),
+            fingerprint: binding.adapter.configuration_fingerprint.clone(),
+        },
+        effective_configuration_fingerprint: evidence.candidate.fingerprint,
+        source_revision: evidence.project.source_revision,
+        decision_id: evidence.decision_id,
+        decision_fingerprint: evidence.decision_fingerprint,
+        actor,
+        reason,
+    };
+    eprintln!(
+        "Copying the sealed-accepted checkpoint into managed custody and advancing the audited baseline pointer."
+    );
+    print(&record_accepted_model_promotion(folder, &source, request).await?)
 }
 
 fn managed_command(

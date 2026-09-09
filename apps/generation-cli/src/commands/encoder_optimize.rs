@@ -9,8 +9,9 @@ use std::{
 use anyhow::Context;
 use chrono::Utc;
 use encoder_campaign_core::{
-    CampaignBenchmarkBinding, CampaignBudget, CampaignState, CampaignStore, ProductionCampaign,
-    adopt_run_event, bind_generation_event, complete_campaign_event, first_campaign_event,
+    CampaignBenchmarkBinding, CampaignBudget, CampaignEventKind, CampaignState, CampaignStore,
+    ProductionCampaign, adopt_run_event, bind_generation_event, complete_campaign_event,
+    first_campaign_event,
     optimization::{
         OptimizationArtifactBinding, OptimizationEventKind, OptimizationLaunchStore,
         OptimizationRunState, OptimizationView, ProductionOptimizationDefinition,
@@ -20,8 +21,11 @@ use encoder_campaign_core::{
     replay_campaign, start_run_event,
 };
 use encoder_experiment_core::{
-    domain::{OptimizationBudget, TrainingCandidate},
-    journal::{CandidateExecutionState, ExperimentRunState},
+    domain::{
+        ExternalProjectSnapshot, ModelArtifactIdentity, OptimizationBudget, TrainingCandidate,
+    },
+    journal::{CandidateExecutionState, ExperimentEventKind, ExperimentRunState, FinalDecision},
+    metrics::CandidateVerdict,
     ports::{EncoderTaskBackend, ExperimentStore},
     protocol::{DevelopmentSelectionRule, ExperimentProtocol},
 };
@@ -274,6 +278,19 @@ struct LaunchContext {
     definition: ProductionOptimizationDefinition,
     run: ProductionOptimizationRun,
     view: OptimizationView,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct AcceptedPromotionEvidence {
+    pub project: ExternalProjectSnapshot,
+    pub candidate: TrainingCandidate,
+    pub model: ModelArtifactIdentity,
+    pub training_snapshot_id: Uuid,
+    pub training_snapshot_fingerprint: String,
+    pub experiment_run_id: Uuid,
+    pub experiment_head_fingerprint: String,
+    pub decision_id: String,
+    pub decision_fingerprint: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1581,6 +1598,162 @@ async fn load_launch(store: &SqliteExperimentStore, run_id: Uuid) -> anyhow::Res
         definition,
         run,
         view,
+    })
+}
+
+/// Reproduce the complete accepted scientific lineage for one promotion.
+/// This reads only owner journals and returns no sealed row-level evidence.
+pub(crate) async fn accepted_promotion_evidence(
+    store: &SqliteExperimentStore,
+    backend: &NomosBackend,
+    run_id: Uuid,
+) -> anyhow::Result<AcceptedPromotionEvidence> {
+    let launch = load_launch(store, run_id).await?;
+    anyhow::ensure!(
+        launch.view.state == OptimizationRunState::Completed
+            && launch.view.decision == Some(FinalDecision::PromoteCandidate),
+        "Only a completed optimization with a promote-candidate decision can change the baseline."
+    );
+    let project = store
+        .get_project(launch.definition.project.id)
+        .await?
+        .context("optimization project does not exist")?;
+    anyhow::ensure!(
+        project.fingerprint == launch.definition.project.fingerprint,
+        "The accepted optimization belongs to a different project snapshot."
+    );
+    backend.verify_current_snapshot(project.clone()).await?;
+
+    let campaign = load_optional_campaign(store, &launch)
+        .await?
+        .context("The accepted optimization has no campaign journal.")?;
+    anyhow::ensure!(
+        campaign.campaign.id == launch.run.reserved_campaign_id
+            && campaign.view.state == CampaignState::Completed
+            && campaign.view.run_id == Some(launch.run.reserved_experiment_run_id),
+        "The accepted optimization's campaign is incomplete or belongs to another run."
+    );
+    let experiment = campaign
+        .experiment
+        .as_ref()
+        .context("The accepted campaign has no experiment journal.")?;
+    anyhow::ensure!(
+        experiment.run_id == launch.run.reserved_experiment_run_id
+            && experiment.state == ExperimentRunState::Completed
+            && experiment.final_decision == Some(FinalDecision::PromoteCandidate),
+        "The selected experiment is incomplete or did not accept its candidate."
+    );
+    let candidate_id = experiment
+        .selected_candidate_id
+        .context("The accepted experiment has no selected candidate.")?;
+    anyhow::ensure!(
+        campaign.view.selected_candidate_id == Some(candidate_id),
+        "The campaign and experiment disagree about the accepted candidate."
+    );
+    let candidate = launch
+        .definition
+        .candidates
+        .iter()
+        .find(|value| value.id == candidate_id)
+        .cloned()
+        .context("The accepted candidate is absent from the immutable optimization definition.")?;
+    candidate.validate_integrity(&project)?;
+    let execution = experiment
+        .candidates
+        .get(&candidate_id)
+        .context("The accepted candidate has no execution journal.")?;
+    let train_output = execution
+        .train_output
+        .as_ref()
+        .context("The accepted candidate has no checkpoint.")?;
+    let sealed_report = experiment
+        .sealed_report
+        .as_ref()
+        .context("The accepted candidate has no sealed evaluation report.")?;
+    let sealed_assessment = experiment
+        .sealed_assessment
+        .as_ref()
+        .context("The accepted candidate has no sealed assessment.")?;
+    anyhow::ensure!(
+        sealed_assessment.verdict == CandidateVerdict::Passed
+            && sealed_report.model == train_output.model,
+        "The selected checkpoint is not the model that passed sealed acceptance."
+    );
+
+    let snapshot = store
+        .get_native_repair_training_snapshot(launch.definition.training_snapshot.id)
+        .await?
+        .context("The accepted optimization's training snapshot is missing.")?;
+    anyhow::ensure!(
+        snapshot.fingerprint == launch.definition.training_snapshot.fingerprint
+            && snapshot.specification_fingerprint
+                == launch
+                    .definition
+                    .training_snapshot_specification_fingerprint,
+        "The accepted checkpoint's training snapshot changed."
+    );
+
+    let experiment_events = store.load_events(experiment.run_id).await?;
+    let final_event = experiment_events
+        .last()
+        .context("The accepted experiment journal is empty.")?;
+    anyhow::ensure!(
+        final_event.fingerprint == experiment.last_event_fingerprint
+            && matches!(
+                final_event.event,
+                ExperimentEventKind::Finalized {
+                    decision: FinalDecision::PromoteCandidate
+                }
+            ),
+        "The accepted experiment does not end in its promotion decision."
+    );
+
+    let campaign_events = store.list_campaign_events(campaign.campaign.id).await?;
+    let finalizations = campaign_events
+        .iter()
+        .filter(|event| {
+            matches!(
+                &event.event,
+                CampaignEventKind::IterationFinalized {
+                    run_id,
+                    decision: FinalDecision::PromoteCandidate,
+                    experiment_head_fingerprint,
+                    ..
+                } if *run_id == experiment.run_id
+                    && experiment_head_fingerprint == &experiment.last_event_fingerprint
+            )
+        })
+        .count();
+    anyhow::ensure!(
+        finalizations == 1,
+        "The campaign does not bind exactly one accepted experiment decision."
+    );
+    let optimization_events = store.list_optimization_events(launch.run.id).await?;
+    let optimization_final = optimization_events
+        .last()
+        .context("The optimization journal is empty.")?;
+    anyhow::ensure!(
+        optimization_final.fingerprint == launch.view.last_event_fingerprint
+            && matches!(
+                &optimization_final.event,
+                OptimizationEventKind::Completed {
+                    decision: FinalDecision::PromoteCandidate,
+                    campaign_head_fingerprint,
+                } if campaign_head_fingerprint == &campaign.view.last_event_fingerprint
+            ),
+        "The optimization completion does not bind the accepted campaign head."
+    );
+
+    Ok(AcceptedPromotionEvidence {
+        project,
+        candidate,
+        model: train_output.model.clone(),
+        training_snapshot_id: launch.definition.training_snapshot.id,
+        training_snapshot_fingerprint: launch.definition.training_snapshot.fingerprint,
+        experiment_run_id: experiment.run_id,
+        experiment_head_fingerprint: experiment.last_event_fingerprint.clone(),
+        decision_id: final_event.id.to_string(),
+        decision_fingerprint: final_event.fingerprint.clone(),
     })
 }
 

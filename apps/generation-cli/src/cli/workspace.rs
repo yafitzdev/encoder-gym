@@ -124,6 +124,19 @@ pub enum WorkspaceCommand {
         #[command(subcommand)]
         command: Box<ManagedOptimizeCommand>,
     },
+    /// Promote a checkpoint already accepted by the bound finite optimizer.
+    Promote {
+        folder: PathBuf,
+        #[arg(long)]
+        run_id: Uuid,
+        /// Active baseline revision observed when the operator accepted promotion.
+        #[arg(long)]
+        expected_baseline_revision_id: Uuid,
+        #[arg(long, default_value = "local-operator")]
+        actor: String,
+        #[arg(long, default_value = "Promote sealed-accepted optimization candidate")]
+        reason: String,
+    },
     /// Configure separate project providers without storing secret values.
     Providers {
         folder: PathBuf,
