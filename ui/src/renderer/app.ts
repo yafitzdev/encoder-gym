@@ -180,7 +180,7 @@ export function mount(): void {
   async function refreshOptimization(): Promise<void> {
     const id = selection.selectedId;
     if (!id || !workspace()?.managed || view.optimization.loading) return;
-    const state = view.optimization; state.loading = true; state.error = undefined; render();
+    const state = view.optimization; state.loading = true; state.error = undefined; state.errorTitle = undefined; render();
     try {
       state.readiness = await bridge.managedReadiness(id, state.manifest?.token);
       if (state.manifest) state.manifest = { ...state.manifest, readiness: state.readiness };
@@ -188,33 +188,33 @@ export function mount(): void {
         state.prepared = state.readiness.preparedOptimization;
         if (!state.prepared) state.run = undefined;
       }
-    } catch (error) { state.error = message(error); }
+    } catch (error) { state.errorTitle = "Could not refresh launch readiness"; state.error = message(error); }
     finally { state.loading = false; if (selection.selectedId === id) render(); }
   }
   async function chooseOptimizationManifest(): Promise<void> {
     const id = selection.selectedId;
     if (!id || view.optimization.loading) return;
-    const state = view.optimization; state.loading = true; state.error = undefined; render();
+    const state = view.optimization; state.loading = true; state.error = undefined; state.errorTitle = undefined; render();
     try {
       const selected = await bridge.chooseOptimizationManifest(id);
       if (selected && selection.selectedId === id) { state.manifest = selected; state.prepared = undefined; state.readiness = selected.readiness; state.run = undefined; }
-    } catch (error) { state.error = message(error); }
+    } catch (error) { state.errorTitle = "Could not inspect the selected definition"; state.error = message(error); }
     finally { state.loading = false; if (selection.selectedId === id) render(); }
   }
   async function prepareOptimization(): Promise<void> {
     const id = selection.selectedId;
     if (!id || view.optimization.loading) return;
-    const state = view.optimization; state.loading = true; state.error = undefined; render();
+    const state = view.optimization; state.loading = true; state.error = undefined; state.errorTitle = undefined; render();
     try {
       const prepared = await bridge.prepareOptimization(id);
       if (selection.selectedId === id) { state.prepared = prepared; state.manifest = undefined; state.run = undefined; }
-    } catch (error) { state.error = message(error); }
+    } catch (error) { state.errorTitle = "Could not prepare the approved run"; state.error = message(error); }
     finally { state.loading = false; if (selection.selectedId === id) render(); }
   }
   async function optimize(request: Parameters<typeof bridge.managedOptimize>[1]): Promise<void> {
     const id = selection.selectedId;
     if (!id || view.optimization.loading) return;
-    const state = view.optimization; state.loading = true; state.executing = request.action; state.error = undefined; render();
+    const state = view.optimization; state.loading = true; state.executing = request.action; state.error = undefined; state.errorTitle = undefined; render();
     let polling = request.action === "resume";
     const poll = async (): Promise<void> => {
       if (request.action !== "resume") return;
@@ -231,7 +231,10 @@ export function mount(): void {
     };
     void poll();
     try { state.run = runStatus(await bridge.managedOptimize(id, request)); }
-    catch (error) { state.error = message(error); }
+    catch (error) {
+      state.errorTitle = ({ start: "Could not reserve the optimization run", resume: "Could not execute this stage", "authorize-sealed": "Could not authorize final acceptance", cancel: "Could not cancel the run" } as Record<string, string>)[request.action] ?? "Could not update the optimization run";
+      state.error = message(error);
+    }
     finally { polling = false; state.loading = false; state.executing = undefined; if (selection.selectedId === id) render(); }
   }
   const optimizationActions: OptimizationPageActions = {

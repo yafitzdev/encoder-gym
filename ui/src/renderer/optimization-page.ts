@@ -7,6 +7,7 @@ export interface OptimizationPageState {
   loading: boolean;
   executing?: string;
   error?: string;
+  errorTitle?: string;
   readiness?: ManagedReadiness;
   manifest?: OptimizationManifestChoice;
   prepared?: PreparedOptimizationChoice;
@@ -109,7 +110,7 @@ export function renderOptimization(workspace: ManagedWorkspace, state: Optimizat
   const active = workspace.modelCatalog?.artifacts.find(model => model.id === workspace.modelCatalog?.baselineRevisions.find(revision => revision.id === workspace.modelCatalog?.activeBaselineRevisionId)?.modelArtifactId);
   return h("div", { class: "page-content optimization-page" },
     pageHeader("Start optimization", "Turn this project's reviewed scientific inputs into one finite, recoverable run.", button("Refresh checks", actions.refresh, "ghost", "refresh")),
-    state.error ? h("section", { class: "operation-failure", role: "alert" }, h("strong", {}, "Could not inspect launch readiness"), h("p", {}, state.error)) : null,
+    state.error ? h("section", { class: "operation-failure", role: "alert" }, h("strong", {}, state.errorTitle ?? "Could not inspect launch readiness"), h("p", {}, state.error)) : null,
     state.loading && !state.executing && !report ? h("div", { class: "workspace-progress", role: "status" }, "Checking persisted project state…") : null,
     state.loading && !state.executing && report ? h("div", { class: "workspace-progress", role: "status" }, "Replaying the approved native evidence and verifying its artifact tree… This one-time integrity step can take several minutes for a large encoder project.") : null,
     state.executing && !state.run ? h("div", { class: "workspace-progress", role: "status" }, state.executing === "start" ? "Reserving the immutable run…" : "Updating the durable run record…") : null,

@@ -297,6 +297,14 @@ fn ensure_database_belongs_to_root(
     let authorized_root = authorized_root
         .canonicalize()
         .context("could not resolve authorized database root")?;
+    let database = database_file_path(database_url)?;
+    if !database.starts_with(&authorized_root) {
+        anyhow::bail!(outside_message.to_owned());
+    }
+    Ok(())
+}
+
+pub(crate) fn database_file_path(database_url: &str) -> anyhow::Result<std::path::PathBuf> {
     let raw = database_url
         .strip_prefix("sqlite://")
         .context("experiment database must use an explicit sqlite:// file URL")?
@@ -331,10 +339,7 @@ fn ensure_database_belongs_to_root(
             .file_name()
             .context("experiment database path has no filename")?,
     );
-    if !database.starts_with(&authorized_root) {
-        anyhow::bail!(outside_message.to_owned());
-    }
-    Ok(())
+    Ok(database)
 }
 
 #[cfg(test)]

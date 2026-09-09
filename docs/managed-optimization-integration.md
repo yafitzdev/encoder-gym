@@ -226,10 +226,16 @@ readiness, upgrade, preview/start, status/inspection, review, resume,
 authorization, cancellation, Doctor, provenance, and report intents. Every
 intent reopens the registered workspace and the Rust composition root
 revalidates its active baseline, binding, runtime project, and scientific store.
-Mutating intents are exclusive per project; a second concurrent start/resume or
-authorization is rejected. CLI launch uses `execFile` without a shell and JSON
-stdout. Durable child-process correlation and credential injection remain the
-next main-process lifecycle component.
+Mutating intents are exclusive per project inside one Electron process. In
+addition, every `resume` command acquires a process-owned execution lease beside
+the contained scientific store before it can enter a stage. Lease publication
+is atomic, binds the process ID to its operating-system start time, rejects a
+live owner across app/CLI processes, and safely replaces a dead owner's lease.
+This closes the duplicate native-training/evaluation window without changing
+the scientific schema or treating a UI flag as authority. CLI launch uses
+`execFile` without a shell and JSON stdout. Provider credential injection
+remains a later main-process lifecycle component for workflows whose reviewed
+definition permits external calls.
 
 Managed preparation no longer requires the normal desktop user to author or
 pick that TOML manifest. Readiness asks the scientific store for approved native
@@ -274,6 +280,13 @@ graphs. Native replay remains mandatory at binding/repair verification, first
 snapshot preparation, native execution stages, and an explicit doctor. This
 keeps page loads and run recovery responsive without claiming a fresh deep
 verification that did not occur.
+
+Run status includes a human stage derived from the optimization, campaign, and
+experiment journals. During a desktop `resume`, the renderer polls the passive
+status intent and replaces its view only with newly replayed facts. Candidate
+build and development-suite units count only durable completions or durable
+failures; the UI never estimates the fraction of an in-flight native call.
+Cancellation is hidden while the local non-preemptible stage call is active.
 
 The Electron main-process adapter:
 

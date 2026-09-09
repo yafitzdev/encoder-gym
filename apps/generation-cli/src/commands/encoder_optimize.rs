@@ -34,6 +34,7 @@ use encoder_repair_core::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use sysinfo::{Pid, System};
 use uuid::Uuid;
 use workflow_core::benchmark_generation::{BenchmarkGenerationState, BenchmarkGenerationView};
 
@@ -44,8 +45,8 @@ use crate::{
     },
     commands::{
         experiment::{
-            ensure_database_belongs_to_managed_root, ensure_database_belongs_to_workspace,
-            load_persisted_view,
+            database_file_path, ensure_database_belongs_to_managed_root,
+            ensure_database_belongs_to_workspace, load_persisted_view,
         },
         production_campaign::{
             CampaignContext, campaign_provenance, finalize_campaign_iteration, load_generation,
@@ -59,6 +60,159 @@ use crate::{
 
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const MAX_MANIFEST_BYTES: u64 = 1_048_576;
+const EXECUTION_LEASE_SCHEMA_VERSION: u32 = 1;
+const MAX_EXECUTION_LEASE_BYTES: u64 = 4_096;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExecutionLeaseOwner {
+    schema_version: u32,
+    process_id: u32,
+    process_started_at: u64,
+    nonce: Uuid,
+}
+
+#[derive(Debug)]
+struct OptimizationExecutionLease {
+    directory: PathBuf,
+    owner: ExecutionLeaseOwner,
+}
+
+impl OptimizationExecutionLease {
+    fn for_command(
+        command: &EncoderOptimizeCommand,
+        database_url: &str,
+    ) -> anyhow::Result<Option<Self>> {
+        match command {
+            EncoderOptimizeCommand::Resume(args) => {
+                Self::acquire(database_url, args.run_id).map(Some)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn acquire(database_url: &str, run_id: Uuid) -> anyhow::Result<Self> {
+        let database = database_file_path(database_url)?;
+        let parent = database
+            .parent()
+            .context("experiment database path has no parent")?;
+        let directory = parent.join(format!(".encoder-optimization-{run_id}.lease"));
+        let process_id = std::process::id();
+        let owner = ExecutionLeaseOwner {
+            schema_version: EXECUTION_LEASE_SCHEMA_VERSION,
+            process_id,
+            process_started_at: process_started_at(process_id)
+                .context("could not inspect the optimization runner process")?,
+            nonce: Uuid::new_v4(),
+        };
+
+        for _ in 0..3 {
+            let staged = parent.join(format!(
+                ".encoder-optimization-{run_id}.lease-staged-{}",
+                owner.nonce
+            ));
+            fs::create_dir(&staged).context("could not stage optimization execution lease")?;
+            let owner_path = staged.join("owner.json");
+            let bytes = serde_json::to_vec(&owner)?;
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&owner_path)
+                .context("could not write optimization execution lease")?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            drop(file);
+            match fs::rename(&staged, &directory) {
+                Ok(()) => return Ok(Self { directory, owner }),
+                Err(_error) if directory.is_dir() => {
+                    fs::remove_file(&owner_path)?;
+                    fs::remove_dir(&staged)?;
+                    let current = read_execution_lease(&directory)?;
+                    if execution_owner_is_active(&current) {
+                        anyhow::bail!(
+                            "This optimization stage is already running in another local process. Reopen its status instead of starting it again."
+                        );
+                    }
+                    let stale = parent.join(format!(
+                        ".encoder-optimization-{run_id}.lease-stale-{}",
+                        Uuid::new_v4()
+                    ));
+                    match fs::rename(&directory, &stale) {
+                        Ok(()) => remove_execution_lease_directory(&stale)?,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => {
+                            return Err(error)
+                                .context("could not recover stale optimization execution lease");
+                        }
+                    }
+                }
+                Err(error) => {
+                    fs::remove_file(&owner_path)?;
+                    fs::remove_dir(&staged)?;
+                    return Err(error).context("could not acquire optimization execution lease");
+                }
+            }
+        }
+        anyhow::bail!("optimization execution ownership changed repeatedly; inspect run status")
+    }
+}
+
+impl Drop for OptimizationExecutionLease {
+    fn drop(&mut self) {
+        if matches!(read_execution_lease(&self.directory), Ok(ref owner) if owner == &self.owner) {
+            let _ = remove_execution_lease_directory(&self.directory);
+        }
+    }
+}
+
+fn read_execution_lease(directory: &Path) -> anyhow::Result<ExecutionLeaseOwner> {
+    let directory_metadata = fs::symlink_metadata(directory)
+        .context("could not inspect optimization execution lease")?;
+    anyhow::ensure!(
+        directory_metadata.is_dir() && !directory_metadata.file_type().is_symlink(),
+        "optimization execution lease is not a plain local directory"
+    );
+    let mut entries = fs::read_dir(directory)
+        .context("could not inspect optimization execution lease")?
+        .collect::<Result<Vec<_>, _>>()?;
+    anyhow::ensure!(
+        entries.len() == 1
+            && entries
+                .pop()
+                .is_some_and(|entry| entry.file_name() == "owner.json"),
+        "optimization execution lease has unexpected contents"
+    );
+    let owner_path = directory.join("owner.json");
+    let metadata = fs::symlink_metadata(&owner_path)?;
+    anyhow::ensure!(
+        metadata.is_file()
+            && !metadata.file_type().is_symlink()
+            && metadata.len() <= MAX_EXECUTION_LEASE_BYTES,
+        "optimization execution lease is invalid"
+    );
+    let owner: ExecutionLeaseOwner = serde_json::from_slice(&fs::read(owner_path)?)?;
+    anyhow::ensure!(
+        owner.schema_version == EXECUTION_LEASE_SCHEMA_VERSION,
+        "optimization execution lease uses an unsupported schema"
+    );
+    Ok(owner)
+}
+
+fn remove_execution_lease_directory(directory: &Path) -> anyhow::Result<()> {
+    fs::remove_file(directory.join("owner.json"))?;
+    fs::remove_dir(directory)?;
+    Ok(())
+}
+
+fn process_started_at(process_id: u32) -> Option<u64> {
+    System::new_all()
+        .process(Pid::from_u32(process_id))
+        .map(sysinfo::Process::start_time)
+}
+
+fn execution_owner_is_active(owner: &ExecutionLeaseOwner) -> bool {
+    process_started_at(owner.process_id) == Some(owner.process_started_at)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -604,6 +758,7 @@ pub async fn execute(command: EncoderOptimizeCommand, database_url: &str) -> any
     ensure_database_belongs_to_workspace(database_url, &args.workspace)?;
     let workspace = args.workspace.clone();
     let python = args.python.clone();
+    let _execution_lease = OptimizationExecutionLease::for_command(&command, database_url)?;
     let store = command.database_access().production(database_url).await?;
     match command {
         EncoderOptimizeCommand::Doctor(args) => {
@@ -634,6 +789,7 @@ pub(crate) async fn execute_managed(
     let python = args.python.clone();
     let store = command.database_access().production(database_url).await?;
     ensure_managed_command_scope(&command, &store, project_id, project_fingerprint).await?;
+    let _execution_lease = OptimizationExecutionLease::for_command(&command, database_url)?;
     match command {
         EncoderOptimizeCommand::Doctor(args) => {
             let backend = NomosBackend::open(&workspace, python)?;
@@ -1987,5 +2143,50 @@ surprise = true
         let project = tempfile::tempdir().unwrap();
         std::fs::write(project.path().join("runs"), b"not a directory").unwrap();
         assert!(verify_managed_definitions_directory(project.path(), true).is_err());
+    }
+
+    #[test]
+    fn optimization_execution_lease_blocks_a_live_duplicate_and_releases_cleanly() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("scientific.sqlite");
+        let url = format!("sqlite://{}", database.to_string_lossy().replace('\\', "/"));
+        let run_id = Uuid::new_v4();
+        let lease = OptimizationExecutionLease::acquire(&url, run_id).unwrap();
+        let duplicate = OptimizationExecutionLease::acquire(&url, run_id).unwrap_err();
+        assert!(duplicate.to_string().contains("already running"));
+        drop(lease);
+        assert!(OptimizationExecutionLease::acquire(&url, run_id).is_ok());
+    }
+
+    #[test]
+    fn optimization_execution_lease_recovers_an_atomically_published_stale_owner() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("scientific.sqlite");
+        let url = format!("sqlite://{}", database.to_string_lossy().replace('\\', "/"));
+        let run_id = Uuid::new_v4();
+        let lease_directory = directory
+            .path()
+            .join(format!(".encoder-optimization-{run_id}.lease"));
+        fs::create_dir(&lease_directory).unwrap();
+        let mut absent_process_id = u32::MAX;
+        while process_started_at(absent_process_id).is_some() {
+            absent_process_id -= 1;
+        }
+        let stale = ExecutionLeaseOwner {
+            schema_version: EXECUTION_LEASE_SCHEMA_VERSION,
+            process_id: absent_process_id,
+            process_started_at: 0,
+            nonce: Uuid::new_v4(),
+        };
+        fs::write(
+            lease_directory.join("owner.json"),
+            serde_json::to_vec(&stale).unwrap(),
+        )
+        .unwrap();
+
+        let lease = OptimizationExecutionLease::acquire(&url, run_id).unwrap();
+        assert_ne!(lease.owner, stale);
+        drop(lease);
+        assert!(!lease_directory.exists());
     }
 }

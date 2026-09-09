@@ -3426,6 +3426,7 @@ dependencies = [
  "synthetic-data-fake",
  "synthetic-data-openai-compatible",
  "synthetic-data-sqlite",
+ "sysinfo",
  "tempfile",
  "tokio",
  "toml",
