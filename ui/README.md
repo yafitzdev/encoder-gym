@@ -155,9 +155,13 @@ but adding another encoder does not supply an execution adapter. Other
 encoders need compatible backend integration producing the supported contracts.
 The independent platform-slice CLI workflows remain available separately;
 their records are not silently converted into experiment journals by this UI.
-Preparation of new snapshots, suites, hypotheses, provider credentials, and
-promotion is not yet complete in the desktop. A managed run can only start when
-the same immutable definition accepted by `synth workspace optimize` resolves.
+The desktop can configure separate encrypted provider credentials, resolve one
+current approved repair into its immutable snapshot/run definition, execute the
+fixed managed lifecycle, and explicitly promote a sealed-accepted checkpoint.
+It does not invent the upstream scientific approval: if no reviewed hypothesis,
+native delta, compatible suites, or successor benchmark exists, readiness says
+which owning scientific step is missing. A managed run starts only when the
+same immutable definition accepted by `synth workspace optimize` resolves.
 External and sealed work remain separately authorized workflow boundaries.
 
 Use `synth experiment --help` to inspect that command family. Run detail offers
@@ -218,10 +222,13 @@ itself is not automated. Experiment database bytes are checked unchanged.
 Managed checks exercise New, checkpoint preview/cancel, copied baselines,
 dataset preview/import and held-out rejection, two-project isolation, invalid
 Open, moved-folder recovery with identity checks, verification, forget/reopen,
-and responsive dialogs/dataset pages. Additional checks cover 760×560 dialog
-actions and errors, Enter/Tab/Escape using hidden Chromium input, slow-import
-duplicate/dismissal guards, long project names, persistent Open failures, and
-revision-fenced verification after switching away and back.
+and responsive dialogs/dataset pages. A deterministic lifecycle fixture drives
+the real renderer/preload/main IPC through approved-repair preparation, finite
+preview, reservation, native-stage resume, sealed authorization, accepted
+candidate status, and explicit baseline promotion. Additional checks cover
+760×560 dialog actions and errors, Enter/Tab/Escape using hidden Chromium input,
+slow-import duplicate/dismissal guards, long project names, persistent Open
+failures, and revision-fenced verification after switching away and back.
 Tiny custody-format model fixtures never
 claim to be trained or executable encoders.
 

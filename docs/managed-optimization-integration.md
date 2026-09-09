@@ -16,7 +16,7 @@ same boundary without adopting Nomos row shapes or metrics.
 
 ## Initial gap and current integration state
 
-Managed workspaces currently prove only custody:
+Managed workspaces initially proved only custody:
 
 - `encoder-gym.json` owns immutable project identity and the copied baseline
   inventory;
@@ -418,6 +418,15 @@ must make no provider call, training run, sealed evaluation, spend, or artifact
 mutation. A real run starts only after the user sees and authorizes its final
 immutable preview.
 
+The 2026-09-09 current-project Electron preflight reopened and rehashed the
+actual saved Nomos workspace through a temporary browser profile. It reproduced
+project `0dd64b24-47d2-4cfb-9523-6c0b65dc4a46`, baseline
+`sha256:9885102b8b6e2fc530dcea5614dd7c3293eacb175f62774382a51f486691f630`,
+two imported sources, and 6,800 rows. It rendered Models, Data, and Project
+settings and proved the saved project library remained byte-for-byte unchanged.
+It performed no upgrade, binding, scientific-store write, provider call,
+training, or evaluation.
+
 The 2026-09-09 binding preflight copied the real managed workspace to a temporary
 directory, upgraded only that copy, and matched its 134,211,908-byte baseline to
 isolated revision `4450ab3f1de8a1fc64bcbe5d77c67d0fb0f99af9`. The selected
@@ -481,7 +490,10 @@ run, and baseline-revision identities, that the main process constructs the
 fixed command, and that native execution receives only project-scoped secrets
 under the three fixed environment names. The full Rust all-feature suite, 45 UI
 contract tests, and the Electron acceptance flow at desktop and narrow widths
-passed after these stages.
+passed after these stages. The managed Electron flow now exercises preparation,
+reservation, native-stage resume, sealed authorization, accepted-result copy,
+and explicit promotion through the real preload/main-process IPC. Deterministic
+Rust fixtures remain authoritative for the underlying lifecycle transitions.
 
 ## Delivery order
 

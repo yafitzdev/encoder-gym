@@ -110,15 +110,34 @@ function runPanel(run: ManagedRunStatus, state: OptimizationPageState, actions: 
     h("div", { class: "inline-group" }, next, !terminal && !busy ? button("Cancel before next stage", actions.cancel, "secondary") : null));
 }
 
+function launchSummary(state: OptimizationPageState, readiness: ManagedReadiness | undefined, preview: ManagedLaunchPreview | undefined, unfinished: number, activeAcceptedModel: boolean): { title: string; detail: string; label: string; tone: "success" | "warning" | "danger" | "neutral" } {
+  const run = state.run;
+  if (run) {
+    if (run.state === "failed") return { title: "Run needs attention", detail: "The durable journal stopped on a failed or uncertain stage. Inspect the recorded diagnostic before deciding whether recovery is safe.", label: "Failed", tone: "danger" };
+    if (run.state === "cancelled") return { title: "Run cancelled", detail: "No further stage will execute. Completed artifacts and journal transitions remain available for inspection.", label: "Cancelled", tone: "neutral" };
+    if (run.state === "completed" && run.decision === "promote_candidate") return activeAcceptedModel
+      ? { title: "Baseline updated", detail: "The sealed-accepted checkpoint is now the project's active baseline and the previous revision remains in immutable history.", label: "Promoted", tone: "success" }
+      : { title: "Candidate accepted", detail: "The exact checkpoint passed final acceptance. It remains a candidate until you explicitly advance the project baseline.", label: "Decision required", tone: "warning" };
+    if (run.state === "completed" && run.decision === "retain_baseline") return { title: "Baseline retained", detail: "No candidate satisfied the complete acceptance contract, so the active baseline did not change.", label: "Complete", tone: "neutral" };
+    if (run.state === "completed") return { title: "Run completed", detail: "The run is terminal. Inspect its persisted decision and evidence before taking any model action.", label: "Complete", tone: "success" };
+    return { title: "Run paused at a safe boundary", detail: "The last stage committed its durable facts. The run panel below shows the one action that can advance it.", label: run.state === "planned" ? "Reserved" : "In progress", tone: "warning" };
+  }
+  const existing = preview?.existingRun;
+  if (existing) return { title: "Existing run recovered", detail: "This immutable definition already owns a run. Open it to inspect its persisted stage and next safe action.", label: "Run found", tone: "success" };
+  if (preview) return { title: "Prepared for reservation", detail: "The owner workflow resolved the exact approved snapshot, suites, candidates, and budgets shown below.", label: "Prepared", tone: "success" };
+  if (readiness?.report.runnable) return { title: "Ready to reserve", detail: "Every required fact resolves against the active baseline. Reserving the run makes no external call.", label: "Ready", tone: "success" };
+  return { title: `${unfinished} setup ${unfinished === 1 ? "step" : "steps"} remain`, detail: "Complete these in order. Each step is derived from the workspace and scientific stores—not from what the screen happens to show.", label: readiness ? labels[readiness.report.overall].label : "Checking", tone: readiness ? labels[readiness.report.overall].tone : "neutral" };
+}
+
 export function renderOptimization(workspace: ManagedWorkspace, state: OptimizationPageState, actions: OptimizationPageActions): HTMLElement {
   const readiness = state.manifest?.readiness ?? state.readiness;
   const preview = state.prepared?.launchPreview ?? readiness?.launchPreview;
-  const existing = preview?.existingRun;
   const report = readiness?.report;
   const unfinished = report ? new Set(report.checks.filter(check => check.required && check.state !== "ready").map(check => check.category)).size : 0;
   const active = workspace.modelCatalog?.artifacts.find(model => model.id === workspace.modelCatalog?.baselineRevisions.find(revision => revision.id === workspace.modelCatalog?.activeBaselineRevisionId)?.modelArtifactId);
   const runBaseline = workspace.modelCatalog?.artifacts.find(model => model.id === workspace.modelCatalog?.baselineRevisions.find(revision => revision.id === workspace.scientificBinding?.baselineRevisionId)?.modelArtifactId);
   const activeAcceptedModel = Boolean(state.run && active?.producingRun?.id === state.run.artifacts.experiment_run_id);
+  const summary = launchSummary(state, readiness, preview, unfinished, activeAcceptedModel);
   return h("div", { class: "page-content optimization-page" },
     pageHeader(state.run ? "Optimization run" : "Start optimization", state.run ? "Follow one finite run from reservation through evidence-backed baseline decision." : "Turn this project's reviewed scientific inputs into one finite, recoverable run.", button("Refresh checks", actions.refresh, "ghost", "refresh")),
     state.error ? h("section", { class: "operation-failure", role: "alert" }, h("strong", {}, state.errorTitle ?? "Could not inspect launch readiness"), h("p", {}, state.error)) : null,
@@ -126,8 +145,8 @@ export function renderOptimization(workspace: ManagedWorkspace, state: Optimizat
     state.loading && !state.executing && report ? h("div", { class: "workspace-progress", role: "status" }, "Replaying the approved native evidence and verifying its artifact tree… This one-time integrity step can take several minutes for a large encoder project.") : null,
     state.executing && !state.run ? h("div", { class: "workspace-progress", role: "status" }, state.executing === "start" ? "Reserving the immutable run…" : "Updating the durable run record…") : null,
     report ? h("section", { class: "launch-summary" },
-      h("div", {}, h("div", { class: "eyebrow" }, "Launch status"), h("h2", {}, existing ? "Existing run recovered" : preview ? "Prepared for reservation" : report.runnable ? "Ready to reserve" : `${unfinished} setup ${unfinished === 1 ? "step" : "steps"} remain`), h("p", {}, existing ? "This immutable definition already owns a run. Open it to inspect its persisted stage and next safe action." : preview ? "The owner workflow resolved the exact approved snapshot, suites, candidates, and budgets shown below." : report.runnable ? "Every required fact resolves against the active baseline. Reserving the run makes no external call." : "Complete these in order. Each step is derived from the workspace and scientific stores—not from what the screen happens to show.")),
-      status(existing ? "Run found" : preview ? "Prepared" : labels[report.overall].label, existing || preview ? "success" : labels[report.overall].tone)) : null,
+      h("div", {}, h("div", { class: "eyebrow" }, state.run ? "Run outcome" : "Launch status"), h("h2", {}, summary.title), h("p", {}, summary.detail)),
+      status(summary.label, summary.tone)) : null,
     readiness?.optimizationAuthority && !preview ? h("section", { class: "launch-definition" }, sectionHeader("Current approved repair", tag("Reviewed", "accent")),
       h("p", { class: "section-note" }, readiness.optimizationAuthority.hypotheses.join(" ")),
       facts([["Candidates", String(readiness.optimizationAuthority.candidateCount)], ["Qualified repair rows", readiness.optimizationAuthority.deltaRows.toLocaleString()], ["Training ceiling", `${readiness.optimizationAuthority.budget.maximum_training_seconds.toLocaleString()} seconds`], ["External calls", String(readiness.optimizationAuthority.budget.maximum_external_calls)], ["Sealed uses", String(readiness.optimizationAuthority.budget.maximum_sealed_uses)], ["Authority expires", new Date(readiness.optimizationAuthority.validUntil).toLocaleString()]]),

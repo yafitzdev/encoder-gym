@@ -1,9 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { BrowserWindow } from "electron";
 import type { ProjectRegistry } from "./project-registry.js";
 import type { ManagedBackend } from "./managed-backend.js";
+import type { ManagedOptimizationRequest, ManagedPromotionRequest } from "./managed-control.js";
 
 interface Harness { registry: ProjectRegistry; backend: ManagedBackend; chooseFolder(path?: string): void; restart: boolean }
 export async function runManagedSmokeChecks(window: BrowserWindow, output: string, harness: Harness): Promise<void> {
@@ -100,6 +102,71 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   const credentialIndex = readFileSync(join(harness.registry.file, "..", "credentials.json"), "utf8");
   if (credentialIndex.includes("generation-smoke-secret-123") || credentialIndex.includes("advisor-smoke-secret-456")) throw new Error("Credential plaintext reached the desktop profile");
   await screenshot("managed-provider-settings");
+
+  // Exercise the actual renderer/preload/main IPC journey using deterministic
+  // lifecycle facts. Rust end-to-end tests own the workflow transitions; this
+  // proves that the desktop exposes those facts and only their safe actions.
+  const readinessMethod = harness.backend.readiness.bind(harness.backend);
+  const prepareMethod = harness.backend.prepareOptimization.bind(harness.backend);
+  const optimizeMethod = harness.backend.optimize.bind(harness.backend);
+  const promoteMethod = harness.backend.promoteAccepted.bind(harness.backend);
+  const managed = await harness.backend.openRegistered(firstId);
+  const catalog = managed.modelCatalog;
+  if (!catalog) throw new Error("Managed smoke project has no model catalog");
+  const runId = randomUUID(), experimentId = randomUUID(), candidateId = randomUUID();
+  const trainingSnapshotId = randomUUID(), benchmarkGenerationId = randomUUID();
+  const budget = { maximum_iterations: 1, maximum_candidates: 1, maximum_training_seconds: 120, maximum_development_evaluations: 2, maximum_sealed_evaluations: 1, maximum_backend_operations: 4, maximum_external_calls: 0 };
+  const preview = { manifestFingerprint: "sha256:" + "1".repeat(64), specificationFingerprint: "sha256:" + "2".repeat(64), projectId: firstId, projectFingerprint: "sha256:" + "3".repeat(64), trainingSnapshotId, benchmarkGenerationId, candidateCount: 1, budget };
+  const authority = { proposalId: randomUUID(), selectionId: randomUUID(), trainingSnapshotId, benchmarkGenerationId, hypotheses: ["Repair the observed retrieval regression without weakening generic holdout behavior."], candidateCount: 1, baseTrainingInputs: 2, deltaRows: 24, budget: { maximum_total_rows: 7000, maximum_rows_per_target: 24, maximum_candidates: 1, maximum_training_seconds: 120, maximum_evaluation_seconds: 120, maximum_development_evaluations: 2, maximum_external_calls: 0, maximum_sealed_uses: 1 }, validUntil: new Date(Date.now() + 3_600_000).toISOString() };
+  const readiness = { report: { projectId: firstId, baselineRevisionId: catalog.activeBaselineRevisionId, computedAt: new Date().toISOString(), overall: "action_required" as const, runnable: false, checks: [{ key: "optimization.preview", category: "optimization" as const, state: "action_required" as const, required: true, summary: "Approved repair is ready to freeze", evidence: "One reviewed bounded repair remains current.", nextAction: { key: "prepare-optimization", label: "Prepare approved run" } }] }, optimizationAuthority: authority };
+  const run = (state: "planned" | "campaign_active" | "completed", next: "resume" | "authorize-sealed" | "none", decision?: string) => ({
+    run_id: runId, existing: false, state, ...(state !== "planned" ? { campaign_state: state === "completed" ? "completed" : "development_selected", experiment_state: state === "completed" ? "completed" : "development_selected" } : {}), ...(decision ? { decision, selected_candidate_id: candidateId } : {}),
+    completed: state === "planned" ? [] : ["candidate_training_completed", "candidate_development_completed"], stopped_reason: next === "authorize-sealed" ? "sealed_authorization_required" : state === "completed" ? "accepted_candidate" : "run_reserved", human_authorization_required: next === "authorize-sealed", last_sequence: state === "completed" ? 8 : state === "campaign_active" ? 5 : 1, head_fingerprint: "sha256:" + "4".repeat(64), artifacts: { experiment_run_id: experimentId, training_snapshot_id: trainingSnapshotId, benchmark_generation_id: benchmarkGenerationId }, budgets: { maximum: budget },
+    stage: next === "resume" ? { key: "development", label: "Build and evaluate the candidate", detail: "The next bounded native stage trains one candidate and records development evidence.", execution: "native" as const, development: { completed_units: 0, total_units: 2 } } : next === "authorize-sealed" ? { key: "sealed-authorization", label: "Review final acceptance", detail: "The selected candidate is eligible for one separately authorized sealed evaluation.", execution: "authorization" as const, development: { completed_units: 2, total_units: 2, active_candidate_id: candidateId } } : { key: "terminal", label: "Accepted candidate recorded", detail: "The exact checkpoint passed the final acceptance contract.", execution: "terminal" as const },
+    next_command: next,
+  });
+  let currentRun = run("planned", "resume");
+  try {
+    harness.backend.readiness = async projectId => { if (projectId !== firstId) return readinessMethod(projectId); return readiness; };
+    harness.backend.prepareOptimization = async projectId => { if (projectId !== firstId) return prepareMethod(projectId); return { token: "managed-smoke-definition", name: "Reviewed repair", launchPreview: preview, authority, createdTrainingSnapshot: false, externalCalls: 0 }; };
+    harness.backend.optimize = async (projectId, request) => {
+      if (projectId !== firstId) return optimizeMethod(projectId, request);
+      const intent = request as ManagedOptimizationRequest;
+      if (intent.action === "start") currentRun = run("planned", "resume");
+      else if (intent.action === "resume") currentRun = run("campaign_active", "authorize-sealed");
+      else if (intent.action === "authorize-sealed") currentRun = run("completed", "none", "promote_candidate");
+      return currentRun;
+    };
+    harness.backend.promoteAccepted = async (projectId, request) => {
+      if (projectId !== firstId) return promoteMethod(projectId, request);
+      const intent = request as ManagedPromotionRequest;
+      if (intent.runId !== runId || intent.expectedBaselineRevisionId !== catalog.activeBaselineRevisionId) throw new Error("Promotion request lost its accepted run or comparison baseline");
+      const previous = catalog.baselineRevisions.find(item => item.id === catalog.activeBaselineRevisionId)!;
+      const candidate = { id: randomUUID(), projectId: firstId, name: "Accepted smoke candidate", createdAt: new Date().toISOString(), origin: "trained" as const, path: "models/candidates/smoke", format: managed.manifest.baseline.format, bytes: 10, fingerprint: "sha256:" + "5".repeat(64), parentModelId: previous.modelArtifactId, producingRun: { id: experimentId, fingerprint: "sha256:" + "6".repeat(64) }, trainingSnapshot: { id: trainingSnapshotId, fingerprint: "sha256:" + "7".repeat(64) } };
+      const revisionId = randomUUID();
+      return { ...managed, modelCatalog: { ...catalog, artifacts: [...catalog.artifacts, candidate], baselineRevisions: [...catalog.baselineRevisions, { id: revisionId, projectId: firstId, sequence: catalog.baselineRevisions.length + 1, modelArtifactId: candidate.id, previousRevisionId: catalog.activeBaselineRevisionId, change: { kind: "promotion" as const, decision_id: randomUUID(), decision_fingerprint: "sha256:" + "8".repeat(64) }, actor: "local-operator", reason: "Smoke accepted promotion", createdAt: new Date().toISOString(), fingerprint: "sha256:" + "9".repeat(64) }], activeBaselineRevisionId: revisionId } };
+    };
+
+    await nav("models"); await textButton("Start optimization"); await textButton("Refresh checks"); await until("document.querySelector('.launch-definition')?.textContent.includes('Current approved repair')");
+    await check("approved repair is understandable before preparation", "document.querySelector('.launch-definition').textContent.includes('one candidate') || document.querySelector('.launch-definition').textContent.includes('Candidates') && document.querySelector('.launch-definition').textContent.includes('External calls')");
+    await textButton("Prepare approved run"); await until("document.querySelector('.launch-definition')?.textContent.includes('Exact run definition')");
+    await check("prepared definition exposes finite execution and sealed limits", "document.querySelector('.launch-definition').textContent.includes('120 seconds') && document.querySelector('.launch-definition').textContent.includes('Sealed evaluations') && document.querySelector('.launch-actions').textContent.includes('0 external calls')");
+    await textButton("Reserve optimization run"); await until("document.querySelector('.run-control')?.textContent.includes('Build and evaluate the candidate')");
+    await check("reservation exposes only the next durable stage", "document.querySelector('.run-control').textContent.includes('Reserved run') && [...document.querySelectorAll('.run-control button')].some(b=>b.textContent === 'Build and evaluate the candidate')");
+    await textButton("Build and evaluate the candidate"); await until("document.querySelector('.run-control')?.textContent.includes('Review final acceptance')");
+    await check("sealed evidence requires its own visible authorization", "document.querySelector('.run-control').textContent.includes('one separately authorized sealed evaluation') && [...document.querySelectorAll('.run-control button')].some(b=>b.textContent === 'Review sealed authorization')");
+    await textButton("Review sealed authorization"); await until("document.querySelector('.promotion-result')?.textContent.includes('passed final acceptance')");
+    await check("accepted result remains a candidate pending operator promotion", "document.querySelector('.promotion-result').textContent.includes('remains a candidate') && [...document.querySelectorAll('.promotion-result button')].some(b=>b.textContent === 'Promote accepted candidate')");
+    await evaluate("window.confirm=()=>true;true"); await textButton("Promote accepted candidate"); await until("document.querySelector('.promotion-result')?.textContent.includes('now the project baseline')");
+    await check("promotion immediately updates the active managed baseline", "document.querySelector('.launch-summary h2').textContent === 'Baseline updated' && document.querySelector('.promotion-result').textContent.includes('managed custody') && document.getElementById('toast').textContent.includes('promoted')");
+    await screenshot("managed-optimization-promoted");
+  } finally {
+    harness.backend.readiness = readinessMethod;
+    harness.backend.prepareOptimization = prepareMethod;
+    harness.backend.optimize = optimizeMethod;
+    harness.backend.promoteAccepted = promoteMethod;
+  }
+
   await nav("models");
   await nav("runs");
   await check("managed runs own the optimization launch action", "document.querySelector('.empty-state').textContent.includes('launch requirements') && [...document.querySelectorAll('#page button')].filter(b=>b.textContent.includes('optimization') || b.textContent.includes('launch requirements')).length >= 2");
