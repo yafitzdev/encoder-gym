@@ -5,6 +5,7 @@ import { h } from "./dom.js";
 
 export interface OptimizationPageState {
   loading: boolean;
+  executing?: string;
   error?: string;
   readiness?: ManagedReadiness;
   manifest?: OptimizationManifestChoice;
@@ -81,13 +82,22 @@ function readinessList(readiness: ManagedReadiness, actions: OptimizationPageAct
     ready.length ? details(`${ready.length} required ${ready.length === 1 ? "foundation is" : "foundations are"} ready`, h("div", { class: "readiness-details" }, ...ready.map(check => h("section", {}, h("strong", {}, check.summary), h("p", {}, check.evidence))))) : null,
   );
 }
-function runPanel(run: ManagedRunStatus, actions: OptimizationPageActions): HTMLElement {
+function runPanel(run: ManagedRunStatus, state: OptimizationPageState, actions: OptimizationPageActions): HTMLElement {
   const terminal = ["completed", "cancelled", "failed"].includes(run.state);
-  const next = run.next_command === "resume" ? button("Run next stage", actions.resume, "primary") : run.next_command === "authorize-sealed" ? button("Review sealed authorization", actions.authorizeSealed, "primary") : null;
+  const busy = Boolean(state.executing);
+  const nextLabel = run.next_command === "authorize-sealed" ? "Review sealed authorization" : run.stage.label;
+  const next = run.next_command === "resume" ? button(busy ? "Stage running…" : nextLabel, actions.resume, "primary") : run.next_command === "authorize-sealed" ? button(nextLabel, actions.authorizeSealed, "primary") : null;
+  if (next instanceof HTMLButtonElement) next.disabled = busy;
+  const progress = run.stage.development;
   return h("section", { class: "run-control" }, sectionHeader("Reserved run", tag(run.state.replaceAll("_", " "))),
-    facts([["Run", run.run_id], ["Stopped because", run.stopped_reason.replaceAll("_", " ")], ["Durable transitions", String(run.last_sequence)], ["Next safe action", run.next_command.replaceAll("-", " ")]]),
+    h("div", { class: `run-stage ${busy ? "is-running" : ""}`, role: busy ? "status" : undefined },
+      h("div", { class: "eyebrow" }, busy ? "Executing now" : terminal ? "Final state" : "Next safe stage"),
+      h("h3", {}, run.stage.label), h("p", {}, run.stage.detail),
+      progress && progress.total_units > 0 ? h("p", { class: "stage-progress" }, `${progress.completed_units} of ${progress.total_units} candidate build and development-evaluation steps durably recorded`) : null,
+      busy && run.stage.execution === "native" ? h("p", { class: "stage-caution" }, "This native stage can take a while. The screen is reading the journal as new facts are committed; it does not estimate unfinished work.") : null),
+    details("Run identity and journal", facts([["Run", run.run_id], ["Stopped because", run.stopped_reason.replaceAll("_", " ")], ["Durable transitions", String(run.last_sequence)], ["Journal head", run.head_fingerprint]])),
     run.failed_or_uncertain ? h("p", { class: "form-error", role: "alert" }, run.failed_or_uncertain) : null,
-    h("div", { class: "inline-group" }, next, !terminal ? button("Cancel before next stage", actions.cancel, "secondary") : null));
+    h("div", { class: "inline-group" }, next, !terminal && !busy ? button("Cancel before next stage", actions.cancel, "secondary") : null));
 }
 
 export function renderOptimization(workspace: ManagedWorkspace, state: OptimizationPageState, actions: OptimizationPageActions): HTMLElement {
@@ -100,8 +110,9 @@ export function renderOptimization(workspace: ManagedWorkspace, state: Optimizat
   return h("div", { class: "page-content optimization-page" },
     pageHeader("Start optimization", "Turn this project's reviewed scientific inputs into one finite, recoverable run.", button("Refresh checks", actions.refresh, "ghost", "refresh")),
     state.error ? h("section", { class: "operation-failure", role: "alert" }, h("strong", {}, "Could not inspect launch readiness"), h("p", {}, state.error)) : null,
-    state.loading && !report ? h("div", { class: "workspace-progress", role: "status" }, "Checking persisted project state…") : null,
-    state.loading && report ? h("div", { class: "workspace-progress", role: "status" }, "Replaying the approved native evidence and verifying its artifact tree… This one-time integrity step can take several minutes for a large encoder project.") : null,
+    state.loading && !state.executing && !report ? h("div", { class: "workspace-progress", role: "status" }, "Checking persisted project state…") : null,
+    state.loading && !state.executing && report ? h("div", { class: "workspace-progress", role: "status" }, "Replaying the approved native evidence and verifying its artifact tree… This one-time integrity step can take several minutes for a large encoder project.") : null,
+    state.executing && !state.run ? h("div", { class: "workspace-progress", role: "status" }, state.executing === "start" ? "Reserving the immutable run…" : "Updating the durable run record…") : null,
     report ? h("section", { class: "launch-summary" },
       h("div", {}, h("div", { class: "eyebrow" }, "Launch status"), h("h2", {}, existing ? "Existing run recovered" : preview ? "Prepared for reservation" : report.runnable ? "Ready to reserve" : `${unfinished} setup ${unfinished === 1 ? "step" : "steps"} remain`), h("p", {}, existing ? "This immutable definition already owns a run. Open it to inspect its persisted stage and next safe action." : preview ? "The owner workflow resolved the exact approved snapshot, suites, candidates, and budgets shown below." : report.runnable ? "Every required fact resolves against the active baseline. Reserving the run makes no external call." : "Complete these in order. Each step is derived from the workspace and scientific stores—not from what the screen happens to show.")),
       status(existing ? "Run found" : preview ? "Prepared" : labels[report.overall].label, existing || preview ? "success" : labels[report.overall].tone)) : null,
@@ -115,6 +126,6 @@ export function renderOptimization(workspace: ManagedWorkspace, state: Optimizat
       facts([["Active baseline", active?.name ?? workspace.manifest.name + " baseline"], ["Training snapshot", preview.trainingSnapshotId], ["Benchmark generation", preview.benchmarkGenerationId], ...budgetFacts(preview)]),
       h("p", { class: "section-note" }, "Sealed evidence remains unavailable to generation, training, development analysis, and the advisor. Its single use requires a later explicit authorization."),
       state.prepared ? h("p", { class: "section-note" }, state.prepared.createdTrainingSnapshot ? "The approved logical training snapshot was created during preparation." : "The existing approved logical training snapshot was reused exactly.") : null,
-      state.run ? runPanel(state.run, actions) : h("div", { class: "launch-actions" }, button(preview.existingRun ? "Open existing run" : "Reserve optimization run", actions.start, "primary", "runs"), h("p", {}, preview.existingRun ? "This definition already owns a run; no duplicate will be created." : `This persists the immutable definition and run identity. Preparation authorized ${state.prepared?.externalCalls ?? 0} external calls; reserving does not execute them.`))) : null,
+      state.run ? runPanel(state.run, state, actions) : h("div", { class: "launch-actions" }, button(preview.existingRun ? "Open existing run" : "Reserve optimization run", actions.start, "primary", "runs"), h("p", {}, preview.existingRun ? "This definition already owns a run; no duplicate will be created." : `This persists the immutable definition and run identity. Preparation authorized ${state.prepared?.externalCalls ?? 0} external calls; reserving does not execute them.`))) : null,
   );
 }

@@ -21,7 +21,7 @@ use encoder_campaign_core::{
 };
 use encoder_experiment_core::{
     domain::{OptimizationBudget, TrainingCandidate},
-    journal::ExperimentRunState,
+    journal::{CandidateExecutionState, ExperimentRunState},
     ports::{EncoderTaskBackend, ExperimentStore},
     protocol::{DevelopmentSelectionRule, ExperimentProtocol},
 };
@@ -1765,8 +1765,143 @@ fn print_status(
             "reserved": reserved,
             "remaining_unreserved": remaining,
         },
+        "stage": stage_status(context, campaign),
         "next_command": next_command(context, campaign),
     }))
+}
+
+fn stage_status(
+    context: &LaunchContext,
+    campaign: Option<&crate::commands::production_campaign::CampaignContext>,
+) -> serde_json::Value {
+    let candidate_count = context.definition.candidates.len();
+    let development_suite_count = context.definition.development_suite_keys.len();
+    let campaign_state = campaign.map(|value| value.view.state);
+    let experiment = campaign.and_then(|value| value.experiment.as_ref());
+    let (key, label, detail, execution) = match (context.view.state, campaign_state) {
+        (OptimizationRunState::Planned, _) => (
+            "attach_campaign",
+            "Set up the controlled run",
+            "Attach the already-reserved campaign. This writes identities only; it does not train or evaluate.",
+            "quick",
+        ),
+        (OptimizationRunState::CampaignActive, Some(CampaignState::AwaitingGeneration)) => (
+            "bind_evaluations",
+            "Bind the approved evaluations",
+            "Confirm that the frozen development and sealed suites still match this run definition.",
+            "quick",
+        ),
+        (OptimizationRunState::CampaignActive, Some(CampaignState::ReadyToPrepare)) => (
+            "prepare_protocol",
+            "Prepare the experiment contract",
+            "Resolve the baseline reports, candidate recipes, metric gates, and finite execution budget.",
+            "native",
+        ),
+        (OptimizationRunState::CampaignActive, Some(CampaignState::ReadyToStart)) => (
+            "create_experiment",
+            "Create the experiment journal",
+            "Persist the candidate execution record before any model build begins.",
+            "quick",
+        ),
+        (OptimizationRunState::CampaignActive, Some(CampaignState::RunningDevelopment)) => (
+            "development",
+            "Train and evaluate the candidates",
+            "Build each candidate from the frozen training snapshot, then run every development suite. Sealed evidence remains unavailable.",
+            "native",
+        ),
+        (OptimizationRunState::CampaignActive, Some(CampaignState::AwaitingFinalization)) => (
+            "record_development",
+            "Record the development decision",
+            "Persist the deterministic development selection and reconcile the campaign budget.",
+            "quick",
+        ),
+        (
+            OptimizationRunState::CampaignActive,
+            Some(CampaignState::AwaitingSealedAuthorization),
+        ) => (
+            "await_sealed_authorization",
+            "Review final acceptance",
+            "Development is complete. Sealed evidence stays closed until you explicitly authorize its one permitted use.",
+            "authorization",
+        ),
+        (OptimizationRunState::CampaignActive, Some(CampaignState::SealedAuthorized)) => (
+            "sealed_evaluation",
+            "Run final acceptance",
+            "Evaluate the selected candidate once against sealed evidence and persist the strict gate decision.",
+            "native",
+        ),
+        (OptimizationRunState::CampaignActive, Some(CampaignState::RenewalRequired)) => (
+            "complete_campaign",
+            "Close the finite campaign",
+            "Record that the single authorized iteration has exhausted its scope.",
+            "quick",
+        ),
+        (OptimizationRunState::CampaignActive, Some(CampaignState::Completed)) => (
+            "record_final_decision",
+            "Record the final run decision",
+            "Link the completed campaign decision into the optimization journal.",
+            "quick",
+        ),
+        (OptimizationRunState::Completed, _) => (
+            "completed",
+            "Optimization complete",
+            "The finite run and its final decision are durably recorded.",
+            "terminal",
+        ),
+        (OptimizationRunState::Cancelled, _) => (
+            "cancelled",
+            "Run cancelled",
+            "No further stage can execute for this immutable run.",
+            "terminal",
+        ),
+        (OptimizationRunState::Failed, _) => (
+            "failed",
+            "Run failed",
+            "The failure is recorded. Inspect the persisted reason before starting another run.",
+            "terminal",
+        ),
+        (OptimizationRunState::CampaignActive, None) => (
+            "recover_campaign",
+            "Recover the campaign record",
+            "The optimization journal is active, but its reserved campaign could not be loaded.",
+            "blocked",
+        ),
+    };
+
+    let development = experiment.map(|value| {
+        let completed_units = value
+            .candidates
+            .values()
+            .map(|candidate| {
+                let completed_build = usize::from(candidate.train_output.is_some());
+                let recorded_failure = usize::from(
+                    candidate.state == CandidateExecutionState::Failed
+                        && (candidate.train_output.is_none()
+                            || candidate.development_reports.len() < development_suite_count),
+                );
+                completed_build + candidate.development_reports.len() + recorded_failure
+            })
+            .sum::<usize>();
+        let active_candidate_id = value.candidates.iter().find_map(|(id, candidate)| {
+            matches!(
+                candidate.state,
+                CandidateExecutionState::Training | CandidateExecutionState::Trained
+            )
+            .then_some(*id)
+        });
+        serde_json::json!({
+            "completed_units": completed_units,
+            "total_units": candidate_count.saturating_mul(development_suite_count.saturating_add(1)),
+            "active_candidate_id": active_candidate_id,
+        })
+    });
+    serde_json::json!({
+        "key": key,
+        "label": label,
+        "detail": detail,
+        "execution": execution,
+        "development": development,
+    })
 }
 
 fn next_command(

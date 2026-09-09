@@ -214,10 +214,25 @@ export function mount(): void {
   async function optimize(request: Parameters<typeof bridge.managedOptimize>[1]): Promise<void> {
     const id = selection.selectedId;
     if (!id || view.optimization.loading) return;
-    const state = view.optimization; state.loading = true; state.error = undefined; render();
+    const state = view.optimization; state.loading = true; state.executing = request.action; state.error = undefined; render();
+    let polling = request.action === "resume";
+    const poll = async (): Promise<void> => {
+      if (request.action !== "resume") return;
+      while (polling) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        if (!polling || selection.selectedId !== id) return;
+        try {
+          const received = runStatus(await bridge.managedOptimize(id, { action: "status", runId: request.runId }));
+          if (!polling || selection.selectedId !== id) return;
+          state.run = received;
+          if (selection.selectedId === id) render();
+        } catch { /* The executing command owns the user-facing failure. */ }
+      }
+    };
+    void poll();
     try { state.run = runStatus(await bridge.managedOptimize(id, request)); }
     catch (error) { state.error = message(error); }
-    finally { state.loading = false; if (selection.selectedId === id) render(); }
+    finally { polling = false; state.loading = false; state.executing = undefined; if (selection.selectedId === id) render(); }
   }
   const optimizationActions: OptimizationPageActions = {
     refresh: () => { void refreshOptimization(); },

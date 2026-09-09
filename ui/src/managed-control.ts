@@ -76,6 +76,11 @@ export interface ManagedRunStatus {
   head_fingerprint: string;
   artifacts: Record<string, string>;
   budgets: { maximum: OptimizationBudget; reserved?: OptimizationBudget; remaining_unreserved?: OptimizationBudget };
+  stage: {
+    key: string; label: string; detail: string;
+    execution: "quick" | "native" | "authorization" | "terminal" | "blocked";
+    development?: { completed_units: number; total_units: number; active_candidate_id?: string };
+  };
   next_command: "resume" | "authorize-sealed" | "none";
 }
 

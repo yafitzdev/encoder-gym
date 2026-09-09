@@ -541,6 +541,13 @@ dialog::backdrop { background: #0008; }
 .launch-actions { display: flex; align-items: center; gap: 16px; border-top: 1px solid var(--line); margin-top: 20px; padding-top: 18px; }
 .launch-actions p { color: var(--muted); font-size: 12px; max-width: 620px; }
 .run-control { background: var(--bg); }
+.run-stage { margin-top: 16px; padding: 18px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 5px; background: var(--surface); }
+.run-stage h3 { margin: 5px 0 7px; font-size: 18px; }
+.run-stage p { margin: 0; max-width: 760px; color: var(--muted); }
+.run-stage.is-running { border-left-color: var(--cyan); }
+.run-stage.is-running .eyebrow { color: var(--cyan); }
+.run-stage .stage-progress { margin-top: 13px; color: var(--text); font: 12px var(--mono); }
+.run-stage .stage-caution { margin-top: 10px; font-size: 12px; }
 @media (max-width: 1100px) {
   .candidate-table td.numeric { min-width: 90px; }
   .candidate-table tbody th { min-width: 175px; }
