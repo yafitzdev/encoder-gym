@@ -41,8 +41,18 @@ export interface ManagedLaunchPreview {
   budget: OptimizationBudget;
   existingRun?: { runId: string; state: OptimizationRunState };
 }
-export interface ManagedReadiness { report: ReadinessReport; launchPreview?: ManagedLaunchPreview }
+export interface ManagedOptimizationAuthority {
+  proposalId: string; selectionId: string; trainingSnapshotId?: string; benchmarkGenerationId: string;
+  hypotheses: string[]; candidateCount: number; baseTrainingInputs: number; deltaRows: number;
+  budget: { maximum_total_rows: number; maximum_rows_per_target: number; maximum_candidates: number; maximum_training_seconds: number; maximum_evaluation_seconds: number; maximum_development_evaluations: number; maximum_external_calls: number; maximum_sealed_uses: number };
+  validUntil: string;
+}
+export interface ManagedReadiness { report: ReadinessReport; optimizationAuthority?: ManagedOptimizationAuthority; launchPreview?: ManagedLaunchPreview }
 export interface OptimizationManifestChoice { token: string; name: string; readiness: ManagedReadiness }
+export interface PreparedOptimizationChoice {
+  token: string; name: string; launchPreview: ManagedLaunchPreview; authority: ManagedOptimizationAuthority;
+  createdTrainingSnapshot: boolean; externalCalls: number;
+}
 
 export interface ManagedRunStatus {
   run_id: string;

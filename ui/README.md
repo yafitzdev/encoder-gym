@@ -187,6 +187,14 @@ No Rust core policy, acceptance algorithm, or backend contract is duplicated in
 the renderer. The browser-only fallback is an in-memory example preview and
 cannot register local folders; actual folder workflows require Electron.
 
+For a bound project with one current approved repair, the Start optimization
+page derives and explains that authority. Its primary preparation button uses a
+fixed project-scoped intent rather than opening a TOML picker. The backend
+replays the approved delta, creates or adopts the immutable logical training
+snapshot, and publishes a content-addressed definition inside the managed
+workspace. The renderer receives only an opaque token and resolved preview. No
+model work, provider call, or sealed evaluation happens during preparation.
+
 ## Validation
 
 ```powershell

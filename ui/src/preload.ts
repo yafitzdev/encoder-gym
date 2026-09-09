@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
+import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, PreparedOptimizationChoice, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
 import type { OpenedProject, ProjectCollection } from "./projects.js";
 import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, ModelChoice } from "./managed-workspace.js";
 
@@ -13,6 +13,7 @@ export interface EncoderGymBridge {
   verifyManagedProject(id: string): Promise<OpenedProject>;
   upgradeManagedProject(id: string): Promise<OpenedProject>;
   managedReadiness(id: string, manifestToken?: string): Promise<ManagedReadiness>;
+  prepareOptimization(id: string): Promise<PreparedOptimizationChoice>;
   chooseOptimizationManifest(id: string): Promise<OptimizationManifestChoice | null>;
   managedOptimize(id: string, request: ManagedOptimizationRequest): Promise<ManagedOptimizationResult>;
   managedProviders(id: string): Promise<ManagedProviderStatus>;
@@ -47,6 +48,7 @@ const bridge: EncoderGymBridge = {
   verifyManagedProject: id => ipcRenderer.invoke("encoder-gym:verify-managed", id),
   upgradeManagedProject: id => ipcRenderer.invoke("encoder-gym:upgrade-managed", id),
   managedReadiness: (id, manifestToken) => ipcRenderer.invoke("encoder-gym:managed-readiness", id, manifestToken),
+  prepareOptimization: id => ipcRenderer.invoke("encoder-gym:prepare-optimization", id),
   chooseOptimizationManifest: id => ipcRenderer.invoke("encoder-gym:choose-optimization-manifest", id),
   managedOptimize: (id, request) => ipcRenderer.invoke("encoder-gym:managed-optimize", id, request),
   managedProviders: id => ipcRenderer.invoke("encoder-gym:managed-providers", id),

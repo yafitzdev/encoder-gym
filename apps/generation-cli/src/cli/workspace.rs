@@ -116,6 +116,8 @@ pub enum WorkspaceCommand {
         #[arg(long)]
         manifest: Option<PathBuf>,
     },
+    /// Freeze the one current approved repair and create its managed run definition.
+    PrepareOptimization { folder: PathBuf },
     /// Operate the bound finite optimizer through fixed project-scoped intents.
     Optimize {
         folder: PathBuf,

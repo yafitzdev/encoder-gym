@@ -173,6 +173,19 @@ Nomos runtime project, confirms the store contains that exact project, and
 rejects runs or manifests from another project. Starting remains idempotent;
 resuming advances at most one persisted stage.
 
+For the normal desktop path, a user does not create that manifest by hand.
+When readiness finds exactly one unexpired approved repair selection bound to
+the active, unused successor benchmark, **Prepare approved run** invokes the
+fixed `workspace prepare-optimization` intent. It replays the approved native
+delta through the production-repair owner, creates or adopts its immutable
+logical training snapshot, and publishes a content-addressed strict definition
+under the managed project's `runs/definitions/` directory. The step performs
+no model training, evaluation, provider call, or sealed-evidence exposure.
+Historical, expired, superseded, exposed, foreign-project, and ambiguous
+approvals are never silently selected. Electron retains the definition path in
+the main process and returns only an opaque project-scoped token to the
+renderer.
+
 ## Provider settings and credentials
 
 Generation and advisor authorities are configured separately. An evaluator is

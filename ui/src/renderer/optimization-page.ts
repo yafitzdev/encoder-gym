@@ -1,4 +1,4 @@
-import type { ManagedLaunchPreview, ManagedReadiness, ManagedRunStatus, OptimizationManifestChoice, ReadinessCheck, ReadinessState } from "../managed-control.js";
+import type { ManagedLaunchPreview, ManagedReadiness, ManagedRunStatus, OptimizationManifestChoice, PreparedOptimizationChoice, ReadinessCheck, ReadinessState } from "../managed-control.js";
 import type { ManagedWorkspace } from "../managed-workspace.js";
 import { button, details, facts, pageHeader, sectionHeader, status, tag } from "./components.js";
 import { h } from "./dom.js";
@@ -8,10 +8,12 @@ export interface OptimizationPageState {
   error?: string;
   readiness?: ManagedReadiness;
   manifest?: OptimizationManifestChoice;
+  prepared?: PreparedOptimizationChoice;
   run?: ManagedRunStatus;
 }
 export interface OptimizationPageActions {
   refresh(): void;
+  prepare(): void;
   chooseManifest(): void;
   start(): void;
   resume(): void;
@@ -46,7 +48,7 @@ function actionFor(check: ReadinessCheck, actions: OptimizationPageActions): HTM
   if (key === "upgrade-workspace") return button(check.nextAction!.label, actions.upgrade, "secondary");
   if (key === "import-dataset") return button(check.nextAction!.label, actions.openData, "secondary");
   if (key.startsWith("bind-") || key.startsWith("rebind-") || key.startsWith("repair-scientific") || key === "configure-providers") return button("Open project settings", actions.openSettings, "secondary");
-  if (key === "prepare-optimization") return button("Choose reviewed definition", actions.chooseManifest, "secondary");
+  if (key === "prepare-optimization") return button("Prepare approved run", actions.prepare, "secondary");
   if (key === "resume-optimization") return button("Open existing run", actions.start, "secondary");
   return null;
 }
@@ -56,7 +58,7 @@ const categoryCopy: Record<string, [string, string]> = {
   scientific: ["Connect the scientific runtime", "Verify the task adapter, its exact project snapshot, and the contained scientific store."],
   data: ["Approve the training input", "Imported sources are custody only; training needs immutable scientific authority."],
   evaluation: ["Prepare development and sealed evaluation", "Both evidence roles must exist before candidates can be compared and accepted."],
-  optimization: ["Choose the reviewed run definition", "Bind the approved snapshot, benchmark generation, candidate space, and finite budgets."],
+  optimization: ["Prepare the reviewed run", "Freeze the approved snapshot and bind its benchmark generation, candidate space, and finite budgets."],
   recovery: ["Resolve the existing run", "Continue or replace the run already associated with this exact definition."],
 };
 const severity: Record<ReadinessState, number> = { ready: 0, action_required: 1, unavailable: 2, stale: 3, blocked: 4 };
@@ -90,6 +92,7 @@ function runPanel(run: ManagedRunStatus, actions: OptimizationPageActions): HTML
 
 export function renderOptimization(workspace: ManagedWorkspace, state: OptimizationPageState, actions: OptimizationPageActions): HTMLElement {
   const readiness = state.manifest?.readiness ?? state.readiness;
+  const preview = state.prepared?.launchPreview ?? readiness?.launchPreview;
   const report = readiness?.report;
   const unfinished = report ? new Set(report.checks.filter(check => check.required && check.state !== "ready").map(check => check.category)).size : 0;
   const active = workspace.modelCatalog?.artifacts.find(model => model.id === workspace.modelCatalog?.baselineRevisions.find(revision => revision.id === workspace.modelCatalog?.activeBaselineRevisionId)?.modelArtifactId);
@@ -97,13 +100,20 @@ export function renderOptimization(workspace: ManagedWorkspace, state: Optimizat
     pageHeader("Start optimization", "Turn this project's reviewed scientific inputs into one finite, recoverable run.", button("Refresh checks", actions.refresh, "ghost", "refresh")),
     state.error ? h("section", { class: "operation-failure", role: "alert" }, h("strong", {}, "Could not inspect launch readiness"), h("p", {}, state.error)) : null,
     state.loading && !report ? h("div", { class: "workspace-progress", role: "status" }, "Checking persisted project state…") : null,
+    state.loading && report ? h("div", { class: "workspace-progress", role: "status" }, "Replaying the approved native evidence and verifying its artifact tree… This one-time integrity step can take several minutes for a large encoder project.") : null,
     report ? h("section", { class: "launch-summary" },
-      h("div", {}, h("div", { class: "eyebrow" }, "Launch status"), h("h2", {}, report.runnable ? "Ready to reserve" : `${unfinished} setup ${unfinished === 1 ? "step" : "steps"} remain`), h("p", {}, report.runnable ? "Every required fact resolves against the active baseline. Reserving the run makes no external call." : "Complete these in order. Each step is derived from the workspace and scientific stores—not from what the screen happens to show.")),
-      status(labels[report.overall].label, labels[report.overall].tone)) : null,
-    readiness ? readinessList(readiness, actions) : null,
-    readiness?.launchPreview ? h("section", { class: "launch-definition" }, sectionHeader("Exact run definition", tag(state.manifest?.name ?? "Reviewed selection", "accent")),
-      facts([["Active baseline", active?.name ?? workspace.manifest.name + " baseline"], ["Training snapshot", readiness.launchPreview.trainingSnapshotId], ["Benchmark generation", readiness.launchPreview.benchmarkGenerationId], ...budgetFacts(readiness.launchPreview)]),
+      h("div", {}, h("div", { class: "eyebrow" }, "Launch status"), h("h2", {}, preview ? "Prepared for reservation" : report.runnable ? "Ready to reserve" : `${unfinished} setup ${unfinished === 1 ? "step" : "steps"} remain`), h("p", {}, preview ? "The owner workflow resolved the exact approved snapshot, suites, candidates, and budgets shown below." : report.runnable ? "Every required fact resolves against the active baseline. Reserving the run makes no external call." : "Complete these in order. Each step is derived from the workspace and scientific stores—not from what the screen happens to show.")),
+      status(preview ? "Prepared" : labels[report.overall].label, preview ? "success" : labels[report.overall].tone)) : null,
+    readiness?.optimizationAuthority && !preview ? h("section", { class: "launch-definition" }, sectionHeader("Current approved repair", tag("Reviewed", "accent")),
+      h("p", { class: "section-note" }, readiness.optimizationAuthority.hypotheses.join(" ")),
+      facts([["Candidates", String(readiness.optimizationAuthority.candidateCount)], ["Qualified repair rows", readiness.optimizationAuthority.deltaRows.toLocaleString()], ["Training ceiling", `${readiness.optimizationAuthority.budget.maximum_training_seconds.toLocaleString()} seconds`], ["External calls", String(readiness.optimizationAuthority.budget.maximum_external_calls)], ["Sealed uses", String(readiness.optimizationAuthority.budget.maximum_sealed_uses)], ["Authority expires", new Date(readiness.optimizationAuthority.validUntil).toLocaleString()]]),
+      h("p", { class: "section-note" }, readiness.optimizationAuthority.trainingSnapshotId ? "Its immutable training snapshot already exists. Preparing resolves the final run definition." : "Preparing replays the approved native delta, freezes its logical training snapshot, and resolves the final run definition. It does not train, evaluate, expose sealed evidence, or contact a provider."),
+      button(state.loading ? "Preparing…" : "Prepare approved run", actions.prepare, "primary", "arrow")) : null,
+    readiness && !preview ? readinessList(readiness, actions) : null,
+    preview ? h("section", { class: "launch-definition" }, sectionHeader("Exact run definition", tag(state.prepared?.name ?? state.manifest?.name ?? "Reviewed selection", "accent")),
+      facts([["Active baseline", active?.name ?? workspace.manifest.name + " baseline"], ["Training snapshot", preview.trainingSnapshotId], ["Benchmark generation", preview.benchmarkGenerationId], ...budgetFacts(preview)]),
       h("p", { class: "section-note" }, "Sealed evidence remains unavailable to generation, training, development analysis, and the advisor. Its single use requires a later explicit authorization."),
-      state.run ? runPanel(state.run, actions) : h("div", { class: "launch-actions" }, button(readiness.launchPreview.existingRun ? "Open existing run" : "Reserve optimization run", actions.start, "primary", "runs"), h("p", {}, readiness.launchPreview.existingRun ? "This definition already owns a run; no duplicate will be created." : "This persists the immutable definition and run identity. It does not train a model or contact a provider."))) : null,
+      state.prepared ? h("p", { class: "section-note" }, state.prepared.createdTrainingSnapshot ? "The approved logical training snapshot was created during preparation." : "The existing approved logical training snapshot was reused exactly.") : null,
+      state.run ? runPanel(state.run, actions) : h("div", { class: "launch-actions" }, button(preview.existingRun ? "Open existing run" : "Reserve optimization run", actions.start, "primary", "runs"), h("p", {}, preview.existingRun ? "This definition already owns a run; no duplicate will be created." : `This persists the immutable definition and run identity. Preparation authorized ${state.prepared?.externalCalls ?? 0} external calls; reserving does not execute them.`))) : null,
   );
 }

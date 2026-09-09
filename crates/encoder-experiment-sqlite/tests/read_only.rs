@@ -1,6 +1,8 @@
 use encoder_experiment_sqlite::SqliteExperimentStore;
-use sqlx::Connection;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use std::str::FromStr;
 
+static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 fn database(directory: &tempfile::TempDir) -> (std::path::PathBuf, String) {
     let path = directory.path().join("passive.db");
     let url = format!(
@@ -72,20 +74,23 @@ async fn passive_connection_sees_live_wal_and_rejects_writes() {
 async fn passive_connection_preserves_delete_journal_and_database_bytes() {
     let directory = tempfile::tempdir().unwrap();
     let (path, url) = database(&directory);
-    let writer = SqliteExperimentStore::connect(&url).await.unwrap();
-    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
-        .execute(writer.pool())
+    let options = SqliteConnectOptions::from_str(&url)
+        .unwrap()
+        .create_if_missing(true);
+    let setup = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
         .await
         .unwrap();
-    writer.pool().close().await;
-    // Journal mode is database-wide. Use exactly one setup connection so a
-    // lazily opened sibling from a pool cannot retain a transient read lock.
-    let mut connection = sqlx::SqliteConnection::connect(&url).await.unwrap();
-    sqlx::query("PRAGMA journal_mode=DELETE")
-        .execute(&mut connection)
-        .await
-        .unwrap();
-    connection.close().await.unwrap();
+    MIGRATOR.run(&setup).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("PRAGMA journal_mode=DELETE")
+            .fetch_one(&setup)
+            .await
+            .unwrap(),
+        "delete"
+    );
+    setup.close().await;
     let before = std::fs::read(&path).unwrap();
     let reader = SqliteExperimentStore::connect_read_only(&url)
         .await

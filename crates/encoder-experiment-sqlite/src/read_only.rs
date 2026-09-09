@@ -6,6 +6,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 use std::{path::Path, str::FromStr, time::Duration};
+use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +23,27 @@ pub struct ScientificStoreInventory {
 }
 
 impl SqliteExperimentStore {
+    /// Return the immutable approved-delta identities associated with one exact
+    /// execution-project snapshot. Callers must still load each selection
+    /// through its owning store contract before using it.
+    pub async fn native_delta_selection_ids_for_project(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<Uuid>, ExperimentStoreError> {
+        sqlx::query_scalar(
+            "SELECT selections.id \
+             FROM encoder_native_delta_selections AS selections \
+             JOIN encoder_repair_proposals AS proposals \
+               ON proposals.id = selections.proposal_id \
+             WHERE proposals.execution_project_snapshot_id = ? \
+             ORDER BY selections.created_at DESC, selections.id DESC",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store_error)
+    }
+
     /// Open an existing, current-schema database with SQLite-enforced read-only access.
     /// WAL remains visible: concurrent writers may commit while status/watch runs.
     pub async fn connect_read_only(database_url: &str) -> Result<Self, ExperimentStoreError> {

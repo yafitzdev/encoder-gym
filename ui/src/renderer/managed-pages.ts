@@ -24,8 +24,8 @@ export function renderDatasets(workspace: ManagedWorkspace, actions: Actions, pr
         ]))),
       ))),
     h("section", { class: "preparation-note" }, h("h2", {}, "Source files, not training-ready datasets"),
-      h("p", {}, "Import keeps a local copy. Approving records and creating a reproducible training snapshot are separate CLI steps, not available in this desktop yet."),
-      details("What preparation involves", h("p", {}, "Use the existing task-compatible dataset admission, snapshot, and evaluation contracts before training. Declaring a file's purpose does not approve its records, create splits, or configure a trainer. This page never runs training or evaluation."))),
+      h("p", {}, "Import keeps a local copy. Declaring a purpose does not approve records or create a reproducible training snapshot."),
+      details("What preparation involves", h("p", {}, "Task-compatible scientific history owns admission, immutable snapshots, and evaluation authority. When one reviewed repair is current, Start optimization can replay and freeze that approved snapshot without training or evaluating a model. This page never treats custody as approval."))),
   );
 }
 
@@ -61,7 +61,7 @@ export function renderManagedSettings(project: ProjectEntry, workspace: ManagedW
     h("section", { class: "project-info" }, sectionHeader("Check stored files", tag(workspace.verified ? "Checksums verified" : "File sizes checked")),
       h("p", { class: "section-note" }, workspace.verified ? "Baseline and dataset files matched their recorded checksums and counts during this verification." : "Opening checked file sizes and project metadata. Verify to check the contents of every baseline and dataset file."),
       button("Verify project files", projects.verify, "secondary", "check")),
-    details("Training and execution availability", h("div", { class: "reading-note" }, h("p", {}, "Importing a checkpoint does not configure a trainer. Dataset admission, snapshots, training, and evaluation remain explicit task-compatible CLI workflows; this desktop does not launch them or import their history automatically."),
+    details("Training and execution availability", h("div", { class: "reading-note" }, h("p", {}, "Importing a checkpoint does not configure a trainer. Explicitly connected scientific history may supply reviewed snapshots and evaluation authority; Start optimization can prepare and run only the exact current approved lineage."),
       h("p", {}, "project.sqlite stores this workspace's file registry. It is not a training-run database and must not be used as the legacy CLI's --database-url."))),
     h("section", { class: "remove-project" }, h("h2", {}, "Remove from this app"), h("p", { class: "section-note" }, "Only the library entry is removed. The workspace, checkpoint, datasets and run folders stay on disk."), button("Remove project entry…", projects.forget, "secondary")),
   );

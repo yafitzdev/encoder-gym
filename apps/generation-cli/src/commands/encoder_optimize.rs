@@ -1,6 +1,10 @@
 mod report;
 
-use std::{fs, path::Path};
+use std::{
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context;
 use chrono::Utc;
@@ -24,7 +28,10 @@ use encoder_experiment_core::{
 use encoder_experiment_nomos::NomosBackend;
 use encoder_experiment_runner::ExperimentRunner;
 use encoder_experiment_sqlite::SqliteExperimentStore;
-use encoder_repair_core::{ports::NativeRepairTrainingStore, proposal::RepairProposal};
+use encoder_repair_core::{
+    ports::NativeRepairTrainingStore,
+    proposal::{RepairBudget, RepairProposal},
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -43,7 +50,9 @@ use crate::{
         production_campaign::{
             CampaignContext, campaign_provenance, finalize_campaign_iteration, load_generation,
         },
-        production_repair::{load_approved_delta_context, load_approved_delta_facts},
+        production_repair::{
+            build_training_snapshot, load_approved_delta_context, load_approved_delta_facts,
+        },
     },
     presentation,
 };
@@ -135,6 +144,33 @@ pub(crate) struct ManagedExistingOptimization {
     pub state: OptimizationRunState,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ManagedOptimizationAuthority {
+    pub proposal_id: Uuid,
+    pub selection_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub training_snapshot_id: Option<Uuid>,
+    pub benchmark_generation_id: Uuid,
+    pub hypotheses: Vec<String>,
+    pub candidate_count: usize,
+    pub base_training_inputs: usize,
+    pub delta_rows: usize,
+    pub budget: RepairBudget,
+    pub valid_until: chrono::DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ManagedOptimizationPreparation {
+    pub manifest_path: PathBuf,
+    pub manifest_name: String,
+    pub authority: ManagedOptimizationAuthority,
+    pub readiness: ManagedOptimizationReadiness,
+    pub created_training_snapshot: bool,
+    pub external_calls: u32,
+}
+
 /// Resolve the same immutable definition consumed by `start`, without writing
 /// state or opening a native adapter. Managed-project readiness uses this
 /// instead of reproducing optimization policy in the presentation layer.
@@ -143,6 +179,13 @@ pub(crate) async fn managed_readiness(
     manifest: &Path,
 ) -> anyhow::Result<ManagedOptimizationReadiness> {
     let resolved = resolve_manifest(store, manifest).await?;
+    managed_readiness_from_resolved(store, &resolved).await
+}
+
+async fn managed_readiness_from_resolved(
+    store: &SqliteExperimentStore,
+    resolved: &ResolvedLaunch,
+) -> anyhow::Result<ManagedOptimizationReadiness> {
     let existing_run = match store
         .find_optimization_by_manifest(resolved.manifest_fingerprint.clone())
         .await?
@@ -163,16 +206,211 @@ pub(crate) async fn managed_readiness(
         None => None,
     };
     Ok(ManagedOptimizationReadiness {
-        manifest_fingerprint: resolved.manifest_fingerprint,
-        specification_fingerprint: resolved.definition.specification_fingerprint,
+        manifest_fingerprint: resolved.manifest_fingerprint.clone(),
+        specification_fingerprint: resolved.definition.specification_fingerprint.clone(),
         project_id: resolved.definition.project.id,
-        project_fingerprint: resolved.definition.project.fingerprint,
+        project_fingerprint: resolved.definition.project.fingerprint.clone(),
         training_snapshot_id: resolved.definition.training_snapshot.id,
         benchmark_generation_id: resolved.definition.benchmark.generation_id,
         candidate_count: resolved.definition.candidates.len(),
-        budget: resolved.definition.campaign_budget,
+        budget: resolved.definition.campaign_budget.clone(),
         existing_run,
     })
+}
+
+/// Derive the one approved successor repair that still binds the current,
+/// active, unused benchmark generation. Historical selections remain
+/// inspectable but cannot become a new launch merely because their rows still
+/// exist in the scientific store.
+pub(crate) async fn managed_authority(
+    store: &SqliteExperimentStore,
+    project: &encoder_experiment_core::domain::ExternalProjectSnapshot,
+) -> anyhow::Result<Option<ManagedOptimizationAuthority>> {
+    let mut current = Vec::new();
+    for selection_id in store
+        .native_delta_selection_ids_for_project(project.id)
+        .await?
+    {
+        let approved = load_approved_delta_facts(store, selection_id).await?;
+        approved
+            .proposal
+            .context
+            .execution_project
+            .verify(project)?;
+        if approved.proposal.expires_at <= Utc::now() {
+            continue;
+        }
+        let Ok((generation, view)) =
+            load_generation(store, approved.proposal.context.benchmark.generation_id).await
+        else {
+            continue;
+        };
+        if require_active_generation(&view, &generation).is_err() {
+            continue;
+        }
+        let benchmark = &approved.proposal.context.benchmark;
+        let observed_development = generation
+            .development_suites
+            .iter()
+            .map(|value| {
+                (
+                    value.suite_key.clone(),
+                    value.bundle.development_suite_fingerprint.clone(),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        if generation.fingerprint != benchmark.generation_fingerprint
+            || view.last_sequence != benchmark.journal_sequence
+            || view.last_event_fingerprint != benchmark.journal_head_fingerprint
+            || observed_development != benchmark.development_suite_fingerprints
+            || generation.sealed_suite_id != benchmark.sealed_suite_id
+            || generation.sealed_suite_fingerprint != benchmark.sealed_suite_fingerprint
+        {
+            continue;
+        }
+        let training_snapshot = store
+            .get_native_repair_training_snapshot_for_selection(selection_id)
+            .await?;
+        current.push(ManagedOptimizationAuthority {
+            proposal_id: approved.proposal.id,
+            selection_id,
+            training_snapshot_id: training_snapshot.map(|value| value.id),
+            benchmark_generation_id: generation.id,
+            hypotheses: approved
+                .proposal
+                .candidates
+                .iter()
+                .map(|value| value.hypothesis.clone())
+                .collect(),
+            candidate_count: approved.proposal.candidates.len(),
+            base_training_inputs: approved.proposal.context.base_training_inputs.len(),
+            delta_rows: approved.candidate_set.rows.len(),
+            budget: approved.proposal.budget,
+            valid_until: approved.proposal.expires_at,
+        });
+    }
+    anyhow::ensure!(
+        current.len() <= 1,
+        "More than one approved repair selection claims current optimization authority. Resolve the scientific lineage before preparing a run."
+    );
+    Ok(current.pop())
+}
+
+/// Freeze the current approved native repair into its owner-managed logical
+/// training snapshot, then write one content-addressed strict manifest below
+/// the managed workspace. This performs no training, evaluation, provider
+/// call, or sealed-evidence exposure.
+pub(crate) async fn prepare_managed(
+    store: &SqliteExperimentStore,
+    backend: &NomosBackend,
+    project: &encoder_experiment_core::domain::ExternalProjectSnapshot,
+    managed_root: &Path,
+) -> anyhow::Result<ManagedOptimizationPreparation> {
+    let mut authority = managed_authority(store, project)
+        .await?
+        .context("No current approved repair is available for optimization preparation")?;
+    let created_training_snapshot = authority.training_snapshot_id.is_none();
+    let prepared = build_training_snapshot(store, backend, authority.selection_id).await?;
+    let snapshot = prepared.snapshot;
+    let approved = prepared.context;
+    anyhow::ensure!(
+        approved.project.id == project.id && approved.project.fingerprint == project.fingerprint,
+        "The current repair belongs to another scientific project snapshot."
+    );
+    authority.training_snapshot_id = Some(snapshot.id);
+
+    let name = optimization_name(&project.name, &approved.proposal.candidates);
+    let manifest = OptimizeManifest {
+        schema_version: MANIFEST_SCHEMA_VERSION,
+        name: name.clone(),
+        adapter: OptimizeAdapter::Nomos,
+        project_source_revision: project.source_revision.clone(),
+        training_snapshot_id: snapshot.id,
+        training_snapshot_fingerprint: snapshot.fingerprint.clone(),
+        training_snapshot_specification_fingerprint: snapshot.specification_fingerprint.clone(),
+        benchmark_generation_id: approved.proposal.context.benchmark.generation_id,
+        benchmark_generation_fingerprint: approved
+            .proposal
+            .context
+            .benchmark
+            .generation_fingerprint
+            .clone(),
+        approval_mode: ApprovalMode::ExplicitSealedUse,
+        selection_policy: DevelopmentSelectionRule::MaximizeWorstSuiteThenMean,
+        final_decision_policy: FinalDecisionPolicy::StrictMetricContract,
+        existing_experiment: None,
+    };
+    validate_manifest(&manifest)?;
+    let resolved = resolve_loaded(
+        store,
+        manifest.clone(),
+        snapshot,
+        &approved.project,
+        &approved.proposal,
+    )
+    .await?;
+    let readiness = managed_readiness_from_resolved(store, &resolved).await?;
+    let manifest_fingerprint = artifact_core::fingerprint(&manifest)?;
+    let manifest_name = format!(
+        "optimization-{}.toml",
+        manifest_fingerprint
+            .strip_prefix("sha256:")
+            .context("optimization manifest fingerprint is malformed")?
+    );
+    let definitions = managed_root.join("runs").join("definitions");
+    fs::create_dir_all(&definitions).context("could not create managed run definitions")?;
+    let manifest_path = definitions.join(&manifest_name);
+    let contents = toml::to_string_pretty(&manifest)
+        .context("could not encode the managed optimization definition")?;
+    write_content_addressed(&manifest_path, contents.as_bytes())?;
+    Ok(ManagedOptimizationPreparation {
+        manifest_path,
+        manifest_name: name,
+        authority,
+        readiness,
+        created_training_snapshot,
+        external_calls: approved.proposal.budget.maximum_external_calls,
+    })
+}
+
+fn optimization_name(
+    project_name: &str,
+    hypotheses: &[encoder_repair_core::proposal::RepairCandidateHypothesis],
+) -> String {
+    let suffix = hypotheses
+        .first()
+        .map(|value| value.key.as_str())
+        .unwrap_or("approved repair");
+    let value = format!("{project_name} · {suffix}");
+    value.chars().take(120).collect()
+}
+
+fn write_content_addressed(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
+    if path.exists() {
+        anyhow::ensure!(
+            fs::read(path)? == contents,
+            "A managed optimization definition exists under the same identity with different bytes."
+        );
+        return Ok(());
+    }
+    let parent = path
+        .parent()
+        .context("managed optimization definition has no parent")?;
+    let mut staged = tempfile::NamedTempFile::new_in(parent)
+        .context("could not stage managed optimization definition")?;
+    staged.write_all(contents)?;
+    staged.as_file().sync_all()?;
+    match staged.persist_noclobber(path) {
+        Ok(_) => Ok(()),
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+            anyhow::ensure!(
+                fs::read(path)? == contents,
+                "A managed optimization definition exists under the same identity with different bytes."
+            );
+            Ok(())
+        }
+        Err(error) => Err(error.error).context("could not publish managed optimization definition"),
+    }
 }
 
 pub async fn execute(command: EncoderOptimizeCommand, database_url: &str) -> anyhow::Result<()> {
@@ -751,7 +989,6 @@ async fn resolve_manifest(
 ) -> anyhow::Result<ResolvedLaunch> {
     let manifest = read_manifest(path)?;
     validate_manifest(&manifest)?;
-    let manifest_fingerprint = artifact_core::fingerprint(&manifest)?;
     let snapshot = store
         .get_native_repair_training_snapshot(manifest.training_snapshot_id)
         .await?
@@ -781,8 +1018,34 @@ async fn resolve_manifest(
         anyhow::bail!("optimization manifest project revision differs from the immutable project");
     }
 
-    let source_view =
-        load_persisted_view(approved.proposal.context.source_experiment_run_id, store).await?;
+    resolve_loaded(
+        store,
+        manifest,
+        snapshot,
+        &approved.project,
+        &approved.proposal,
+    )
+    .await
+}
+
+async fn resolve_loaded(
+    store: &SqliteExperimentStore,
+    manifest: OptimizeManifest,
+    snapshot: encoder_repair_core::training::NativeRepairTrainingSnapshot,
+    project: &encoder_experiment_core::domain::ExternalProjectSnapshot,
+    proposal: &RepairProposal,
+) -> anyhow::Result<ResolvedLaunch> {
+    validate_manifest(&manifest)?;
+    let manifest_fingerprint = artifact_core::fingerprint(&manifest)?;
+    anyhow::ensure!(
+        snapshot.id == manifest.training_snapshot_id
+            && snapshot.fingerprint == manifest.training_snapshot_fingerprint
+            && snapshot.specification_fingerprint
+                == manifest.training_snapshot_specification_fingerprint
+            && project.source_revision == manifest.project_source_revision,
+        "managed optimization definition no longer matches its verified repair authority"
+    );
+    let source_view = load_persisted_view(proposal.context.source_experiment_run_id, store).await?;
     let source_protocol = store
         .get_protocol(source_view.protocol_id)
         .await?
@@ -804,7 +1067,7 @@ async fn resolve_manifest(
         &generation_view,
         source_protocol.sealed_suite_key.clone(),
     )?;
-    let repair_benchmark = &approved.proposal.context.benchmark;
+    let repair_benchmark = &proposal.context.benchmark;
     if repair_benchmark.generation_id != generation.id
         || repair_benchmark.generation_fingerprint != generation.fingerprint
         || repair_benchmark.journal_sequence != generation_view.last_sequence
@@ -817,7 +1080,7 @@ async fn resolve_manifest(
         anyhow::bail!("approved repair and optimization benchmark authorities differ");
     }
 
-    let compiled = snapshot.compile_training_candidates(&approved.project, &approved.proposal)?;
+    let compiled = snapshot.compile_training_candidates(project, proposal)?;
     let deterministic = compiled
         .into_iter()
         .map(|candidate| {
@@ -827,7 +1090,7 @@ async fn resolve_manifest(
                     "candidate",
                     u64::from(candidate.sequence),
                 ),
-                &approved.project,
+                project,
                 candidate.sequence,
                 candidate.maximum_training_seconds,
                 candidate.parameters,
@@ -835,7 +1098,7 @@ async fn resolve_manifest(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let budget = protocol_budget_from(
-        &approved.proposal,
+        proposal,
         deterministic.len(),
         source_protocol.development_suite_keys().len(),
     )?;
@@ -846,16 +1109,15 @@ async fn resolve_manifest(
                 .get_protocol(existing.protocol_id)
                 .await?
                 .context("manifest adoption protocol does not exist")?;
-            protocol.validate_integrity(&approved.project)?;
+            protocol.validate_integrity(project)?;
             let view = load_persisted_view(existing.run_id, store).await?;
             if protocol.fingerprint != existing.protocol_fingerprint
                 || view.protocol_id != protocol.id
                 || view.last_event_fingerprint != existing.run_head_fingerprint
-                || protocol.project_snapshot_id != approved.project.id
+                || protocol.project_snapshot_id != project.id
                 || protocol.metric_contract != source_protocol.metric_contract
                 || protocol.budget != budget
-                || protocol.maximum_evaluation_seconds
-                    != approved.proposal.budget.maximum_evaluation_seconds
+                || protocol.maximum_evaluation_seconds != proposal.budget.maximum_evaluation_seconds
                 || protocol.development_suite_keys() != source_protocol.development_suite_keys()
                 || protocol.sealed_suite_key != source_protocol.sealed_suite_key
                 || protocol.development_selection_rule
@@ -874,29 +1136,29 @@ async fn resolve_manifest(
         None => (deterministic, None, None),
     };
     let campaign_budget = campaign_budget_from(
-        &approved.proposal,
+        proposal,
         candidates.len(),
         source_protocol.development_suite_keys().len(),
     )?;
     let definition = ProductionOptimizationDefinition::create(
         manifest.name.clone(),
         manifest_fingerprint.clone(),
-        &approved.project,
+        project,
         OptimizationArtifactBinding::new(
-            approved.proposal.id,
-            approved.proposal.fingerprint.clone(),
+            snapshot.proposal.id,
+            snapshot.proposal.fingerprint.clone(),
         )?,
         OptimizationArtifactBinding::new(
-            approved.selection.id,
-            approved.selection.fingerprint.clone(),
+            snapshot.selection.id,
+            snapshot.selection.fingerprint.clone(),
         )?,
         OptimizationArtifactBinding::new(snapshot.id, snapshot.fingerprint.clone())?,
-        snapshot.specification_fingerprint,
+        snapshot.specification_fingerprint.clone(),
         benchmark,
         &source_protocol,
         candidates,
         campaign_budget,
-        approved.proposal.budget.maximum_evaluation_seconds,
+        proposal.budget.maximum_evaluation_seconds,
         Utc::now(),
     )?;
     Ok(ResolvedLaunch {
@@ -1386,5 +1648,16 @@ surprise = true
         assert_eq!(first, deterministic_uuid("sha256:test", "candidate", 1));
         assert_ne!(first, deterministic_uuid("sha256:test", "candidate", 2));
         assert!(!first.is_nil());
+    }
+
+    #[test]
+    fn content_addressed_definition_is_idempotent_and_never_overwrites() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("definition.toml");
+        write_content_addressed(&path, b"first").unwrap();
+        write_content_addressed(&path, b"first").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"first");
+        assert!(write_content_addressed(&path, b"second").is_err());
+        assert_eq!(std::fs::read(path).unwrap(), b"first");
     }
 }

@@ -193,7 +193,17 @@ export function mount(): void {
     const state = view.optimization; state.loading = true; state.error = undefined; render();
     try {
       const selected = await bridge.chooseOptimizationManifest(id);
-      if (selected && selection.selectedId === id) { state.manifest = selected; state.readiness = selected.readiness; state.run = undefined; }
+      if (selected && selection.selectedId === id) { state.manifest = selected; state.prepared = undefined; state.readiness = selected.readiness; state.run = undefined; }
+    } catch (error) { state.error = message(error); }
+    finally { state.loading = false; if (selection.selectedId === id) render(); }
+  }
+  async function prepareOptimization(): Promise<void> {
+    const id = selection.selectedId;
+    if (!id || view.optimization.loading) return;
+    const state = view.optimization; state.loading = true; state.error = undefined; render();
+    try {
+      const prepared = await bridge.prepareOptimization(id);
+      if (selection.selectedId === id) { state.prepared = prepared; state.manifest = undefined; state.run = undefined; }
     } catch (error) { state.error = message(error); }
     finally { state.loading = false; if (selection.selectedId === id) render(); }
   }
@@ -207,10 +217,13 @@ export function mount(): void {
   }
   const optimizationActions: OptimizationPageActions = {
     refresh: () => { void refreshOptimization(); },
+    prepare: () => { void prepareOptimization(); },
     chooseManifest: () => { void chooseOptimizationManifest(); },
     start: () => {
-      const existing = view.optimization.manifest?.readiness.launchPreview?.existingRun;
+      const prepared = view.optimization.prepared;
+      const existing = prepared?.launchPreview.existingRun ?? view.optimization.manifest?.readiness.launchPreview?.existingRun;
       if (existing) void optimize({ action: "status", runId: existing.runId });
+      else if (prepared) void optimize({ action: "start", manifestToken: prepared.token });
       else if (view.optimization.manifest) void optimize({ action: "start", manifestToken: view.optimization.manifest.token });
     },
     resume: () => { const id = view.optimization.run?.run_id; if (id) void optimize({ action: "resume", runId: id }); },

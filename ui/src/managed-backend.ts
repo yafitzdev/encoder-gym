@@ -2,8 +2,8 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
-import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, ProviderInput, ProviderSettingsRequest } from "./managed-control.js";
+import { basename, join, resolve, sep } from "node:path";
+import type { ManagedLaunchPreview, ManagedOptimizationAuthority, ManagedOptimizationRequest, ManagedOptimizationResult, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, PreparedOptimizationChoice, ProviderInput, ProviderSettingsRequest } from "./managed-control.js";
 import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, LocalModel, ManagedWorkspace, ModelChoice } from "./managed-workspace.js";
 import type { ProjectRegistry } from "./project-registry.js";
 import type { WorkspaceSnapshot } from "./workspace.js";
@@ -189,6 +189,18 @@ export class ManagedBackend {
       this.manifests.delete(token);
       throw error;
     }
+  }
+
+  async prepareOptimization(projectId: string): Promise<PreparedOptimizationChoice> {
+    const workspace = await this.openRegistered(projectId);
+    return this.exclusiveProject(projectId, async () => {
+      const prepared = await this.command<{ manifestPath: string; manifestName: string; readiness: ManagedLaunchPreview; authority: ManagedOptimizationAuthority; createdTrainingSnapshot: boolean; externalCalls: number }>(["prepare-optimization", workspace.folder]);
+      const root = resolve(workspace.folder), manifest = resolve(prepared.manifestPath);
+      if (manifest !== root && !manifest.startsWith(root + sep)) throw new Error("The managed optimization definition escaped its project workspace.");
+      const token = randomUUID();
+      this.manifests.set(token, { projectId, path: manifest, name: prepared.manifestName });
+      return { token, name: prepared.manifestName, launchPreview: prepared.readiness, authority: prepared.authority, createdTrainingSnapshot: prepared.createdTrainingSnapshot, externalCalls: prepared.externalCalls };
+    });
   }
 
   async optimize(projectId: string, value: unknown): Promise<ManagedOptimizationResult> {

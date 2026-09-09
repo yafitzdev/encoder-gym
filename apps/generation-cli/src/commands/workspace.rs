@@ -37,12 +37,14 @@ use std::{
     time::Duration,
 };
 
-use super::encoder_optimize::ManagedOptimizationReadiness;
+use super::encoder_optimize::{ManagedOptimizationAuthority, ManagedOptimizationReadiness};
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ManagedReadinessOutput {
     report: ReadinessReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    optimization_authority: Option<ManagedOptimizationAuthority>,
     #[serde(skip_serializing_if = "Option::is_none")]
     launch_preview: Option<ManagedOptimizationReadiness>,
 }
@@ -231,6 +233,9 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
         WorkspaceCommand::Readiness { folder, manifest } => {
             print(&readiness(&folder, manifest.as_deref()).await?)
         }
+        WorkspaceCommand::PrepareOptimization { folder } => {
+            print(&prepare_optimization(&folder).await?)
+        }
         WorkspaceCommand::Optimize { folder, command } => managed_optimize(&folder, *command).await,
         WorkspaceCommand::Providers { folder, command } => providers(&folder, command).await,
         WorkspaceCommand::PreviewNomosBinding {
@@ -397,6 +402,36 @@ fn secret_availability(provider: &ProviderConfiguration) -> SecretAvailability {
         Some(_) => SecretAvailability::Missing,
         None => SecretAvailability::Unavailable,
     }
+}
+
+async fn prepare_optimization(
+    folder: &std::path::Path,
+) -> anyhow::Result<super::encoder_optimize::ManagedOptimizationPreparation> {
+    let workspace = open_workspace(folder, true).await?;
+    let catalog = workspace
+        .model_catalog
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Upgrade this managed workspace before optimization."))?;
+    let binding = workspace
+        .scientific_binding
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Configure a scientific binding before optimization."))?;
+    anyhow::ensure!(
+        binding.baseline_revision_id == catalog.active_baseline_revision_id,
+        "The scientific binding is stale for the active baseline; rebind it before optimization."
+    );
+    let store = open_bound_store_mutable(&workspace.folder, binding).await?;
+    let project = load_bound_project(&store, binding).await?;
+    let backend = open_nomos_binding(binding, &project)?;
+    let result = super::encoder_optimize::prepare_managed(
+        &store,
+        &backend,
+        &project,
+        std::path::Path::new(&workspace.folder),
+    )
+    .await;
+    store.pool().close().await;
+    result
 }
 
 async fn managed_optimize(
@@ -851,18 +886,61 @@ async fn readiness(
         )?);
     }
 
+    let (optimization_authority, authority_error) = match (store.as_ref(), runtime_project.as_ref())
+    {
+        (Some(store), Some(project)) => {
+            match super::encoder_optimize::managed_authority(store, project).await {
+                Ok(value) => (value, None),
+                Err(error) => (None, Some(plain_error(&error))),
+            }
+        }
+        _ => (None, None),
+    };
     let mut launch_preview = None;
     match (manifest, store.as_ref(), runtime_project.as_ref()) {
         (None, _, _) => {
-            checks.push(check(
-                "optimization.preview",
-                ReadinessCategory::Optimization,
-                ReadinessState::ActionRequired,
-                true,
-                "No reviewed optimization request is selected",
-                "Select an exact approved training snapshot, successor benchmark generation, candidate set, and finite budget to resolve a launch preview.",
-                Some(action("prepare-optimization", "Prepare optimization")?),
-            )?);
+            let preparation_check = if let Some(authority) = &optimization_authority {
+                check(
+                    "optimization.preview",
+                    ReadinessCategory::Optimization,
+                    ReadinessState::ActionRequired,
+                    true,
+                    if authority.training_snapshot_id.is_some() {
+                        "Approved optimization authority is ready to resolve"
+                    } else {
+                        "Approved repair is ready to freeze"
+                    },
+                    format!(
+                        "The current reviewed repair defines {} candidate(s), {} qualified delta rows, an active successor benchmark, and finite authority through {}. Preparing it makes no provider call and does not train or evaluate a model.",
+                        authority.candidate_count, authority.delta_rows, authority.valid_until
+                    ),
+                    Some(action("prepare-optimization", "Prepare approved run")?),
+                )?
+            } else if let Some(error) = &authority_error {
+                check(
+                    "optimization.preview",
+                    ReadinessCategory::Optimization,
+                    ReadinessState::Blocked,
+                    true,
+                    "Scientific optimization authority is ambiguous or invalid",
+                    error,
+                    Some(action(
+                        "inspect-scientific-history",
+                        "Inspect scientific history",
+                    )?),
+                )?
+            } else {
+                check(
+                    "optimization.preview",
+                    ReadinessCategory::Optimization,
+                    ReadinessState::ActionRequired,
+                    true,
+                    "No current approved repair is available",
+                    "Create and approve a task-compatible repair proposal and native delta against an active, unused benchmark generation before preparing a run.",
+                    Some(action("prepare-repair", "Prepare a repair hypothesis")?),
+                )?
+            };
+            checks.push(preparation_check);
             checks.push(check(
                 "recovery.current-run",
                 ReadinessCategory::Recovery,
@@ -954,6 +1032,7 @@ async fn readiness(
     }
     Ok(ManagedReadinessOutput {
         report,
+        optimization_authority,
         launch_preview,
     })
 }
@@ -963,6 +1042,24 @@ async fn verify_nomos_runtime(
     catalog: &project_workspace_core::ModelCatalog,
     project: &ExternalProjectSnapshot,
 ) -> anyhow::Result<()> {
+    let backend = open_nomos_binding(binding, project)?;
+    backend.verify_current_snapshot(project.clone()).await?;
+    let runtime_root = std::path::Path::new(&binding.runtime.location).canonicalize()?;
+    let runtime_baseline = inspect_model(&runtime_root.join(&project.baseline_model.key))?;
+    let active = catalog.active_model();
+    anyhow::ensure!(
+        runtime_baseline.fingerprint == active.fingerprint
+            && runtime_baseline.bytes == active.bytes
+            && runtime_baseline.format == active.format,
+        "The runtime baseline no longer matches the active managed model."
+    );
+    Ok(())
+}
+
+fn open_nomos_binding(
+    binding: &ScientificBinding,
+    project: &ExternalProjectSnapshot,
+) -> anyhow::Result<NomosBackend> {
     anyhow::ensure!(
         binding.adapter.key == "nomos",
         "This executable has no compiled adapter for '{}'.",
@@ -984,17 +1081,7 @@ async fn verify_nomos_runtime(
             && project.fingerprint == binding.runtime.project_snapshot.fingerprint,
         "The scientific project identity differs from this runtime binding."
     );
-    backend.verify_current_snapshot(project.clone()).await?;
-    let runtime_root = std::path::Path::new(&binding.runtime.location).canonicalize()?;
-    let runtime_baseline = inspect_model(&runtime_root.join(&project.baseline_model.key))?;
-    let active = catalog.active_model();
-    anyhow::ensure!(
-        runtime_baseline.fingerprint == active.fingerprint
-            && runtime_baseline.bytes == active.bytes
-            && runtime_baseline.format == active.format,
-        "The runtime baseline no longer matches the active managed model."
-    );
-    Ok(())
+    Ok(backend)
 }
 
 async fn load_bound_project(
@@ -1026,6 +1113,20 @@ async fn open_bound_store(
     let root = std::path::Path::new(workspace_folder);
     let url = bound_store_url(root, binding)?;
     Ok(SqliteExperimentStore::connect_read_only(&url).await?)
+}
+
+async fn open_bound_store_mutable(
+    workspace_folder: &str,
+    binding: &ScientificBinding,
+) -> anyhow::Result<SqliteExperimentStore> {
+    anyhow::ensure!(
+        binding.store.schema.id == SCHEMA_ID
+            && binding.store.schema.fingerprint == schema_fingerprint(),
+        "The bound scientific-store schema differs from this executable."
+    );
+    let root = std::path::Path::new(workspace_folder);
+    let url = bound_store_url(root, binding)?;
+    Ok(SqliteExperimentStore::connect(&url).await?)
 }
 
 fn bound_store_url(

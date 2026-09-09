@@ -155,6 +155,10 @@ ipcMain.handle("encoder-gym:managed-readiness", (_event, value: unknown, manifes
   if (manifestToken !== undefined && typeof manifestToken !== "string") throw new Error("Invalid optimization selection.");
   return desktopReadiness(id, manifestToken);
 });
+ipcMain.handle("encoder-gym:prepare-optimization", async (_event, value: unknown) => {
+  const id = projectId(value);
+  return backend.prepareOptimization(id);
+});
 ipcMain.handle("encoder-gym:choose-optimization-manifest", async (_event, value: unknown) => {
   const id = projectId(value);
   await backend.openRegistered(id);

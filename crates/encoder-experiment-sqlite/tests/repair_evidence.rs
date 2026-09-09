@@ -603,6 +603,14 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
         .create_native_delta_selection(selection)
         .await
         .unwrap();
+    assert_eq!(
+        fixture
+            .store
+            .native_delta_selection_ids_for_project(fixture.project.id)
+            .await
+            .unwrap(),
+        vec![selection.id]
+    );
     let duplicate_selection = ApprovedNativeDeltaSelection::create(
         &proposal,
         &candidate_set,

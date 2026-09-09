@@ -229,6 +229,23 @@ authorization is rejected. CLI launch uses `execFile` without a shell and JSON
 stdout. Durable child-process correlation and credential injection remain the
 next main-process lifecycle component.
 
+Managed preparation no longer requires the normal desktop user to author or
+pick that TOML manifest. Readiness asks the scientific store for approved native
+delta selections belonging to the exact bound execution-project snapshot, then
+retains only the one whose proposal is unexpired and whose pinned benchmark
+generation is still active, unused, fresh, and at the same journal head. The
+screen shows that reviewed hypothesis, qualified delta-row count, candidate
+count, expiry, and finite budgets before mutation. The fixed
+`workspace prepare-optimization` intent calls the existing production-repair
+snapshot builder, including native delta replay, and writes a strict
+content-addressed manifest below `runs/definitions/`. Existing identical
+snapshots and definitions are adopted idempotently; conflicting bytes are never
+overwritten. Preparation performs no training, evaluation, provider call, or
+sealed exposure. The Electron main process validates that the returned path is
+inside the selected managed workspace and gives the renderer only an opaque
+project-scoped token plus the resolved readiness view. Manual manifest selection
+remains a compatibility/debugging boundary, not the primary journey.
+
 The Electron main-process adapter:
 
 1. reopens and verifies the selected managed project;
@@ -370,6 +387,21 @@ The contained copy reopened in a fresh process and all four scientific binding,
 store, runtime, and project checks were ready. A before/after SHA-256 check
 proved the selected source database unchanged. The temporary workspace and
 marker were removed after verification.
+
+A later preparation preflight operated only on another temporary managed copy
+with the same contained history image and temporary import-only capability
+marker. It found one current project-scoped successor authority and resolved
+the reviewed `conservative-genuine-finetune-v2` hypothesis: one candidate,
+7,200 seconds maximum training, zero external calls, and at most one separately
+authorized sealed use. It reused logical training snapshot
+`2602ef88-db56-4591-8a4c-2581c5613726`, published an immutable 792-byte
+definition under `runs/definitions/`, and found no existing optimization for
+that exact manifest. No trainer, evaluator, provider, or sealed suite ran.
+Native artifact/delta replay took 817 seconds on this machine. The preparation
+UI therefore describes it as an indeterminate, one-time integrity operation;
+it never displays a fabricated percentage. Redundant post-write graph reloads
+and duplicate managed/native project verification were removed, leaving the
+production-repair owner replay as the sole expensive boundary.
 
 ## Delivery order
 

@@ -556,9 +556,27 @@ async fn training_snapshot_build(
     backend: &NomosBackend,
     args: ProductionRepairSelectionIdArgs,
 ) -> anyhow::Result<()> {
-    let context = load_approved_delta_context(store, backend, args.selection_id, true).await?;
+    let prepared = build_training_snapshot(store, backend, args.selection_id).await?;
+    print_training_snapshot_summary(&prepared.snapshot, true)
+}
+
+pub(crate) struct PreparedTrainingSnapshot {
+    pub(crate) snapshot: NativeRepairTrainingSnapshot,
+    pub(crate) context: ApprovedDeltaContext,
+}
+
+/// Reuse the production-repair owner boundary from managed-project
+/// preparation without reproducing snapshot construction in the workspace
+/// layer. Native evidence is replayed before either returning an existing
+/// immutable snapshot or creating the exact missing one.
+pub(crate) async fn build_training_snapshot(
+    store: &SqliteExperimentStore,
+    backend: &NomosBackend,
+    selection_id: Uuid,
+) -> anyhow::Result<PreparedTrainingSnapshot> {
+    let context = load_approved_delta_context(store, backend, selection_id, true).await?;
     if let Some(existing) = store
-        .get_native_repair_training_snapshot_for_selection(args.selection_id)
+        .get_native_repair_training_snapshot_for_selection(selection_id)
         .await?
     {
         existing.validate_against(
@@ -570,7 +588,10 @@ async fn training_snapshot_build(
             context.approval_predecessor.as_ref(),
             &context.selection,
         )?;
-        return print_training_snapshot_summary(&existing, true);
+        return Ok(PreparedTrainingSnapshot {
+            snapshot: existing,
+            context,
+        });
     }
     let snapshot = NativeRepairTrainingSnapshot::create(
         &context.project,
@@ -585,7 +606,7 @@ async fn training_snapshot_build(
     let snapshot = store
         .create_native_repair_training_snapshot(snapshot)
         .await?;
-    print_training_snapshot_summary(&snapshot, true)
+    Ok(PreparedTrainingSnapshot { snapshot, context })
 }
 
 async fn training_snapshot_show(
@@ -838,7 +859,7 @@ async fn load_current_benchmark_binding(
     .map_err(Into::into)
 }
 
-async fn load_verified_proposal(
+pub(crate) async fn load_verified_proposal(
     store: &SqliteExperimentStore,
     backend: &NomosBackend,
     proposal_id: Uuid,
