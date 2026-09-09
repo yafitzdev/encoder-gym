@@ -1,5 +1,13 @@
 //! Passive connections never create, migrate, reconcile, or change journal mode.
 use super::{ExperimentStoreError, MIGRATOR, SqliteExperimentStore, store_error};
+use encoder_repair_core::{
+    diagnosis::ComparativeDiagnosis,
+    proposal::RepairProposal,
+    quality::{
+        ApprovedNativeDeltaSelection, NativeDeltaCandidateSet, NativeDeltaQualityReport,
+        NativeDeltaReview,
+    },
+};
 use serde::Serialize;
 use sqlx::{
     Connection, SqliteConnection,
@@ -22,6 +30,44 @@ pub struct ScientificStoreInventory {
     pub optimization_runs: u64,
 }
 
+/// Row-local, fingerprint-verified facts used to summarize one approved repair
+/// without recursively replaying every source campaign and evaluation.
+/// Mutation and doctor boundaries must continue to use the owning deep ports.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApprovedNativeDeltaSummaryFacts {
+    pub proposal: RepairProposal,
+    pub candidate_set: NativeDeltaCandidateSet,
+    pub report: NativeDeltaQualityReport,
+    pub approval: NativeDeltaReview,
+    pub approval_predecessor: Option<NativeDeltaReview>,
+    pub selection: ApprovedNativeDeltaSelection,
+}
+
+#[derive(sqlx::FromRow)]
+struct ApprovedNativeDeltaSummaryRow {
+    selection_json: String,
+    selection_specification_fingerprint: String,
+    selection_fingerprint: String,
+    proposal_json: String,
+    proposal_specification_fingerprint: String,
+    proposal_fingerprint: String,
+    diagnosis_json: String,
+    diagnosis_derivation_fingerprint: String,
+    diagnosis_fingerprint: String,
+    candidate_set_json: String,
+    candidate_set_evidence_fingerprint: String,
+    candidate_set_fingerprint: String,
+    report_json: String,
+    report_fingerprint: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct NativeDeltaReviewSummaryRow {
+    id: Uuid,
+    fingerprint: String,
+    artifact_json: String,
+}
+
 impl SqliteExperimentStore {
     /// Return the immutable approved-delta identities associated with one exact
     /// execution-project snapshot. Callers must still load each selection
@@ -42,6 +88,161 @@ impl SqliteExperimentStore {
         .fetch_all(&self.pool)
         .await
         .map_err(store_error)
+    }
+
+    /// Verify the directly bound approved-delta records and their canonical
+    /// fingerprints without recursively resolving the diagnosis's historical
+    /// campaign graph. This is suitable only for passive status projection.
+    pub async fn approved_native_delta_summary_facts(
+        &self,
+        selection_id: Uuid,
+    ) -> Result<Option<ApprovedNativeDeltaSummaryFacts>, ExperimentStoreError> {
+        let row: Option<ApprovedNativeDeltaSummaryRow> = sqlx::query_as(
+            "SELECT selections.artifact_json AS selection_json, \
+                    selections.specification_fingerprint AS selection_specification_fingerprint, \
+                    selections.fingerprint AS selection_fingerprint, \
+                    proposals.artifact_json AS proposal_json, \
+                    proposals.specification_fingerprint AS proposal_specification_fingerprint, \
+                    proposals.fingerprint AS proposal_fingerprint, \
+                    diagnoses.artifact_json AS diagnosis_json, \
+                    diagnoses.derivation_fingerprint AS diagnosis_derivation_fingerprint, \
+                    diagnoses.fingerprint AS diagnosis_fingerprint, \
+                    candidates.artifact_json AS candidate_set_json, \
+                    candidates.evidence_fingerprint AS candidate_set_evidence_fingerprint, \
+                    candidates.fingerprint AS candidate_set_fingerprint, \
+                    reports.artifact_json AS report_json, \
+                    reports.fingerprint AS report_fingerprint \
+             FROM encoder_native_delta_selections AS selections \
+             JOIN encoder_repair_proposals AS proposals \
+               ON proposals.id = selections.proposal_id \
+             JOIN encoder_repair_diagnoses AS diagnoses \
+               ON diagnoses.id = proposals.diagnosis_id \
+             JOIN encoder_native_delta_candidate_sets AS candidates \
+               ON candidates.id = selections.candidate_set_id \
+             JOIN encoder_native_delta_reports AS reports \
+               ON reports.id = selections.report_id \
+             WHERE selections.id = ?",
+        )
+        .bind(selection_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(store_error)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let selection: ApprovedNativeDeltaSelection =
+            serde_json::from_str(&row.selection_json).map_err(store_error)?;
+        let proposal: RepairProposal =
+            serde_json::from_str(&row.proposal_json).map_err(store_error)?;
+        let diagnosis: ComparativeDiagnosis =
+            serde_json::from_str(&row.diagnosis_json).map_err(store_error)?;
+        let candidate_set: NativeDeltaCandidateSet =
+            serde_json::from_str(&row.candidate_set_json).map_err(store_error)?;
+        let report: NativeDeltaQualityReport =
+            serde_json::from_str(&row.report_json).map_err(store_error)?;
+        if selection.id != selection_id
+            || selection.specification_fingerprint != row.selection_specification_fingerprint
+            || selection.fingerprint != row.selection_fingerprint
+            || proposal.specification_fingerprint != row.proposal_specification_fingerprint
+            || proposal.fingerprint != row.proposal_fingerprint
+            || diagnosis.derivation_fingerprint != row.diagnosis_derivation_fingerprint
+            || diagnosis.fingerprint != row.diagnosis_fingerprint
+            || candidate_set.evidence_fingerprint != row.candidate_set_evidence_fingerprint
+            || candidate_set.fingerprint != row.candidate_set_fingerprint
+            || report.fingerprint != row.report_fingerprint
+        {
+            return Err(ExperimentStoreError(
+                "approved native delta summary storage envelope changed".into(),
+            ));
+        }
+        proposal
+            .validate_integrity(&diagnosis)
+            .map_err(store_error)?;
+        candidate_set
+            .validate_against(&proposal)
+            .map_err(store_error)?;
+        report
+            .validate_against(&proposal, &candidate_set)
+            .map_err(store_error)?;
+
+        let review_rows: Vec<NativeDeltaReviewSummaryRow> = sqlx::query_as(
+            "SELECT id, fingerprint, artifact_json FROM encoder_native_delta_reviews \
+             WHERE report_id = ? ORDER BY created_at, id",
+        )
+        .bind(report.id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store_error)?;
+        let mut reviews = Vec::<NativeDeltaReview>::with_capacity(review_rows.len());
+        for stored in review_rows {
+            let review: NativeDeltaReview =
+                serde_json::from_str(&stored.artifact_json).map_err(store_error)?;
+            if review.id != stored.id || review.fingerprint != stored.fingerprint {
+                return Err(ExperimentStoreError(
+                    "native delta review summary storage envelope changed".into(),
+                ));
+            }
+            review
+                .validate_against(&proposal, &candidate_set, &report, reviews.last())
+                .map_err(store_error)?;
+            reviews.push(review);
+        }
+        let approval_index = reviews
+            .iter()
+            .position(|review| review.id == selection.approval.id)
+            .ok_or_else(|| ExperimentStoreError("native delta approval is missing".into()))?;
+        if approval_index + 1 != reviews.len() {
+            return Err(ExperimentStoreError(
+                "native delta selection does not bind the frozen latest review".into(),
+            ));
+        }
+        let approval = reviews[approval_index].clone();
+        let approval_predecessor = approval_index
+            .checked_sub(1)
+            .and_then(|index| reviews.get(index))
+            .cloned();
+        selection
+            .validate_against(
+                &proposal,
+                &candidate_set,
+                &report,
+                &approval,
+                approval_predecessor.as_ref(),
+            )
+            .map_err(store_error)?;
+        Ok(Some(ApprovedNativeDeltaSummaryFacts {
+            proposal,
+            candidate_set,
+            report,
+            approval,
+            approval_predecessor,
+            selection,
+        }))
+    }
+
+    /// Return a fingerprint-verified training snapshot for passive status
+    /// without walking its complete repair provenance graph.
+    pub async fn native_repair_training_snapshot_for_selection_shallow(
+        &self,
+        selection_id: Uuid,
+    ) -> Result<
+        Option<encoder_repair_core::training::NativeRepairTrainingSnapshot>,
+        ExperimentStoreError,
+    > {
+        let id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM encoder_native_repair_training_snapshots WHERE selection_id = ?",
+        )
+        .bind(selection_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(store_error)?;
+        match id {
+            Some(id) => self
+                .get_native_repair_training_snapshot_shallow(id)
+                .await
+                .map_err(|error| ExperimentStoreError(error.to_string())),
+            None => Ok(None),
+        }
     }
 
     /// Return optimization runs for one exact scientific project, newest

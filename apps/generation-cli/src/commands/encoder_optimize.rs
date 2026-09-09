@@ -527,6 +527,88 @@ pub(crate) async fn managed_authority(
     Ok(current.pop())
 }
 
+/// Project the currently recorded successor authority for a passive screen
+/// refresh. The selected repair records and their canonical fingerprints are
+/// checked together, but historical campaigns and source evaluations are not
+/// recursively replayed here. `managed_authority` remains mandatory at every
+/// preparation or mutation boundary.
+pub(crate) async fn managed_authority_summary(
+    store: &SqliteExperimentStore,
+    project: &encoder_experiment_core::domain::ExternalProjectSnapshot,
+) -> anyhow::Result<Option<ManagedOptimizationAuthority>> {
+    let mut current = Vec::new();
+    for selection_id in store
+        .native_delta_selection_ids_for_project(project.id)
+        .await?
+    {
+        let approved = store
+            .approved_native_delta_summary_facts(selection_id)
+            .await?
+            .with_context(|| format!("native repair delta selection {selection_id} disappeared"))?;
+        approved
+            .proposal
+            .context
+            .execution_project
+            .verify(project)?;
+        if approved.proposal.expires_at <= Utc::now() {
+            continue;
+        }
+        let Ok((generation, view)) =
+            load_generation(store, approved.proposal.context.benchmark.generation_id).await
+        else {
+            continue;
+        };
+        if require_active_generation(&view, &generation).is_err() {
+            continue;
+        }
+        let benchmark = &approved.proposal.context.benchmark;
+        let observed_development = generation
+            .development_suites
+            .iter()
+            .map(|value| {
+                (
+                    value.suite_key.clone(),
+                    value.bundle.development_suite_fingerprint.clone(),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        if generation.fingerprint != benchmark.generation_fingerprint
+            || view.last_sequence != benchmark.journal_sequence
+            || view.last_event_fingerprint != benchmark.journal_head_fingerprint
+            || observed_development != benchmark.development_suite_fingerprints
+            || generation.sealed_suite_id != benchmark.sealed_suite_id
+            || generation.sealed_suite_fingerprint != benchmark.sealed_suite_fingerprint
+        {
+            continue;
+        }
+        let training_snapshot = store
+            .native_repair_training_snapshot_for_selection_shallow(selection_id)
+            .await?;
+        current.push(ManagedOptimizationAuthority {
+            proposal_id: approved.proposal.id,
+            selection_id: approved.selection.id,
+            training_snapshot_id: training_snapshot.map(|value| value.id),
+            benchmark_generation_id: generation.id,
+            hypotheses: approved
+                .proposal
+                .candidates
+                .iter()
+                .map(|value| value.hypothesis.clone())
+                .collect(),
+            candidate_count: approved.proposal.candidates.len(),
+            base_training_inputs: approved.proposal.context.base_training_inputs.len(),
+            delta_rows: approved.candidate_set.rows.len(),
+            budget: approved.proposal.budget,
+            valid_until: approved.proposal.expires_at,
+        });
+    }
+    anyhow::ensure!(
+        current.len() <= 1,
+        "More than one approved repair selection claims current optimization authority. Resolve the scientific lineage before preparing a run."
+    );
+    Ok(current.pop())
+}
+
 /// Freeze the current approved native repair into its owner-managed logical
 /// training snapshot, then write one content-addressed strict manifest below
 /// the managed workspace. This performs no training, evaluation, provider
@@ -624,6 +706,52 @@ pub(crate) async fn recover_managed(
         created_training_snapshot: false,
         external_calls: approved.proposal.budget.maximum_external_calls,
     }))
+}
+
+/// Avoid a recursive scientific-history replay merely to discover that no
+/// prepared definition exists. If the exact content-addressed file is present,
+/// the normal deep recovery path remains authoritative.
+pub(crate) async fn recover_managed_summary(
+    store: &SqliteExperimentStore,
+    project: &encoder_experiment_core::domain::ExternalProjectSnapshot,
+    managed_root: &Path,
+    authority: &ManagedOptimizationAuthority,
+) -> anyhow::Result<Option<ManagedOptimizationPreparation>> {
+    let Some(snapshot_id) = authority.training_snapshot_id else {
+        return Ok(None);
+    };
+    let approved = store
+        .approved_native_delta_summary_facts(authority.selection_id)
+        .await?
+        .context("The approved repair selection no longer exists")?;
+    approved
+        .proposal
+        .context
+        .execution_project
+        .verify(project)?;
+    let snapshot = store
+        .native_repair_training_snapshot_for_selection_shallow(authority.selection_id)
+        .await?
+        .context("The approved repair's training snapshot no longer exists")?;
+    anyhow::ensure!(
+        snapshot.id == snapshot_id,
+        "The approved repair resolves to another training snapshot."
+    );
+    snapshot.validate_against(
+        project,
+        &approved.proposal,
+        &approved.candidate_set,
+        &approved.report,
+        &approved.approval,
+        approved.approval_predecessor.as_ref(),
+        &approved.selection,
+    )?;
+    let (_, manifest) = managed_manifest(project, &snapshot, &approved.proposal);
+    let (manifest_path, _) = managed_manifest_file(managed_root, &manifest)?;
+    if !manifest_path.exists() {
+        return Ok(None);
+    }
+    recover_managed(store, project, managed_root, authority).await
 }
 
 fn managed_manifest(

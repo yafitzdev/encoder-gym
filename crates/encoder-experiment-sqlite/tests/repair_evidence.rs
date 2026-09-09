@@ -603,6 +603,18 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
         .create_native_delta_selection(selection)
         .await
         .unwrap();
+    let summary = fixture
+        .store
+        .approved_native_delta_summary_facts(selection.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(summary.proposal, proposal);
+    assert_eq!(summary.candidate_set, candidate_set);
+    assert_eq!(summary.report, report);
+    assert_eq!(summary.approval, delta_review);
+    assert_eq!(summary.approval_predecessor, None);
+    assert_eq!(summary.selection, selection);
     assert_eq!(
         fixture
             .store
@@ -663,6 +675,14 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
     assert_eq!(training_snapshot.base_rows, 1);
     assert_eq!(training_snapshot.delta_rows, 12);
     assert_eq!(training_snapshot.total_rows, 13);
+    assert_eq!(
+        fixture
+            .store
+            .native_repair_training_snapshot_for_selection_shallow(selection.id)
+            .await
+            .unwrap(),
+        Some(training_snapshot.clone())
+    );
     let compiled_candidates = training_snapshot
         .compile_training_candidates(&fixture.project, &proposal)
         .unwrap();
@@ -892,6 +912,14 @@ async fn repair_evidence_round_trips_idempotently_and_deep_verification_detects_
             .await
             .is_err(),
         "deep reads must detect normalized storage-envelope tampering"
+    );
+    assert!(
+        fixture
+            .store
+            .approved_native_delta_summary_facts(selection.id)
+            .await
+            .is_err(),
+        "passive summaries must detect their storage-envelope tampering"
     );
     assert_eq!(
         fixture

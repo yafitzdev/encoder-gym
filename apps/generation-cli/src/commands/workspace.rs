@@ -649,33 +649,25 @@ async fn readiness(
     folder: &std::path::Path,
     manifest: Option<&std::path::Path>,
 ) -> anyhow::Result<ManagedReadinessOutput> {
-    // Open without artifact rehashing first so an integrity failure can be
-    // represented as a project-scoped fact instead of losing the whole report.
+    // Readiness is a passive projection: validate the registry envelopes,
+    // artifact paths, and recorded byte sizes without re-reading every model
+    // and dataset byte on every screen refresh. The explicit workspace doctor
+    // and every mutating launch boundary still perform the full checksum and
+    // content validation through `open_workspace(folder, true)`.
     let workspace = open_workspace(folder, false).await?;
     let catalog = workspace.model_catalog.as_ref();
     let baseline_revision_id = catalog.map(|value| value.active_baseline_revision_id);
     let mut checks = Vec::new();
 
-    checks.push(match open_workspace(folder, true).await {
-        Ok(_) => check(
-            "workspace.integrity",
-            ReadinessCategory::Workspace,
-            ReadinessState::Ready,
-            true,
-            "Workspace artifacts are intact",
-            "The manifest, project registry, baseline inventory, and imported dataset bytes match their immutable identities.",
-            None,
-        )?,
-        Err(error) => check(
-            "workspace.integrity",
-            ReadinessCategory::Workspace,
-            ReadinessState::Blocked,
-            true,
-            "Workspace integrity failed",
-            plain_error(&error),
-            Some(action("verify-workspace", "Inspect workspace integrity")?),
-        )?,
-    });
+    checks.push(check(
+        "workspace.integrity",
+        ReadinessCategory::Workspace,
+        ReadinessState::Ready,
+        true,
+        "Workspace registry is coherent",
+        "The manifest, project registry, artifact paths, and recorded byte sizes agree. Full artifact checksums and dataset contents are verified by Prepare before any run can be reserved.",
+        None,
+    )?);
 
     checks.push(match catalog {
         Some(catalog) => check(
@@ -1007,7 +999,7 @@ async fn readiness(
     let (optimization_authority, authority_error) = match (store.as_ref(), runtime_project.as_ref())
     {
         (Some(store), Some(project)) => {
-            match super::encoder_optimize::managed_authority(store, project).await {
+            match super::encoder_optimize::managed_authority_summary(store, project).await {
                 Ok(value) => (value, None),
                 Err(error) => (None, Some(plain_error(&error))),
             }
@@ -1030,7 +1022,7 @@ async fn readiness(
                 runtime_project.as_ref(),
             ) {
                 (Some(authority), Some(store), Some(project)) => {
-                    super::encoder_optimize::recover_managed(
+                    super::encoder_optimize::recover_managed_summary(
                         store,
                         project,
                         std::path::Path::new(&workspace.folder),
@@ -1122,12 +1114,12 @@ async fn readiness(
                         ReadinessState::ActionRequired,
                         true,
                         if authority.training_snapshot_id.is_some() {
-                            "Approved optimization authority is ready to resolve"
+                            "Approved repair is recorded and ready to resolve"
                         } else {
-                            "Approved repair is ready to freeze"
+                            "Approved repair is recorded and ready to freeze"
                         },
                         format!(
-                            "The current reviewed repair defines {} candidate(s), {} qualified delta rows, an active successor benchmark, and finite authority through {}. Preparing it makes no provider call and does not train or evaluate a model.",
+                            "The directly bound repair records define {} candidate(s), {} qualified delta rows, an active successor benchmark, and finite authority through {}. Prepare performs the complete historical replay; it makes no provider call and does not train or evaluate a model.",
                             authority.candidate_count, authority.delta_rows, authority.valid_until
                         ),
                         Some(action("prepare-optimization", "Prepare approved run")?),

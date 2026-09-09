@@ -251,8 +251,12 @@ pick that TOML manifest. Readiness asks the scientific store for approved native
 delta selections belonging to the exact bound execution-project snapshot, then
 retains only the one whose proposal is unexpired and whose pinned benchmark
 generation is still active, unused, fresh, and at the same journal head. The
-screen shows that reviewed hypothesis, qualified delta-row count, candidate
-count, expiry, and finite budgets before mutation. The fixed
+passive query validates the directly bound proposal, diagnosis, candidate set,
+quality report, latest approval, selection, and logical snapshot fingerprints
+together without recursively replaying their source campaign. The screen calls
+this an approved repair **on record**, shows its hypothesis, qualified delta-row
+count, candidate count, expiry, and finite budgets, and reserves the stronger
+claim for Prepare. The fixed
 `workspace prepare-optimization` intent calls the existing production-repair
 snapshot builder, including native delta replay, and writes a strict
 content-addressed manifest below `runs/definitions/`. Existing identical
@@ -283,12 +287,13 @@ over unrelated historical terminal runs. Opening a recovered run needs only its
 validated run identity; it does not need the original manifest token.
 
 Passive readiness and persisted run inspection do not reproduce the complete
-native repository tree. They validate managed artifact custody, binding and
-adapter identity, scientific schema, project identity, and immutable owner
-graphs. Native replay remains mandatory at binding/repair verification, first
-snapshot preparation, native execution stages, and an explicit doctor. This
-keeps page loads and run recovery responsive without claiming a fresh deep
-verification that did not occur.
+native repository tree or rehash every large managed artifact. They validate
+the managed registry envelopes, artifact paths and byte sizes, binding and
+adapter identity, scientific schema, project identity, and the directly bound
+fingerprinted owner records. Full managed checksums and native replay remain
+mandatory at preparation, binding/repair verification, native execution stages,
+and an explicit doctor. This keeps page loads and run recovery responsive
+without claiming a fresh deep verification that did not occur.
 
 Run status includes a human stage derived from the optimization, campaign, and
 experiment journals. During a desktop `resume`, the renderer polls the passive
@@ -467,12 +472,15 @@ training seconds, two development evaluations, one sealed use, and zero
 external calls, valid through 2026-11-30. No exact run definition was written
 and no run was reserved.
 
-This real transition also exposed two presentation/verification defects. The
+This real transition also exposed three presentation/verification defects. The
 Models catalog now excludes scientific-history checkpoints that have not been
 registered as managed candidate artifacts; Runs and Evaluation retain that
-history. The real Electron preflight resolves expensive owner readiness exactly
-once and renders that immutable response, rather than replaying the same
-roughly nine-minute authority computation twice.
+history. The real Electron preflight renders one immutable backend response
+rather than recomputing it during screenshot capture. Finally, passive launch
+readiness now uses the record-local fingerprint projection described above and
+completed in 1.97 seconds against the real Nomos history; the former recursive
+screen refresh took roughly nine minutes. Prepare, Doctor, and every side-effect
+boundary retain the complete owner replay.
 
 The 2026-09-09 binding preflight copied the real managed workspace to a temporary
 directory, upgraded only that copy, and matched its 134,211,908-byte baseline to

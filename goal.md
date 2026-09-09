@@ -43,8 +43,12 @@ Do not confuse custody with readiness:
   do not become managed candidate artifacts merely because their database was
   imported. The real Models page therefore truthfully shows one baseline and
   no managed candidates.
-- The final read-only Electron preflight verifies every required scientific
-  foundation. Its sole required next action is **Prepare approved run** for one
+- The final read-only Electron preflight derives every required scientific
+  foundation from persisted facts. Its passive backend projection completes in
+  about two seconds for the real Nomos history; it validates the directly bound
+  fingerprints and approval chain without pretending to replay the entire
+  historical graph. **Prepare approved run** remains the deliberate boundary
+  that rehashes managed artifacts and deeply replays that graph. It covers one
   reviewed candidate over 192 approved delta rows, with 7,200 seconds maximum
   training, two development evaluations, one separately authorized sealed use,
   and zero external calls. Preparation—not runtime setup—is now the remaining
