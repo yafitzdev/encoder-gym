@@ -317,7 +317,7 @@ export function mount(): void {
       const reason = window.prompt("Why are you cancelling this run? The reason is persisted in its audit history.");
       if (reason?.trim()) void optimize({ action: "cancel", runId: id, reason: reason.trim() });
     },
-    openSettings: () => navigate({ page: "project" }), openData: () => navigate({ page: "datasets" }),
+    openSettings: () => navigate({ page: "project" }), openData: () => navigate({ page: "datasets" }), openRuns: () => navigate({ page: "runs" }),
     upgrade: () => {
       const id = selection.selectedId; if (!id || view.optimization.loading) return;
       view.optimization.loading = true; view.optimization.error = undefined; render();

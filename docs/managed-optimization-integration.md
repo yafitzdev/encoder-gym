@@ -615,6 +615,9 @@ neutral terminal fact. Neither state exposes an unsafe continuation action.
 Passive readiness refresh and mutating preparation also have distinct progress
 states: only preparation may claim the expensive owner replay, while refresh
 describes itself as a read of persisted project state.
+Readiness actions do not strand the operator: missing provider credentials
+route to Project settings, while an ambiguous or damaged scientific journal
+routes to Runs for inspection instead of silently dropping the backend action.
 
 ## Delivery order
 

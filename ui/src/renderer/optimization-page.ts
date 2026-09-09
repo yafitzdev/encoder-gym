@@ -27,6 +27,7 @@ export interface OptimizationPageActions {
   cancel(): void;
   openSettings(): void;
   openData(): void;
+  openRuns(): void;
   upgrade(): void;
 }
 
@@ -121,7 +122,8 @@ function actionFor(check: ReadinessCheck, actions: OptimizationPageActions): HTM
   if (!key) return null;
   if (key === "upgrade-workspace") return button(check.nextAction!.label, actions.upgrade, "secondary");
   if (key === "import-dataset") return button(check.nextAction!.label, actions.openData, "secondary");
-  if (key.startsWith("bind-") || key.startsWith("rebind-") || key.startsWith("repair-scientific") || key === "configure-providers") return button("Open project settings", actions.openSettings, "secondary");
+  if (key.startsWith("bind-") || key.startsWith("rebind-") || key.startsWith("repair-scientific") || key === "configure-providers" || key === "configure-provider-secret") return button("Open project settings", actions.openSettings, "secondary");
+  if (key === "inspect-scientific-history") return button(check.nextAction!.label, actions.openRuns, "secondary");
   if (key === "prepare-optimization") return button("Prepare approved run", actions.prepare, "secondary");
   if (key === "resume-optimization") return button("Open existing run", actions.start, "secondary");
   return null;

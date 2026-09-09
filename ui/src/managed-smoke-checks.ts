@@ -170,6 +170,20 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
       return { ...managed, modelCatalog: { ...catalog, artifacts: [...catalog.artifacts, candidate], baselineRevisions: [...catalog.baselineRevisions, { id: revisionId, projectId: firstId, sequence: catalog.baselineRevisions.length + 1, modelArtifactId: candidate.id, previousRevisionId: catalog.activeBaselineRevisionId, change: { kind: "promotion" as const, decision_id: randomUUID(), decision_fingerprint: "sha256:" + "8".repeat(64) }, actor: "local-operator", reason: "Smoke accepted promotion", createdAt: new Date().toISOString(), fingerprint: "sha256:" + "9".repeat(64) }], activeBaselineRevisionId: revisionId } };
     };
 
+    const ordinaryChecks = readiness.report.checks;
+    readiness.report.checks = [
+      { key: "provider.generation", category: "providers", state: "action_required", required: true, summary: "Provider credential is unavailable", evidence: "The secret value was not read.", nextAction: { key: "configure-provider-secret", label: "Configure provider credential" } },
+      { key: "recovery.current-run", category: "recovery", state: "stale", required: true, summary: "Existing optimization journal cannot be recovered", evidence: "Inspect the persisted run records before continuing.", nextAction: { key: "inspect-scientific-history", label: "Inspect scientific history" } },
+    ];
+    readiness.optimizationAuthority = undefined;
+    await nav("models"); await textButton("Start optimization"); await textButton("Refresh checks");
+    await until("[...document.querySelectorAll('.readiness-row button')].some(b=>b.textContent === 'Inspect scientific history')");
+    await check("credential and journal readiness actions have honest desktop destinations", "[...document.querySelectorAll('.readiness-row button')].some(b=>b.textContent === 'Open project settings') && [...document.querySelectorAll('.readiness-row button')].some(b=>b.textContent === 'Inspect scientific history')");
+    await textButton("Inspect scientific history"); await until("document.querySelector('.page-heading h1')?.textContent === 'Runs'");
+    await nav("models"); await textButton("Start optimization"); await textButton("Open project settings"); await until("document.querySelector('.page-heading h1')?.textContent === 'Project settings'");
+    readiness.report.checks = ordinaryChecks;
+    readiness.optimizationAuthority = authority;
+
     await nav("models"); await textButton("Start optimization"); await textButton("Refresh checks");
     await check("passive readiness refresh never claims to perform deep preparation", "document.querySelector('.workspace-progress').textContent.includes('Checking persisted project state') && !document.querySelector('.workspace-progress').textContent.includes('Replaying')");
     await until("document.querySelector('.launch-definition')?.textContent.includes('Approved repair on record')");
