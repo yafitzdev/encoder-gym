@@ -85,11 +85,19 @@ The compiled Nomos adapter can be explicitly bound to a managed project after
 the project is upgraded:
 
 ```powershell
+synth workspace preview-nomos-binding C:\EncoderGym\Projects\Nomos --runtime C:\isolated\nomos-runtime --python C:\path\to\python.exe
 synth workspace bind-nomos C:\EncoderGym\Projects\Nomos --runtime C:\isolated\nomos-runtime
 ```
 
-The command deeply verifies the managed checkpoint and the clean, no-remote
-isolated runtime, initializes a new production scientific store at
+The preview deeply verifies the managed checkpoint and the clean, no-remote
+isolated runtime, proves that its baseline matches the active model, and runs a
+15-second offline Python capability check. The check requires Python 3.11 or
+3.12 plus the training, retrieval-evaluation, local-agent-evaluation, and
+diagnostic modules used by the compiled Nomos adapter. It writes nothing and
+makes no network or provider call.
+
+The binding command repeats every check, rejects an incomplete interpreter,
+initializes a new production scientific store at
 `runs/scientific.sqlite`, and persists only their explicit binding in
 `project.sqlite`. It does not import the runtime's historical databases, start
 training, evaluate a model, or call a provider. The source `fitz-tool`

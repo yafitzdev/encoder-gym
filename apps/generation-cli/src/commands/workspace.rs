@@ -26,6 +26,8 @@ use project_workspace_local::{
 };
 use uuid::Uuid;
 
+use std::{collections::BTreeMap, path::PathBuf, time::Duration};
+
 use super::encoder_optimize::ManagedOptimizationReadiness;
 
 #[derive(serde::Serialize)]
@@ -34,6 +36,75 @@ struct ManagedReadinessOutput {
     report: ReadinessReport,
     #[serde(skip_serializing_if = "Option::is_none")]
     launch_preview: Option<ManagedOptimizationReadiness>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RawPythonInspection {
+    version: String,
+    major: u32,
+    minor: u32,
+    modules: BTreeMap<String, bool>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PythonCapability {
+    key: &'static str,
+    label: &'static str,
+    ready: bool,
+    missing_modules: Vec<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PythonRuntimeInspection {
+    executable: String,
+    version: String,
+    compatible_version: bool,
+    capabilities: Vec<PythonCapability>,
+    ready: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BindingModelPreview {
+    name: String,
+    format: String,
+    bytes: u64,
+    fingerprint: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BindingStorePreview {
+    database_path: &'static str,
+    action: &'static str,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NomosBindingPreview {
+    project_id: Uuid,
+    project_name: String,
+    baseline_revision_id: Uuid,
+    active_model: BindingModelPreview,
+    adapter: AdapterBinding,
+    runtime_location: String,
+    source_revision: String,
+    source_fingerprint: String,
+    project_snapshot: BoundIdentity,
+    python: PythonRuntimeInspection,
+    store: BindingStorePreview,
+    previous_binding_id: Option<Uuid>,
+    ready: bool,
+}
+
+struct VerifiedNomosBinding {
+    workspace: project_workspace_local::ManagedWorkspace,
+    backend: NomosBackend,
+    project: ExternalProjectSnapshot,
+    runtime_root: PathBuf,
+    python: PythonRuntimeInspection,
 }
 
 #[derive(serde::Deserialize)]
@@ -127,6 +198,11 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
         }
         WorkspaceCommand::Optimize { folder, command } => managed_optimize(&folder, *command).await,
         WorkspaceCommand::Providers { folder, command } => providers(&folder, command).await,
+        WorkspaceCommand::PreviewNomosBinding {
+            folder,
+            runtime,
+            python,
+        } => preview_nomos_binding(&folder, &runtime, &python).await,
         WorkspaceCommand::BindNomos {
             folder,
             runtime,
@@ -287,16 +363,9 @@ async fn managed_optimize(
         binding.baseline_revision_id == catalog.active_baseline_revision_id,
         "The scientific binding is stale for the active baseline; rebind it before optimization."
     );
-    let project = verify_nomos_runtime(binding, catalog).await?;
     let store = open_bound_store(&workspace.folder, binding).await?;
-    let stored_project = store
-        .get_project(project.id)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("The bound scientific project snapshot is missing."))?;
-    anyhow::ensure!(
-        stored_project == project,
-        "The bound runtime and scientific store project snapshots differ."
-    );
+    let project = load_bound_project(&store, binding).await?;
+    verify_nomos_runtime(binding, catalog, &project).await?;
     store.pool().close().await;
 
     let executable = binding
@@ -520,37 +589,6 @@ async fn readiness(
                     .transpose()?,
             )?);
 
-            let runtime_result = verify_nomos_runtime(binding, catalog).await;
-            match runtime_result {
-                Ok(project) => {
-                    checks.push(check(
-                        "scientific.runtime",
-                        ReadinessCategory::Scientific,
-                        ReadinessState::Ready,
-                        true,
-                        "Compiled runtime matches the binding",
-                        format!(
-                            "Adapter {} {} reproduced project snapshot {}.",
-                            binding.adapter.key, binding.adapter.protocol, project.id
-                        ),
-                        None,
-                    )?);
-                    runtime_project = Some(project);
-                }
-                Err(error) => checks.push(check(
-                    "scientific.runtime",
-                    ReadinessCategory::Scientific,
-                    ReadinessState::Unavailable,
-                    true,
-                    "Compiled runtime cannot be verified",
-                    plain_error(&error),
-                    Some(action(
-                        "rebind-scientific-runtime",
-                        "Rebind scientific runtime",
-                    )?),
-                )?),
-            }
-
             let store_result = open_bound_store(&workspace.folder, binding).await;
             match store_result {
                 Ok(value) => {
@@ -582,25 +620,65 @@ async fn readiness(
                 )?),
             }
 
-            let (project_matches, project_evidence) = match (&store, &runtime_project) {
-                (Some(store), Some(project)) => match store.get_project(project.id).await {
-                    Ok(Some(stored)) if stored == *project => (
-                        true,
-                        "The runtime and scientific store contain the same immutable project snapshot."
-                            .into(),
-                    ),
-                    Ok(_) => (
-                        false,
-                        "The scientific store does not contain the exact runtime project snapshot."
-                            .into(),
-                    ),
-                    Err(error) => (false, plain_error(&error)),
+            let bound_project = match &store {
+                Some(store) => load_bound_project(store, binding).await,
+                None => Err(anyhow::anyhow!(
+                    "Verify the bound scientific store before reproducing its project snapshot."
+                )),
+            };
+            let (project_matches, project_evidence) = match bound_project {
+                Ok(project) => match verify_nomos_runtime(binding, catalog, &project).await {
+                    Ok(()) => {
+                        checks.push(check(
+                            "scientific.runtime",
+                            ReadinessCategory::Scientific,
+                            ReadinessState::Ready,
+                            true,
+                            "Compiled runtime matches the binding",
+                            format!(
+                                "Adapter {} {} reproduced persisted project snapshot {}.",
+                                binding.adapter.key, binding.adapter.protocol, project.id
+                            ),
+                            None,
+                        )?);
+                        runtime_project = Some(project);
+                        (
+                            true,
+                            "The persisted scientific project remains exact and the current runtime reproduces its content."
+                                .into(),
+                        )
+                    }
+                    Err(error) => {
+                        checks.push(check(
+                            "scientific.runtime",
+                            ReadinessCategory::Scientific,
+                            ReadinessState::Unavailable,
+                            true,
+                            "Compiled runtime cannot be verified",
+                            plain_error(&error),
+                            Some(action(
+                                "rebind-scientific-runtime",
+                                "Rebind scientific runtime",
+                            )?),
+                        )?);
+                        (false, plain_error(&error))
+                    }
                 },
-                _ => (
-                    false,
-                    "Both a verified runtime and its exact registered project snapshot are required."
-                        .into(),
-                ),
+                Err(error) => {
+                    checks.push(check(
+                        "scientific.runtime",
+                        ReadinessCategory::Scientific,
+                        ReadinessState::Unavailable,
+                        true,
+                        "Compiled runtime cannot be verified",
+                        "The exact persisted scientific project must be available before runtime content can be reproduced.",
+                        Some(action(
+                            "repair-scientific-store",
+                            "Inspect scientific store",
+                        )?),
+                    )?);
+                    (false, plain_error(&error))
+                }
             };
             checks.push(check(
                 "scientific.project",
@@ -830,7 +908,8 @@ async fn readiness(
 async fn verify_nomos_runtime(
     binding: &ScientificBinding,
     catalog: &project_workspace_core::ModelCatalog,
-) -> anyhow::Result<ExternalProjectSnapshot> {
+    project: &ExternalProjectSnapshot,
+) -> anyhow::Result<()> {
     anyhow::ensure!(
         binding.adapter.key == "nomos",
         "This executable has no compiled adapter for '{}'.",
@@ -847,12 +926,12 @@ async fn verify_nomos_runtime(
             && identity.configuration_fingerprint == binding.adapter.configuration_fingerprint,
         "The compiled adapter identity changed since binding."
     );
-    let project = backend.project_snapshot()?;
     anyhow::ensure!(
         project.id.to_string() == binding.runtime.project_snapshot.id
             && project.fingerprint == binding.runtime.project_snapshot.fingerprint,
-        "The isolated runtime project snapshot changed since binding."
+        "The scientific project identity differs from this runtime binding."
     );
+    backend.verify_current_snapshot(project.clone()).await?;
     let runtime_root = std::path::Path::new(&binding.runtime.location).canonicalize()?;
     let runtime_baseline = inspect_model(&runtime_root.join(&project.baseline_model.key))?;
     let active = catalog.active_model();
@@ -861,6 +940,23 @@ async fn verify_nomos_runtime(
             && runtime_baseline.bytes == active.bytes
             && runtime_baseline.format == active.format,
         "The runtime baseline no longer matches the active managed model."
+    );
+    Ok(())
+}
+
+async fn load_bound_project(
+    store: &SqliteExperimentStore,
+    binding: &ScientificBinding,
+) -> anyhow::Result<ExternalProjectSnapshot> {
+    let project_id = Uuid::parse_str(&binding.runtime.project_snapshot.id)
+        .map_err(|_| anyhow::anyhow!("The bound scientific project identity is invalid."))?;
+    let project = store
+        .get_project(project_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("The bound scientific project snapshot is missing."))?;
+    anyhow::ensure!(
+        project.fingerprint == binding.runtime.project_snapshot.fingerprint,
+        "The bound scientific project fingerprint changed."
     );
     Ok(project)
 }
@@ -889,10 +985,17 @@ fn bound_store_url(
         path.starts_with(&root),
         "Scientific store escapes the managed project."
     );
-    Ok(format!(
-        "sqlite://{}",
-        path.to_string_lossy().replace('\\', "/")
-    ))
+    Ok(sqlite_file_url(&path))
+}
+
+fn sqlite_file_url(path: &std::path::Path) -> String {
+    let raw = path.to_string_lossy();
+    let ordinary = raw
+        .strip_prefix(r"\\?\UNC\")
+        .map(|value| format!(r"\\{value}"))
+        .or_else(|| raw.strip_prefix(r"\\?\").map(str::to_owned))
+        .unwrap_or_else(|| raw.into_owned());
+    format!("sqlite://{}", ordinary.replace('\\', "/"))
 }
 
 fn recovery_check(preview: &ManagedOptimizationReadiness) -> anyhow::Result<ReadinessCheck> {
@@ -1073,28 +1176,25 @@ async fn bind_nomos(
     actor: &str,
     reason: &str,
 ) -> anyhow::Result<()> {
-    let workspace = open_workspace(folder, true).await?;
+    let verified = verify_nomos_binding(folder, runtime, python).await?;
+    let VerifiedNomosBinding {
+        workspace,
+        backend,
+        project,
+        runtime_root,
+        python: python_inspection,
+    } = verified;
     let catalog = workspace
         .model_catalog
         .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Upgrade this managed workspace before binding Nomos."))?;
-    let backend = NomosBackend::open(runtime, python.to_path_buf())?;
-    let project = backend.project_snapshot()?;
-    let runtime_root = runtime.canonicalize()?;
-    let runtime_baseline = inspect_model(&runtime_root.join(&project.baseline_model.key))?;
-    let active_model = catalog.active_model();
+        .expect("verified model catalog");
     anyhow::ensure!(
-        runtime_baseline.fingerprint == active_model.fingerprint
-            && runtime_baseline.bytes == active_model.bytes
-            && runtime_baseline.format == active_model.format,
-        "The isolated Nomos runtime baseline does not match this project's active model."
+        python_inspection.ready,
+        "The selected Python runtime is incomplete. Preview it and resolve every missing capability before binding."
     );
 
     let store_path = std::path::Path::new(&workspace.folder).join("runs/scientific.sqlite");
-    let database_url = format!(
-        "sqlite://{}",
-        store_path.to_string_lossy().replace('\\', "/")
-    );
+    let database_url = sqlite_file_url(&store_path);
     let store = SqliteExperimentStore::connect(&database_url).await?;
     if let Some(existing) = store.get_project(project.id).await? {
         anyhow::ensure!(
@@ -1147,9 +1247,251 @@ async fn bind_nomos(
     print(&record_scientific_binding(folder, binding, previous).await?)
 }
 
+async fn preview_nomos_binding(
+    folder: &std::path::Path,
+    runtime: &std::path::Path,
+    python: &std::path::Path,
+) -> anyhow::Result<()> {
+    let verified = verify_nomos_binding(folder, runtime, python).await?;
+    let catalog = verified
+        .workspace
+        .model_catalog
+        .as_ref()
+        .expect("verified model catalog");
+    let active_model = catalog.active_model();
+    let adapter = verified.backend.identity();
+    let store_path =
+        std::path::Path::new(&verified.workspace.folder).join("runs/scientific.sqlite");
+    let preview = NomosBindingPreview {
+        project_id: verified.workspace.manifest.id,
+        project_name: verified.workspace.manifest.name.clone(),
+        baseline_revision_id: catalog.active_baseline_revision_id,
+        active_model: BindingModelPreview {
+            name: active_model.name.clone(),
+            format: active_model.format.clone(),
+            bytes: active_model.bytes,
+            fingerprint: active_model.fingerprint.clone(),
+        },
+        adapter: AdapterBinding {
+            key: adapter.name,
+            protocol: adapter.protocol_version,
+            configuration_fingerprint: adapter.configuration_fingerprint,
+        },
+        runtime_location: verified.runtime_root.to_string_lossy().into_owned(),
+        source_revision: verified.project.source_revision.clone(),
+        source_fingerprint: verified.project.source_fingerprint.clone(),
+        project_snapshot: BoundIdentity {
+            id: verified.project.id.to_string(),
+            fingerprint: verified.project.fingerprint.clone(),
+        },
+        store: BindingStorePreview {
+            database_path: "runs/scientific.sqlite",
+            action: if store_path.exists() {
+                "verify_existing_store"
+            } else {
+                "initialize_new_store"
+            },
+        },
+        previous_binding_id: verified
+            .workspace
+            .scientific_binding
+            .as_ref()
+            .map(|value| value.id),
+        ready: verified.python.ready,
+        python: verified.python,
+    };
+    print(&preview)
+}
+
+async fn verify_nomos_binding(
+    folder: &std::path::Path,
+    runtime: &std::path::Path,
+    python: &std::path::Path,
+) -> anyhow::Result<VerifiedNomosBinding> {
+    let workspace = open_workspace(folder, true).await?;
+    let catalog = workspace
+        .model_catalog
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Upgrade this managed workspace before binding Nomos."))?;
+    let backend = NomosBackend::open(runtime, python.to_path_buf())?;
+    let project = backend.project_snapshot()?;
+    let runtime_root = runtime.canonicalize()?;
+    let runtime_baseline = inspect_model(&runtime_root.join(&project.baseline_model.key))?;
+    let active_model = catalog.active_model();
+    anyhow::ensure!(
+        runtime_baseline.fingerprint == active_model.fingerprint
+            && runtime_baseline.bytes == active_model.bytes
+            && runtime_baseline.format == active_model.format,
+        "The isolated Nomos runtime baseline does not match this project's active model."
+    );
+    let python = inspect_python_runtime(python, &runtime_root).await?;
+    Ok(VerifiedNomosBinding {
+        workspace,
+        backend,
+        project,
+        runtime_root,
+        python,
+    })
+}
+
+async fn inspect_python_runtime(
+    executable: &std::path::Path,
+    runtime: &std::path::Path,
+) -> anyhow::Result<PythonRuntimeInspection> {
+    const SCRIPT: &str = r#"import importlib.util,json,sys
+names=['torch','sentence_transformers','transformers','datasets','accelerate','numpy','sklearn','psutil','onnxruntime_genai']
+print(json.dumps({'version':'.'.join(map(str,sys.version_info[:3])),'major':sys.version_info[0],'minor':sys.version_info[1],'modules':{name:importlib.util.find_spec(name) is not None for name in names}}))"#;
+    let output = tokio::time::timeout(
+        Duration::from_secs(15),
+        tokio::process::Command::new(executable)
+            .args(["-B", "-c", SCRIPT])
+            .current_dir(runtime)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("The selected Python runtime did not answer its offline capability check within 15 seconds."))?
+    .map_err(|error| anyhow::anyhow!("Could not start the selected Python runtime: {error}"))?;
+    anyhow::ensure!(
+        output.status.success(),
+        "The selected Python runtime failed its offline capability check: {}",
+        plain_error(&String::from_utf8_lossy(&output.stderr))
+    );
+    let raw: RawPythonInspection = serde_json::from_slice(&output.stdout).map_err(|_| {
+        anyhow::anyhow!("The selected Python runtime returned an unreadable capability report.")
+    })?;
+    Ok(python_runtime_inspection(
+        executable.to_string_lossy().into_owned(),
+        raw,
+    ))
+}
+
+fn python_runtime_inspection(
+    executable: String,
+    raw: RawPythonInspection,
+) -> PythonRuntimeInspection {
+    let groups = [
+        (
+            "training",
+            "Encoder training",
+            &[
+                "torch",
+                "sentence_transformers",
+                "transformers",
+                "datasets",
+                "accelerate",
+            ][..],
+        ),
+        (
+            "retrieval",
+            "Retrieval evaluation",
+            &["numpy", "sklearn"][..],
+        ),
+        (
+            "agent_evaluation",
+            "Local agent evaluation",
+            &["onnxruntime_genai", "transformers"][..],
+        ),
+        ("diagnostics", "Runtime diagnostics", &["psutil"][..]),
+    ];
+    let capabilities = groups
+        .into_iter()
+        .map(|(key, label, modules)| {
+            let missing_modules = modules
+                .iter()
+                .filter(|module| !raw.modules.get(**module).copied().unwrap_or(false))
+                .map(|module| (*module).to_owned())
+                .collect::<Vec<_>>();
+            PythonCapability {
+                key,
+                label,
+                ready: missing_modules.is_empty(),
+                missing_modules,
+            }
+        })
+        .collect::<Vec<_>>();
+    let compatible_version = raw.major == 3 && matches!(raw.minor, 11 | 12);
+    let ready = compatible_version && capabilities.iter().all(|value| value.ready);
+    PythonRuntimeInspection {
+        executable,
+        version: raw.version,
+        compatible_version,
+        capabilities,
+        ready,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn python_modules(available: bool) -> BTreeMap<String, bool> {
+        [
+            "torch",
+            "sentence_transformers",
+            "transformers",
+            "datasets",
+            "accelerate",
+            "numpy",
+            "sklearn",
+            "psutil",
+            "onnxruntime_genai",
+        ]
+        .into_iter()
+        .map(|name| (name.to_owned(), available))
+        .collect()
+    }
+
+    fn scientific_project() -> ExternalProjectSnapshot {
+        use encoder_experiment_core::domain::{
+            BackendIdentity, EncoderTaskKind, ExternalArtifactIdentity, ModelArtifactIdentity,
+        };
+        ExternalProjectSnapshot::create(
+            "persisted project",
+            EncoderTaskKind::RetrievalRanking,
+            "revision",
+            format!("sha256:{}", "a".repeat(64)),
+            BackendIdentity::new(
+                "nomos",
+                "nomos-ranking-v3",
+                format!("sha256:{}", "b".repeat(64)),
+            )
+            .unwrap(),
+            vec![
+                ExternalArtifactIdentity::new(
+                    "train.jsonl",
+                    EvidenceRole::Training,
+                    10,
+                    format!("sha256:{}", "c".repeat(64)),
+                )
+                .unwrap(),
+                ExternalArtifactIdentity::new(
+                    "development.jsonl",
+                    EvidenceRole::Development,
+                    10,
+                    format!("sha256:{}", "e".repeat(64)),
+                )
+                .unwrap(),
+                ExternalArtifactIdentity::new(
+                    "sealed.jsonl",
+                    EvidenceRole::SealedAcceptance,
+                    10,
+                    format!("sha256:{}", "f".repeat(64)),
+                )
+                .unwrap(),
+            ],
+            ModelArtifactIdentity::new(
+                "baseline",
+                "sentence-transformers",
+                10,
+                format!("sha256:{}", "d".repeat(64)),
+            )
+            .unwrap(),
+            serde_json::json!({"adapter_protocol":"nomos-ranking-v3"}),
+            Utc::now(),
+        )
+        .unwrap()
+    }
 
     fn backend() -> NomosWorkspaceArgs {
         NomosWorkspaceArgs {
@@ -1188,5 +1530,101 @@ mod tests {
             command,
             EncoderOptimizeCommand::Cancel(EncoderOptimizeCancelArgs { run_id: id, .. }) if id == run_id
         ));
+    }
+
+    #[test]
+    fn python_runtime_requires_supported_version_and_every_execution_capability() {
+        let ready = python_runtime_inspection(
+            "python".into(),
+            RawPythonInspection {
+                version: "3.12.4".into(),
+                major: 3,
+                minor: 12,
+                modules: python_modules(true),
+            },
+        );
+        assert!(ready.ready);
+        assert!(ready.compatible_version);
+        assert!(ready.capabilities.iter().all(|value| value.ready));
+
+        let mut modules = python_modules(true);
+        modules.insert("onnxruntime_genai".into(), false);
+        let incomplete = python_runtime_inspection(
+            "python".into(),
+            RawPythonInspection {
+                version: "3.10.9".into(),
+                major: 3,
+                minor: 10,
+                modules,
+            },
+        );
+        assert!(!incomplete.ready);
+        assert!(!incomplete.compatible_version);
+        let agent = incomplete
+            .capabilities
+            .iter()
+            .find(|value| value.key == "agent_evaluation")
+            .unwrap();
+        assert!(!agent.ready);
+        assert_eq!(agent.missing_modules, ["onnxruntime_genai"]);
+    }
+
+    #[tokio::test]
+    async fn bound_project_is_loaded_by_persisted_identity_not_a_fresh_adapter_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("scientific.sqlite");
+        let url = format!("sqlite://{}", database.to_string_lossy().replace('\\', "/"));
+        let store = SqliteExperimentStore::connect(&url).await.unwrap();
+        let project = scientific_project();
+        store.create_project(project.clone()).await.unwrap();
+        let binding = ScientificBinding::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            None,
+            AdapterBinding {
+                key: "nomos".into(),
+                protocol: "nomos-ranking-v3".into(),
+                configuration_fingerprint: format!("sha256:{}", "b".repeat(64)),
+            },
+            RuntimeBinding {
+                kind: RuntimeKind::ExternalIsolated,
+                location: "runtime".into(),
+                executable: Some("python".into()),
+                project_snapshot: BoundIdentity {
+                    id: project.id.to_string(),
+                    fingerprint: project.fingerprint.clone(),
+                },
+            },
+            ScientificStoreBinding {
+                database_path: "runs/scientific.sqlite".into(),
+                schema: BoundIdentity {
+                    id: SCHEMA_ID.into(),
+                    fingerprint: schema_fingerprint(),
+                },
+            },
+            "operator",
+            "test persisted binding",
+            Utc::now(),
+        )
+        .unwrap();
+        assert_eq!(load_bound_project(&store, &binding).await.unwrap(), project);
+        store.pool().close().await;
+    }
+
+    #[test]
+    fn sqlite_urls_remove_windows_extended_path_markers() {
+        assert_eq!(
+            sqlite_file_url(std::path::Path::new(
+                r"\\?\C:\EncoderGym\runs\scientific.sqlite"
+            )),
+            "sqlite://C:/EncoderGym/runs/scientific.sqlite"
+        );
+        assert_eq!(
+            sqlite_file_url(std::path::Path::new(
+                r"\\?\UNC\server\share\scientific.sqlite"
+            )),
+            "sqlite:////server/share/scientific.sqlite"
+        );
     }
 }

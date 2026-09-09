@@ -33,6 +33,15 @@ async function pickFolder(title: string, defaultPath?: string): Promise<string |
   const selected = await dialog.showOpenDialog({ title, defaultPath, properties: ["openDirectory", "createDirectory"] });
   return selected.canceled ? undefined : selected.filePaths[0];
 }
+async function pickExecutable(title: string): Promise<string | undefined> {
+  if (smokeTest) { const choice = smokeFolderChoice; smokeFolderChoice = undefined; return choice; }
+  const selected = await dialog.showOpenDialog({
+    title,
+    properties: ["openFile"],
+    filters: process.platform === "win32" ? [{ name: "Python executable", extensions: ["exe"] }] : undefined,
+  });
+  return selected.canceled ? undefined : selected.filePaths[0];
+}
 const projectId = (value: unknown): string => { if (typeof value !== "string" || !value) throw new Error("A project identity is required."); return value; };
 const providerRole = (value: unknown): ProviderRole => {
   if (value !== "generation" && value !== "advisor" && value !== "evaluator") throw new Error("Choose a provider authority.");
@@ -174,6 +183,20 @@ ipcMain.handle("encoder-gym:remove-provider-credential", async (_event, value: u
   const provider = status.catalog?.providers.find(candidate => candidate.role === role);
   if (provider?.secret?.id === `${id}:${role}`) credentials.remove(provider.secret.id);
   return desktopProviderStatus(await backend.providerStatus(id));
+});
+ipcMain.handle("encoder-gym:choose-nomos-runtime", async (_event, value: unknown) => {
+  const id = projectId(value), path = await pickFolder("Choose the isolated Nomos runtime");
+  return path ? backend.chooseNomosRuntime(id, path) : null;
+});
+ipcMain.handle("encoder-gym:choose-nomos-python", async (_event, value: unknown) => {
+  const id = projectId(value), path = await pickExecutable("Choose the Python executable for this runtime");
+  return path ? backend.chooseNomosPython(id, path) : null;
+});
+ipcMain.handle("encoder-gym:preview-nomos-binding", (_event, value: unknown, runtimeToken: unknown, pythonToken: unknown) =>
+  backend.previewNomosBinding(projectId(value), runtimeToken, pythonToken));
+ipcMain.handle("encoder-gym:bind-nomos", async (_event, value: unknown, previewToken: unknown) => {
+  const id = projectId(value);
+  return { project: registry.get(id), content: { state: "ready", workspace: managedSnapshot(await backend.bindNomos(id, previewToken)) } } satisfies OpenedProject;
 });
 
 ipcMain.handle("encoder-gym:window-action", (event, action: unknown) => {

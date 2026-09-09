@@ -487,6 +487,25 @@ dialog::backdrop { background: #0008; }
 .provider-form-section > p { color: var(--muted); font-size: 12px; margin: 6px 0 16px; }
 .provider-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .provider-form-grid .form-field:last-child { grid-column: 1 / -1; }
+#project-dialog:has(.runtime-form) { width: 700px; max-width: min(700px, calc(100vw - 30px)); }
+.runtime-form { width: 100%; min-width: 0; }
+.runtime-notice { margin: 18px 24px 0; padding: 13px 15px; border-left: 3px solid var(--accent); background: var(--bg); }
+.runtime-notice strong { font-size: 12px; }
+.runtime-notice p { margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.runtime-selection { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-bottom: 15px; border-bottom: 1px solid var(--line); }
+.runtime-selection > div { min-width: 0; display: grid; gap: 5px; }
+.runtime-selection strong { font-size: 12px; }
+.runtime-selection span { color: var(--muted); font: 11px/1.5 var(--mono); overflow-wrap: anywhere; }
+.runtime-preview { padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+.runtime-preview-heading { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
+.runtime-preview-heading h3 { font-size: 15px; }
+.runtime-preview-heading p { color: var(--muted); font-size: 12px; margin-top: 5px; }
+.runtime-preview .facts { margin-top: 15px; }
+.capability-list { margin-top: 15px; border-top: 1px solid var(--line); }
+.capability-row { display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.capability-row strong { display: block; font-size: 12px; }
+.capability-row small { display: block; color: var(--muted); margin-top: 3px; font: 11px/1.45 var(--mono); overflow-wrap: anywhere; }
+.runtime-preview > .disclosure { margin: 12px 0 0; padding-bottom: 0; }
 #project-dialog .dialog-actions { position: sticky; bottom: 0; background: var(--surface); padding: 14px 0; z-index: 1; }
 #project-dialog .onboarding-footer .dialog-actions { position: static; padding: 0; margin-top: 12px; }
 .optimization-page { max-width: 1120px; }
@@ -524,6 +543,9 @@ dialog::backdrop { background: #0008; }
   .provider-form-grid .form-field:last-child { grid-column: auto; }
   .provider-summary { align-items: start; flex-direction: column; gap: 10px; }
   .provider-state { justify-content: start; }
+  .runtime-selection, .runtime-preview-heading { align-items: start; flex-direction: column; }
+  .runtime-selection .button { width: 100%; }
+  .runtime-notice { margin-inline: 17px; }
   .launch-summary, .readiness-row, .launch-actions { flex-direction: column; align-items: start; gap: 12px; }
   .dataset-row { flex-direction: column; gap: 12px; }
   .dataset-purpose { display: flex; align-items: center; gap: 9px; }

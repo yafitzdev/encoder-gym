@@ -87,6 +87,11 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await check("readiness exposes no managed paths as editable command input", "!document.querySelector('.optimization-page input') && !document.querySelector('.optimization-page').textContent.includes('project.sqlite')");
   await screenshot("managed-readiness");
   await nav("project"); await until("[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Configure providers' && !b.disabled)");
+  await check("scientific runtime setup is a real project-settings action", "[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Connect scientific runtime') && !document.getElementById('page').textContent.includes('not implemented')");
+  await textButton("Connect scientific runtime"); await until("document.querySelector('#project-dialog[open] .runtime-form')");
+  await check("runtime setup explains isolation and requires offline preview", "document.querySelector('.runtime-form').textContent.includes('original source repository is deliberately rejected') && document.querySelector('.runtime-form').textContent.includes('no provider call') && [...document.querySelectorAll('.runtime-form button')].find(b=>b.textContent === 'Connect runtime').disabled");
+  await screenshot("managed-runtime-setup", 760, 760); window.setContentSize(1440, 960);
+  await textButton("Cancel"); await until("!document.querySelector('#project-dialog[open]')");
   await textButton("Configure providers"); await until("document.querySelector('#project-dialog[open]')");
   await type("generation-model", "generation-smoke-model"); await type("advisor-model", "advisor-smoke-model");
   await type("generation-credential", "generation-smoke-secret-123"); await type("advisor-credential", "advisor-smoke-secret-456");

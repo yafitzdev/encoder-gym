@@ -128,6 +128,14 @@ pub enum WorkspaceCommand {
         #[command(subcommand)]
         command: ManagedProviderCommand,
     },
+    /// Passively verify a Nomos runtime before offering to bind it.
+    PreviewNomosBinding {
+        folder: PathBuf,
+        #[arg(long)]
+        runtime: PathBuf,
+        #[arg(long, default_value = "python")]
+        python: PathBuf,
+    },
     /// Verify and bind the compiled Nomos runtime to a contained scientific store.
     BindNomos {
         folder: PathBuf,

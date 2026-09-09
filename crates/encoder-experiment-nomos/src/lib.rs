@@ -368,6 +368,21 @@ impl NomosBackend {
         .map_err(adapter_error)
     }
 
+    /// Reverify a persisted scientific project against the current isolated runtime.
+    /// Snapshot IDs and creation times remain store-owned; currentness is content-based.
+    pub async fn verify_current_snapshot(
+        &self,
+        project: ExternalProjectSnapshot,
+    ) -> Result<AdapterInspection, EncoderTaskAdapterError> {
+        let inspection = self.inspect(project.clone()).await?;
+        if !self.project_matches_current(&project)? {
+            return Err(adapter_error(
+                "The persisted Nomos project no longer matches the current isolated runtime",
+            ));
+        }
+        Ok(inspection)
+    }
+
     /// Compile the current schema-v4, row-free Nomos authority evidence into
     /// the provider-neutral renewable benchmark contract.
     pub fn benchmark_generation(

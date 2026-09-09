@@ -99,6 +99,14 @@ renderer. `SYNTH_OPENAI_API_KEY` and `SYNTH_ADVISOR_API_KEY` remain explicit
 fallbacks when desktop credential encryption is unavailable or intentionally
 not used. Availability checks are offline and make no provider request.
 
+Scientific runtime setup also stays behind native picker tokens. The desktop
+first previews the isolated checkout and Python executable through the fixed
+`workspace preview-nomos-binding` intent. The preview checks the exact baseline,
+clean/no-remote source state, supported Python version, and required execution
+capabilities without writing or contacting a provider. **Connect runtime** is
+enabled only for a ready preview; the binding command rechecks the same facts
+before creating or verifying the contained scientific store.
+
 `project.sqlite` is the workspace custody registry, not a legacy slice-run
 database. Source datasets still need normal task-compatible admission, snapshot
 and evaluation contracts before training. **Start optimization** now shows the

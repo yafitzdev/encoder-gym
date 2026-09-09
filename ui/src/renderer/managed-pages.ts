@@ -31,16 +31,18 @@ export function renderDatasets(workspace: ManagedWorkspace, actions: Actions, pr
 
 export interface ProviderPageState { loading: boolean; error?: string; status?: ManagedProviderStatus }
 export interface ProviderPageActions { configure(): void; refresh(): void; remove(role: ProviderRole): void }
+export interface ScientificRuntimeActions { configure(): void; upgrade(): void }
 
-export function renderManagedSettings(project: ProjectEntry, workspace: ManagedWorkspace, providerState: ProviderPageState, providerActions: ProviderPageActions, actions: Actions, projects: ProjectActions): HTMLElement {
+export function renderManagedSettings(project: ProjectEntry, workspace: ManagedWorkspace, providerState: ProviderPageState, providerActions: ProviderPageActions, runtimeActions: ScientificRuntimeActions, actions: Actions, projects: ProjectActions): HTMLElement {
   const binding = workspace.scientificBinding, providers = providerState.status?.catalog ?? workspace.providerCatalog;
   const configureProviders = button(providers ? "Edit provider setup" : "Configure providers", providerActions.configure, "secondary");
   configureProviders.disabled = providerState.loading;
   return h("div", { class: "page-content settings-page" }, pageHeader("Project settings", "Runtime, provider authorities, workspace identity, and integrity."),
     h("section", { class: "project-info" }, sectionHeader("Scientific runtime", tag(binding ? "Connected" : "Not connected", binding ? "accent" : undefined)),
       binding ? h("div", {}, h("p", { class: "section-note" }, "The task adapter and scientific store are bound to the current baseline revision. Readiness re-verifies their exact identities before every launch."), facts([["Task adapter", binding.adapter.key], ["Protocol", binding.adapter.protocol], ["Baseline revision", binding.baselineRevisionId]]),
-        details("Runtime and store identity", facts([["Runtime", copyField(displayPath(binding.runtime.location), actions.copy)], ["Scientific store", binding.store.databasePath], ["Binding", copyField(binding.id, actions.copy)]]))) :
-        h("p", { class: "section-note" }, "This project currently owns model and dataset custody only. No task adapter or scientific store is connected, so training snapshots, evaluation authority, and optimization runs cannot be verified. Desktop binding setup is not implemented yet; readiness will continue to block rather than infer one.")),
+        details("Runtime and store identity", facts([["Runtime", copyField(displayPath(binding.runtime.location), actions.copy)], ["Scientific store", binding.store.databasePath], ["Binding", copyField(binding.id, actions.copy)]])), h("div", { class: "inline-group settings-actions" }, button("Reverify or change runtime", runtimeActions.configure, "secondary"))) :
+        workspace.modelCatalog ? h("div", {}, h("p", { class: "section-note" }, "This project currently owns model and dataset custody only. Connect a verified task runtime before training snapshots, evaluation authority, or optimization runs can exist."), button("Connect scientific runtime", runtimeActions.configure, "primary")) :
+          h("div", {}, h("p", { class: "section-note" }, "This older workspace has no immutable model history yet. Initialize it from the already-verified imported baseline before connecting a runtime. Models and datasets are not copied or changed."), button("Initialize model history", runtimeActions.upgrade, "primary"))),
     h("section", { class: "project-info" }, sectionHeader("Provider authorities", tag(providers ? `${providers.providers.length} configured` : "Not configured")),
       providerState.error ? h("p", { class: "form-error", role: "alert" }, providerState.error) : null,
       providers ? h("div", {}, h("p", { class: "section-note" }, "Generation, advisor, and optional evaluator settings are separate. Secret values are never part of this project record."), ...providers.providers.map(provider => {

@@ -165,3 +165,43 @@ test("provider configuration serializes only validated non-secret settings to a 
   assert.equal(parsed.advisor.environment_fallback, "SYNTH_ADVISOR_API_KEY");
   assert.equal(existsSync(temporary), false);
 });
+
+test("scientific binding uses only native-picked runtime tokens and requires a successful preview", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gym-managed-binding-")), folder = join(root, "project"); mkdirSync(folder);
+  const id = randomUUID(), modelId = randomUUID(), revisionId = randomUUID();
+  const baseline = { source: folder, format: "safetensors-encoder", architecture: "bert", files: [], bytes: 10, fingerprint: "sha256:" + "c".repeat(64), execution: "not-configured" };
+  const workspace = {
+    folder, verified: true,
+    manifest: { version: 1, id, name: "Binding fixture", createdAt: new Date().toISOString(), task: null, baseline }, datasets: [],
+    modelCatalog: { projectId: id, artifacts: [{ id: modelId, projectId: id, name: "baseline", createdAt: new Date().toISOString(), origin: "imported", path: "models/baseline", format: baseline.format, bytes: 10, fingerprint: baseline.fingerprint }], baselineRevisions: [], activeBaselineRevisionId: revisionId },
+  };
+  const registry = new ProjectRegistry(join(root, "profile", "projects.json")); registry.addManaged(workspace);
+  const calls = [];
+  const previewOutput = {
+    projectId: id, projectName: workspace.manifest.name, baselineRevisionId: revisionId,
+    activeModel: { name: "baseline", format: baseline.format, bytes: 10, fingerprint: baseline.fingerprint },
+    adapter: { key: "nomos", protocol: "v1", configurationFingerprint: "sha256:" + "a".repeat(64) },
+    runtimeLocation: join(root, "isolated"), sourceRevision: "abc123", sourceFingerprint: "sha256:" + "b".repeat(64),
+    projectSnapshot: { id: randomUUID(), fingerprint: "sha256:" + "d".repeat(64) },
+    python: { executable: join(root, "python.exe"), version: "3.12.4", compatibleVersion: true, capabilities: [], ready: true },
+    store: { databasePath: "runs/scientific.sqlite", action: "initialize_new_store" }, ready: true,
+  };
+  const executor = async (_executable, args) => {
+    calls.push(args);
+    if (args[3] === "open") return JSON.stringify(workspace);
+    if (args[3] === "preview-nomos-binding") return JSON.stringify(previewOutput);
+    if (args[3] === "bind-nomos") return JSON.stringify({ ...workspace, scientificBinding: { id: randomUUID() } });
+    throw new Error("unexpected command");
+  };
+  const backend = new ManagedBackend("owned-synth", registry, executor);
+  const runtime = await backend.chooseNomosRuntime(id, join(root, "isolated"));
+  const python = await backend.chooseNomosPython(id, join(root, "python.exe"));
+  await assert.rejects(() => backend.previewNomosBinding(id, "renderer-path", python.token), /Choose the isolated runtime/);
+  const preview = await backend.previewNomosBinding(id, runtime.token, python.token);
+  await assert.rejects(() => backend.bindNomos(id, "renderer-path"), /Preview the scientific runtime/);
+  await backend.bindNomos(id, preview.token);
+  const bindArgs = calls.find(args => args[3] === "bind-nomos");
+  assert.equal(bindArgs[bindArgs.indexOf("--runtime") + 1], join(root, "isolated"));
+  assert.equal(bindArgs[bindArgs.indexOf("--python") + 1], join(root, "python.exe"));
+  assert.equal(bindArgs.includes("renderer-path"), false);
+});

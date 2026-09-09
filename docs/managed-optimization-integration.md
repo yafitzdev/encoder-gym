@@ -121,6 +121,15 @@ as an explicitly authorized root; it must not weaken the adapter's clean,
 no-remote isolated-runtime checks. Arbitrary shell commands and arbitrary
 adapter code remain impossible.
 
+Project settings owns a two-step runtime connection. Native pickers mint opaque
+main-process tokens for the isolated checkout and Python executable. A passive
+CLI preview verifies the clean/no-remote runtime, exact active-baseline match,
+Python 3.11/3.12 compatibility, and every dependency group needed for training,
+retrieval evaluation, local agent evaluation, and diagnostics. Only a ready
+preview token can reach the fixed binding intent. Binding repeats all checks,
+then creates or verifies the contained scientific store and appends the binding;
+preview never writes, contacts a provider, trains, or evaluates.
+
 Historical Nomos databases and journals are not automatically bound. Importing
 legacy evidence requires a future explicit verifier and is outside this goal.
 
@@ -302,6 +311,24 @@ An explicit final preflight may inspect its binding and scientific authority but
 must make no provider call, training run, sealed evaluation, spend, or artifact
 mutation. A real run starts only after the user sees and authorizes its final
 immutable preview.
+
+The 2026-09-09 binding preflight copied the real managed workspace to a temporary
+directory, upgraded only that copy, and matched its 134,211,908-byte baseline to
+isolated revision `4450ab3f1de8a1fc64bcbe5d77c67d0fb0f99af9`. The selected
+Python 3.12 environment passed training, retrieval, and diagnostic capability
+checks but lacks `onnxruntime_genai`, so local agent evaluation—and therefore
+binding—is truthfully blocked. The actual managed workspace and isolated runtime
+were not changed. Project settings exposes the older workspace's required model-
+history upgrade separately rather than hiding it inside runtime setup.
+
+A second temporary-copy check supplied an explicit no-op marker for the one
+missing Python capability, bound the runtime, and reopened readiness in a fresh
+CLI process. All four scientific checks—binding, store, runtime, and persisted
+project—remained ready. This check exposed and fixed two integration defects:
+Windows extended paths are now stripped before SQLite URL construction, and
+runtime verification now loads the immutable project identity from the bound
+store before asking the adapter to reproduce its content. It no longer compares
+against the adapter's intentionally ephemeral inspection ID.
 
 ## Delivery order
 

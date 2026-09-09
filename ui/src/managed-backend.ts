@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedProviderStatus, ManagedReadiness, OptimizationManifestChoice, ProviderInput, ProviderSettingsRequest } from "./managed-control.js";
+import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, ProviderInput, ProviderSettingsRequest } from "./managed-control.js";
 import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, LocalModel, ManagedWorkspace, ModelChoice } from "./managed-workspace.js";
 import type { ProjectRegistry } from "./project-registry.js";
 import type { WorkspaceSnapshot } from "./workspace.js";
@@ -95,6 +95,9 @@ export class ManagedBackend {
   private parents = new Map<string, string>();
   private datasets = new Map<string, DatasetChoice & { projectId: string }>();
   private manifests = new Map<string, { projectId: string; path: string; name: string }>();
+  private runtimes = new Map<string, { projectId: string; path: string }>();
+  private pythons = new Map<string, { projectId: string; path: string }>();
+  private bindingPreviews = new Map<string, { projectId: string; runtime: string; python: string; ready: boolean }>();
   private activeProjects = new Set<string>();
   private busy = false;
   constructor(readonly executable: string, private registry: ProjectRegistry, private executor: CommandExecutor = executeCommand) {}
@@ -212,6 +215,47 @@ export class ManagedBackend {
   async providerStatus(projectId: string): Promise<ManagedProviderStatus> {
     const workspace = await this.openRegistered(projectId);
     return this.command<ManagedProviderStatus>(["providers", workspace.folder, "show"]);
+  }
+
+  async chooseNomosRuntime(projectId: string, path: string): Promise<NativePathChoice> {
+    await this.openRegistered(projectId);
+    this.runtimes.clear();
+    const token = randomUUID();
+    this.runtimes.set(token, { projectId, path });
+    return { token, path };
+  }
+
+  async chooseNomosPython(projectId: string, path: string): Promise<NativePathChoice> {
+    await this.openRegistered(projectId);
+    this.pythons.clear();
+    const token = randomUUID();
+    this.pythons.set(token, { projectId, path });
+    return { token, path };
+  }
+
+  async previewNomosBinding(projectId: string, runtimeToken: unknown, pythonToken: unknown): Promise<NomosBindingPreview> {
+    const runtime = typeof runtimeToken === "string" ? this.runtimes.get(runtimeToken) : undefined;
+    const python = typeof pythonToken === "string" ? this.pythons.get(pythonToken) : undefined;
+    if (!runtime || !python || runtime.projectId !== projectId || python.projectId !== projectId) throw new Error("Choose the isolated runtime and Python executable for this project again.");
+    const workspace = await this.openRegistered(projectId);
+    const inspected = await this.command<Omit<NomosBindingPreview, "token">>(["preview-nomos-binding", workspace.folder, "--runtime", runtime.path, "--python", python.path]);
+    if (inspected.projectId !== projectId) throw new Error("The runtime preview belongs to a different project.");
+    this.bindingPreviews.clear();
+    const token = randomUUID();
+    this.bindingPreviews.set(token, { projectId, runtime: runtime.path, python: python.path, ready: inspected.ready === true });
+    return { ...inspected, token };
+  }
+
+  async bindNomos(projectId: string, previewToken: unknown): Promise<ManagedWorkspace> {
+    const selected = typeof previewToken === "string" ? this.bindingPreviews.get(previewToken) : undefined;
+    if (!selected || selected.projectId !== projectId) throw new Error("Preview the scientific runtime for this project again.");
+    if (!selected.ready) throw new Error("Resolve every missing runtime capability and preview the setup again before connecting.");
+    const workspace = await this.openRegistered(projectId);
+    return this.exclusiveProject(projectId, async () => {
+      const bound = await this.command<ManagedWorkspace>(["bind-nomos", workspace.folder, "--runtime", selected.runtime, "--python", selected.python, "--actor", "local-operator", "--reason", "Bind verified desktop scientific runtime"]);
+      this.bindingPreviews.delete(previewToken as string);
+      return bound;
+    });
   }
 
   async configureProviders(projectId: string, value: unknown): Promise<ManagedProviderStatus> {

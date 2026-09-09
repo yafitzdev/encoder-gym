@@ -15,6 +15,7 @@ import { newProjectDialog, importDatasetDialog } from "./onboarding.js";
 import { renderDatasets, renderManagedSettings, type ProviderPageActions, type ProviderPageState } from "./managed-pages.js";
 import { renderOptimization, type OptimizationPageActions, type OptimizationPageState } from "./optimization-page.js";
 import { providerDialog } from "./provider-dialog.js";
+import { scientificRuntimeDialog } from "./scientific-runtime-dialog.js";
 
 const element = (id: string): HTMLElement => { const found = document.getElementById(id); if (!found) throw new Error("Missing #" + id); return found; };
 interface ProjectView { history: NavigationHistory; models: ModelPageState; details: Map<string, DetailState>; optimization: OptimizationPageState; providers: ProviderPageState }
@@ -258,6 +259,30 @@ export function mount(): void {
       void bridge.removeProviderCredential(id, role).then(result => { if (selection.selectedId === id) { view.providers.status = result; view.providers.loading = false; render(); notify("Saved credential removed."); } }, error => { if (selection.selectedId === id) { view.providers.loading = false; view.providers.error = message(error); render(); } });
     },
   };
+  const runtimeActions = {
+    configure: () => {
+      const id = selection.selectedId;
+      if (!id || loading || !workspace()?.managed) return;
+      scientificRuntimeDialog(element("project-dialog") as HTMLDialogElement, bridge, id, result => {
+        if (selection.selectedId !== id) return;
+        opened = result; view.optimization = { loading: false }; render();
+        notify("Scientific runtime connected. No training or evaluation was run.");
+      });
+    },
+    upgrade: () => {
+      const id = selection.selectedId;
+      if (!id || loading || !workspace()?.managed) return;
+      loading = true; loadingMessage = "Initializing immutable model history from the verified baseline…"; render();
+      void bridge.upgradeManagedProject(id).then(result => {
+        if (selection.selectedId !== id) return;
+        opened = result; loading = false; view.optimization = { loading: false }; render();
+        notify("Model history initialized. The checkpoint and datasets are unchanged.");
+      }, error => {
+        if (selection.selectedId !== id) return;
+        loading = false; operationError = error; render();
+      });
+    },
+  };
   const actions: Actions = {
     navigate, render, help, notify, connect: projects.addFolder,
     backTo: page => { if (view.history.returnTo(page, main.scrollTop)) { render(); restorePlace(); } else navigate({ page }); },
@@ -297,7 +322,7 @@ export function mount(): void {
     let content: HTMLElement;
     if (collectionError) content = h("div", { class: "page-content" }, h("h1", { tabindex: "-1" }, "Project library unavailable"), h("section", { class: "project-recovery", role: "alert" }, failureNotice(collectionError), button("Try again", () => { void refreshCollection(); }, "primary")));
     else if (!project) content = loading ? h("div", { class: "page-content", role: "status" }, "Opening project collection…") : renderWelcome(projects);
-    else if (current.page === "project") content = data?.managed ? renderManagedSettings(project, data.managed, view.providers, providerActions, actions, projects) : renderProjectSettings(project, opened, actions, projects);
+    else if (current.page === "project") content = data?.managed ? renderManagedSettings(project, data.managed, view.providers, providerActions, runtimeActions, actions, projects) : renderProjectSettings(project, opened, actions, projects);
     else if (!data) content = renderProjectState(project, opened, actions, projects, current.page);
     else {
       const detailKey = (current.id ?? "") + ":" + (current.runId ?? "");

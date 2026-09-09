@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedProviderStatus, ManagedReadiness, OptimizationManifestChoice, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
+import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
 import type { OpenedProject, ProjectCollection } from "./projects.js";
 import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, ModelChoice } from "./managed-workspace.js";
 
@@ -19,6 +19,10 @@ export interface EncoderGymBridge {
   configureManagedProviders(id: string, request: ProviderSettingsRequest): Promise<ManagedProviderStatus>;
   setProviderCredential(id: string, role: ProviderRole, secret: string): Promise<ManagedProviderStatus>;
   removeProviderCredential(id: string, role: ProviderRole): Promise<ManagedProviderStatus>;
+  chooseNomosRuntime(id: string): Promise<NativePathChoice | null>;
+  chooseNomosPython(id: string): Promise<NativePathChoice | null>;
+  previewNomosBinding(id: string, runtimeToken: string, pythonToken: string): Promise<NomosBindingPreview>;
+  bindNomos(id: string, previewToken: string): Promise<OpenedProject>;
   getProjects(): Promise<ProjectCollection>;
   addProjectFolder(): Promise<ProjectCollection | null>;
   openExample(): Promise<ProjectCollection>;
@@ -47,6 +51,10 @@ const bridge: EncoderGymBridge = {
   configureManagedProviders: (id, request) => ipcRenderer.invoke("encoder-gym:configure-managed-providers", id, request),
   setProviderCredential: (id, role, secret) => ipcRenderer.invoke("encoder-gym:set-provider-credential", id, role, secret),
   removeProviderCredential: (id, role) => ipcRenderer.invoke("encoder-gym:remove-provider-credential", id, role),
+  chooseNomosRuntime: id => ipcRenderer.invoke("encoder-gym:choose-nomos-runtime", id),
+  chooseNomosPython: id => ipcRenderer.invoke("encoder-gym:choose-nomos-python", id),
+  previewNomosBinding: (id, runtimeToken, pythonToken) => ipcRenderer.invoke("encoder-gym:preview-nomos-binding", id, runtimeToken, pythonToken),
+  bindNomos: (id, previewToken) => ipcRenderer.invoke("encoder-gym:bind-nomos", id, previewToken),
   getProjects: () => ipcRenderer.invoke("encoder-gym:get-projects"),
   addProjectFolder: () => ipcRenderer.invoke("encoder-gym:add-project-folder"),
   openExample: () => ipcRenderer.invoke("encoder-gym:open-example"),

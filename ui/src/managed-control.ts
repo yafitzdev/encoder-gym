@@ -83,3 +83,16 @@ export interface ManagedProviderStatus {
   projectId: string; configured: boolean; catalog?: import("./managed-workspace.js").ProviderCatalog | null;
   credentialAvailability: CredentialAvailability[]; liveProbePerformed: false;
 }
+
+export interface NativePathChoice { token: string; path: string }
+export interface PythonCapability { key: string; label: string; ready: boolean; missingModules: string[] }
+export interface NomosBindingPreview {
+  token: string; projectId: string; projectName: string; baselineRevisionId: string;
+  activeModel: { name: string; format: string; bytes: number; fingerprint: string };
+  adapter: { key: string; protocol: string; configurationFingerprint: string };
+  runtimeLocation: string; sourceRevision: string; sourceFingerprint: string;
+  projectSnapshot: { id: string; fingerprint: string };
+  python: { executable: string; version: string; compatibleVersion: boolean; capabilities: PythonCapability[]; ready: boolean };
+  store: { databasePath: string; action: "initialize_new_store" | "verify_existing_store" };
+  previousBindingId?: string; ready: boolean;
+}
