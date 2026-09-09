@@ -88,6 +88,7 @@ struct PythonRuntimeInspection {
 struct PythonPreparationResult {
     installed_packages: Vec<&'static str>,
     python: PythonRuntimeInspection,
+    pip_bootstrapped: bool,
     network_used: bool,
 }
 
@@ -1888,6 +1889,7 @@ async fn prepare_nomos_python(
         !packages.is_empty(),
         "The selected Python runtime already provides every required capability."
     );
+    let pip_bootstrapped = ensure_python_pip(python, &verified.runtime_root).await?;
     eprintln!(
         "Installing the fixed missing Nomos runtime package set into the explicitly selected Python environment; this may use the network."
     );
@@ -1927,8 +1929,59 @@ async fn prepare_nomos_python(
     print(&PythonPreparationResult {
         installed_packages: packages,
         python: inspection,
+        pip_bootstrapped,
         network_used: true,
     })
+}
+
+async fn ensure_python_pip(python: &Path, runtime_root: &Path) -> anyhow::Result<bool> {
+    async fn usable(python: &Path, runtime_root: &Path) -> anyhow::Result<bool> {
+        let output = tokio::time::timeout(
+            Duration::from_secs(15),
+            tokio::process::Command::new(python)
+                .args(["-m", "pip", "--version"])
+                .current_dir(runtime_root)
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "The selected Python runtime did not answer its pip check within 15 seconds."
+            )
+        })?
+        .map_err(|error| {
+            anyhow::anyhow!("Could not check pip through the selected Python executable: {error}")
+        })?;
+        Ok(output.status.success())
+    }
+
+    if usable(python, runtime_root).await? {
+        return Ok(false);
+    }
+    eprintln!(
+        "The selected Python environment has no usable pip; restoring it from Python's bundled offline ensurepip package."
+    );
+    let output = tokio::time::timeout(
+        Duration::from_secs(5 * 60),
+        tokio::process::Command::new(python)
+            .args(["-m", "ensurepip", "--upgrade", "--default-pip"])
+            .current_dir(runtime_root)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| {
+        anyhow::anyhow!("The offline pip bootstrap exceeded five minutes and was stopped.")
+    })?
+    .map_err(|error| {
+        anyhow::anyhow!("Could not start Python's bundled ensurepip module: {error}")
+    })?;
+    anyhow::ensure!(
+        output.status.success() && usable(python, runtime_root).await?,
+        "Python's bundled ensurepip module could not restore pip. Repair this interpreter or choose another Python 3.11/3.12 environment."
+    );
+    Ok(true)
 }
 
 fn missing_python_packages(

@@ -15,6 +15,33 @@ test("all 15 model identities are present and recovered attempts remain linked",
   assert.ok(recovered.candidate.model);
   assert.equal(recovered.candidate.failure, undefined);
 });
+test("managed Models exposes only cataloged candidates, not imported historical checkpoints", () => {
+  const managed = structuredClone(snapshot);
+  const projectId = "00000000-0000-4000-8000-000000000001";
+  const baselineId = "00000000-0000-4000-8000-000000000002";
+  managed.managed = {
+    modelCatalog: {
+      projectId,
+      activeBaselineRevisionId: "00000000-0000-4000-8000-000000000003",
+      baselineRevisions: [{ modelArtifactId: baselineId }],
+      artifacts: [{ id: baselineId, projectId, fingerprint: managed.baseline.fingerprint }],
+    },
+  };
+  assert.equal(candidateRows(managed).length, 0);
+
+  const row = candidateRows(snapshot).find(item => item.candidate.model);
+  assert.ok(row?.candidate.model);
+  managed.managed.modelCatalog.artifacts.push({
+    id: "00000000-0000-4000-8000-000000000004",
+    projectId,
+    fingerprint: row.candidate.model.fingerprint,
+    producingRun: { id: row.run.id, fingerprint: "sha256:" + "a".repeat(64) },
+  });
+  assert.deepEqual(candidateRows(managed).map(item => item.candidate.id), [row.candidate.id]);
+
+  managed.managed.modelCatalog.baselineRevisions.push({ modelArtifactId: managed.managed.modelCatalog.artifacts.at(-1).id });
+  assert.equal(candidateRows(managed).length, 0, "a former or active baseline is not implicitly a candidate");
+});
 test("all displayed comparisons share exact baseline, suite, and metric authority within a group", () => {
   const groups = comparisonGroups(snapshot, initialFilter());
   assert.ok(groups.length > 1);

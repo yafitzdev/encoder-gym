@@ -82,9 +82,24 @@ export function setupName(run: RunRecord): string {
   return `${run.baselines.length} ${run.baselines.length === 1 ? "benchmark" : "benchmarks"} · ${run.agentTopK ? `top-${run.agentTopK} agent` : "development evaluation"}`;
 }
 export function candidateRows(workspace: WorkspaceSnapshot): CandidateRow[] {
+  const catalog = workspace.managed?.modelCatalog;
+  const baselineArtifactIds = catalog
+    ? new Set(catalog.baselineRevisions.map(revision => revision.modelArtifactId))
+    : undefined;
+  const candidateArtifacts = catalog
+    ? catalog.artifacts.filter(artifact => !baselineArtifactIds!.has(artifact.id))
+    : undefined;
   const rows = new Map<string, CandidateRow>();
   for (const run of [...workspace.runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt))) {
     for (const candidate of run.candidates) {
+      // A bound scientific store can contain valid historical experiments whose
+      // checkpoints were never brought into this managed project's custody.
+      // Runs and Evaluation still expose that evidence, but Models represents
+      // only project-catalog artifacts and their baseline/candidate relations.
+      if (candidateArtifacts && !candidateArtifacts.some(artifact =>
+        candidate.model?.fingerprint === artifact.fingerprint &&
+        (!artifact.producingRun || artifact.producingRun.id === run.id)
+      )) continue;
       const previous = rows.get(candidate.id);
       if (previous) previous.attempts.push(run);
       else rows.set(candidate.id, { candidate, run, attempts: [run] });
