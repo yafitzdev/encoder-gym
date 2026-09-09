@@ -31,6 +31,7 @@ export const humanize = (value: string) => value.replaceAll("_", " ").replace(/^
 export const suiteName = (suite: string) => humanize(suite);
 export const modelName = (key: string) => key.split(/[\\/]/).filter(Boolean).at(-1)?.replaceAll("_", " ") ?? key;
 export const dateLabel = (date: string) => new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(date));
+export const localDateTimeLabel = (date: string) => new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(date)) + " local time";
 export const timeLabel = (date: string) => new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }).format(new Date(date)) + " UTC";
 export function durationLabel(seconds?: number): string { return seconds === undefined ? "Not recorded" : seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`; }
 export function bytesLabel(bytes: number): string { return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? (bytes / 1024).toFixed(1) + " KB" : (bytes / 1024 / 1024).toFixed(1) + " MB"; }

@@ -1,5 +1,6 @@
 import type { ManagedLaunchPreview, ManagedReadiness, ManagedRunStatus, OptimizationManifestChoice, PreparedOptimizationChoice, ReadinessCheck, ReadinessState } from "../managed-control.js";
 import type { ManagedWorkspace } from "../managed-workspace.js";
+import { localDateTimeLabel } from "./catalog.js";
 import { button, details, facts, pageHeader, sectionHeader, status, tag } from "./components.js";
 import { h } from "./dom.js";
 
@@ -65,13 +66,13 @@ const categoryCopy: Record<string, [string, string]> = {
   recovery: ["Resolve the existing run", "Continue or replace the run already associated with this exact definition."],
 };
 const severity: Record<ReadinessState, number> = { ready: 0, action_required: 1, unavailable: 2, stale: 3, blocked: 4 };
-function readinessList(readiness: ManagedReadiness, actions: OptimizationPageActions): HTMLElement {
-  const required = readiness.report.checks.filter(check => check.required);
+function readinessList(readiness: ManagedReadiness, actions: OptimizationPageActions, handledKeys: ReadonlySet<string> = new Set()): HTMLElement {
+  const required = readiness.report.checks.filter(check => check.required && !handledKeys.has(check.key));
   const blocked = required.filter(check => check.state !== "ready");
   const groups = [...new Set(blocked.map(check => check.category))].map(category => blocked.filter(check => check.category === category));
   const ready = required.filter(check => check.state === "ready");
   return h("section", { class: "readiness-list", "aria-label": "Launch requirements" },
-    groups.length ? sectionHeader("Do these next", tag(String(groups.length))) : sectionHeader("Required setup", tag("Complete", "accent")),
+    groups.length ? sectionHeader("Do these next", tag(String(groups.length))) : sectionHeader("Required foundations", tag("Complete", "accent")),
     ...groups.map(group => {
       const state = group.reduce((worst, check) => severity[check.state] > severity[worst] ? check.state : worst, group[0]!.state);
       const display = labels[state], copy = categoryCopy[group[0]!.category] ?? [group[0]!.summary, group[0]!.evidence];
@@ -149,10 +150,10 @@ export function renderOptimization(workspace: ManagedWorkspace, state: Optimizat
       status(summary.label, summary.tone)) : null,
     readiness?.optimizationAuthority && !preview ? h("section", { class: "launch-definition" }, sectionHeader("Current approved repair", tag("Reviewed", "accent")),
       h("p", { class: "section-note" }, readiness.optimizationAuthority.hypotheses.join(" ")),
-      facts([["Candidates", String(readiness.optimizationAuthority.candidateCount)], ["Qualified repair rows", readiness.optimizationAuthority.deltaRows.toLocaleString()], ["Training ceiling", `${readiness.optimizationAuthority.budget.maximum_training_seconds.toLocaleString()} seconds`], ["External calls", String(readiness.optimizationAuthority.budget.maximum_external_calls)], ["Sealed uses", String(readiness.optimizationAuthority.budget.maximum_sealed_uses)], ["Authority expires", new Date(readiness.optimizationAuthority.validUntil).toLocaleString()]]),
+      facts([["Candidates", String(readiness.optimizationAuthority.candidateCount)], ["Qualified repair rows", readiness.optimizationAuthority.deltaRows.toLocaleString()], ["Training ceiling", `${readiness.optimizationAuthority.budget.maximum_training_seconds.toLocaleString()} seconds`], ["External calls", String(readiness.optimizationAuthority.budget.maximum_external_calls)], ["Sealed uses", String(readiness.optimizationAuthority.budget.maximum_sealed_uses)], ["Authority expires", localDateTimeLabel(readiness.optimizationAuthority.validUntil)]]),
       h("p", { class: "section-note" }, readiness.optimizationAuthority.trainingSnapshotId ? "Its immutable training snapshot already exists. Preparing resolves the final run definition." : "Preparing replays the approved native delta, freezes its logical training snapshot, and resolves the final run definition. It does not train, evaluate, expose sealed evidence, or contact a provider."),
       button(state.loading ? "Preparing…" : "Prepare approved run", actions.prepare, "primary", "arrow")) : null,
-    readiness && !preview ? readinessList(readiness, actions) : null,
+    readiness && !preview ? readinessList(readiness, actions, readiness.optimizationAuthority ? new Set(["optimization.preview"]) : new Set()) : null,
     preview ? h("section", { class: "launch-definition" }, sectionHeader("Exact run definition", tag(state.prepared?.name ?? state.manifest?.name ?? "Reviewed selection", "accent")),
       facts([["Baseline at reservation", runBaseline?.name ?? active?.name ?? workspace.manifest.name + " baseline"], ["Training snapshot", preview.trainingSnapshotId], ["Benchmark generation", preview.benchmarkGenerationId], ...budgetFacts(preview)]),
       h("p", { class: "section-note" }, "Sealed evidence remains unavailable to generation, training, development analysis, and the advisor. Its single use requires a later explicit authorization."),

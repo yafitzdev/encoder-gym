@@ -7,7 +7,8 @@ import { h } from "./dom.js";
 export interface ModelPageState { filter: CatalogFilter; selected: Set<string>; suiteIndex: number }
 export function renderModels(workspace: WorkspaceSnapshot, state: ModelPageState, actions: Actions): HTMLElement {
   const allRows = candidateRows(workspace);
-  const newest = workspace.runs[0];
+  const newest = workspace.managed ? allRows[0]?.run : workspace.runs[0];
+  const importedHistoryOnly = Boolean(workspace.managed && workspace.runs.length && !allRows.length);
   const setups = comparisonGroups(workspace, initialFilter());
   const groups = comparisonGroups(workspace, state.filter, state.suiteIndex);
   const shown = groups.reduce((n, g) => n + g.rows.length, 0);
@@ -19,13 +20,14 @@ export function renderModels(workspace: WorkspaceSnapshot, state: ModelPageState
   const filterChange = (key: keyof CatalogFilter, value: string) => { state.filter[key] = value; actions.render(); };
   const selectedSetup = selectedRows[0] ? setupId(selectedRows[0].run) : undefined;
   return h("div", { class: "page-content" },
-    pageHeader("Models", allRows.length ? "Which candidates improve on your reference model?" : "Your starting model and the alternatives you develop from it.", workspace.managed ? button("Start optimization", actions.prepareOptimization, "primary", "runs") : allRows.length ? button("How to read this", () => actions.help(), "ghost", "help") : null),
+    pageHeader("Models", allRows.length ? "Which candidates improve on your reference model?" : "Your starting model and the alternatives you develop from it.", workspace.managed && allRows.length ? button("Start optimization", actions.prepareOptimization, "primary", "runs") : !workspace.managed && allRows.length ? button("How to read this", () => actions.help(), "ghost", "help") : null),
     h("section", { class: "baseline-anchor", "aria-label": "Baseline encoder" },
       h("div", { class: "baseline-heading" }, h("div", { class: "model-symbol", "aria-hidden": "true" }, icon("models")),
         h("div", { class: "baseline-name" }, h("div", { class: "eyebrow" }, "Project baseline"), h("h2", {}, modelName(workspace.baseline.key)), h("p", {}, workspace.baseline.format + " · comparison reference"))),
       h("div", { class: "baseline-action" }, button("Inspect baseline", () => actions.navigate({ page: "baseline" }), "ghost small", "arrow")),
     ),
-    newest ? h("div", { class: "project-update" }, icon("runs"), h("span", {}, newest.decision === "retain_baseline" ? "Latest run kept the baseline." : "Latest recorded run is available.", " ", h("button", { type: "button", class: "inline-link", onClick: () => actions.navigate({ page: "run", id: newest.id }) }, `${runName(newest)} →`)), h("time", {}, dateLabel(newest.updatedAt))) : null,
+    newest ? h("div", { class: "project-update" }, icon("runs"), h("span", {}, newest.decision === "retain_baseline" ? "Latest managed candidate run kept the baseline." : "Latest managed candidate run is available.", " ", h("button", { type: "button", class: "inline-link", onClick: () => actions.navigate({ page: "run", id: newest.id }) }, `${runName(newest)} →`)), h("time", {}, dateLabel(newest.updatedAt))) :
+      importedHistoryOnly ? h("div", { class: "project-update" }, icon("runs"), h("span", {}, `${workspace.runs.length} imported historical ${workspace.runs.length === 1 ? "run is" : "runs are"} available under Runs and Evaluation. Their checkpoints are not registered project models. `, h("button", { type: "button", class: "inline-link", onClick: () => actions.navigate({ page: "runs" }) }, "Open runs →")), h("time", {}, dateLabel(workspace.runs[0]!.updatedAt))) : null,
     h("section", { class: "candidate-section", "aria-label": "Candidate comparisons" },
       sectionHeader("Candidates", allRows.length ? h("div", { class: "section-tools" }, tag(String(allRows.length)), h("span", { class: "muted" }, "Development results")) : null),
       allRows.length ? h("div", { class: "comparison-toolbar" },
@@ -71,8 +73,8 @@ export function renderModels(workspace: WorkspaceSnapshot, state: ModelPageState
           )),
         );
       }),
-      !allRows.length ? h("div", { class: "candidate-empty" }, h("h3", {}, "No candidates recorded yet"),
-        h("p", {}, "A candidate is a trained or transformed alternative to your baseline. Its results belong here once an experiment has produced evidence."),
+      !allRows.length ? h("div", { class: "candidate-empty" }, h("h3", {}, workspace.managed ? "No managed candidates yet" : "No candidates recorded yet"),
+        h("p", {}, importedHistoryOnly ? "Imported scientific history remains available under Runs and Evaluation. A checkpoint appears here only after it is registered as an immutable artifact of this managed project." : "A candidate is a trained or transformed alternative to your baseline. Its results belong here once an experiment has produced evidence."),
         workspace.managed ? h("div", { class: "next-step" }, h("div", {}, h("h3", {}, "Prepare the first bounded run"),
           h("p", {}, "Check the active baseline, scientific inputs, evaluations, providers, and finite budgets before reserving any work.")),
           button("Start optimization", actions.prepareOptimization, "primary", "arrow")) : button("Project settings", () => actions.navigate({ page: "project" })),

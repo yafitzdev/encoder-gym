@@ -17,6 +17,8 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
   await check("document.querySelector('[data-project-id=" + JSON.stringify(expected.manifest.id) + "]') !== null");
   await check("document.getElementById('source-state').textContent.includes('Managed workspace')");
   await check("document.querySelectorAll('[data-candidate-id]').length === 0");
+  await check("document.getElementById('page').textContent.includes('No managed candidates yet') && document.getElementById('page').textContent.includes('imported historical')");
+  await check("[...document.querySelectorAll('#page button')].filter(button=>button.textContent==='Start optimization').length === 1");
   mkdirSync(output, { recursive: true });
   const capture = async (name: string) => {
     await evaluate("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))");
@@ -30,6 +32,7 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
   }
   await capture("managed-current-datasets");
   await evaluate("document.querySelector('[data-page=project]').click()");
+  await evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(![...document.querySelectorAll('#page button')].some(button=>button.textContent.includes('Checking')))resolve(true);else if(n++>1000)reject(new Error('Provider availability did not resolve'));else setTimeout(poll,20)};poll()})");
   await capture("managed-current-settings");
   const readiness = await backend.readiness(expected.manifest.id);
   // Real adapter authority resolution may replay a large immutable graph. Do it
@@ -42,6 +45,7 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
   try {
     await evaluate("[...document.querySelectorAll('[data-page=models]')].at(0).click();[...document.querySelectorAll('#page button')].find(button=>button.textContent==='Start optimization').click();true");
     await evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(document.querySelector('.launch-summary')&&!document.querySelector('.workspace-progress'))resolve(true);else if(n++>1500)reject(new Error('Real managed readiness did not render'));else setTimeout(poll,20)};poll()})");
+    await check("[...document.querySelectorAll('#page button')].filter(button=>button.textContent==='Prepare approved run').length === 1 && !document.getElementById('page').textContent.includes('Do these next')");
     await capture("managed-current-readiness");
   } finally {
     backend.readiness = readinessMethod;
