@@ -2,7 +2,7 @@ use crate::{
     cli::{
         EncoderOptimizeAuthorizeArgs, EncoderOptimizeCancelArgs, EncoderOptimizeCommand,
         EncoderOptimizeManifestArgs, EncoderOptimizeRunArgs, ManagedOptimizeCommand,
-        ManagedProviderCommand, NomosWorkspaceArgs, WorkspaceCommand,
+        ManagedProviderCommand, NomosWorkspaceArgs, WorkspaceActivityCommand, WorkspaceCommand,
     },
     presentation::print,
 };
@@ -24,8 +24,9 @@ use project_workspace_core::{
     RuntimeBinding, RuntimeKind, ScientificBinding, ScientificStoreBinding, SecretReference,
 };
 use project_workspace_local::{
-    AcceptedModelPromotion, backfill_nomos, create_workspace, import_dataset, inspect_dataset,
-    inspect_model, open_workspace, record_accepted_model_promotion, record_provider_catalog,
+    AcceptedModelPromotion, AppendActivity, append_activity, backfill_nomos, create_workspace,
+    export_activity, import_dataset, inspect_dataset, inspect_model, open_workspace, read_action,
+    read_activity, record_accepted_model_promotion, record_provider_catalog,
     record_scientific_binding, upgrade_workspace,
 };
 use uuid::Uuid;
@@ -240,6 +241,7 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
             eprintln!("Upgrading the project registry; model and dataset artifacts are unchanged.");
             print(&upgrade_workspace(&folder).await?)
         }
+        WorkspaceCommand::Activity { folder, command } => activity(&folder, command).await,
         WorkspaceCommand::Readiness { folder, manifest } => {
             print(&readiness(&folder, manifest.as_deref()).await?)
         }
@@ -326,6 +328,32 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
             print(&backfill_nomos(&folder, &source_root).await?)
         }
     }
+}
+
+async fn activity(folder: &Path, command: WorkspaceActivityCommand) -> anyhow::Result<()> {
+    match command {
+        WorkspaceActivityCommand::List { limit } => {
+            print(&read_activity(folder, usize::try_from(limit)?).await?)?;
+        }
+        WorkspaceActivityCommand::Show { action_id } => {
+            print(&read_action(folder, action_id).await?)?;
+        }
+        WorkspaceActivityCommand::Append { file } => {
+            anyhow::ensure!(
+                std::fs::metadata(&file)?.len() <= 64 * 1024,
+                "Activity request exceeds 64 KiB."
+            );
+            let request: AppendActivity = serde_json::from_reader(File::open(file)?)?;
+            print(&append_activity(folder, request).await?)?;
+        }
+        WorkspaceActivityCommand::Export { output } => {
+            print(&serde_json::json!({
+                "output": std::path::absolute(&output)?.to_string_lossy(),
+                "events": export_activity(folder, &output).await?,
+            }))?;
+        }
+    }
+    Ok(())
 }
 
 async fn providers(

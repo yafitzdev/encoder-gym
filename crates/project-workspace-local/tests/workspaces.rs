@@ -1,12 +1,14 @@
 use chrono::{TimeZone, Utc};
 use project_workspace_core::{
-    AdapterBinding, BoundIdentity, DatasetPurpose, MANIFEST, ProviderAuthentication,
-    ProviderCatalog, ProviderConfiguration, ProviderKind, ProviderLimits, ProviderRole,
-    RuntimeBinding, RuntimeKind, ScientificBinding, ScientificStoreBinding, SecretReference,
+    ActivityEventState, ActivityFailure, ActivityReference, ActivitySource, AdapterBinding,
+    BoundIdentity, DatasetPurpose, MANIFEST, ProviderAuthentication, ProviderCatalog,
+    ProviderConfiguration, ProviderKind, ProviderLimits, ProviderRole, RuntimeBinding, RuntimeKind,
+    ScientificBinding, ScientificStoreBinding, SecretReference,
 };
 use project_workspace_local::{
-    AcceptedModelPromotion, backfill_nomos, create_workspace, import_dataset, inspect_dataset,
-    inspect_model, open_workspace, record_accepted_model_promotion, record_provider_catalog,
+    AcceptedModelPromotion, AppendActivity, append_activity, backfill_nomos, create_workspace,
+    export_activity, import_dataset, inspect_dataset, inspect_model, open_workspace, read_action,
+    read_activity, record_accepted_model_promotion, record_provider_catalog,
     record_scientific_binding, upgrade_workspace,
 };
 use serde_json::json;
@@ -17,6 +19,117 @@ fn model(root: &std::path::Path) -> std::path::PathBuf {
     let path = root.join("source-model");
     training_transformer::fixture::write_tiny_bert_bundle(&path).unwrap();
     path
+}
+
+#[tokio::test]
+async fn project_activity_is_append_only_hash_chained_and_exportable_jsonl() {
+    let temp = TempDir::new().unwrap();
+    let source = model(temp.path());
+    let preview = inspect_model(&source).unwrap();
+    let destination = temp.path().join("activity-project");
+    let workspace = create_workspace(
+        &destination,
+        "Activity fixture",
+        &source,
+        &preview.fingerprint,
+        None,
+    )
+    .await
+    .unwrap();
+    let action_id = uuid::Uuid::new_v4();
+    let run_id = uuid::Uuid::new_v4();
+    let at = Utc.with_ymd_and_hms(2026, 9, 10, 8, 0, 0).unwrap();
+    let request = |state, stage, completed, total, references, failure| AppendActivity {
+        action_id,
+        operation: "optimization.resume".into(),
+        source: ActivitySource::Desktop,
+        state,
+        stage,
+        completed,
+        total,
+        references,
+        failure,
+        created_at: at,
+    };
+    let first = append_activity(
+        &destination,
+        request(
+            ActivityEventState::Started,
+            None,
+            None,
+            None,
+            vec![ActivityReference::new("run", run_id.to_string()).unwrap()],
+            None,
+        ),
+    )
+    .await
+    .unwrap();
+    let progress = append_activity(
+        &destination,
+        request(
+            ActivityEventState::Progress,
+            Some("training".into()),
+            Some(2),
+            Some(5),
+            vec![],
+            None,
+        ),
+    )
+    .await
+    .unwrap();
+    append_activity(
+        &destination,
+        request(
+            ActivityEventState::Failed,
+            None,
+            None,
+            None,
+            vec![],
+            Some(
+                ActivityFailure::new("worker_exit", "Training worker stopped before completion.")
+                    .unwrap(),
+            ),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        progress.previous_event_fingerprint.as_deref(),
+        Some(first.fingerprint.as_str())
+    );
+    assert!(
+        append_activity(
+            &destination,
+            request(
+                ActivityEventState::Succeeded,
+                None,
+                None,
+                None,
+                vec![],
+                None
+            )
+        )
+        .await
+        .is_err()
+    );
+    let action = read_action(&destination, action_id).await.unwrap();
+    assert_eq!(action.state, ActivityEventState::Failed);
+    assert_eq!(action.project_id, workspace.manifest.id);
+    assert_eq!(
+        read_activity(&destination, 10).await.unwrap().actions.len(),
+        1
+    );
+    let export = temp.path().join("activity.jsonl");
+    assert_eq!(export_activity(&destination, &export).await.unwrap(), 3);
+    let lines = fs::read_to_string(export)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<project_workspace_core::ProjectActivityEvent>(line).unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(lines.len(), 3);
+    assert!(lines.iter().all(|event| event.action_id == action_id));
 }
 
 fn digest(character: char) -> String {

@@ -3,6 +3,27 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 #[derive(Debug, Subcommand)]
+pub enum WorkspaceActivityCommand {
+    /// List recent project actions with their complete immutable event chains.
+    List {
+        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..=10_000))]
+        limit: u32,
+    },
+    /// Show one action and every event recorded for it.
+    Show { action_id: Uuid },
+    /// Append one validated event from a JSON request file.
+    Append {
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// Export the complete verified event stream as JSON Lines.
+    Export {
+        #[arg(long = "destination")]
+        output: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum ManagedOptimizeCommand {
     /// Resolve the exact reviewed request without persisting a run.
     Preview {
@@ -109,6 +130,12 @@ pub enum WorkspaceCommand {
     Verify { folder: PathBuf },
     /// Upgrade the project registry and initialize missing baseline history.
     Upgrade { folder: PathBuf },
+    /// Inspect, append, or export the project-wide activity trail.
+    Activity {
+        folder: PathBuf,
+        #[command(subcommand)]
+        command: WorkspaceActivityCommand,
+    },
     /// Derive launch readiness from current managed and scientific facts.
     Readiness {
         folder: PathBuf,

@@ -204,3 +204,97 @@ fn local_onboarding_import_and_portable_reopen_are_real_cli_operations() {
     assert!(!failure.status.success());
     assert!(!root.join("project.sqlite").exists());
 }
+
+#[test]
+fn project_activity_cli_appends_inspects_and_exports_verified_jsonl() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    training_transformer::fixture::write_tiny_bert_bundle(&root.join("checkpoint")).unwrap();
+    let model = run(root, &["inspect-model", "checkpoint"]);
+    let workspace = run(
+        root,
+        &[
+            "create",
+            "activity-project",
+            "--name",
+            "Activity project",
+            "--model",
+            "checkpoint",
+            "--expected-fingerprint",
+            model["fingerprint"].as_str().unwrap(),
+        ],
+    );
+    let action_id = uuid::Uuid::new_v4();
+    let event = |state: &str| {
+        serde_json::json!({
+            "action_id": action_id,
+            "operation": "dataset.import",
+            "source": "desktop",
+            "state": state,
+            "references": if state == "started" { serde_json::json!([]) } else { serde_json::json!([{"kind":"dataset","id":uuid::Uuid::new_v4()}]) },
+            "created_at": "2026-09-10T12:00:00Z"
+        })
+    };
+    fs::write(
+        root.join("activity-start.json"),
+        serde_json::to_vec(&event("started")).unwrap(),
+    )
+    .unwrap();
+    run(
+        root,
+        &[
+            "activity",
+            "activity-project",
+            "append",
+            "--file",
+            "activity-start.json",
+        ],
+    );
+    fs::write(
+        root.join("activity-end.json"),
+        serde_json::to_vec(&event("succeeded")).unwrap(),
+    )
+    .unwrap();
+    run(
+        root,
+        &[
+            "activity",
+            "activity-project",
+            "append",
+            "--file",
+            "activity-end.json",
+        ],
+    );
+    let listed = run(root, &["activity", "activity-project", "list"]);
+    assert_eq!(listed["project_id"], workspace["manifest"]["id"]);
+    assert_eq!(listed["actions"][0]["action_id"], action_id.to_string());
+    assert_eq!(listed["actions"][0]["events"].as_array().unwrap().len(), 2);
+    let shown = run(
+        root,
+        &[
+            "activity",
+            "activity-project",
+            "show",
+            &action_id.to_string(),
+        ],
+    );
+    assert_eq!(shown["state"], "succeeded");
+    let exported = run(
+        root,
+        &[
+            "activity",
+            "activity-project",
+            "export",
+            "--destination",
+            "activity.jsonl",
+        ],
+    );
+    assert_eq!(exported["events"], 2);
+    assert_eq!(
+        fs::read_to_string(root.join("activity.jsonl"))
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
+}

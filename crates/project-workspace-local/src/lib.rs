@@ -1,4 +1,5 @@
 //! Local project custody. No training execution or dataset split decisions.
+mod activity;
 mod datasets;
 mod files;
 mod model;
@@ -16,6 +17,7 @@ use serde::Serialize;
 use sqlx::{Connection, Row, SqliteConnection, sqlite::SqliteConnectOptions};
 use uuid::Uuid;
 
+pub use activity::{AppendActivity, append_activity, export_activity, read_action, read_activity};
 pub use datasets::{DatasetPreview, backfill_nomos, import_dataset, inspect_dataset};
 use files::{canonical_plain, contained, copy_verified, hash, json, plain, write_new};
 pub use model::inspect_model;

@@ -6,11 +6,16 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+mod activity;
 mod models;
 mod providers;
 mod readiness;
 mod scientific;
 
+pub use activity::{
+    ActivityEventState, ActivityFailure, ActivityReference, ActivitySource, ProjectAction,
+    ProjectActivityEvent, ProjectActivityLog,
+};
 pub use models::{
     BaselineChange, BaselineRevision, BoundIdentity, ModelArtifact, ModelCatalog, ModelOrigin,
 };
