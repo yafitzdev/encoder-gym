@@ -11,6 +11,8 @@ mod models;
 mod providers;
 mod readiness;
 mod scientific;
+mod training_data;
+pub use training_data::{ModelDatasetLink, ModelTrainingEvidence, TrainingDatasetInput};
 
 pub use activity::{
     ActivityEventState, ActivityFailure, ActivityReference, ActivitySource, ProjectAction,

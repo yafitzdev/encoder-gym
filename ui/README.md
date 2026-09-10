@@ -55,9 +55,11 @@ They are labelled Legacy and are not silently converted into managed projects.
   read-only and can be forked. The native JSON and row identity are available
   through **Inspect**. Pages contain at most 25 rows or changes; back/forward
   preserve the selected version and page. Training imports reject held-out rows.
-  Creating a version does not grant training qualification. Verified links from
-  Nomos's historical training snapshots into this catalog are still pending;
-  the viewer does not infer them from names or row counts. See
+  Creating a version does not grant training qualification. A verified model
+  link opens its exact training version; the version's Models tab links back.
+  Imported final-stage data can be adopted through the recorded manifest CLI.
+  Native completed-candidate adoption is still pending; the viewer never infers
+  training provenance from names or row counts. See
   [dataset versions](../docs/dataset-versions-spec.md).
 - **Runs:** immutable experiment records. A run owns its candidate attempts,
   activity, recorded budgets, provenance, and final decision. Completion does
@@ -97,7 +99,7 @@ outputs produced before automatic registration was implemented. Promotion reuses
 the registered artifact and appends only the baseline revision. Native and managed
 inventory fingerprints are connected through the recorded source-model identity.
 
-Remaining model/dataset links, benchmark version management, and automatic agent
+Completed-candidate dataset adoption, benchmark version management, and automatic agent
 execution are tracked in [the product contract](../docs/encoder-workspace-product.md).
 
 Managed onboarding calls the project-owned `synth workspace` commands. It
@@ -270,6 +272,8 @@ inspects before/after changes, pages rows, and reopens every prior version.
 A deliberately lost response after a real committed edit verifies that retry
 reuses the same version, not a duplicate. The tests also cover folder recovery,
 restart, editable validation errors, busy controls, and narrow diff layouts.
+An additional recorded-input fixture follows model -> training dataset -> model,
+with membership adopted through the ordinary CLI rather than injected UI state.
 Tiny custody-format model fixtures never
 claim to be trained or executable encoders.
 

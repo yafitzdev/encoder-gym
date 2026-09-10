@@ -5,6 +5,9 @@
 `project-workspace-core` owns portable project identities, baseline inventories,
 dataset custody metadata, the project activity-event contract, and pure validation. `project-workspace-local` owns
 safe local copying, format inspection, hashing and project-bound SQLite.
+The workspace core's model/dataset link consumes only Dataset Management's
+immutable version artifact. Local persistence verifies manifest/source custody
+and pins that version without rewriting model artifacts or native run snapshots.
 `synth workspace` uses that adapter without opening the global synthetic-data
 store. Imported assets do not imply admitted snapshot membership, training
 execution, evaluation policy, or scientific approval. Existing slices retain

@@ -25,6 +25,7 @@ export function renderModel(workspace: WorkspaceSnapshot, id: string, tab: strin
   const parent = catalog?.parentModelId ? findModel(workspace, catalog.parentModelId) : row ? findModel(workspace, row.run.baseline.id) : undefined;
   const snapshotId = catalog?.trainingSnapshot?.id ?? row?.candidate.parameters.repair_snapshot_id;
   const snapshotRows = row?.candidate.parameters.repair_total_rows;
+  const trainingData = workspace.managed?.modelDatasetLinks?.find(link => link.projectId === catalog?.projectId && link.modelId === catalog.id && link.modelFingerprint === catalog.fingerprint);
   const overview = h("div", { class: "detail-columns" },
     h("section", {}, sectionHeader("Model"), facts([
       ["Status", m.role], ["Format", artifact.format], ["Size", bytesLabel(artifact.bytes)],
@@ -32,15 +33,18 @@ export function renderModel(workspace: WorkspaceSnapshot, id: string, tab: strin
       ...(parent ? [["Starting model", button(parent.name, () => actions.navigate({ page: "model", id: parent.id }), "ghost small")]] as [string, HTMLElement][] : []),
       ...(row ? [["Run", button(runLabel(row.run, workspace), () => actions.navigate({ page: "run", id: row.run.id }), "ghost small")]] as [string, HTMLElement][] : []),
     ])),
-    h("section", {}, sectionHeader("Training dataset"), snapshotId ? h("div", {},
+    h("section", {}, sectionHeader("Training dataset"), trainingData ? h("div", {},
+      h("p", {}, `${trainingData.inputs.reduce((total, input) => total + input.rows, 0).toLocaleString()} rows · Version ${trainingData.version.number}`),
+      button("Inspect dataset", () => actions.navigate({ page: "dataset", id: trainingData.version.id }), "ghost small", "arrow")) : snapshotId ? h("div", {},
       h("p", {}, snapshotRows ? `${Number(snapshotRows).toLocaleString()} examples` : "Recorded training version"),
-      button("Inspect dataset", () => actions.navigate({ page: "datasets", id: String(snapshotId) }), "ghost small", "arrow")) : h("p", { class: "muted" }, "Training version not recorded")));
+      button("Inspect training record", () => actions.navigate({ page: "model", id: m.id, tab: "training", runId }), "ghost small", "arrow")) : h("p", { class: "muted" }, "Training version not recorded")));
   const evaluations = row ? renderResults(row, state, actions) : reports.length ? h("div", {}, ...reports.map(report => h("section", { class: "evidence-section" },
     sectionHeader(suiteName(report.suite)), facts(Object.entries(report.metrics).map(([key, value]) => [metricInfo(key).label, score(value, key)])),
     details("Evaluation version", copyField(report.suiteFingerprint, actions.copy))))) : empty("No evaluations");
   const record = h("div", {}, facts([
     ["Artifact", copyField(artifact.key, actions.copy)], ["Fingerprint", copyField(artifact.fingerprint, actions.copy)], ["Model ID", copyField(m.id, actions.copy)],
     ...(snapshotId ? [["Training snapshot", copyField(String(snapshotId), actions.copy)]] as [string, HTMLElement][] : []),
+    ...(trainingData ? [["Dataset version", copyField(trainingData.version.id, actions.copy)], ["Training provenance", trainingData.evidence.kind === "importedManifest" ? "Recorded final-stage inputs; ancestor training unknown" : "Completed training receipt"], ["Dataset link", copyField(trainingData.fingerprint, actions.copy)]] as [string, HTMLElement | string][] : []),
     ...(row ? [["Training time", durationLabel(row.candidate.durationSeconds)]] as [string, string][] : []),
   ]), row ? h("section", {}, sectionHeader("Run history"), ...row.attempts.map(r => runListItem(r, workspace, actions))) : null);
   return h("div", { class: "page-content detail-page model-view", "data-model-id": m.id },

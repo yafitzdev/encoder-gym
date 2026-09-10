@@ -8,7 +8,7 @@ import { modelInventory } from "./model-inventory.js";
 import { h } from "./dom.js";
 
 function preview(row: InspectedDatasetRow): string {
-  for (const key of ["text", "query", "input", "instruction", "user_message", "decision_state_id"]) if (typeof row.value[key] === "string") return String(row.value[key]).slice(0, 180);
+  for (const key of ["text", "question", "query", "input", "instruction", "user_message", "objective", "decision_state_id"]) if (typeof row.value[key] === "string") return String(row.value[key]).slice(0, 180);
   return JSON.stringify(row.value).slice(0, 180);
 }
 function delta(version: DatasetVersionSummary): string {
@@ -55,7 +55,8 @@ export function renderDatasetPage(workspace: WorkspaceSnapshot, location: Locati
         change.after ? h("div", {}, h("small", { class: "muted" }, "After"), h("p", {}, preview(change.after)), button("Inspect after", () => controller.inspect(change.after!), "ghost small")) : null)))), pager(location, page.page.total, page.page.changes.length, actions)) : empty("No row changes") : h("div", { role: "status" }, controller.error ? "" : "Loading changes…");
   else if (tab === "versions") body = h("div", { class: "dataset-versions" }, ...entry.versions.map(v => h("section", { class: "artifact-row" }, h("div", { class: "artifact-row-name" }, h("h2", {}, `Version ${v.version.number}`), h("p", { class: "muted" }, `${v.rows.toLocaleString()} rows · ${delta(v)} · ${dateLabel(v.createdAt)}`)), button("Inspect version", () => actions.navigate({ page: "dataset", id: v.version.id, tab: "rows" }), "ghost small"))));
   else {
-    const models = modelInventory(workspace).filter(model => model.catalogArtifact?.projectId === version.version.projectId && model.catalogArtifact.trainingSnapshot?.id === version.version.id && model.catalogArtifact.trainingSnapshot.fingerprint === version.version.fingerprint);
+    const links = workspace.managed?.modelDatasetLinks ?? [];
+    const models = modelInventory(workspace).filter(model => links.some(link => link.projectId === version.version.projectId && link.version.id === version.version.id && link.version.fingerprint === version.version.fingerprint && link.modelId === model.id && link.modelFingerprint === model.catalogArtifact?.fingerprint));
     body = models.length ? h("div", { class: "artifact-list" }, ...models.map(model => h("div", { class: "artifact-row" }, h("div", { class: "artifact-row-name" }, h("h2", {}, model.name), tag(model.role)), button("Inspect model", () => actions.navigate({ page: "model", id: model.id }), "ghost small")))) : empty("No linked models");
   }
   const origin = entry.dataset.origin ? controller.find(entry.dataset.origin.id) : undefined;

@@ -38,14 +38,14 @@ pub struct DatasetRowPage {
 }
 
 struct SourceContents {
-    members: Vec<DatasetMember>,
+    members: BTreeMap<u64, DatasetMember>,
     selected: BTreeMap<u64, Value>,
 }
 
 fn scan(
     workspace: &ManagedWorkspace,
     import_id: Uuid,
-    selected: &BTreeSet<u64>,
+    selected: Option<&BTreeSet<u64>>,
 ) -> Result<SourceContents> {
     let source = workspace
         .datasets
@@ -65,7 +65,7 @@ fn scan(
         "The dataset source no longer matches its immutable import."
     );
     let mut reader = BufReader::new(File::open(&path)?);
-    let mut members = Vec::new();
+    let mut members = BTreeMap::new();
     let mut payloads = BTreeMap::new();
     let mut record = 0;
     let mut returned_bytes = 0;
@@ -85,22 +85,31 @@ fn scan(
             continue;
         }
         record += 1;
+        // The complete source was already validated and checksum-bound above.
+        // A page only needs content fingerprints for the requested records;
+        // constructing membership for every large native row makes paging slow.
+        if selected.is_some_and(|records| !records.contains(&record)) {
+            continue;
+        }
         let value: Value =
             serde_json::from_slice(&line).context("An imported row is no longer valid JSON.")?;
         ensure!(
             value.is_object(),
             "An imported record is no longer a JSON object."
         );
-        members.push(DatasetMember::imported(
-            SourceRecord {
-                import_id,
-                artifact_fingerprint: source.artifact.fingerprint.clone(),
-                record,
-            },
-            artifact_core::fingerprint(&value)?,
-            SnapshotSplit::Train,
-        )?);
-        if selected.contains(&record) {
+        members.insert(
+            record,
+            DatasetMember::imported(
+                SourceRecord {
+                    import_id,
+                    artifact_fingerprint: source.artifact.fingerprint.clone(),
+                    record,
+                },
+                artifact_core::fingerprint(&value)?,
+                SnapshotSplit::Train,
+            )?,
+        );
+        if selected.is_some() {
             returned_bytes += line.len();
             ensure!(
                 returned_bytes <= 16 * 1_048_576,
@@ -119,14 +128,17 @@ fn scan(
     })
 }
 
-pub(super) fn source_members(
+pub(crate) fn source_members(
     workspace: &ManagedWorkspace,
     import_id: Uuid,
 ) -> Result<Vec<DatasetMember>> {
-    Ok(scan(workspace, import_id, &BTreeSet::new())?.members)
+    Ok(scan(workspace, import_id, None)?
+        .members
+        .into_values()
+        .collect())
 }
 
-pub(super) fn verify_members(
+pub(crate) fn verify_members(
     workspace: &ManagedWorkspace,
     members: &[DatasetMember],
 ) -> Result<()> {
@@ -158,7 +170,7 @@ pub async fn read_rows(
 ) -> Result<DatasetRowPage> {
     ensure!((1..=100).contains(&limit), "Row page size must be 1–100.");
     let workspace = open_workspace(folder, false).await?;
-    let version = super::inspect(folder, version_id).await?;
+    let version = super::inspect_workspace(&workspace, version_id).await?;
     let selected: Vec<_> = version
         .members
         .iter()
@@ -188,7 +200,7 @@ pub(super) fn inspect_members(
     }
     let mut sources = BTreeMap::new();
     for (id, records) in requested {
-        sources.insert(id, scan(workspace, id, &records)?);
+        sources.insert(id, scan(workspace, id, Some(&records))?);
     }
     let mut rows = Vec::new();
     let mut bytes = 0;
@@ -196,7 +208,7 @@ pub(super) fn inspect_members(
         let source = &sources[&member.source.import_id];
         let original = source
             .members
-            .get(usize::try_from(member.source.record - 1)?)
+            .get(&member.source.record)
             .context("Source record is absent from the import.")?;
         ensure!(
             original.source == member.source

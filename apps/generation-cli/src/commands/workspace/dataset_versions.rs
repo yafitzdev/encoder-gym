@@ -16,6 +16,7 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceDatasetCommand) -> 
     use WorkspaceDatasetCommand::*;
     match command {
         List => super::print(&datasets::list(folder).await?),
+        AdoptBaseline => adopt_baseline(folder).await,
         Inspect { version_id } => super::print(&datasets::inspect(folder, version_id).await?),
         Rows {
             version_id,
@@ -79,6 +80,45 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceDatasetCommand) -> 
             .await
         }
     }
+}
+
+async fn adopt_baseline(folder: &Path) -> Result<()> {
+    initialize_activity(folder).await?;
+    let action_id = Uuid::new_v4();
+    let event = |state, references, failure| AppendActivity {
+        action_id,
+        operation: "dataset.adopt_baseline".into(),
+        source: ActivitySource::Cli,
+        state,
+        stage: None,
+        completed: None,
+        total: None,
+        references,
+        failure,
+        created_at: Utc::now(),
+    };
+    append_activity(folder, event(ActivityEventState::Started, vec![], None)).await?;
+    let result = project_workspace_local::model_datasets::adopt_baseline(folder).await;
+    let terminal = match &result {
+        Ok(link) => event(
+            ActivityEventState::Succeeded,
+            vec![
+                ActivityReference::new("model", link.model_id.to_string())?,
+                ActivityReference::new("dataset_version", link.version.id.to_string())?,
+            ],
+            None,
+        ),
+        Err(_) => event(
+            ActivityEventState::Failed,
+            vec![],
+            Some(ActivityFailure::new(
+                "training_data_adoption_failed",
+                "Training data could not be linked. Retry reuses any recorded dataset version; model files and history are unchanged.",
+            )?),
+        ),
+    };
+    append_activity(folder, terminal).await?;
+    super::print(&serde_json::json!({"actionId": action_id, "link": result?}))
 }
 
 async fn record(

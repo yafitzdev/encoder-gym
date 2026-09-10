@@ -1,6 +1,6 @@
 //! Project-bound persistence for native dataset variants. Sources remain owned
 //! immutable imports; version creation is not scientific training approval.
-mod rows;
+pub(crate) mod rows;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -45,9 +45,9 @@ pub async fn read_changes(
 ) -> Result<DatasetChangePage> {
     ensure!((1..=50).contains(&limit), "Change page size must be 1–50.");
     let workspace = open_workspace(folder, false).await?;
-    let version = inspect(folder, version_id).await?;
+    let version = inspect_workspace(&workspace, version_id).await?;
     let parent = match &version.parent {
-        Some(parent) => Some(inspect(folder, parent.id).await?),
+        Some(parent) => Some(inspect_workspace(&workspace, parent.id).await?),
         None => None,
     };
     let previous: BTreeMap<_, _> = parent
@@ -222,6 +222,13 @@ pub async fn list(folder: &Path) -> Result<Vec<DatasetEntry>> {
 
 pub async fn inspect(folder: &Path, version_id: Uuid) -> Result<DatasetVersion> {
     let workspace = open_workspace(folder, false).await?;
+    inspect_workspace(&workspace, version_id).await
+}
+
+async fn inspect_workspace(
+    workspace: &ManagedWorkspace,
+    version_id: Uuid,
+) -> Result<DatasetVersion> {
     let mut database = connect(Path::new(&workspace.folder), true, false).await?;
     let version = load_version(&mut database, workspace.manifest.id, version_id).await?;
     database.close().await?;
@@ -426,7 +433,7 @@ async fn optional_version(
     }
 }
 
-async fn load_version(
+pub(crate) async fn load_version(
     database: &mut SqliteConnection,
     project_id: Uuid,
     id: Uuid,
@@ -442,7 +449,8 @@ async fn load_version(
         let row = sqlx::query("SELECT dataset_id, number, parent_version_id, fingerprint, metadata_json FROM dataset_versions WHERE id=?")
             .bind(id.to_string()).fetch_optional(&mut *database).await?.context("Dataset version not found in this project.")?;
         let version: DatasetVersion = serde_json::from_str(&row.get::<String, _>("metadata_json"))?;
-        version.validate_integrity()?;
+        // The bottom-up replay below validates and reconstructs each complete
+        // version. Do not repeat its expensive membership validation here.
         ensure!(
             version.id == id
                 && version.project_id == project_id

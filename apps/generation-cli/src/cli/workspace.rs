@@ -6,6 +6,8 @@ use uuid::Uuid;
 pub enum WorkspaceDatasetCommand {
     /// List the project's base dataset, variants, and version summaries.
     List,
+    /// Reconstruct the imported model's exact recorded final-stage dataset.
+    AdoptBaseline,
     /// Create the base dataset from verified training imports.
     Create {
         #[arg(long)]

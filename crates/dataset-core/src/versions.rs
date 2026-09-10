@@ -470,7 +470,9 @@ impl DatasetVersion {
     }
 
     pub fn verify(&self, dataset: &DatasetBranch, parent: Option<&Self>) -> Result<()> {
-        self.validate_integrity()?;
+        // Reconstruct through the validating constructors, then compare the
+        // entire artifact (including its fingerprint). Validating this same
+        // membership before reconstruction would repeat the complete work.
         require(
             self.dataset_id == dataset.id && self.project_id == dataset.project_id,
             "Version belongs to another dataset",

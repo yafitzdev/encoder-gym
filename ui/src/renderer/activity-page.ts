@@ -32,6 +32,7 @@ const operationLabels: Record<string, string> = {
   "dataset.create": "Dataset created",
   "dataset.fork": "Dataset variant created",
   "dataset.revise": "Dataset version saved",
+  "dataset.adopt_baseline": "Recorded training data linked",
   "optimization.authorize_external": "External calls authorized",
   "optimization.authorize_sealed": "Sealed evaluation authorized",
   "optimization.cancel": "Run cancelled",

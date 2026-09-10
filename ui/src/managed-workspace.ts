@@ -1,5 +1,6 @@
 /** Row-free workspace metadata. Explicit bounded training-row inspections use
  * the separate dataset-workspace contract, never this scientific projection. */
+import type { DatasetVersionRef } from "./dataset-workspace.js";
 export interface FileIdentity { path: string; bytes: number; fingerprint: string }
 export interface LocalModel {
   source: string; format: string; architecture: string; files: FileIdentity[];
@@ -15,6 +16,7 @@ export interface ManagedWorkspace {
   folder: string; verified: boolean;
   manifest: { version: 1; id: string; name: string; createdAt: string; task: string | null; baseline: LocalModel };
   datasets: DatasetImport[];
+  modelDatasetLinks?: ModelDatasetLink[];
   modelCatalog?: ModelCatalog;
   scientificBinding?: ScientificBinding;
   providerCatalog?: ProviderCatalog;
@@ -27,6 +29,12 @@ export interface DatasetChoice {
 export interface CreateProjectRequest { modelToken: string; parentToken: string; folderName: string; name: string; task: string }
 
 export interface BoundIdentity { id: string; fingerprint: string }
+export interface ModelDatasetLink {
+  projectId: string; modelId: string; modelFingerprint: string; version: DatasetVersionRef;
+  inputs: { key: string; importId: string; fingerprint: string; rows: number }[];
+  evidence: { kind: "importedManifest"; manifest: FileIdentity } | { kind: "completedTraining"; manifest: FileIdentity; snapshot: BoundIdentity; run: BoundIdentity };
+  createdAt: string; fingerprint: string;
+}
 export interface ModelArtifact {
   id: string; projectId: string; name: string; createdAt: string; origin: "imported" | "trained" | "transformed";
   path: string; format: string; bytes: number; fingerprint: string; parentModelId?: string;

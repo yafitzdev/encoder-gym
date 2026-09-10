@@ -17,6 +17,61 @@ fn run(root: &Path, args: &[&str]) -> Value {
 }
 
 #[test]
+fn recorded_model_dataset_adoption_is_idempotent_inspectable_and_logged() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    training_transformer::fixture::write_tiny_bert_bundle(&root.join("checkpoint")).unwrap();
+    fs::write(root.join("checkpoint/nomos_training_manifest.json"), serde_json::to_vec(&serde_json::json!({"inputs":["b.jsonl","a.jsonl"],"input_state_counts":{"a.jsonl":1,"b.jsonl":1}})).unwrap()).unwrap();
+    for name in ["a", "b"] {
+        fs::write(root.join(format!("{name}.jsonl")), format!("{}\n", serde_json::json!({"evaluation_partition":"train","accepted":true,"decision_state_id":name,"tool_registry":[],"legal_candidate_ids":[]}))).unwrap();
+    }
+    let model = run(root, &["inspect-model", "checkpoint"]);
+    let created = run(
+        root,
+        &[
+            "create",
+            "project",
+            "--name",
+            "Recorded model",
+            "--model",
+            "checkpoint",
+            "--expected-fingerprint",
+            model["fingerprint"].as_str().unwrap(),
+        ],
+    );
+    run(root, &["backfill-nomos", "project", "--source-root", "."]);
+    let result = run(root, &["dataset", "project", "adopt-baseline"]);
+    let repeated = run(root, &["dataset", "project", "adopt-baseline"]);
+    assert_eq!(result["link"], repeated["link"]);
+    assert_ne!(result["actionId"], repeated["actionId"]);
+    assert_eq!(result["link"]["inputs"][0]["key"], "b.jsonl");
+    let entries = run(root, &["dataset", "project", "list"]);
+    assert_eq!(entries.as_array().unwrap().len(), 1);
+    assert_eq!(entries[0]["versions"][0]["rows"], 2);
+    assert_eq!(
+        entries[0]["versions"][0]["version"],
+        result["link"]["version"]
+    );
+    fs::rename(root.join("project"), root.join("moved")).unwrap();
+    let opened = run(root, &["verify", "moved"]);
+    assert_eq!(opened["modelCatalog"], created["modelCatalog"]);
+    assert_eq!(opened["modelDatasetLinks"][0], result["link"]);
+    let action = run(
+        root,
+        &[
+            "activity",
+            "moved",
+            "show",
+            result["actionId"].as_str().unwrap(),
+        ],
+    );
+    let encoded = serde_json::to_string(&action).unwrap();
+    assert!(encoded.contains("dataset.adopt_baseline"));
+    assert!(encoded.contains(result["link"]["version"]["id"].as_str().unwrap()));
+    assert!(!encoded.contains("decision_state_id"));
+}
+
+#[test]
 fn dataset_variants_rows_diffs_and_action_history_are_real_cli_operations() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();

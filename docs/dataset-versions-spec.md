@@ -80,3 +80,32 @@ Saving against an old branch head fails; it never silently overwrites new work.
 
 Every mutating CLI operation records an action UUID with started and terminal
 events. Events contain dataset/version references, never native row values.
+
+## Model training links
+
+`project-workspace-core::ModelDatasetLink` owns a separate immutable edge between
+an exact model artifact and dataset version. It consumes dataset-core's version
+contract; neither core depends on an adapter. The edge records ordered native
+input keys, import identities, fingerprints and complete input membership.
+Input order is model-specific provenance and may differ from dataset display
+order. Editing a dataset or promoting a model never changes the edge.
+
+`ImportedManifest` means recorded final-stage training inputs, not a claim about
+all ancestral pretraining. `CompletedTraining` additionally binds the model's
+exact original run and native snapshot; its adapter-owned adoption is a separate
+integration step. A source name or row count alone never establishes a link.
+
+`workspace dataset <PROJECT> adopt-baseline` reconstructs the imported Nomos
+model's version from its verified checkpoint manifest and already-recorded
+training imports. It reuses an exact existing base version or creates one with
+project/model-scoped retry identities. An incompatible base is left unchanged.
+Repeated calls preserve the same version and link. Interrupted link persistence
+reuses the created dataset on retry. The append-only edge lives in migration 7;
+reads reproduce its fingerprint, model/version membership, original input order,
+manifest checksum and counts, and source custody references. Full verification
+also rereads the exact native source rows. CLI adoption records an action UUID.
+
+Paged reads validate the complete source's identity and training partitions but
+only compute row-content fingerprints for requested records. Full construction
+and verification still reconstruct every member. An unrequested changed row
+invalidates the entire immutable source, not just the page containing that row.

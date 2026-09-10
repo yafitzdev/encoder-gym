@@ -127,6 +127,30 @@ fn malformed_changes_and_tampered_versions_are_rejected() {
     tampered = first.clone();
     tampered.fingerprint = artifact_core::fingerprint(&"fake").unwrap();
     assert!(tampered.verify(&branch, None).is_err());
+    for field in [
+        "id",
+        "datasetId",
+        "projectId",
+        "number",
+        "createdAt",
+        "parent",
+        "members",
+    ] {
+        let mut changed = serde_json::to_value(&first).unwrap();
+        changed[field] = match field {
+            "id" | "datasetId" | "projectId" => serde_json::json!(Uuid::nil()),
+            "number" => serde_json::json!(99),
+            "createdAt" => serde_json::json!(at() - chrono::Duration::seconds(1)),
+            "parent" => serde_json::to_value(first.reference()).unwrap(),
+            "members" => serde_json::json!([]),
+            _ => unreachable!(),
+        };
+        let changed: DatasetVersion = serde_json::from_value(changed).unwrap();
+        assert!(
+            changed.verify(&branch, None).is_err(),
+            "accepted changed {field}"
+        );
+    }
 }
 
 #[test]

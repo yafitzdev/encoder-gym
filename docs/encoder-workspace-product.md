@@ -71,11 +71,12 @@ decision. No unbounded work or inferred spending.
 
 1. Model inventory and navigation — implemented and verified on real Nomos.
    Unified viewers, rejected project outputs, project Optimize,
-   and neutral run/model names are present. Dataset deep links await stage 2;
+   and neutral run/model names are present. Verified dataset deep links are present;
    model-level baseline promotion/restoration controls remain outstanding.
 2. Dataset versions and changes — backend, CLI, desktop collection and version
-   viewer implemented. Model links and verified Nomos dataset adoption remain
-   pending; new manually created versions are not historical training evidence.
+   viewer implemented. Immutable model links and imported-baseline dataset
+   adoption are implemented. Completed-candidate dataset adoption remains pending;
+   new manually created versions are not historical training evidence.
 3. Shared benchmark — pending. Version selection and one results table per exact
    benchmark version. Verify incompatibility and sealed isolation.
 4. Automatic bounded optimization — pending. Persisted launch scope, agent and
@@ -167,3 +168,41 @@ and keep outstanding requirements visible.
   two training imports, and no dataset catalog entries yet. The candidate still
   pins native snapshot `2602ef88-db56-4591-8a4c-2581c5613726`; its identity must
   not be replaced with a guessed catalog version.
+
+### Recorded model training datasets — 10 September 2026
+
+- Workspace core owns an immutable model-to-version link, with ordered native
+  input identities and either imported final-stage or completed-training evidence.
+  Dataset membership remains dataset-core-owned. Model and native snapshot IDs
+  are unchanged. Migration 7 makes links append-only.
+- The CLI can adopt the imported model's recorded inputs, reusing the same
+  dataset/version after a partial write. Reads verify exact membership, source
+  custody, manifest checksum/counts/order, and model/version fingerprints.
+- Three local tests cover provenance, immutability, moved folders, edited
+  dataset history, input-order tampering, and interrupted-link retry. The CLI
+  process test checks exact replay IDs and payload-free activity UUIDs.
+- All four Rust gates, UI typecheck/build, 61 unit tests, and the four-launch
+  offline Electron suite pass. The renderer journey follows model -> exact
+  dataset version -> trained model through the actual CLI and IPC contracts.
+- Nomos baseline `b12bb044-0c7c-4ad6-99f6-91a2b4c44bb7` now links to Base
+  dataset version `9448e8ca-bae2-8689-90ae-73a26d0b3c49` (6,800 rows).
+  Adoption action `3f7453f1-0ba8-4194-81a9-8e6d32925485` records the operation.
+  Full verification passed; original import metadata, model catalog, model/data
+  bytes, baseline revision, and project manifest are unchanged. No training,
+  provider calls, or holdout execution ran.
+- The native candidate's 6,992-row dataset still needs adapter-verified adoption.
+  Its manifest orders the two base inputs differently; the model link must
+  preserve that order independently of dataset display order. Shared benchmark,
+  promotion controls, and the complete automatic agent flow remain outstanding.
+- Real-row paging initially timed out in the renderer. The read path now hashes
+  only requested row payloads while retaining full source checksum/partition
+  validation, and avoids redundant project opens and version reconstruction.
+  A measured 25-row Nomos CLI read fell from 27.7s to 8.7s in the debug build.
+  Sparse-page and off-page corruption tests preserve row identities and fail
+  closed on changed source bytes. Dataset previews show questions, not internal
+  decision-state IDs, when question text is available.
+- The real-project Electron check passed the baseline -> 6,800-row version ->
+  baseline journey, both model viewers, all project pages and preparation. The
+  final verified reopen confirmed unchanged library, manifest, custody database
+  and workspace facts. Captures include `ui/qa/managed-current-datasets.png` and
+  `ui/qa/managed-current-linked-dataset.png`. This inspection did not start a run.

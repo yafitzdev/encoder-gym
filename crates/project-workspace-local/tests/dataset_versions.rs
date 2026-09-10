@@ -228,6 +228,12 @@ async fn changed_source_bytes_are_not_silently_reinterpreted_as_version_rows() {
             .await
             .is_err()
     );
+    // An unrequested row changing still invalidates the complete source.
+    assert!(
+        datasets::read_rows(&folder, version.id, 1, 1)
+            .await
+            .is_err()
+    );
     assert!(
         datasets::fork(
             &folder,
@@ -296,5 +302,44 @@ async fn foreign_and_protected_sources_never_enter_dataset_versions() {
         )
         .await
         .is_err()
+    );
+}
+
+#[tokio::test]
+async fn sparse_pages_preserve_source_positions_and_exact_content_fingerprints() {
+    let temp = TempDir::new().unwrap();
+    let folder = fixture(temp.path()).await;
+    let values = (0..8).map(|index| json!({"text": format!("Row {index}"), "native": {"registry": [index, index + 1]}})).collect::<Vec<_>>();
+    let input = import(
+        &folder,
+        temp.path(),
+        "paged",
+        &values,
+        DatasetPurpose::Training,
+    )
+    .await;
+    let version = datasets::create_base(&folder, Uuid::new_v4(), Uuid::new_v4(), "Base", &[input])
+        .await
+        .unwrap();
+    let page = datasets::read_rows(&folder, version.id, 3, 2)
+        .await
+        .unwrap();
+    assert_eq!(page.total, 8);
+    assert_eq!(page.rows.len(), 2);
+    for (offset, row) in page.rows.iter().enumerate() {
+        assert_eq!(row.member, version.members[offset + 3]);
+        assert_eq!(row.value, values[offset + 3]);
+        assert_eq!(row.member.source.record, offset as u64 + 4);
+        assert_eq!(
+            row.member.content_fingerprint,
+            artifact_core::fingerprint(&row.value).unwrap()
+        );
+    }
+    assert!(
+        datasets::read_rows(&folder, version.id, 8, 2)
+            .await
+            .unwrap()
+            .rows
+            .is_empty()
     );
 }

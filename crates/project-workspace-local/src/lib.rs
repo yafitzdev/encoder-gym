@@ -4,6 +4,7 @@ pub mod dataset_versions;
 mod datasets;
 mod files;
 mod model;
+pub mod model_datasets;
 mod model_registration;
 
 use std::{fs, path::Path};
@@ -52,6 +53,7 @@ pub struct ManagedWorkspace {
     pub folder: String,
     pub manifest: ProjectManifest,
     pub datasets: Vec<DatasetImport>,
+    pub model_dataset_links: Vec<project_workspace_core::ModelDatasetLink>,
     /// Absent only when an older workspace requires an explicit registry upgrade.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_catalog: Option<ModelCatalog>,
@@ -256,6 +258,8 @@ pub async fn open_workspace(folder: &Path, verify: bool) -> Result<ManagedWorksp
     let model_catalog = load_model_catalog(&mut database, &manifest).await?;
     let scientific_binding = load_scientific_binding(&mut database, &manifest).await?;
     let provider_catalog = load_provider_catalog(&mut database, &manifest).await?;
+    let model_dataset_links =
+        model_datasets::load_links(&mut database, &root, model_catalog.as_ref(), &datasets).await?;
     database.close().await?;
     for file in &manifest.baseline.files {
         let mut identity = file.clone();
@@ -280,15 +284,20 @@ pub async fn open_workspace(folder: &Path, verify: bool) -> Result<ManagedWorksp
             }
         }
     }
-    Ok(ManagedWorkspace {
+    let workspace = ManagedWorkspace {
         folder: root.to_string_lossy().into_owned(),
         manifest,
         datasets,
+        model_dataset_links,
         model_catalog,
         scientific_binding,
         provider_catalog,
         verified: verify,
-    })
+    };
+    if verify {
+        model_datasets::verify_members(&workspace).await?;
+    }
+    Ok(workspace)
 }
 
 /// Append and activate one non-secret provider-settings revision.

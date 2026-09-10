@@ -2338,7 +2338,9 @@ dependencies = [
 name = "project-workspace-core"
 version = "0.1.0"
 dependencies = [
+ "artifact-core",
  "chrono",
+ "dataset-core",
  "serde",
  "serde_json",
  "sha2",

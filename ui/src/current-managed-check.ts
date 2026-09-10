@@ -30,6 +30,17 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
     await check("document.querySelector('.model-view') && document.querySelectorAll('.tabs button').length === 4");
     await check("document.querySelector('.model-view h1').textContent === " + JSON.stringify(model.name));
     await capture(model.role === "Baseline" ? "managed-current-baseline" : "managed-current-candidate");
+    const trainingData = expected.modelDatasetLinks?.find(link => link.modelId === model.id);
+    if (trainingData) {
+      await evaluate("[...document.querySelectorAll('#page button')].find(button=>button.textContent==='Inspect dataset').click()");
+      await until("document.querySelector('.dataset-row-entry')");
+      await check("document.getElementById('dataset-version').value === " + JSON.stringify(trainingData.version.id));
+      await capture("managed-current-linked-dataset");
+      await evaluate("document.getElementById('tab-models').click()");
+      await check("document.querySelector('#detail-panel').textContent.includes(" + JSON.stringify(model.name) + ")");
+      await evaluate("[...document.querySelectorAll('#detail-panel button')].find(button=>button.textContent==='Inspect model').click()");
+      await check("document.querySelector('.model-view').dataset.modelId === " + JSON.stringify(model.id));
+    }
     if (model.evidence) {
       await evaluate("document.getElementById('tab-results').click()");
       await check("document.querySelector('.result-banner') && document.querySelector('.evidence-table')");
@@ -40,6 +51,7 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
   for (const page of ["datasets", "benchmarks", "runs", "project"]) {
     await evaluate("document.getElementById(" + JSON.stringify("nav-" + page) + ").click()");
     await until("document.querySelector('.workspace-page') && !document.querySelector('.workspace-progress')");
+    if (page === "datasets") await until("document.querySelector('.dataset-collection, .empty-state, .operation-failure')");
     await check("!document.getElementById('project-optimize').hidden");
     await capture("managed-current-" + page);
   }

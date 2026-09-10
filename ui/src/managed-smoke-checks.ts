@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { BrowserWindow } from "electron";
@@ -462,5 +463,25 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   if (harness.registry.read().selectedId !== firstId || !harness.registry.get(secondId)) throw new Error("Reopen changed identities");
   if (!before.equals(readFileSync(join(one, "model.safetensors")))) throw new Error("Onboarding changed source model bytes");
   await check("reopened project still has no invented run evidence", "document.querySelectorAll('[data-candidate-id]').length === 0");
+  // Import actual recorded-input evidence through the ordinary CLI, then inspect
+  // the resulting model/version relationship through renderer + IPC reads.
+  const recordedModel = join(root, "model-with-data"); writeLocalModel(recordedModel, 3);
+  writeFileSync(join(recordedModel, "nomos_training_manifest.json"), JSON.stringify({ inputs: ["recorded.jsonl"], input_state_counts: { "recorded.jsonl": 2 } }));
+  writeFileSync(join(root, "recorded.jsonl"), ["one", "two"].map(id => JSON.stringify({ evaluation_partition: "train", accepted: true, decision_state_id: id, tool_registry: [], legal_candidate_ids: [], question: "Recorded row " + id }) + "\n").join(""));
+  await create("Recorded encoder", recordedModel);
+  const recordedFolder = join(root, "Recorded encoder");
+  for (const args of [["backfill-nomos", recordedFolder, "--source-root", root], ["dataset", recordedFolder, "adopt-baseline"]]) execFileSync(harness.backend.executable, ["--output", "json", "workspace", ...args], { windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+  await click("#reload-evidence"); await loaded();
+  await evaluate("document.querySelector('.artifact-row .candidate-link').click()");
+  await textButton("Inspect dataset"); await until("document.querySelectorAll('.dataset-row-entry').length === 2");
+  await check("model opens its exact persisted training version", "document.querySelector('.dataset-view h1').textContent === 'Base dataset' && document.querySelector('.dataset-rows').textContent.includes('Recorded row one')");
+  await click("#tab-models");
+  await check("dataset model links are derived from the same recorded version", "document.querySelector('#detail-panel .artifact-row').textContent.includes('Baseline')");
+  await textButton("Inspect model");
+  await check("dataset returns to the shared model viewer", "document.querySelector('.model-view') && document.querySelectorAll('.tabs button').length === 4");
+  await screenshot("managed-model-dataset-link");
+  await nav("project"); await textButton("Remove project entry…"); await textButton("Remove entry");
+  await until("!document.querySelector('dialog[open]') && document.querySelectorAll('[data-project-id]').length === 2"); await loaded();
+  if (harness.registry.read().selectedId !== firstId) { await click('[data-project-id="' + firstId + '"]'); await loaded(); }
   console.log("Managed-workspace Electron acceptance passed.");
 }
