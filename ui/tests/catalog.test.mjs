@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { candidateName, candidateRows, comparisonGroups, developmentStatus, initialFilter, setupId, score, delta, summaryMetrics } from "../dist/evidence/catalog.js";
+import { candidateName, candidateRows, comparisonGroups, developmentStatus, evaluationGroups, initialFilter, setupId, score, delta, summaryMetrics } from "../dist/evidence/catalog.js";
 import { projectRun } from "../dist/evidence/read-workspace.js";
 import { experimentFixture } from "./fixtures/experiment.mjs";
 
@@ -28,6 +28,7 @@ test("managed Models exposes only cataloged candidates, not imported historical 
     },
   };
   assert.equal(candidateRows(managed).length, 0);
+  assert.equal(evaluationGroups(managed, initialFilter()).flatMap(group => group.rows).length, 15, "historical evaluations remain evidence without becoming managed candidates");
 
   const row = candidateRows(snapshot).find(item => item.candidate.model);
   assert.ok(row?.candidate.model);

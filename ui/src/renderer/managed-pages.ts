@@ -1,15 +1,33 @@
 import type { ManagedWorkspace } from "../managed-workspace.js";
-import type { ManagedProviderStatus, ProviderRole } from "../managed-control.js";
+import type { ManagedProviderStatus, ManagedReadiness, ProviderRole } from "../managed-control.js";
 import type { Actions, ProjectActions } from "./actions.js";
 import type { ProjectEntry } from "../projects.js";
 import { bytesLabel, dateLabel, displayPath } from "./catalog.js";
 import { button, copyField, details, empty, facts, pageHeader, sectionHeader, status, tag } from "./components.js";
 import { h } from "./dom.js";
 
-export function renderDatasets(workspace: ManagedWorkspace, actions: Actions, projects: ProjectActions): HTMLElement {
+export function renderDatasets(workspace: ManagedWorkspace, actions: Actions, projects: ProjectActions, readiness?: ManagedReadiness): HTMLElement {
   const rows = workspace.datasets.reduce((total, dataset) => total + dataset.rows, 0);
-  return h("div", { class: "page-content" }, pageHeader("Datasets", `${workspace.datasets.length} imported ${workspace.datasets.length === 1 ? "source" : "sources"} · ${rows.toLocaleString()} records`, workspace.datasets.length ? button("Import dataset", projects.importDataset, "primary", "project") : null),
-    !workspace.datasets.length ? empty("Add your first dataset", "Import a local JSONL file. Gym preserves its original structure and stores an independent copy inside this project.", button("Import dataset", projects.importDataset, "primary")) :
+  const preview = readiness?.preparedOptimization?.launchPreview ?? readiness?.launchPreview;
+  const authority = readiness?.preparedOptimization?.authority ?? readiness?.optimizationAuthority;
+  const trainingSnapshotId = preview?.trainingSnapshotId ?? authority?.trainingSnapshotId;
+  const snapshot = trainingSnapshotId ? h("section", { class: "scientific-data-card" },
+      sectionHeader(preview ? "Frozen training snapshot" : "Approved training snapshot", tag(preview ? preview.existingRun ? "Used by run" : "Prepared" : "Approved", "accent")),
+      h("p", { class: "section-note" }, preview ? "This immutable, reviewed membership is the exact training input frozen into the current optimization definition. Imported source files remain separate custody records." : "Scientific history contains a reviewed training membership for the current repair. Preparing the run will replay its owner evidence before freezing an executable definition."),
+      authority ? h("div", { class: "snapshot-summary" },
+        h("div", {}, h("strong", {}, authority.deltaRows.toLocaleString()), h("span", {}, "approved repair rows")),
+        h("div", {}, h("strong", {}, authority.baseTrainingInputs.toLocaleString()), h("span", {}, authority.baseTrainingInputs === 1 ? "base input artifact" : "base input artifacts")),
+        h("div", {}, h("strong", {}, String(authority.candidateCount)), h("span", {}, authority.candidateCount === 1 ? "bounded candidate" : "bounded candidates"))) : null,
+      details("Snapshot authority and usage", facts([
+        ["Training snapshot", copyField(trainingSnapshotId, actions.copy)],
+        ...(preview ? [["Prepared run", preview.runName], ["Benchmark generation", copyField(preview.benchmarkGenerationId, actions.copy)], ["Use", preview.existingRun ? `Optimization run ${preview.existingRun.runId}` : "Prepared definition; no run reserved"]] as [string, string | HTMLElement][] : []),
+        ...(authority ? [["Repair selection", copyField(authority.selectionId, actions.copy)], ["Authority valid until", dateLabel(authority.validUntil)]] as [string, string | HTMLElement][] : []),
+      ])),
+      button(preview?.existingRun ? "Open optimization run" : "Review optimization", actions.prepareOptimization, "secondary", "arrow")) : null;
+  return h("div", { class: "page-content" }, pageHeader("Data", trainingSnapshotId ? `${preview ? "1 frozen" : "1 approved"} training snapshot · ${workspace.datasets.length} imported ${workspace.datasets.length === 1 ? "source" : "sources"}` : `${workspace.datasets.length} imported ${workspace.datasets.length === 1 ? "source" : "sources"} · ${rows.toLocaleString()} records`, workspace.datasets.length ? button("Import dataset", projects.importDataset, "primary", "project") : null),
+    snapshot,
+    sectionHeader("Imported sources"),
+    !workspace.datasets.length ? trainingSnapshotId ? h("section", { class: "source-empty" }, h("div", {}, h("h3", {}, "No managed source imports"), h("p", {}, "The frozen scientific snapshot remains usable through its owner store. Import a local JSONL source only when you need separate Gym custody.")), button("Import dataset", projects.importDataset, "secondary")) : empty("Add your first dataset", "Import a local JSONL file. Gym preserves its original structure and stores an independent copy inside this project.", button("Import dataset", projects.importDataset, "primary")) :
       h("div", { class: "dataset-list", "aria-label": "Imported datasets" }, ...workspace.datasets.map(dataset => h("section", { class: "dataset-card", "data-dataset-id": dataset.id },
         h("div", { class: "dataset-row" }, h("div", { class: "dataset-identity" }, h("h2", {}, dataset.name),
           h("p", { class: "dataset-summary" }, `${dataset.rows.toLocaleString()} records · ${bytesLabel(dataset.artifact.bytes)} · JSONL`)),

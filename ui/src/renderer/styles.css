@@ -462,6 +462,9 @@ dialog::backdrop { background: #0008; }
 .dataset-list { border-top: 1px solid var(--line); }
 .dataset-card { min-width: 0; border-bottom: 1px solid var(--line); padding: 19px 0 8px; }
 .dataset-card h2 { overflow-wrap: anywhere; font-size: 15px; }
+.source-empty { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 16px 0 20px; border-block: 1px solid var(--line-soft); }
+.source-empty h3 { font-size: 14px; }
+.source-empty p { max-width: 720px; margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .dataset-row { display: flex; justify-content: space-between; align-items: start; gap: 24px; }
 .dataset-identity { min-width: 0; }
 .dataset-purpose { flex-shrink: 0; display: grid; justify-items: end; gap: 5px; }
@@ -469,6 +472,21 @@ dialog::backdrop { background: #0008; }
 .dataset-summary { color: var(--muted); font-size: 13px; margin-top: 6px; }
 .dataset-card .section-note { margin-top: 12px; }
 .dataset-card > .disclosure { margin-top: 8px; border: 0; padding: 9px 0; }
+.scientific-data-card, .evaluation-plan { margin: 28px 0; padding: 20px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 7px; background: var(--surface); }
+.scientific-data-card > .section-note, .evaluation-plan > .section-note { max-width: 760px; margin-bottom: 16px; }
+.scientific-data-card > .button, .evaluation-plan > .button { margin-top: 16px; }
+.snapshot-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-block: 1px solid var(--line-soft); }
+.snapshot-summary > div { display: grid; gap: 4px; padding: 14px 16px; border-right: 1px solid var(--line-soft); }
+.snapshot-summary > div:first-child { padding-left: 0; }
+.snapshot-summary > div:last-child { border-right: 0; }
+.snapshot-summary strong { font: 18px var(--mono); color: var(--text); }
+.snapshot-summary span { color: var(--muted); font-size: 11px; }
+.scientific-data-card > .disclosure, .evaluation-plan > .disclosure { margin-top: 10px; }
+.evaluation-plan-list { border-top: 1px solid var(--line-soft); }
+.evaluation-plan-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 0; border-bottom: 1px solid var(--line-soft); }
+.evaluation-plan-row > div { min-width: 0; display: grid; gap: 4px; }
+.evaluation-plan-row strong { overflow-wrap: anywhere; font-size: 13px; }
+.evaluation-plan-row small { color: var(--muted); font-size: 11px; }
 .preparation-note { margin-top: 28px; max-width: 720px; }
 .preparation-note h2 { font-size: 14px; }
 .preparation-note p { color: var(--muted); font-size: 13px; line-height: 1.7; margin-top: 7px; }
@@ -624,6 +642,10 @@ dialog::backdrop { background: #0008; }
   .runtime-notice { margin-inline: 17px; }
   .launch-summary, .readiness-row, .launch-actions, .run-actions, .report-action, .promotion-result { flex-direction: column; align-items: start; gap: 12px; }
   .launch-boundaries, .launch-disclosures, .report-summary, .report-suite { grid-template-columns: 1fr; }
+  .snapshot-summary { grid-template-columns: 1fr; }
+  .snapshot-summary > div, .snapshot-summary > div:first-child { padding: 11px 0; border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .snapshot-summary > div:last-child { border-bottom: 0; }
+  .evaluation-plan-row, .source-empty { align-items: start; flex-direction: column; gap: 8px; }
   .dataset-row { flex-direction: column; gap: 12px; }
   .dataset-purpose { display: flex; align-items: center; gap: 9px; }
   .next-step { flex-direction: column; align-items: start; gap: 15px; }

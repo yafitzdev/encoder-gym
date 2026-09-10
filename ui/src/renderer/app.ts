@@ -59,7 +59,7 @@ export function mount(): void {
     view.history.remember(location, main.scrollTop, contentFocus());
     render(); main.scrollTop = 0; focusHeading();
     if (location.page === "project" && workspace()?.managed && !view.providers.status) void refreshProviders();
-    if (location.page === "runs" && workspace()?.managed && !view.optimization.run && !view.optimization.loading) void refreshOptimization();
+    if (["datasets", "runs", "benchmarks"].includes(location.page) && workspace()?.managed && !view.optimization.readiness && !view.optimization.loading) void refreshOptimization();
   }
   async function selectProject(id: string): Promise<void> {
     if (collectionBusy) return;
@@ -75,6 +75,7 @@ export function mount(): void {
       if (!next) return;
       opened = next; loading = false; render();
       if (view.history.current.page === "project" && next.content.state === "ready" && next.content.workspace.managed && !view.providers.status) void refreshProviders();
+      if (["datasets", "runs", "benchmarks"].includes(view.history.current.page) && next.content.state === "ready" && next.content.workspace.managed && !view.optimization.readiness && !view.optimization.loading) void refreshOptimization();
       if (changed) restorePlace();
     } catch (error) {
       if (selection.selectedId !== id) return;
@@ -215,7 +216,10 @@ export function mount(): void {
     const state = view.optimization; state.loading = true; state.executing = "prepare"; state.error = undefined; state.errorTitle = undefined; render();
     try {
       const prepared = await bridge.prepareOptimization(id);
-      if (selection.selectedId === id) { state.prepared = prepared; state.manifest = undefined; state.run = undefined; }
+      if (selection.selectedId === id) {
+        state.prepared = prepared; state.manifest = undefined; state.run = undefined;
+        if (state.readiness) state.readiness = { ...state.readiness, launchPreview: prepared.launchPreview, preparedOptimization: prepared };
+      }
     } catch (error) { state.errorTitle = "Could not prepare the approved run"; state.error = message(error); }
     finally { state.loading = false; state.executing = undefined; if (selection.selectedId === id) render(); }
   }
@@ -428,12 +432,12 @@ export function mount(): void {
       const detail = view.details.get(detailKey) ?? { failedOnly: exactCandidate?.development.some(d => d.checks.some(g => !g.passed)) ?? false };
       if (current.id) view.details.set(detailKey, detail);
       if (current.page === "models") content = renderModels(data, view.models, actions);
-      else if (current.page === "datasets" && data.managed) content = renderDatasets(data.managed, actions, projects);
+      else if (current.page === "datasets" && data.managed) content = renderDatasets(data.managed, actions, projects, view.optimization.readiness);
       else if (current.page === "optimization" && data.managed) content = renderOptimization(data.managed, view.optimization, optimizationActions);
       else if (current.page === "candidate") content = renderCandidate(data, current.id ?? "", current.tab ?? "results", detail, actions, current.runId);
       else if (current.page === "run") content = renderRun(data, current.id ?? "", current.tab ?? "overview", actions);
       else if (current.page === "runs") content = renderRuns(data, actions, view.optimization.run);
-      else if (current.page === "benchmarks") content = renderBenchmarks(data, actions);
+      else if (current.page === "benchmarks") content = renderBenchmarks(data, actions, view.optimization.readiness);
       else if (current.page === "baseline") content = renderBaseline(data, actions);
       else content = renderCompare(data, candidateRows(data).filter(r => current.candidateIds?.includes(r.candidate.id)), actions);
     }

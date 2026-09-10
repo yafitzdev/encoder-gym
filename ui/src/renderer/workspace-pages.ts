@@ -1,7 +1,7 @@
 import type { WorkspaceSnapshot } from "../workspace.js";
-import type { ManagedRunStatus } from "../managed-control.js";
+import type { ManagedReadiness, ManagedRunStatus } from "../managed-control.js";
 import type { Actions } from "./actions.js";
-import { bytesLabel, comparisonGroups, initialFilter, metricInfo, primaryMetric, score, setupName, suiteName, summaryMetrics } from "./catalog.js";
+import { bytesLabel, comparisonGroups, evaluationGroups, initialFilter, metricInfo, primaryMetric, score, setupName, suiteName, summaryMetrics } from "./catalog.js";
 import { button, copyField, details, empty, facts, pageHeader, sectionHeader, tag } from "./components.js";
 import { runListItem } from "./detail-pages.js";
 import { h } from "./dom.js";
@@ -16,11 +16,29 @@ export function renderRuns(workspace: WorkspaceSnapshot, actions: Actions, optim
     workspace.runs.length ? h("div", { class: "run-list" }, ...workspace.runs.map(run => runListItem(run, workspace, actions))) : optimization ? empty(active ? "No experiment journal yet" : "No separate experiment record shown", active ? "The optimization parent is safe and recoverable. Continue it to create or adopt its immutable experiment journal." : "Open the optimization record to inspect its aggregate candidate evidence, decision, and provenance.", button("Open optimization", actions.prepareOptimization, "secondary", "arrow")) : empty("No runs recorded yet", workspace.managed ? "Check the project's launch requirements, prepare its reviewed definition, and reserve the first bounded optimization run." : "The baseline is registered. Reload after a compatible CLI experiment writes records to this legacy folder.", workspace.managed ? button("Check launch requirements", actions.prepareOptimization, "primary", "arrow") : button("Back to models", () => actions.navigate({ page: "models" }))),
     workspace.runs.length ? h("p", { class: "table-footnote" }, "A completed run can keep the baseline. Open a run to inspect its candidates, execution history, and recorded limits.") : null);
 }
-export function renderBenchmarks(workspace: WorkspaceSnapshot, actions: Actions): HTMLElement {
-  const groups = comparisonGroups(workspace, initialFilter());
-  if (!groups.length) return h("div", { class: "page-content" }, pageHeader("Benchmarks", "The tests used to measure baseline and candidate quality."),
-    empty("No run evaluations recorded yet", workspace.managed ? "Importing a model or dataset does not create evaluation results. Start a bounded optimization, or explicitly bring matching Encoder Gym scientific history through Project settings." : "No comparison setup has been recorded in this folder. Reload after a compatible experiment produces evaluation evidence.", button("Back to models", () => actions.navigate({ page: "models" }))));
-  return h("div", { class: "page-content" }, pageHeader("Benchmarks", "What each evaluation measures, and which candidate comparisons are valid."),
+export function renderBenchmarks(workspace: WorkspaceSnapshot, actions: Actions, readiness?: ManagedReadiness): HTMLElement {
+  const groups = evaluationGroups(workspace, initialFilter());
+  const preview = readiness?.preparedOptimization?.launchPreview ?? readiness?.launchPreview;
+  const planned = preview ? h("section", { class: "evaluation-plan" },
+    sectionHeader("Bound evaluation plan", tag(preview.existingRun ? "Run reserved" : "Prepared", "accent")),
+    h("p", { class: "section-note" }, "These suites and limits belong to the exact frozen optimization definition. They are evaluation authority, not candidate results."),
+    h("div", { class: "evaluation-plan-list" },
+      ...preview.developmentSuites.map(suite => h("div", { class: "evaluation-plan-row" }, h("div", {}, h("strong", {}, suiteName(suite)), h("small", {}, "Development suite")), tag("Adaptive evidence"))),
+      h("div", { class: "evaluation-plan-row sealed-plan" }, h("div", {}, h("strong", {}, suiteName(preview.sealedSuite)), h("small", {}, "Final acceptance suite")), tag("Separate authorization", "warning"))),
+    details("Exact plan identity and limits", facts([
+      ["Baseline model", copyField(workspace.baseline.fingerprint, actions.copy)],
+      ["Training snapshot", copyField(preview.trainingSnapshotId, actions.copy)],
+      ["Benchmark generation", copyField(preview.benchmarkGenerationId, actions.copy)],
+      ["Development evaluations", `At most ${preview.budget.maximum_development_evaluations}`],
+      ["Sealed evaluations", `At most ${preview.budget.maximum_sealed_evaluations}; separately authorized`],
+      ["Evaluation time", `At most ${preview.maximumEvaluationSeconds.toLocaleString()} seconds`],
+    ])),
+    button(preview.existingRun ? "Open optimization run" : "Review prepared run", actions.prepareOptimization, "secondary", "arrow")) : null;
+  if (!groups.length) return h("div", { class: "page-content" }, pageHeader("Evaluation", "Suites define measurement; runs produce comparable evidence."), planned,
+    sectionHeader("Recorded evaluation evidence"),
+    empty("No run evaluations recorded yet", workspace.managed ? "Importing a model or dataset does not create evaluation results. Reserve and execute a bounded optimization, or explicitly bring matching Encoder Gym scientific history through Project settings." : "No comparison setup has been recorded in this folder. Reload after a compatible experiment produces evaluation evidence.", button("Back to models", () => actions.navigate({ page: "models" }))));
+  return h("div", { class: "page-content" }, pageHeader("Evaluation", "Suites, measured model/cohort combinations, and valid comparisons."), planned,
+    sectionHeader("Recorded evaluation evidence"),
     h("p", { class: "section-note" }, "Compare candidates within a group: they share the same baseline, tests, and scoring rules. Identical metric names alone do not make different groups comparable."),
     ...groups.map((group, i) => {
       const primary = primaryMetric(group.run);
@@ -33,7 +51,7 @@ export function renderBenchmarks(workspace: WorkspaceSnapshot, actions: Actions)
         button("Compare " + group.rows.length + (group.rows.length === 1 ? " candidate" : " candidates"), () => actions.navigate({ page: "models", id: group.id }), "ghost", "arrow"),
       );
     }),
-    h("section", { class: "reading-note" }, h("h2", {}, "Development and final acceptance"), h("p", {}, "Development scores help you compare and diagnose candidates. Separate sealed evaluation is used only for an explicitly selected candidate's final acceptance. Its scores never enter this comparison workspace."), h("p", {}, "The run record shows whether final acceptance was used and its recorded outcome. Use CLI Doctor to verify current authority before starting another experiment.")),
+    h("section", { class: "reading-note" }, h("h2", {}, "Development and final acceptance"), h("p", {}, "Development scores help you compare and diagnose candidates. Separate sealed evaluation is used only for an explicitly selected candidate's final acceptance. Its scores never enter this comparison workspace."), h("p", {}, "The run record shows whether final acceptance was used and its recorded outcome. Project readiness and Doctor verify current authority before another experiment.")),
   );
 }
 export function renderBaseline(workspace: WorkspaceSnapshot, actions: Actions): HTMLElement {

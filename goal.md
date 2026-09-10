@@ -78,6 +78,15 @@ Do not confuse custody with readiness:
   89.121 seconds because it deliberately rehashed the 134 MB baseline and data,
   captured four pages, and performed a second unchanged-state reopen; ordinary
   page navigation does not make that integrity claim or pay that cost.
+- The Data collection now leads with the current frozen training snapshot and
+  its reviewed repair membership, then presents imported source custody as a
+  separate concern. The Evaluation collection leads with the exact bound
+  development and sealed-suite authority, explicitly labels it as a plan rather
+  than results, and keeps imported historical evaluation evidence visible below
+  it. That historical evidence does not enter the managed Models catalog. The
+  real Nomos verifier exercises all three projections and still reports one
+  baseline, zero managed candidates, the prepared immutable definition, and no
+  reserved run.
 - Once reserved, the desktop now puts the active run and its one safe next
   action above the frozen launch definition. Run supervision distinguishes
   completed model/evaluation records from reserved and unreserved capacity,

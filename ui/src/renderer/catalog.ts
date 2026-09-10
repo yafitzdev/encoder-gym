@@ -82,7 +82,7 @@ export function setupId(run: RunRecord): string {
 export function setupName(run: RunRecord): string {
   return `${run.baselines.length} ${run.baselines.length === 1 ? "benchmark" : "benchmarks"} · ${run.agentTopK ? `top-${run.agentTopK} agent` : "development evaluation"}`;
 }
-export function candidateRows(workspace: WorkspaceSnapshot): CandidateRow[] {
+function collectCandidateRows(workspace: WorkspaceSnapshot, catalogOnly: boolean): CandidateRow[] {
   const catalog = workspace.managed?.modelCatalog;
   const baselineArtifactIds = catalog
     ? new Set(catalog.baselineRevisions.map(revision => revision.modelArtifactId))
@@ -97,7 +97,7 @@ export function candidateRows(workspace: WorkspaceSnapshot): CandidateRow[] {
       // checkpoints were never brought into this managed project's custody.
       // Runs and Evaluation still expose that evidence, but Models represents
       // only project-catalog artifacts and their baseline/candidate relations.
-      if (candidateArtifacts && !candidateArtifacts.some(artifact =>
+      if (catalogOnly && candidateArtifacts && !candidateArtifacts.some(artifact =>
         candidate.model?.fingerprint === artifact.fingerprint &&
         (!artifact.producingRun || artifact.producingRun.id === run.id)
       )) continue;
@@ -108,6 +108,7 @@ export function candidateRows(workspace: WorkspaceSnapshot): CandidateRow[] {
   }
   return [...rows.values()];
 }
+export function candidateRows(workspace: WorkspaceSnapshot): CandidateRow[] { return collectCandidateRows(workspace, true); }
 export function developmentStatus(row: CandidateRow): { label: string; tone: string; detail: string; key: string } {
   const { candidate: c, run } = row;
   if (c.failure) return { label: "Execution failed", tone: "danger", detail: c.failure.phase, key: "failed" };
@@ -124,9 +125,9 @@ export function resultSummary(row: CandidateRow): string {
   if (row.run.acceptance.candidateId === row.candidate.id) return row.run.acceptance.state === "failed" ? "Rejected at final acceptance" : row.run.acceptance.state === "passed" ? "Passed final acceptance" : "Final acceptance pending";
   return row.run.decision ? "Not selected for final acceptance" : "Awaiting selection";
 }
-export function comparisonGroups(workspace: WorkspaceSnapshot, filter: CatalogFilter, suiteIndex = 0): EvaluationSetup[] {
+function groupCandidateRows(workspace: WorkspaceSnapshot, rows: CandidateRow[], filter: CatalogFilter, suiteIndex: number): EvaluationSetup[] {
   const groups = new Map<string, EvaluationSetup>();
-  for (const row of candidateRows(workspace)) {
+  for (const row of rows) {
     const id = setupId(row.run);
     const query = filter.query.trim().toLocaleLowerCase();
     if (filter.setup !== "all" && filter.setup !== id) continue;
@@ -145,6 +146,13 @@ export function comparisonGroups(workspace: WorkspaceSnapshot, filter: CatalogFi
     });
   }
   return [...groups.values()];
+}
+export function comparisonGroups(workspace: WorkspaceSnapshot, filter: CatalogFilter, suiteIndex = 0): EvaluationSetup[] {
+  return groupCandidateRows(workspace, candidateRows(workspace), filter, suiteIndex);
+}
+/** Evaluation history is evidence even when its checkpoint was never cataloged as a managed candidate. */
+export function evaluationGroups(workspace: WorkspaceSnapshot, filter: CatalogFilter, suiteIndex = 0): EvaluationSetup[] {
+  return groupCandidateRows(workspace, collectCandidateRows(workspace, false), filter, suiteIndex);
 }
 export function primaryReport(row: CandidateRow): DevelopmentReport | undefined { return row.candidate.development.find(d => d.report.suite === row.run.baselines[0]?.suite)?.report; }
 export function matchingReport(row: CandidateRow, suite: string) { return row.candidate.development.find(d => d.report.suite === suite); }

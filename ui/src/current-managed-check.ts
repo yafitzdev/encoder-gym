@@ -25,24 +25,37 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
     writeFileSync(join(output, name + ".png"), (await window.webContents.capturePage()).toPNG());
   };
   await capture("managed-current-models");
-  await evaluate("document.querySelector('[data-page=datasets]').click()");
-  await check(`document.querySelectorAll('[data-dataset-id]').length === ${expected.datasets.length}`);
-  for (const dataset of expected.datasets) {
-    await check("document.querySelector('[data-dataset-id=" + JSON.stringify(dataset.id) + "]').textContent.includes(" + JSON.stringify(dataset.rows.toLocaleString() + " records") + ")");
-  }
-  await capture("managed-current-datasets");
-  await evaluate("document.querySelector('[data-page=project]').click()");
-  await evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(![...document.querySelectorAll('#page button')].some(button=>button.textContent.includes('Checking')))resolve(true);else if(n++>1000)reject(new Error('Provider availability did not resolve'));else setTimeout(poll,20)};poll()})");
-  await capture("managed-current-settings");
   const readiness = await backend.readiness(expected.manifest.id);
-  // Real adapter authority resolution may replay a large immutable graph. Do it
-  // exactly once, then make the renderer prove it presents that owner response
-  // rather than asking the backend to repeat the same read-only computation.
+  // Resolve the owner report exactly once, then make every collection page
+  // prove it presents that same response rather than triggering duplicate work.
   const readinessMethod = backend.readiness.bind(backend);
   backend.readiness = async (projectId, manifestToken) => projectId === expected.manifest.id && manifestToken === undefined
     ? readiness
     : readinessMethod(projectId, manifestToken);
   try {
+    await evaluate("document.querySelector('[data-page=datasets]').click()");
+    await check(`document.querySelectorAll('[data-dataset-id]').length === ${expected.datasets.length}`);
+    for (const dataset of expected.datasets) {
+      await check("document.querySelector('[data-dataset-id=" + JSON.stringify(dataset.id) + "]').textContent.includes(" + JSON.stringify(dataset.rows.toLocaleString() + " records") + ")");
+    }
+    const snapshotId = readiness.preparedOptimization?.launchPreview.trainingSnapshotId ?? readiness.launchPreview?.trainingSnapshotId ?? readiness.optimizationAuthority?.trainingSnapshotId;
+    if (snapshotId) {
+      await evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(document.querySelector('.scientific-data-card'))resolve(true);else if(n++>1000)reject(new Error('Real training snapshot did not render'));else setTimeout(poll,20)};poll()})");
+      await check("document.querySelector('.scientific-data-card').textContent.includes('training snapshot') && document.querySelector('.scientific-data-card').textContent.includes('custody records')");
+    }
+    await capture("managed-current-datasets");
+    const launch = readiness.preparedOptimization?.launchPreview ?? readiness.launchPreview;
+    await evaluate("document.querySelector('[data-page=benchmarks]').click()");
+    if (launch) {
+      await evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(document.querySelector('.evaluation-plan'))resolve(true);else if(n++>1000)reject(new Error('Real evaluation plan did not render'));else setTimeout(poll,20)};poll()})");
+      await check(`document.querySelectorAll('.evaluation-plan-row').length === ${launch.developmentSuites.length + 1}`);
+      await check("document.querySelector('.page-heading h1').textContent === 'Evaluation' && document.querySelector('.evaluation-plan').textContent.includes('not candidate results') && document.querySelector('.evaluation-plan').textContent.includes('Separate authorization')");
+    }
+    await check("document.querySelectorAll('.benchmark-section').length > 0 && !document.getElementById('page').textContent.includes('No run evaluations recorded yet')");
+    await capture("managed-current-evaluation");
+    await evaluate("document.querySelector('[data-page=project]').click()");
+    await evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(![...document.querySelectorAll('#page button')].some(button=>button.textContent.includes('Checking')))resolve(true);else if(n++>1000)reject(new Error('Provider availability did not resolve'));else setTimeout(poll,20)};poll()})");
+    await capture("managed-current-settings");
     await evaluate("[...document.querySelectorAll('[data-page=models]')].at(0).click();[...document.querySelectorAll('#page button')].find(button=>button.textContent==='Start optimization').click();true");
     await evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(document.querySelector('.launch-summary')&&!document.querySelector('.workspace-progress'))resolve(true);else if(n++>1500)reject(new Error('Real managed readiness did not render'));else setTimeout(poll,20)};poll()})");
     if (readiness.preparedOptimization) {

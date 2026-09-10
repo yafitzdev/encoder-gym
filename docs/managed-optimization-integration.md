@@ -530,6 +530,20 @@ completed in 1.97 seconds against the real Nomos history; the former recursive
 screen refresh took roughly nine minutes. Prepare, Doctor, and every side-effect
 boundary retain the complete owner replay.
 
+The collection projections now preserve those distinctions in the renderer.
+Data leads with the current immutable training snapshot, reviewed delta
+membership, and bounded use before listing imported source custody. Evaluation
+leads with the currently bound development and separately authorized sealed
+suite plan, labels that authority as not-yet-produced candidate evidence, and
+then presents recorded evidence independently. Models continues to select only
+registered managed artifacts, while Evaluation uses the persisted scientific
+run history even when its checkpoints were never registered as candidates. The
+current-project Electron verifier exercises these pages against the real Nomos
+workspace and confirms that historical evaluation evidence remains visible
+alongside zero managed candidates. It also byte-compares the library, manifest,
+custody database, and projected workspace facts before and after the check; the
+prepared definition remains runnable and no run is reserved.
+
 The 2026-09-09 binding preflight copied the real managed workspace to a temporary
 directory, upgraded only that copy, and matched its 134,211,908-byte baseline to
 isolated revision `4450ab3f1de8a1fc64bcbe5d77c67d0fb0f99af9`. The selected
