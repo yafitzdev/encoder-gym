@@ -58,8 +58,10 @@ They are labelled Legacy and are not silently converted into managed projects.
   Creating a version does not grant training qualification. A verified model
   link opens its exact training version; the version's Models tab links back.
   Imported final-stage data can be adopted through the recorded manifest CLI.
-  Native completed-candidate adoption is still pending; the viewer never infers
-  training provenance from names or row counts. See
+  Completed Nomos fine-tunes link their verified training version during output
+  registration; older registered runs can use `workspace dataset <folder>
+  adopt-run <optimization>`. The viewer never infers training provenance from
+  names or row counts. See
   [dataset versions](../docs/dataset-versions-spec.md).
 - **Runs:** immutable experiment records. A run owns its candidate attempts,
   activity, recorded budgets, provenance, and final decision. Completion does
@@ -93,14 +95,16 @@ a late verification result cannot overwrite a newer read of the same project.
 Every successful managed optimization stage registers completed checkpoints
 through `synth workspace register-run-models <folder> --run-id <optimization>`.
 Registration verifies the native receipt and model bytes, copies the checkpoint
-into managed custody, preserves training provenance, and records project activity.
+into managed custody, links the exact recorded training dataset version, and
+records project activity. Changed data becomes a variant with inspectable
+additions/removals; unchanged populations can be shared by several models.
 Evaluation rejection does not prevent registration. This command also recovers
 outputs produced before automatic registration was implemented. Promotion reuses
 the registered artifact and appends only the baseline revision. Native and managed
 inventory fingerprints are connected through the recorded source-model identity.
 
-Completed-candidate dataset adoption, benchmark version management, and automatic agent
-execution are tracked in [the product contract](../docs/encoder-workspace-product.md).
+Benchmark version management, baseline controls, and automatic agent execution
+remain tracked in [the product contract](../docs/encoder-workspace-product.md).
 
 Managed onboarding calls the project-owned `synth workspace` commands. It
 accepts self-contained BERT-family safetensors encoder bundles, preserving

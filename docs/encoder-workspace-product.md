@@ -75,7 +75,7 @@ decision. No unbounded work or inferred spending.
    model-level baseline promotion/restoration controls remain outstanding.
 2. Dataset versions and changes — backend, CLI, desktop collection and version
    viewer implemented. Immutable model links and imported-baseline dataset
-   adoption are implemented. Completed-candidate dataset adoption remains pending;
+   adoption and completed-candidate dataset adoption are implemented;
    new manually created versions are not historical training evidence.
 3. Shared benchmark — pending. Version selection and one results table per exact
    benchmark version. Verify incompatibility and sealed isolation.
@@ -206,3 +206,49 @@ and keep outstanding requirements visible.
   final verified reopen confirmed unchanged library, manifest, custody database
   and workspace facts. Captures include `ui/qa/managed-current-datasets.png` and
   `ui/qa/managed-current-linked-dataset.png`. This inspection did not start a run.
+
+### Completed model datasets — 11 September 2026
+
+- Completed Nomos fine-tunes now receive verified dataset links during normal
+  output registration. `workspace dataset <folder> adopt-run <optimization>`
+  recovers links for already-registered outputs without rerunning the experiment.
+  The native adapter verifies its receipt and exact ordered inputs; the CLI
+  verifies scientific completion; the workspace adapter owns imports, versions
+  and links. Domain objects do not depend on the native adapter or SQLite.
+- Identical training populations reuse a dataset version. Changed populations
+  fork the starting model's recorded version and save additions/removals. Native
+  input order is preserved independently of dataset row order. Interrupted
+  adoption reuses existing imports, fork, revision and link identities.
+- Six local model-dataset tests cover baseline/candidate links, changed and
+  unchanged populations, interrupted persistence, moved folders, input-order
+  tampering and lightweight-versus-full validation. Native receipt tests verify
+  that adoption needs neither an executable Python nor available holdout files,
+  rejects changed sources, and never recreates a missing training receipt.
+- Routine project opens verify metadata references and the small training
+  manifests without reconstructing every dataset's ancestry. Explicit full
+  verification, row/diff reads and mutations retain complete membership checks.
+  A measured Nomos metadata open took 0.22 seconds in the debug build. Full file
+  and membership verification remains an explicit, more expensive operation.
+- All four Rust gates passed, as did UI typecheck/build, 61 unit tests and the
+  four-launch offline Electron suite. Full Rust output is recorded locally in
+  `target/candidate-dataset-rust-tests.log`; Electron output is in
+  `target/candidate-dataset-electron-tests.log`.
+- Nomos candidate `4cfde9aa-7a28-43bf-aa37-d372086c37a4` now links to
+  `Candidate 01 dataset`, version `a9edeb9e-63ce-81ad-8759-9495e82d6c30`:
+  6,992 rows, with 192 additions to the unchanged 6,800-row base. Its native
+  snapshot identity and manifest input order are preserved. Adoption action
+  `360eb8a5-ca9c-4726-bf00-905188f67e3f` links the optimization, model and version.
+  The original import records, model catalog, baseline link, project manifest
+  and scientific database are unchanged. No training, provider or holdout work
+  ran; only the verified delta import and dataset/link/activity records were added.
+- The real read-only Electron journey passed both model -> exact dataset ->
+  model paths, the candidate's Changes/Versions tabs, all project pages and
+  preparation. Initial/final full verification and byte comparisons proved no
+  inspection writes to the saved library, manifest or custody database. The
+  candidate diff and Data collection captures were visually inspected under
+  `ui/qa/managed-current-*`; the result is in
+  `target/candidate-dataset-current-ui.log`.
+- This completes the recorded candidate-data integration, not the overall goal.
+  Shared benchmark versions/results, model-level baseline promotion/restoration,
+  and the automatic bounded agent journey with complete offline end-to-end
+  acceptance remain outstanding.

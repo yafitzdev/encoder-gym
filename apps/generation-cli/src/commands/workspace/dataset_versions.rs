@@ -17,6 +17,7 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceDatasetCommand) -> 
     match command {
         List => super::print(&datasets::list(folder).await?),
         AdoptBaseline => adopt_baseline(folder).await,
+        AdoptRun { run_id } => super::completed_models::adopt_datasets(folder, run_id).await,
         Inspect { version_id } => super::print(&datasets::inspect(folder, version_id).await?),
         Rows {
             version_id,

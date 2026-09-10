@@ -88,14 +88,16 @@ impl ModelDatasetLink {
         artifact_core::fingerprint(&value).map_err(|error| Invalid(error.to_string()))
     }
 
-    pub fn validate_for(
+    /// Validate the metadata binding. This does not inspect row membership;
+    /// recording or fully verifying a link must use `validate_for` as well.
+    pub fn validate_reference(
         &self,
         model: &ModelArtifact,
-        version: &DatasetVersion,
+        version: &DatasetVersionRef,
     ) -> Result<(), Invalid> {
         model.validate()?;
         version
-            .validate_integrity()
+            .validate()
             .map_err(|error| Invalid(error.to_string()))?;
         require(
             self.fingerprint == self.reproduce()?,
@@ -106,7 +108,7 @@ impl ModelDatasetLink {
                 && self.project_id == version.project_id
                 && self.model_id == model.id
                 && self.model_fingerprint == model.fingerprint
-                && self.version == version.reference(),
+                && self.version == *version,
             "Model dataset link belongs to another artifact or version.",
         )?;
         let manifest = self.evidence.manifest();
@@ -143,6 +145,23 @@ impl ModelDatasetLink {
                 "Training inputs contain missing or repeated sources.",
             )?;
         }
+        Ok(())
+    }
+
+    pub fn validate_for(
+        &self,
+        model: &ModelArtifact,
+        version: &DatasetVersion,
+    ) -> Result<(), Invalid> {
+        self.validate_reference(model, &version.reference())?;
+        version
+            .validate_integrity()
+            .map_err(|error| Invalid(error.to_string()))?;
+        let imports = self
+            .inputs
+            .iter()
+            .map(|input| (input.import_id, input))
+            .collect::<BTreeMap<_, _>>();
         let mut observed: BTreeMap<Uuid, BTreeSet<u64>> = BTreeMap::new();
         for member in &version.members {
             let input = imports.get(&member.source.import_id).ok_or_else(|| {

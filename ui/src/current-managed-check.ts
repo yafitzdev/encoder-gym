@@ -35,10 +35,17 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
       await evaluate("[...document.querySelectorAll('#page button')].find(button=>button.textContent==='Inspect dataset').click()");
       await until("document.querySelector('.dataset-row-entry')");
       await check("document.getElementById('dataset-version').value === " + JSON.stringify(trainingData.version.id));
-      await capture("managed-current-linked-dataset");
+      await capture(model.role === "Baseline" ? "managed-current-linked-dataset" : "managed-current-candidate-dataset");
+      if (trainingData.evidence.kind === "completedTraining") {
+        await evaluate("document.getElementById('tab-changes').click()");
+        await until("document.querySelector('.dataset-change-row, .empty-state')");
+        await capture("managed-current-candidate-data-changes");
+        await evaluate("document.getElementById('tab-versions').click()");
+        await check("document.querySelector('.dataset-versions .artifact-row')");
+      }
       await evaluate("document.getElementById('tab-models').click()");
       await check("document.querySelector('#detail-panel').textContent.includes(" + JSON.stringify(model.name) + ")");
-      await evaluate("[...document.querySelectorAll('#detail-panel button')].find(button=>button.textContent==='Inspect model').click()");
+      await evaluate("[...document.querySelectorAll('#detail-panel .artifact-row')].find(row=>row.querySelector('h2').textContent === " + JSON.stringify(model.name) + ").querySelector('button').click()");
       await check("document.querySelector('.model-view').dataset.modelId === " + JSON.stringify(model.id));
     }
     if (model.evidence) {

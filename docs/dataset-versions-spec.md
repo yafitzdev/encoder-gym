@@ -62,6 +62,8 @@ acceptance follows the full base -> variant -> edit -> diff -> history journey.
 
 ```text
 synth workspace dataset <PROJECT> list
+synth workspace dataset <PROJECT> adopt-baseline
+synth workspace dataset <PROJECT> adopt-run <OPTIMIZATION_RUN_ID>
 synth workspace dataset <PROJECT> create --name "Base dataset" --source <IMPORT_ID>
 synth workspace dataset <PROJECT> fork <VERSION_ID> --name "Variant 1"
 synth workspace dataset <PROJECT> inspect <VERSION_ID>
@@ -92,8 +94,8 @@ order. Editing a dataset or promoting a model never changes the edge.
 
 `ImportedManifest` means recorded final-stage training inputs, not a claim about
 all ancestral pretraining. `CompletedTraining` additionally binds the model's
-exact original run and native snapshot; its adapter-owned adoption is a separate
-integration step. A source name or row count alone never establishes a link.
+exact original run and native snapshot. A source name or row count alone never
+establishes a link.
 
 `workspace dataset <PROJECT> adopt-baseline` reconstructs the imported Nomos
 model's version from its verified checkpoint manifest and already-recorded
@@ -101,9 +103,36 @@ training imports. It reuses an exact existing base version or creates one with
 project/model-scoped retry identities. An incompatible base is left unchanged.
 Repeated calls preserve the same version and link. Interrupted link persistence
 reuses the created dataset on retry. The append-only edge lives in migration 7;
-reads reproduce its fingerprint, model/version membership, original input order,
-manifest checksum and counts, and source custody references. Full verification
-also rereads the exact native source rows. CLI adoption records an action UUID.
+metadata reads reproduce its fingerprint, model/version reference, original input
+order, manifest checksum and counts, and source custody references. Full
+verification additionally reconstructs version ancestry and complete membership,
+then rereads the exact native source rows. Row/diff reads and mutations also
+reconstruct the version rather than trusting lightweight navigation metadata.
+Navigation is not full verification; malformed or foreign metadata still fails
+closed. CLI adoption records an action UUID.
+
+`adopt-run` recovers dataset links for already-registered completed Nomos
+fine-tunes. Normal `workspace register-run-models` registration performs the
+same adoption automatically. The CLI verifies scientific completion; the native
+adapter verifies the published checkpoint, candidate configuration, training
+manifest, receipt, source fingerprints and ordered input counts without running
+Python or reading holdout files. Interpolation outputs without a recorded
+training snapshot cannot be given an invented training dataset.
+
+The workspace adapter verifies custody again, reuses matching training imports,
+and copies missing training inputs through normal import validation. An exact
+existing population reuses its version even when native input order differs.
+Otherwise it forks the starting model's exact training version and records the
+added/removed rows as a new version. Newer user-edited dataset heads do not
+replace that historical starting point. Model-specific input order remains in
+the link independently of row display order.
+
+Retry identities are deterministic per project/model. A partial import, fork,
+revision or link write can be retried without duplicating the version history.
+Completed models remain registered if later dataset adoption fails; adoption
+does not retrain, promote, or modify the original scientific journal. The
+recovery action's JSON events link the run, model and dataset version without
+row payloads.
 
 Paged reads validate the complete source's identity and training partitions but
 only compute row-content fingerprints for requested records. Full construction

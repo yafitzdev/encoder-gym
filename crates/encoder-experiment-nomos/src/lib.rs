@@ -2,7 +2,9 @@
 
 mod progress;
 mod repair_delta;
+mod training_data;
 pub use progress::{NativePhase, NativeProgress, ProgressObserver};
+pub use training_data::{VerifiedTrainingData, VerifiedTrainingInput};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -3648,7 +3650,7 @@ mod tests {
 
     use super::*;
 
-    fn manifest_with_named_suites() -> NomosExperimentManifest {
+    pub(super) fn manifest_with_named_suites() -> NomosExperimentManifest {
         NomosExperimentManifest {
             schema_version: 4,
             experiment: "successor".into(),
@@ -3919,7 +3921,7 @@ mod tests {
         });
         validate_repair_training_manifest(&manifest, binding, &parsed_repair, &configuration)
             .unwrap();
-        let mut changed_manifest = manifest;
+        let mut changed_manifest = manifest.clone();
         changed_manifest["training_triplets"] = json!(11);
         assert!(
             validate_repair_training_manifest(
@@ -3930,6 +3932,7 @@ mod tests {
             )
             .is_err()
         );
+        super::training_data::tests::verify_readonly_handoff(repair.clone(), manifest);
         repair.remove(REPAIR_DELTA_FINGERPRINT_PARAMETER);
         assert!(NativeTrainingParameters::parse(&repair).is_err());
 

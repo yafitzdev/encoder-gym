@@ -135,7 +135,7 @@ pub async fn import_dataset(
     open_workspace(folder, true).await
 }
 
-async fn persist_import(
+pub(crate) async fn persist_import(
     workspace: &ManagedWorkspace,
     preview: &DatasetPreview,
     name: &str,

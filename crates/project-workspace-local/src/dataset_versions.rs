@@ -433,6 +433,35 @@ async fn optional_version(
     }
 }
 
+/// Lightweight metadata for project navigation. Full row reads and mutations
+/// still use `load_version`, which reconstructs the entire version ancestry.
+pub(crate) async fn load_reference(
+    database: &mut SqliteConnection,
+    project_id: Uuid,
+    id: Uuid,
+) -> Result<DatasetVersionRef> {
+    let row = sqlx::query("SELECT v.dataset_id, v.number, v.fingerprint, b.project_id, json_extract(v.metadata_json, '$.id') AS json_id, json_extract(v.metadata_json, '$.datasetId') AS json_dataset, json_extract(v.metadata_json, '$.projectId') AS json_project, json_extract(v.metadata_json, '$.number') AS json_number, json_extract(v.metadata_json, '$.fingerprint') AS json_fingerprint FROM dataset_versions v JOIN dataset_branches b ON b.id=v.dataset_id WHERE v.id=?")
+        .bind(id.to_string()).fetch_optional(database).await?.context("Linked dataset version is missing.")?;
+    let version = DatasetVersionRef {
+        id,
+        dataset_id: row.try_get::<String, _>("dataset_id")?.parse()?,
+        project_id,
+        number: u64::try_from(row.try_get::<i64, _>("number")?)?,
+        fingerprint: row.try_get("fingerprint")?,
+    };
+    version.validate()?;
+    ensure!(
+        row.try_get::<String, _>("project_id")? == project_id.to_string()
+            && row.try_get::<String, _>("json_project")? == project_id.to_string()
+            && row.try_get::<String, _>("json_id")? == id.to_string()
+            && row.try_get::<String, _>("json_dataset")? == version.dataset_id.to_string()
+            && row.try_get::<i64, _>("json_number")? == i64::try_from(version.number)?
+            && row.try_get::<String, _>("json_fingerprint")? == version.fingerprint,
+        "Linked dataset version metadata changed."
+    );
+    Ok(version)
+}
+
 pub(crate) async fn load_version(
     database: &mut SqliteConnection,
     project_id: Uuid,

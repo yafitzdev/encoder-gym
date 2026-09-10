@@ -8,6 +8,8 @@ pub enum WorkspaceDatasetCommand {
     List,
     /// Reconstruct the imported model's exact recorded final-stage dataset.
     AdoptBaseline,
+    /// Link already-registered run outputs to their verified training datasets.
+    AdoptRun { run_id: uuid::Uuid },
     /// Create the base dataset from verified training imports.
     Create {
         #[arg(long)]

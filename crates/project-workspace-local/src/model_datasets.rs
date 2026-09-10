@@ -1,4 +1,7 @@
 //! Reconstruct recorded model inputs without altering checkpoints or run history.
+mod completed;
+pub use completed::{CompletedTrainingData, RecordedTrainingInput, adopt_completed};
+
 use std::{collections::BTreeSet, path::Path};
 
 use anyhow::{Context, Result, ensure};
@@ -37,8 +40,8 @@ pub(crate) async fn load_links(
         let link: ModelDatasetLink = serde_json::from_str(&row.get::<String, _>("metadata_json"))?;
         ensure!(row.get::<String, _>("model_id") == link.model_id.to_string() && row.get::<String, _>("version_id") == link.version.id.to_string() && row.get::<String, _>("fingerprint") == link.fingerprint, "Model dataset link storage changed.");
         let model = catalog.and_then(|catalog| catalog.artifacts.iter().find(|model| model.id == link.model_id)).context("Training dataset refers to an absent model.")?;
-        let version = dataset_versions::load_version(database, model.project_id, link.version.id).await?;
-        link.validate_for(model, &version)?;
+        let version = dataset_versions::load_reference(database, model.project_id, link.version.id).await?;
+        link.validate_reference(model, &version)?;
         let mut identity = link.evidence.manifest().clone();
         identity.path = format!("{}/{}", model.path, identity.path);
         // The small manifest is always verified, including on metadata-only opens.
@@ -73,6 +76,17 @@ pub(crate) async fn verify_members(workspace: &ManagedWorkspace) -> Result<()> {
         let version =
             dataset_versions::load_version(&mut database, workspace.manifest.id, link.version.id)
                 .await?;
+        let model = workspace
+            .model_catalog
+            .as_ref()
+            .and_then(|catalog| {
+                catalog
+                    .artifacts
+                    .iter()
+                    .find(|model| model.id == link.model_id)
+            })
+            .context("Linked model is missing.")?;
+        link.validate_for(model, &version)?;
         dataset_versions::rows::verify_members(workspace, &version.members)?;
     }
     database.close().await?;
@@ -205,7 +219,26 @@ pub async fn adopt_baseline(folder: &Path) -> Result<ModelDatasetLink> {
         }
     };
     dataset_versions::rows::verify_members(&workspace, &version.members)?;
-    let mut link = ModelDatasetLink::new(model, &version, recorded, evidence, Utc::now())?;
+    let link = ModelDatasetLink::new(model, &version, recorded, evidence, Utc::now())?;
+    persist_link(&workspace, link, &version).await
+}
+
+async fn persist_link(
+    workspace: &ManagedWorkspace,
+    mut link: ModelDatasetLink,
+    version: &dataset_core::versions::DatasetVersion,
+) -> Result<ModelDatasetLink> {
+    let model = workspace
+        .model_catalog
+        .as_ref()
+        .and_then(|catalog| {
+            catalog
+                .artifacts
+                .iter()
+                .find(|model| model.id == link.model_id)
+        })
+        .context("Linked model is missing.")?;
+    link.validate_for(model, version)?;
     let mut database = connect(Path::new(&workspace.folder), false, false).await?;
     sqlx::migrate!("./migrations").run(&mut database).await?;
     let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
@@ -223,7 +256,7 @@ pub async fn adopt_baseline(folder: &Path) -> Result<ModelDatasetLink> {
             link == existing,
             "This model already has a different training dataset link."
         );
-        existing.validate_for(model, &version)?;
+        existing.validate_for(model, version)?;
         transaction.rollback().await?;
     } else {
         sqlx::query("INSERT INTO model_dataset_links(model_id, version_id, fingerprint, metadata_json) VALUES (?, ?, ?, ?)").bind(link.model_id.to_string()).bind(link.version.id.to_string()).bind(&link.fingerprint).bind(serde_json::to_string(&link)?).execute(&mut *transaction).await?;

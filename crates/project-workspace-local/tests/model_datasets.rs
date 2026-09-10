@@ -213,3 +213,268 @@ async fn retry_after_link_write_failure_reuses_the_existing_dataset() {
             .contains("input order changed")
     );
 }
+
+async fn completed_request(
+    root: &Path,
+    folder: &Path,
+    extra: bool,
+) -> model_datasets::CompletedTrainingData {
+    use project_workspace_core::{BoundIdentity, DatasetPurpose};
+    use project_workspace_local::{
+        CompletedModelRegistration, inspect_dataset, register_completed_model,
+    };
+    let workspace = open_workspace(folder, false).await.unwrap();
+    let checkpoint = root.join(format!("candidate-{}", Uuid::new_v4()));
+    training_transformer::fixture::write_tiny_bert_bundle(&checkpoint).unwrap();
+    fs::write(
+        root.join("extra.jsonl"),
+        "{\"question\":\"Added training row\",\"split\":\"train\"}\n",
+    )
+    .unwrap();
+    let mut keys = vec!["b.jsonl", "a.jsonl"];
+    if extra {
+        keys.push("extra.jsonl");
+    }
+    let inputs = keys
+        .iter()
+        .map(|key| {
+            let path = root.join(key);
+            let preview = inspect_dataset(&path, DatasetPurpose::Training).unwrap();
+            model_datasets::RecordedTrainingInput {
+                key: key.to_string(),
+                path,
+                bytes: preview.artifact.bytes,
+                fingerprint: preview.artifact.fingerprint,
+                rows: preview.rows,
+            }
+        })
+        .collect::<Vec<_>>();
+    let counts = inputs
+        .iter()
+        .map(|input| (input.key.clone(), input.rows))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    fs::write(
+        checkpoint.join("nomos_training_manifest.json"),
+        serde_json::to_vec(
+            &json!({"inputs":keys, "input_row_counts":counts,"fixture_run":Uuid::new_v4()}),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let model = inspect_model(&checkpoint).unwrap();
+    let identity = || BoundIdentity {
+        id: Uuid::new_v4().to_string(),
+        fingerprint: "sha256:".to_string() + &"3".repeat(64),
+    };
+    let snapshot = identity();
+    let run = identity();
+    let source_model = identity();
+    let registered = register_completed_model(
+        folder,
+        &checkpoint,
+        CompletedModelRegistration {
+            parent_model_id: workspace.model_catalog.as_ref().unwrap().active_model().id,
+            name: "Candidate 01".into(),
+            source_model: source_model.clone(),
+            source_model_format: model.format,
+            source_model_bytes: model.bytes,
+            producing_run: run.clone(),
+            training_snapshot: snapshot.clone(),
+            trainer: identity(),
+            effective_configuration_fingerprint: "sha256:".to_string() + &"4".repeat(64),
+            source_revision: "fixture-revision".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let model_id = registered
+        .model_catalog
+        .unwrap()
+        .artifacts
+        .iter()
+        .find(|model| model.source_model.as_ref() == Some(&source_model))
+        .unwrap()
+        .id;
+    model_datasets::CompletedTrainingData {
+        model_id,
+        snapshot,
+        run,
+        manifest: model
+            .files
+            .into_iter()
+            .find(|file| file.path == "nomos_training_manifest.json")
+            .unwrap(),
+        inputs,
+    }
+}
+
+#[tokio::test]
+async fn completed_candidate_keeps_native_order_and_inspectable_base_plus_delta_history() {
+    let temp = TempDir::new().unwrap();
+    let folder = fixture(temp.path()).await;
+    let base = model_datasets::adopt_baseline(&folder).await.unwrap();
+    let request = completed_request(temp.path(), &folder, true).await;
+    let before = open_workspace(&folder, true).await.unwrap();
+    let link = model_datasets::adopt_completed(&folder, request.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        model_datasets::adopt_completed(&folder, request)
+            .await
+            .unwrap(),
+        link
+    );
+    assert_eq!(
+        link.inputs
+            .iter()
+            .map(|input| input.key.as_str())
+            .collect::<Vec<_>>(),
+        ["b.jsonl", "a.jsonl", "extra.jsonl"]
+    );
+    let entries = dataset_versions::list(&folder).await.unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[1].dataset.origin.as_ref(), Some(&base.version));
+    assert_eq!(entries[1].versions.len(), 2);
+    assert_eq!(entries[1].versions[0].rows, 4);
+    let version = dataset_versions::inspect(&folder, link.version.id)
+        .await
+        .unwrap();
+    assert_eq!(version.changes.added.len(), 1);
+    assert!(version.changes.removed.is_empty());
+    assert_eq!(
+        version.members[0].source.import_id,
+        base.inputs[0].import_id
+    );
+    let changes = dataset_versions::read_changes(&folder, version.id, 0, 25)
+        .await
+        .unwrap();
+    assert_eq!(
+        changes.changes[0].after.as_ref().unwrap().value["question"],
+        "Added training row"
+    );
+    assert_eq!(
+        open_workspace(&folder, true).await.unwrap().model_catalog,
+        before.model_catalog
+    );
+    let moved = temp.path().join("moved-candidate");
+    fs::rename(&folder, &moved).unwrap();
+    assert_eq!(
+        open_workspace(&moved, true)
+            .await
+            .unwrap()
+            .model_dataset_links[1],
+        link
+    );
+}
+
+#[tokio::test]
+async fn completed_model_reuses_unchanged_data_and_failed_link_retry_reuses_its_variant() {
+    let temp = TempDir::new().unwrap();
+    let folder = fixture(temp.path()).await;
+    let base = model_datasets::adopt_baseline(&folder).await.unwrap();
+    let unchanged = completed_request(temp.path(), &folder, false).await;
+    let link = model_datasets::adopt_completed(&folder, unchanged)
+        .await
+        .unwrap();
+    assert_eq!(link.version, base.version);
+    assert_eq!(dataset_versions::list(&folder).await.unwrap().len(), 1);
+    let request = completed_request(temp.path(), &folder, true).await;
+    let mut invalid = request.clone();
+    invalid.snapshot.id = Uuid::new_v4().to_string();
+    assert!(
+        model_datasets::adopt_completed(&folder, invalid)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        open_workspace(&folder, false).await.unwrap().datasets.len(),
+        2
+    );
+    let mut database = SqliteConnection::connect(&format!(
+        "sqlite://{}",
+        folder.join("project.sqlite").display()
+    ))
+    .await
+    .unwrap();
+    sqlx::query("CREATE TRIGGER fail_completed_link BEFORE INSERT ON model_dataset_links BEGIN SELECT RAISE(ABORT, 'injected'); END").execute(&mut database).await.unwrap();
+    assert!(
+        model_datasets::adopt_completed(&folder, request.clone())
+            .await
+            .is_err()
+    );
+    let entries = dataset_versions::list(&folder).await.unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[1].versions.len(), 2);
+    sqlx::query("DROP TRIGGER fail_completed_link")
+        .execute(&mut database)
+        .await
+        .unwrap();
+    let linked = model_datasets::adopt_completed(&folder, request)
+        .await
+        .unwrap();
+    assert_eq!(linked.version, entries[1].versions[0].version);
+    assert_eq!(dataset_versions::list(&folder).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn metadata_navigation_is_not_a_substitute_for_full_membership_verification() {
+    let temp = TempDir::new().unwrap();
+    let folder = fixture(temp.path()).await;
+    let link = model_datasets::adopt_baseline(&folder).await.unwrap();
+    let version = dataset_versions::inspect(&folder, link.version.id)
+        .await
+        .unwrap();
+    let mut changed = serde_json::to_value(&version).unwrap();
+    changed["members"][0]["contentFingerprint"] = json!("sha256:".to_string() + &"a".repeat(64));
+    let mut database = SqliteConnection::connect(&format!(
+        "sqlite://{}",
+        folder.join("project.sqlite").display()
+    ))
+    .await
+    .unwrap();
+    sqlx::query("DROP TRIGGER immutable_dataset_versions_update")
+        .execute(&mut database)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE dataset_versions SET metadata_json=? WHERE id=?")
+        .bind(serde_json::to_string(&changed).unwrap())
+        .bind(version.id.to_string())
+        .execute(&mut database)
+        .await
+        .unwrap();
+    assert!(!open_workspace(&folder, false).await.unwrap().verified);
+    assert!(open_workspace(&folder, true).await.is_err());
+    assert!(
+        dataset_versions::read_rows(&folder, version.id, 0, 1)
+            .await
+            .is_err()
+    );
+    assert!(
+        dataset_versions::fork(
+            &folder,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "Invalid fork",
+            version.id
+        )
+        .await
+        .is_err()
+    );
+    // Mismatched or missing metadata also fails on the lightweight path.
+    changed["projectId"] = json!(Uuid::new_v4());
+    sqlx::query("UPDATE dataset_versions SET metadata_json=? WHERE id=?")
+        .bind(serde_json::to_string(&changed).unwrap())
+        .bind(version.id.to_string())
+        .execute(&mut database)
+        .await
+        .unwrap();
+    assert!(open_workspace(&folder, false).await.is_err());
+    changed["projectId"] = serde_json::Value::Null;
+    sqlx::query("UPDATE dataset_versions SET metadata_json=? WHERE id=?")
+        .bind(serde_json::to_string(&changed).unwrap())
+        .bind(version.id.to_string())
+        .execute(&mut database)
+        .await
+        .unwrap();
+    assert!(open_workspace(&folder, false).await.is_err());
+}
