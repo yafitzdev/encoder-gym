@@ -84,6 +84,11 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await check("new project shows its baseline without fabricated runs or candidates", "document.querySelector('.baseline-name').textContent.includes('Routing encoder') && document.querySelectorAll('[data-candidate-id]').length === 0 && document.getElementById('source-state').textContent.includes('Managed workspace')");
   await screenshot("managed-baseline");
   await check("Models leads with the baseline, candidates, and one action", "document.querySelector('.page-heading h1').textContent === 'Models' && !document.querySelector('.page-heading p') && document.querySelector('.candidate-empty h3').textContent === 'No candidates' && [...document.querySelectorAll('#page button')].filter(b=>b.textContent === 'Start optimization').length === 1 && !document.querySelector('.candidate-empty p')");
+  await check("Models omits decorative model and candidate count badges", "![...document.querySelectorAll('.baseline-name .tag')].some(e=>e.textContent.includes('sentence-transformers')) && document.querySelector('.candidate-section > .section-heading .tag') === null");
+  await click('[data-project-id]');
+  await check("selected project folder collapses independently", "document.querySelector('[data-project-id]').getAttribute('aria-expanded') === 'false' && !document.querySelector('.project-pages')");
+  await click('[data-project-id]');
+  await check("selected project folder expands without changing the page", "document.querySelector('[data-project-id]').getAttribute('aria-expanded') === 'true' && document.querySelector('.project-pages') && document.querySelector('.page-heading h1').textContent === 'Models'");
   const pageFrames: { left: number; top: number; width: number }[] = [];
   for (const page of ["models", "datasets", "runs", "benchmarks", "project"]) {
     await nav(page); await until("document.querySelector('.workspace-page > .page-heading + .workspace-page-body')");

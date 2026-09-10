@@ -29,6 +29,7 @@ export function mount(): void {
   let opened: OpenedProject | undefined, loading = true, collectionError: string | undefined;
   let collectionBusy = false, operationError: unknown, loadingMessage = "Opening project…";
   const views = new Map<string, ProjectView>();
+  const collapsedProjects = new Set<string>();
   let view = newView(), timer: ReturnType<typeof setTimeout>;
   const workspace = (): WorkspaceSnapshot | undefined => opened?.content.state === "ready" ? { ...opened.content.workspace, name: opened.project.name } : undefined;
   const notify = (message: string) => { const toast = element("toast"); toast.textContent = message; toast.hidden = false; clearTimeout(timer); timer = setTimeout(() => { toast.hidden = true; }, 6000); };
@@ -404,12 +405,16 @@ export function mount(): void {
     const focus = document.activeElement, focusId = focus?.id;
     const caret = focus instanceof HTMLInputElement && ["text", "search"].includes(focus.type) ? [focus.selectionStart, focus.selectionEnd] : undefined;
     const scroll = main.scrollTop;
-    element("project-nav").replaceChildren(...collection.projects.map(p => h("section", { class: "project-folder" + (p.id === project?.id ? " selected-project" : "") },
-      h("button", { type: "button", id: "project-" + p.id, disabled: collectionBusy, class: "project-folder-button", title: p.source.kind === "folder" ? p.source.path : "Recorded example", "data-project-id": p.id, "aria-expanded": String(p.id === project?.id), onClick: () => {
-        if (p.id === selection.selectedId) navigate({ page: "models" }); else projects.select(p.id);
+    element("project-nav").replaceChildren(...collection.projects.map(p => {
+      const expanded = p.id === project?.id && !collapsedProjects.has(p.id);
+      return h("section", { class: "project-folder" + (p.id === project?.id ? " selected-project" : "") + (expanded ? " expanded-project" : "") },
+      h("button", { type: "button", id: "project-" + p.id, disabled: collectionBusy, class: "project-folder-button", title: p.source.kind === "folder" ? p.source.path : "Recorded example", "data-project-id": p.id, "aria-expanded": String(expanded), onClick: () => {
+        if (p.id === selection.selectedId) { collapsedProjects.has(p.id) ? collapsedProjects.delete(p.id) : collapsedProjects.add(p.id); render(); }
+        else { collapsedProjects.delete(p.id); projects.select(p.id); }
       } }, icon("project"), h("span", {}, p.name), p.source.kind === "example" ? h("small", {}, "Example") : !p.source.workspaceId ? h("small", {}, "Legacy") : null),
-      p.id === project?.id ? h("div", { class: "project-pages" }, ...pages.filter(([page]) => page !== "datasets" || (p.source.kind === "folder" && p.source.workspaceId)).map(([page, label, symbol]) => h("button", { type: "button", id: "nav-" + page, disabled: collectionBusy, class: "nav-item" + (page === activePage ? " active" : ""), "aria-current": page === activePage ? "page" : null, "data-page": page, onClick: () => navigate({ page }) }, icon(symbol), label,
-        data && ["models", "runs"].includes(page) ? h("span", { class: "nav-count" }, page === "models" ? candidateRows(data).length + 1 : runCount) : null))) : null)));
+      expanded ? h("div", { class: "project-pages" }, ...pages.filter(([page]) => page !== "datasets" || (p.source.kind === "folder" && p.source.workspaceId)).map(([page, label, symbol]) => h("button", { type: "button", id: "nav-" + page, disabled: collectionBusy, class: "nav-item" + (page === activePage ? " active" : ""), "aria-current": page === activePage ? "page" : null, "data-page": page, onClick: () => navigate({ page }) }, icon(symbol), label,
+        data && ["models", "runs"].includes(page) ? h("span", { class: "nav-count" }, page === "models" ? candidateRows(data).length + 1 : runCount) : null))) : null);
+    }));
     const candidate = data ? candidateRows(data).find(r => r.candidate.id === current.id)?.candidate : undefined;
     const run = data?.runs.find(r => r.id === current.id);
     const title = !project ? "Projects" : current.page === "candidate" ? candidate ? candidateName(candidate) : "Candidate not found" :
@@ -450,9 +455,22 @@ export function mount(): void {
     (element("navigate-forward") as HTMLButtonElement).disabled = !project || !view.history.canNavigate(1);
   }
   for (const [id, offset] of [["navigate-back", -1], ["navigate-forward", 1]] as const) element(id).addEventListener("click", () => { const entry = view.history.move(offset, main.scrollTop); if (entry) { render(); restorePlace(); } });
-  bridge.onNavigationCommand(direction => element(direction === "back" ? "navigate-back" : "navigate-forward").click());
+  let lastMouseNavigation: { direction: "back" | "forward"; at: number } | undefined;
+  const mouseNavigate = (direction: "back" | "forward") => {
+    const now = performance.now();
+    if (lastMouseNavigation?.direction === direction && now - lastMouseNavigation.at < 150) return;
+    lastMouseNavigation = { direction, at: now };
+    element(direction === "back" ? "navigate-back" : "navigate-forward").click();
+  };
+  bridge.onNavigationCommand(mouseNavigate);
+  const extendedMouseButton = (event: MouseEvent | PointerEvent) => {
+    if (document.querySelector("dialog[open]") || (event.button !== 3 && event.button !== 4)) return;
+    event.preventDefault();
+    mouseNavigate(event.button === 3 ? "back" : "forward");
+  };
+  document.addEventListener("pointerup", extendedMouseButton, true);
+  document.addEventListener("auxclick", extendedMouseButton, true);
   element("reload-evidence").addEventListener("click", actions.refresh);
-  element("open-guide").addEventListener("click", () => help());
   element("add-project").addEventListener("click", projects.create);
   element("open-project").addEventListener("click", projects.openManaged);
   element("open-legacy-project").addEventListener("click", projects.addFolder);

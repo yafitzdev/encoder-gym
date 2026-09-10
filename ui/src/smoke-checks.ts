@@ -67,6 +67,10 @@ export async function runSmokeChecks(window: BrowserWindow, output: string, harn
   await check("mouse forward uses project navigation history", "document.querySelector('.detail-page h1').textContent === 'Repair fine-tune'");
   web.send("encoder-gym:navigation-command", "back"); await until("document.getElementById('candidate-search')");
   await check("mouse back restores page state", "document.getElementById('candidate-search').value === 'repair' && document.querySelectorAll('[data-candidate-id]').length === 1");
+  await evaluate("document.dispatchEvent(new PointerEvent('pointerup',{button:4,bubbles:true}))"); await until("document.querySelector('.detail-page')");
+  await check("direct mouse forward works without an Electron command", "document.querySelector('.detail-page h1').textContent === 'Repair fine-tune'");
+  await evaluate("document.dispatchEvent(new PointerEvent('pointerup',{button:3,bubbles:true}))"); await until("document.getElementById('candidate-search')");
+  await check("direct mouse back restores page state", "document.getElementById('candidate-search').value === 'repair'");
   await type("candidate-search", "no-matching-candidate");
   await check("empty search has recovery", "document.querySelector('.empty-state').textContent.includes('Reset filters')");
   await click(".empty-state button");
@@ -128,7 +132,12 @@ export async function runSmokeChecks(window: BrowserWindow, output: string, harn
   writeExperimentDatabase(join(semantic, "semantic.sqlite3"), f);
   const before = readFileSync(join(support, "experiment.db"));
   const add = async (folder: string) => { harness.chooseFolder(folder); await evaluate("document.querySelector('.legacy-connections').open = true"); await click("#open-legacy-project"); await until("document.getElementById('breadcrumb').textContent.includes(" + JSON.stringify(folder.split(/[\\/]/).at(-1)) + ")"); await loaded(); };
-  const open = async (id: string) => { await click('[data-project-id="' + id + '"]'); await loaded(); };
+  const open = async (id: string) => {
+    const selector = '[data-project-id="' + id + '"]';
+    const state = await evaluate("(()=>{const button=document.querySelector(" + JSON.stringify(selector) + ");return {selected:button.closest('.project-folder').classList.contains('selected-project'),expanded:button.getAttribute('aria-expanded')==='true'}})()");
+    if (!state.selected || !state.expanded) await click(selector);
+    await loaded();
+  };
   await add(draft);
   const draftId = harness.registry.read().selectedId!;
   await check("an empty project is a valid first-use state", "document.querySelector('.empty-baseline') && document.getElementById('page').textContent.includes('No baseline')");

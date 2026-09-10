@@ -381,6 +381,8 @@ dialog::backdrop { background: #0008; }
 #add-project { width: auto; padding-inline: 7px; font-size: 12px; font-weight: 500; }
 .project-folder { min-width: 0; margin-bottom: 6px; }
 .project-folder-button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 10px 9px; border-radius: 6px; background: transparent; text-align: left; color: var(--muted); font-size: 13px; }
+.project-folder-button::before { content: "›"; width: 8px; color: var(--subtle); font-size: 16px; line-height: 1; transform-origin: center; transition: transform 100ms ease; }
+.expanded-project > .project-folder-button::before { transform: rotate(90deg); }
 .project-folder-button:hover { background: var(--surface); color: var(--text); }
 .project-folder-button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-folder-button > small { color: var(--subtle); font-size: 10px; margin-left: auto; }
@@ -512,7 +514,6 @@ dialog::backdrop { background: #0008; }
 .runtime-form { width: 100%; min-width: 0; }
 .runtime-notice { margin: 18px 24px 0; padding: 13px 15px; border-left: 3px solid var(--accent); background: var(--bg); }
 .runtime-notice strong { font-size: 12px; }
-.sidebar-help { width: 38px; justify-content: center; }
 .runtime-selection { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-bottom: 15px; border-bottom: 1px solid var(--line); }
 .runtime-selection > div { min-width: 0; display: grid; gap: 5px; }
 .runtime-selection strong { font-size: 12px; }
