@@ -71,6 +71,13 @@ Do not confuse custody with readiness:
   read-only verifier both pass. The real reservation action is visible in the
   initial viewport after the essential limits and evidence boundary, before
   optional recipe and immutable-ID disclosures.
+- Prepared-definition recovery no longer falls through from the passive summary
+  path into the complete historical repair replay. A timed real Nomos readiness
+  call now returns the same exact prepared definition, zero blockers, and no
+  existing run in 1.871 seconds. The separate opt-in Electron verifier took
+  89.121 seconds because it deliberately rehashed the 134 MB baseline and data,
+  captured four pages, and performed a second unchanged-state reopen; ordinary
+  page navigation does not make that integrity claim or pay that cost.
 - Once reserved, the desktop now puts the active run and its one safe next
   action above the frozen launch definition. Run supervision distinguishes
   completed model/evaluation records from reserved and unreserved capacity,

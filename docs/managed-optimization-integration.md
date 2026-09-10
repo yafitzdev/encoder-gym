@@ -613,6 +613,20 @@ immediately after the hard limits and development/sealed evidence boundary;
 candidate parameters and immutable identities remain optional disclosures.
 No run was reserved by this verification.
 
+That first recovered-state verification also revealed an accidental performance
+regression: `recover_managed_summary` validated the shallow, directly bound
+owner records and then called `recover_managed`, repeating the complete repair
+history replay. Passive recovery now finishes from the fingerprint-verified
+summary records, shallow logical snapshot, exact content-addressed manifest
+bytes, current benchmark journal, source protocol, and persisted optimization
+lookup. Preparation and every mutation continue to use the deep path. A timed
+real Nomos readiness call returned the identical prepared fingerprint,
+`runnable: true`, zero blockers, and no existing run in 1.871 seconds. The
+separate explicit Electron integrity verifier completed in 89.121 seconds
+because it additionally rehashed the 134,211,908-byte baseline and managed data,
+captured four pages, and reopened the project for byte/fact comparison. Normal
+page refresh does not claim or repeat those explicit integrity checks.
+
 The accepted-promotion implementation is covered at three boundaries. Workspace
 tests prove content-addressed copying, append-only provenance, idempotent retry,
 stale-baseline rejection, orphan-copy recovery, and tamper detection. CLI tests

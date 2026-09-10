@@ -13,6 +13,25 @@ fn database(directory: &tempfile::TempDir) -> (std::path::PathBuf, String) {
     (path, url)
 }
 
+fn assert_file_unchanged(path: &std::path::Path, before: &[u8], context: &str) {
+    let after = std::fs::read(path).unwrap();
+    if before != after {
+        let first_difference = before
+            .iter()
+            .zip(&after)
+            .position(|(left, right)| left != right)
+            .unwrap_or_else(|| before.len().min(after.len()));
+        panic!(
+            "database bytes changed during {context}: before_len={}, after_len={}, first_difference={}, before_byte={:?}, after_byte={:?}",
+            before.len(),
+            after.len(),
+            first_difference,
+            before.get(first_difference),
+            after.get(first_difference)
+        );
+    }
+}
+
 #[tokio::test]
 async fn missing_database_is_never_created_even_with_rwc_url() {
     let directory = tempfile::tempdir().unwrap();
@@ -95,7 +114,7 @@ async fn passive_connection_preserves_delete_journal_and_database_bytes() {
         "delete"
     );
     reader.pool().close().await;
-    assert_eq!(before, std::fs::read(&path).unwrap());
+    assert_file_unchanged(&path, &before, "passive DELETE-journal read");
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
 }
 
@@ -111,10 +130,19 @@ async fn incompatible_schema_is_rejected_without_migration_or_repair() {
         let (path, url) = database(&directory);
         let writer = SqliteStore::connect(&url).await.unwrap();
         sqlx::query(mutation).execute(writer.pool()).await.unwrap();
+        // Establish the bytes whose preservation we are testing while the
+        // writer is still alive. On Windows, SQLite's connection worker can
+        // finish its close-time WAL checkpoint after Pool::close resolves,
+        // which otherwise makes that checkpoint look like a reader write.
+        let checkpoint = sqlx::query_as::<_, (i64, i64, i64)>("PRAGMA wal_checkpoint(TRUNCATE)")
+            .fetch_one(writer.pool())
+            .await
+            .unwrap();
+        assert_eq!(checkpoint.0, 0, "WAL checkpoint was busy for {mutation}");
         writer.pool().close().await;
         let before = std::fs::read(&path).unwrap();
         let error = SqliteStore::connect_read_only(&url).await.unwrap_err();
         assert!(error.to_string().contains("database schema does not match"));
-        assert_eq!(before, std::fs::read(&path).unwrap());
+        assert_file_unchanged(&path, &before, mutation);
     }
 }

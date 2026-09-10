@@ -785,9 +785,9 @@ pub(crate) async fn recover_managed(
     }))
 }
 
-/// Avoid a recursive scientific-history replay merely to discover that no
-/// prepared definition exists. If the exact content-addressed file is present,
-/// the normal deep recovery path remains authoritative.
+/// Recover a prepared definition for passive status projection from the
+/// directly bound, fingerprint-verified owner records. Preparation and every
+/// mutation still use `recover_managed` and its complete historical replay.
 pub(crate) async fn recover_managed_summary(
     store: &SqliteExperimentStore,
     project: &encoder_experiment_core::domain::ExternalProjectSnapshot,
@@ -823,12 +823,26 @@ pub(crate) async fn recover_managed_summary(
         approved.approval_predecessor.as_ref(),
         &approved.selection,
     )?;
-    let (_, manifest) = managed_manifest(project, &snapshot, &approved.proposal);
-    let (manifest_path, _) = managed_manifest_file(managed_root, &manifest)?;
+    let (manifest_name, manifest) = managed_manifest(project, &snapshot, &approved.proposal);
+    let (manifest_path, contents) = managed_manifest_file(managed_root, &manifest)?;
     if !manifest_path.exists() {
         return Ok(None);
     }
-    recover_managed(store, project, managed_root, authority).await
+    verify_managed_definitions_directory(managed_root, false)?;
+    anyhow::ensure!(
+        fs::read(&manifest_path)? == contents,
+        "The prepared optimization definition no longer matches its persisted scientific authority."
+    );
+    let resolved = resolve_loaded(store, manifest, snapshot, project, &approved.proposal).await?;
+    let readiness = managed_readiness_from_resolved(store, &resolved).await?;
+    Ok(Some(ManagedOptimizationPreparation {
+        manifest_path,
+        manifest_name,
+        authority: authority.clone(),
+        readiness,
+        created_training_snapshot: false,
+        external_calls: approved.proposal.budget.maximum_external_calls,
+    }))
 }
 
 fn managed_manifest(
