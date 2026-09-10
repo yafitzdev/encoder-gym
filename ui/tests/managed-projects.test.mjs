@@ -187,6 +187,38 @@ test("managed control rejects a duplicate mutating operation for one project", a
   release(); await first;
 });
 
+test("live progress is observable during execution and isolated to its project and run", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gym-live-progress-")), folder = join(root, "project"); mkdirSync(folder);
+  const id = randomUUID(), runId = randomUUID(), other = randomUUID();
+  const workspace = { folder, verified: true, manifest: { version: 1, id, name: "Progress fixture", createdAt: new Date().toISOString(), task: null, baseline: {} }, datasets: [] };
+  const registry = new ProjectRegistry(join(root, "profile", "projects.json")); registry.addManaged(workspace);
+  registry.addManaged({ ...workspace, folder: root, manifest: { ...workspace.manifest, id: other } });
+  let release, entered;
+  const held = new Promise(resolve => { release = resolve; }), ready = new Promise(resolve => { entered = resolve; });
+  const executor = async (_executable, args, _environment, progress) => {
+    if (args[3] === "open") return JSON.stringify(args[4] === folder ? workspace : { ...workspace, folder: root, manifest: { ...workspace.manifest, id: other } });
+    if (args[5] === "resume") { progress({ phase: "training", completed: 4, total: 12 }); entered(); await held; }
+    return JSON.stringify({ run_id: args[6], state: "campaign_active", worker: { state: "running" } });
+  };
+  const backend = new ManagedBackend("owned-synth", registry, executor);
+  const pending = backend.optimize(id, { action: "resume", runId });
+  try {
+    await ready;
+    const status = await backend.optimize(id, { action: "status", runId });
+    assert.equal(status.activity.running, true);
+    assert.equal(status.activity.completed, 4);
+    assert.equal(status.activity.total, 12);
+    status.activity.completed = 99;
+    assert.equal((await backend.optimize(id, { action: "status", runId })).activity.completed, 4);
+    assert.equal((await backend.optimize(id, { action: "status", runId: other })).activity, undefined);
+    assert.equal((await backend.optimize(other, { action: "status", runId })).activity, undefined);
+    await assert.rejects(() => backend.optimize(id, { action: "resume", runId }), /already running/);
+  } finally { release(); }
+  const finished = await pending;
+  assert.equal(finished.activity.running, false);
+  assert.equal(finished.worker.state, "idle");
+});
+
 test("native execution receives only project-scoped provider credentials in fixed child environment names", async () => {
   const root = mkdtempSync(join(tmpdir(), "gym-managed-secrets-")), folder = join(root, "project"); mkdirSync(folder);
   const id = randomUUID(), runId = randomUUID();

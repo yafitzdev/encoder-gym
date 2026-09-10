@@ -8,6 +8,8 @@ import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice,
 import type { ProjectRegistry } from "./project-registry.js";
 import type { WorkspaceSnapshot } from "./workspace.js";
 import { readWorkspaceDatabase } from "./evidence/read-workspace.js";
+import type { NativeProgress, RunActivity, ManagedRunStatus } from "./managed-control.js";
+import { executeObservedCommand, recordProgress } from "./run-activity.js";
 
 const purposes = new Set<DatasetPurpose>(["unassigned", "training", "development", "sealed"]);
 export function datasetPurpose(value: unknown): DatasetPurpose {
@@ -79,7 +81,7 @@ export function redactBackendError(value: string): string {
 }
 
 export type CommandEnvironment = Readonly<Record<string, string>>;
-export type CommandExecutor = (executable: string, args: string[], environment?: CommandEnvironment) => Promise<string>;
+export type CommandExecutor = (executable: string, args: string[], environment?: CommandEnvironment, progress?: (value: NativeProgress) => void) => Promise<string>;
 export interface ManagedBackendOptions {
   /** Main-process-only resolver. Returned values are placed only in a child process environment. */
   resolveCredential?: (id: string, environmentFallback?: string) => string | undefined;
@@ -89,11 +91,16 @@ interface PreparedOptimizationWire {
   authority: ManagedOptimizationAuthority; createdTrainingSnapshot: boolean; externalCalls: number;
 }
 type ManagedReadinessWire = Omit<ManagedReadiness, "preparedOptimization"> & { preparedOptimization?: PreparedOptimizationWire };
-const executeCommand: CommandExecutor = (executable, args, environment) => new Promise((resolve, reject) => {
-  execFile(executable, args, { windowsHide: true, shell: false, maxBuffer: 16 * 1024 * 1024, ...(environment ? { env: { ...process.env, ...environment } } : {}) }, (error, stdout, stderr) => {
+const executeCommand: CommandExecutor = (executable, args, environment, progress) => new Promise((resolve, reject) => {
+  if (progress) {
+    void executeObservedCommand(executable, args, environment, progress).then(resolve, error => reject(new Error(redactBackendError(String(error.message)))));
+    return;
+  }
+  const statusRead = args[3] === "optimize" && args[5] === "status";
+  execFile(executable, args, { windowsHide: true, shell: false, maxBuffer: 16 * 1024 * 1024, ...(statusRead ? { timeout: 15000 } : {}), ...(environment ? { env: { ...process.env, ...environment } } : {}) }, (error, stdout, stderr) => {
     if (error) {
       const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
-      reject(new Error(missing ? "The local workspace backend is missing. Run npm run build:backend in ui, then retry." : redactBackendError(stderr) || redactBackendError(error.message)));
+      reject(new Error(missing ? "The local workspace backend is missing. Run npm run build:backend in ui, then retry." : statusRead && error.killed ? "Status check timed out. Retrying…" : redactBackendError(stderr) || redactBackendError(error.message)));
       return;
     }
     resolve(stdout);
@@ -111,10 +118,11 @@ export class ManagedBackend {
   private histories = new Map<string, { projectId: string; path: string }>();
   private bindingPreviews = new Map<string, { projectId: string; runtime: string; python: string; history?: string; ready: boolean }>();
   private activeProjects = new Set<string>();
+  private runActivity = new Map<string, { runId: string; activity: RunActivity }>();
   private busy = false;
   constructor(readonly executable: string, private registry: ProjectRegistry, private executor: CommandExecutor = executeCommand, private options: ManagedBackendOptions = {}) {}
-  private async command<T>(args: string[], environment?: CommandEnvironment): Promise<T> {
-    const stdout = await this.executor(this.executable, ["--output", "json", "workspace", ...args], environment);
+  private async command<T>(args: string[], environment?: CommandEnvironment, progress?: (value: NativeProgress) => void): Promise<T> {
+    const stdout = await this.executor(this.executable, ["--output", "json", "workspace", ...args], environment, progress);
     try { return JSON.parse(stdout) as T; } catch { throw new Error("The workspace backend returned an unreadable response."); }
   }
   async chooseModel(path: string): Promise<ModelChoice> {
@@ -227,6 +235,29 @@ export class ManagedBackend {
   }
 
   async optimize(projectId: string, value: unknown): Promise<ManagedOptimizationResult> {
+    if ((value as { action?: string })?.action === "resume") {
+      const runId = uuid((value as { runId?: unknown }).runId, "run identity");
+      return this.exclusiveProject(projectId, async () => {
+        const at = new Date().toISOString();
+        const activity: RunActivity = { running: true, phase: "checking_files", startedAt: at, updatedAt: at, events: [{ phase: "checking_files", at }] };
+        this.runActivity.set(projectId, { runId, activity });
+        try {
+          const result = await this.optimizeCommand(projectId, value, progress => recordProgress(activity, progress));
+          activity.running = false;
+          // The CLI emits its final status before releasing its execution lease.
+          // Its successful exit is authoritative for this worker's completion.
+          return { ...result, worker: { state: "idle" }, activity: structuredClone(activity) };
+        }
+        finally { activity.running = false; }
+      });
+    }
+    const result = await this.optimizeCommand(projectId, value);
+    const current = this.runActivity.get(projectId);
+    if (current?.runId === (result as ManagedRunStatus).run_id) return { ...result, activity: structuredClone(current.activity) };
+    return result;
+  }
+
+  private async optimizeCommand(projectId: string, value: unknown, progress?: (value: NativeProgress) => void): Promise<ManagedOptimizationResult> {
     const workspace = await this.openRegistered(projectId);
     if (!value || typeof value !== "object" || typeof (value as { action?: unknown }).action !== "string") throw new Error("Choose a supported optimization action.");
     const request = value as ManagedOptimizationRequest;
@@ -248,8 +279,8 @@ export class ManagedBackend {
     const environment = request.action === "resume" || request.action === "authorize-sealed"
       ? this.providerEnvironment(projectId, workspace)
       : undefined;
-    const run = () => this.command<ManagedOptimizationResult>(["optimize", workspace.folder, ...args], environment);
-    return ["start", "resume", "authorize-external", "authorize-sealed", "cancel"].includes(request.action)
+    const run = () => this.command<ManagedOptimizationResult>(["optimize", workspace.folder, ...args], environment, progress);
+    return ["start", "authorize-external", "authorize-sealed", "cancel"].includes(request.action)
       ? this.exclusiveProject(projectId, run)
       : run();
   }

@@ -1,6 +1,8 @@
 //! Compiled adapter for the isolated Nomos retrieval-ranking production pilot.
 
+mod progress;
 mod repair_delta;
+pub use progress::{NativePhase, NativeProgress, ProgressObserver};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -8,6 +10,7 @@ use std::{
     io::{BufReader, Read},
     path::{Component, Path, PathBuf},
     process::Stdio,
+    sync::Arc,
     time::Duration,
 };
 
@@ -88,6 +91,7 @@ pub struct NomosBackend {
     identity: BackendIdentity,
     observer_identity: BackendIdentity,
     repair_delta_identity: BackendIdentity,
+    progress: Option<Arc<dyn ProgressObserver>>,
 }
 
 impl NomosBackend {
@@ -179,6 +183,7 @@ impl NomosBackend {
             identity,
             observer_identity,
             repair_delta_identity,
+            progress: None,
         })
     }
 
@@ -841,6 +846,17 @@ impl NomosBackend {
         Ok(())
     }
 
+    pub fn with_progress_observer(mut self, observer: Arc<dyn ProgressObserver>) -> Self {
+        self.progress = Some(observer);
+        self
+    }
+
+    fn observe(&self, phase: NativePhase) {
+        if let Some(observer) = &self.progress {
+            observer.observe(NativeProgress::phase(phase));
+        }
+    }
+
     async fn run_bounded(
         &self,
         arguments: &[String],
@@ -859,15 +875,66 @@ impl NomosBackend {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        let output = tokio::time::timeout(Duration::from_secs(maximum_seconds), command.output())
-            .await
-            .map_err(|_| adapter_error("Nomos process exceeded its finite time limit"))?
+        use tokio::io::AsyncReadExt;
+        let training = arguments.get(1).is_some_and(|module| {
+            matches!(
+                module.as_str(),
+                "tools.train_dense_triplet_router" | "tools.train_dense_router"
+            )
+        });
+        let mut child = command
+            .spawn()
             .map_err(|error| adapter_error(format!("could not start Nomos process: {error}")))?;
-        if !output.status.success() {
-            let stderr = bounded_text(&output.stderr, 2_000);
+        let mut stdout = child.stdout.take().expect("piped stdout");
+        let mut stderr = child.stderr.take().expect("piped stderr");
+        let drain = async {
+            let mut buffer = [0_u8; 4096];
+            let mut line = Vec::new();
+            let mut tail = Vec::new();
+            let mut overflow = false;
+            loop {
+                let count = stderr.read(&mut buffer).await?;
+                if count == 0 {
+                    break;
+                }
+                tail.extend_from_slice(&buffer[..count]);
+                if tail.len() > 2000 {
+                    tail.drain(..tail.len() - 2000);
+                }
+                for &byte in &buffer[..count] {
+                    if byte == b'\r' || byte == b'\n' {
+                        if training && !overflow {
+                            if let Some(value) =
+                                progress::training_counter(&String::from_utf8_lossy(&line))
+                            {
+                                if let Some(observer) = &self.progress {
+                                    observer.observe(value);
+                                }
+                            }
+                        }
+                        line.clear();
+                        overflow = false;
+                    } else if line.len() < 8192 {
+                        line.push(byte);
+                    } else {
+                        overflow = true;
+                    }
+                }
+            }
+            Ok::<_, std::io::Error>(tail)
+        };
+        let output = tokio::time::timeout(Duration::from_secs(maximum_seconds), async {
+            let mut sink = tokio::io::sink();
+            tokio::try_join!(child.wait(), tokio::io::copy(&mut stdout, &mut sink), drain)
+        })
+        .await
+        .map_err(|_| adapter_error("Nomos process exceeded its finite time limit"))?
+        .map_err(|error| adapter_error(format!("could not start Nomos process: {error}")))?;
+        if !output.0.success() {
+            let stderr = bounded_text(&output.2, 2_000);
             return Err(adapter_error(format!(
                 "Nomos process failed with status {}: {stderr}",
-                output.status
+                output.0
             )));
         }
         Ok(())
@@ -1199,6 +1266,7 @@ impl EncoderTaskBackend for NomosBackend {
         project: ExternalProjectSnapshot,
     ) -> BoxFuture<'_, Result<AdapterInspection, EncoderTaskAdapterError>> {
         Box::pin(async move {
+            self.observe(NativePhase::CheckingFiles);
             project.validate_integrity().map_err(adapter_error)?;
             if !self.supports_identity(&project.backend) {
                 return Err(adapter_error(
@@ -1254,6 +1322,7 @@ impl EncoderTaskBackend for NomosBackend {
             let configuration = Self::task_configuration(&project)?;
             configuration.validate()?;
             let strategy = NativeCandidateStrategy::parse(&candidate.parameters)?;
+            self.observe(NativePhase::CheckingTrainingData);
             strategy.verify_training_inputs(self, &project, &configuration)?;
             let output = self.candidate_output(&candidate);
             let output_relative = output
@@ -1360,8 +1429,10 @@ impl EncoderTaskBackend for NomosBackend {
                 }
             }
             let started = std::time::Instant::now();
+            self.observe(NativePhase::LoadingModel);
             self.run_bounded(&arguments, candidate.maximum_training_seconds)
                 .await?;
+            self.observe(NativePhase::SavingCheckpoint);
             let native_manifest = strategy.read_and_validate_manifest(
                 native_output,
                 &native_output_relative,
@@ -1462,6 +1533,7 @@ impl EncoderTaskBackend for NomosBackend {
             let raw = if retrieval_output.exists() {
                 read_json(&retrieval_output)?
             } else {
+                self.observe(NativePhase::EvaluatingRetrieval);
                 self.run_bounded(&arguments, maximum_seconds).await?;
                 read_json(&retrieval_output)?
             };
@@ -1554,6 +1626,7 @@ impl EncoderTaskBackend for NomosBackend {
                     }
                     read_json(&agent_output)?
                 } else {
+                    self.observe(NativePhase::EvaluatingAgent);
                     self.run_bounded(&agent_arguments, maximum_seconds).await?;
                     if !agent_trace.is_file() {
                         return Err(adapter_error(

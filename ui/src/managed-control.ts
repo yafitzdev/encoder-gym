@@ -85,6 +85,9 @@ export interface PreparedOptimizationChoice {
 }
 
 export interface ManagedRunStatus {
+  worker?: { state: "running" | "idle" | "interrupted" | "unavailable"; started_at?: string; memory_bytes?: number; cpu_milliseconds?: number };
+  activity?: RunActivity;
+  timeline?: Array<{ at: string; label: string }>;
   run_id: string;
   existing: boolean;
   created_at: string;
@@ -109,6 +112,18 @@ export interface ManagedRunStatus {
     development?: { completed_units: number; total_units: number; active_candidate_id?: string };
   };
   next_command: "resume" | "authorize-sealed" | "none";
+}
+
+export interface NativeProgress {
+  phase: "checking_files" | "checking_training_data" | "loading_model" | "preparing_batches" | "training" | "saving_checkpoint" | "evaluating_retrieval" | "evaluating_agent";
+  completed?: number;
+  total?: number;
+}
+export interface RunActivity extends NativeProgress {
+  running: boolean;
+  startedAt: string;
+  updatedAt: string;
+  events: Array<{ at: string; phase: NativeProgress["phase"] }>;
 }
 
 export interface ManagedOptimizationReport {

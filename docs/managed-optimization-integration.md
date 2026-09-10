@@ -683,6 +683,30 @@ Readiness actions do not strand the operator: missing provider credentials
 route to Project settings, while an ambiguous or damaged scientific journal
 routes to Runs for inspection instead of silently dropping the backend action.
 
+### Live execution feedback
+
+Run supervision separates operational observations from completed scientific
+records. Passive status reads do not rehash model files. They report execution
+lease liveness (PID plus process start time), process-tree CPU time and memory,
+and a bounded timeline derived from the existing journal. A dead lease is an
+interrupted worker, not a running or completed stage. Mutations retain full
+file verification and the original lease, authorization, and budget checks.
+
+During native execution, the Nomos adapter emits a closed progress schema:
+fixed task phases and numerical training/preparation counters only. Native
+text, credentials, evaluation values, and sealed rows never enter this stream.
+The desktop drains it continuously and retains only a bounded activity list;
+these observations do not change journal state or establish acceptance.
+
+The run page polls while visible, resumes observation after navigation, and
+keeps a separate elapsed clock and status-freshness indicator. Lost updates
+remain visible and retry after a bounded passive-read timeout. Actual counters
+are shown only while the corresponding task is active. Completed-work totals
+remain separately inspectable. There is no inferred ETA or fake overall
+percentage, and no live cancel button that would imply preemptive cancellation.
+Electron acceptance covers a held-open fake worker, progress, lost updates,
+navigation, retained disclosures, and completion before sealed authorization.
+
 ## Delivery order
 
 1. project model catalog and baseline-revision domain/persistence;

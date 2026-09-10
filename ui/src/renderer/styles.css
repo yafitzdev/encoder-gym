@@ -582,6 +582,26 @@ dialog::backdrop { background: #0008; }
 .launch-actions { display: flex; align-items: center; gap: 16px; border-top: 1px solid var(--line); margin-top: 20px; padding-top: 18px; }
 .launch-actions p { color: var(--muted); font-size: 12px; max-width: 620px; }
 .run-control { background: var(--bg); }
+.live-run { border-block: 1px solid var(--line); padding: 24px 0; }
+.live-run-heading { display: flex; justify-content: space-between; align-items: start; gap: 24px; }
+.live-run h3 { margin: 8px 0 0; font-size: 24px; font-weight: 650; }
+.live-elapsed { display: grid; gap: 5px; text-align: right; white-space: nowrap; }
+.live-elapsed span { color: var(--muted); font-size: 12px; }
+.live-elapsed strong { font: 24px var(--mono); font-variant-numeric: tabular-nums; }
+.live-counter { margin-top: 28px; }
+.live-counter > div { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.live-counter strong { font: 13px var(--mono); }
+.live-counter progress { display: block; width: 100%; height: 6px; margin-top: 10px; border: 0; border-radius: 3px; background: var(--line); }
+.live-counter progress::-webkit-progress-bar { background: var(--line); border-radius: 3px; }
+.live-counter progress::-webkit-progress-value { background: var(--accent); border-radius: 3px; }
+.live-run-meta { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 22px; color: var(--muted); font-size: 12px; }
+.run-freshness.is-stale, .run-connection-warning { color: var(--warning); }
+.run-connection-warning { margin-top: 12px; font-size: 13px; overflow-wrap: anywhere; }
+.run-activity { margin: 28px 0; }
+.run-activity h3 { font-size: 14px; margin-bottom: 12px; }
+.run-activity ol { list-style: none; padding: 0; margin: 0; }
+.run-activity li { display: flex; gap: 24px; padding: 9px 0; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
+.run-activity time { color: var(--muted); font: 12px var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .run-stage { margin-top: 16px; padding: 18px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 5px; background: var(--surface); }
 .run-stage h3 { margin: 5px 0 7px; font-size: 18px; }
 .run-stage p { margin: 0; max-width: 760px; color: var(--muted); }

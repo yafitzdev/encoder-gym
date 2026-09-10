@@ -14,6 +14,7 @@ import { previewBridge } from "./preview-bridge.js";
 import { newProjectDialog, importDatasetDialog } from "./onboarding.js";
 import { renderDatasets, renderManagedSettings, type ProviderPageActions, type ProviderPageState } from "./managed-pages.js";
 import { renderOptimization, type OptimizationPageActions, type OptimizationPageState } from "./optimization-page.js";
+import { updateRunClocks } from "./run-progress.js";
 import { providerDialog } from "./provider-dialog.js";
 import { scientificRuntimeDialog } from "./scientific-runtime-dialog.js";
 
@@ -187,8 +188,11 @@ export function mount(): void {
   };
   async function refreshOptimization(): Promise<void> {
     const id = selection.selectedId;
-    if (!id || !workspace()?.managed || view.optimization.loading) return;
+    if (!id || !workspace()?.managed) return;
+    if (view.optimization.executing === "resume") { await pollOptimization(id, view.optimization); return; }
+    if (view.optimization.loading) return;
     const state = view.optimization; state.loading = true; state.error = undefined; state.errorTitle = undefined; render();
+    state.revision = (state.revision ?? 0) + 1;
     try {
       state.readiness = await bridge.managedReadiness(id, state.manifest?.token);
       if (state.manifest) state.manifest = { ...state.manifest, readiness: state.readiness };
@@ -196,10 +200,13 @@ export function mount(): void {
         state.prepared = state.readiness.preparedOptimization;
       }
       const existing = state.manifest?.readiness.launchPreview?.existingRun ?? state.prepared?.launchPreview.existingRun ?? state.readiness.launchPreview?.existingRun;
-      if (existing) state.run = runStatus(await bridge.managedOptimize(id, { action: "status", runId: existing.runId }));
+      if (existing) {
+        state.run = runStatus(await bridge.managedOptimize(id, { action: "status", runId: existing.runId }));
+        state.statusCheckedAt = Date.now(); state.statusError = undefined;
+      }
       else if (!state.prepared) state.run = undefined;
     } catch (error) { state.errorTitle = "Could not refresh launch readiness"; state.error = message(error); }
-    finally { state.loading = false; if (selection.selectedId === id) render(); }
+    finally { state.revision = (state.revision ?? 0) + 1; state.loading = false; if (selection.selectedId === id) render(); }
   }
   async function chooseOptimizationManifest(): Promise<void> {
     const id = selection.selectedId;
@@ -228,29 +235,14 @@ export function mount(): void {
     const id = selection.selectedId;
     if (!id || view.optimization.loading) return;
     const state = view.optimization;
+    state.revision = (state.revision ?? 0) + 1;
     state.loading = true; state.executing = request.action; state.operationStartedAt = Date.now(); state.error = undefined; state.errorTitle = undefined;
     if (request.action !== "status") state.report = undefined;
     render();
-    const elapsedTicker = request.action === "start" ? window.setInterval(() => {
-      if (selection.selectedId === id && state.executing === "start") render();
-    }, 1000) : undefined;
-    let polling = request.action === "resume";
-    const poll = async (): Promise<void> => {
-      if (request.action !== "resume") return;
-      while (polling) {
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        if (!polling || selection.selectedId !== id) return;
-        try {
-          const received = runStatus(await bridge.managedOptimize(id, { action: "status", runId: request.runId }));
-          if (!polling || selection.selectedId !== id) return;
-          state.run = received;
-          if (selection.selectedId === id) render();
-        } catch { /* The executing command owns the user-facing failure. */ }
-      }
-    };
-    void poll();
     try {
       state.run = runStatus(await bridge.managedOptimize(id, request));
+      state.revision = (state.revision ?? 0) + 1;
+      state.statusCheckedAt = Date.now(); state.statusError = undefined;
       if (request.action !== "status" && selection.selectedId === id) {
         try {
           const latest = await bridge.selectProject(id);
@@ -266,12 +258,35 @@ export function mount(): void {
       state.error = message(error);
     }
     finally {
-      polling = false;
-      if (elapsedTicker !== undefined) window.clearInterval(elapsedTicker);
+      state.revision = (state.revision ?? 0) + 1;
       state.loading = false; state.executing = undefined; state.operationStartedAt = undefined;
       if (selection.selectedId === id) render();
     }
   }
+  async function pollOptimization(id: string, state: OptimizationPageState): Promise<void> {
+    const run = state.run;
+    if (!run || state.statusPending) return;
+    const revision = state.revision;
+    state.statusPending = true;
+    try {
+      const result = await bridge.managedOptimize(id, { action: "status", runId: run.run_id });
+      if (state.revision !== revision || state.run?.run_id !== run.run_id) return;
+      state.run = runStatus(result); state.statusCheckedAt = Date.now(); state.statusError = undefined;
+    } catch (error) {
+      if (state.revision === revision) state.statusError = message(error);
+    } finally {
+      state.statusPending = false;
+      if (selection.selectedId === id && view.optimization === state) render();
+    }
+  }
+  // Observation survives navigation and also discovers externally started workers.
+  window.setInterval(() => {
+    const id = selection.selectedId, state = view.optimization;
+    if (!id || !state.run || state.loading && state.executing !== "resume" || !["optimization", "runs"].includes(view.history.current.page)
+      || ["completed", "failed", "cancelled"].includes(state.run.state)) return;
+    void pollOptimization(id, state);
+  }, 2000);
+  window.setInterval(() => updateRunClocks(main), 1000);
   async function promoteAccepted(): Promise<void> {
     const id = selection.selectedId, run = view.optimization.run, managed = workspace()?.managed;
     const expectedBaselineRevisionId = managed?.modelCatalog?.activeBaselineRevisionId;
@@ -413,6 +428,9 @@ export function mount(): void {
     const focus = document.activeElement, focusId = focus?.id;
     const caret = focus instanceof HTMLInputElement && ["text", "search"].includes(focus.type) ? [focus.selectionStart, focus.selectionEnd] : undefined;
     const scroll = main.scrollTop;
+    const disclosurePage = `${project?.id}:${current.page}:${current.id ?? ""}:${view.optimization.run?.run_id ?? ""}`;
+    const openDisclosures = main.dataset.disclosurePage === disclosurePage
+      ? new Set([...main.querySelectorAll<HTMLDetailsElement>("details[open]")].map(node => node.querySelector("summary")?.textContent)) : new Set();
     element("project-nav").replaceChildren(...collection.projects.map(p => {
       const expanded = p.id === project?.id && !collapsedProjects.has(p.id);
       return h("section", { class: "project-folder" + (p.id === project?.id ? " selected-project" : "") + (expanded ? " expanded-project" : "") },
@@ -427,7 +445,7 @@ export function mount(): void {
     const run = data?.runs.find(r => r.id === current.id);
     const title = !project ? "Projects" : current.page === "candidate" ? candidate ? candidateName(candidate) : "Candidate not found" :
       current.page === "run" ? run ? runName(run) : "Run not found" :
-      pages.find(p => p[0] === current.page)?.[1] ?? (current.page === "baseline" ? "Baseline" : current.page === "optimization" ? "Start optimization" : "Compare models");
+      pages.find(p => p[0] === current.page)?.[1] ?? (current.page === "baseline" ? "Baseline" : current.page === "optimization" ? view.optimization.run ? "Run" : "New run" : "Compare models");
     element("breadcrumb").textContent = project ? project.name + " / " + title : "Encoder Gym";
     document.title = title + " · Encoder Gym";
     element("source-state").replaceChildren(...(project ? [button(loading ? "Reading…" : opened?.content.state === "error" ? "Evidence unavailable" : data?.managed ? "Managed workspace" : data?.source === "recorded" ? "Recorded example" : data ? "Legacy journals" : "No records yet", () => navigate({ page: "project" }), "source-button"),
@@ -458,6 +476,11 @@ export function mount(): void {
     content.inert = loading || collectionBusy;
     main.setAttribute("aria-busy", String(loading || collectionBusy));
     main.replaceChildren(...(loading || collectionBusy ? [h("div", { class: "workspace-progress", role: "status" }, loadingMessage)] : []), content); main.scrollTop = scroll;
+    main.dataset.disclosurePage = disclosurePage;
+    for (const disclosure of main.querySelectorAll<HTMLDetailsElement>("details")) {
+      if (openDisclosures.has(disclosure.querySelector("summary")?.textContent)) disclosure.open = true;
+    }
+    updateRunClocks(main);
     if (focusId) { const target = document.getElementById(focusId); target?.focus({ preventScroll: true }); if (caret && target instanceof HTMLInputElement) target.setSelectionRange(caret[0] ?? null, caret[1] ?? null); }
     (element("navigate-back") as HTMLButtonElement).disabled = !project || !view.history.canNavigate(-1);
     (element("navigate-forward") as HTMLButtonElement).disabled = !project || !view.history.canNavigate(1);

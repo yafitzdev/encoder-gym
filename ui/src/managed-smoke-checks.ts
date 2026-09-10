@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import type { BrowserWindow } from "electron";
 import type { ProjectRegistry } from "./project-registry.js";
 import type { ManagedBackend } from "./managed-backend.js";
-import type { ManagedOptimizationRequest, ManagedPromotionRequest, ManagedReadiness } from "./managed-control.js";
+import type { ManagedOptimizationRequest, ManagedPromotionRequest, ManagedReadiness, ManagedRunStatus } from "./managed-control.js";
 
 interface Harness { registry: ProjectRegistry; backend: ManagedBackend; chooseFolder(path?: string): void; restart: boolean }
 export async function runManagedSmokeChecks(window: BrowserWindow, output: string, harness: Harness): Promise<void> {
@@ -164,7 +164,9 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     budget_and_recovery: { maximum: budget, observed_training_seconds: 110, observed_development_evaluations: 2, observed_sealed_evaluations: 1, candidate_failure_events: 0, adopted_previously_proven_run: false, optimization_event_count: 8, campaign_event_count: 7, experiment_event_count: 9 },
     known_evidence_limits: ["Results apply only to the pinned project and benchmark generation.", "Candidate sealed evidence covers only the development-selected candidate."], provenance_head: "sha256:" + "4".repeat(64),
   };
-  let currentRun = run("planned", "resume");
+  let currentRun: ManagedRunStatus = run("planned", "resume");
+  let releaseTraining!: () => void, statusFails = false;
+  const trainingPending = new Promise<void>(resolve => { releaseTraining = resolve; });
   try {
     harness.backend.readiness = async projectId => { if (projectId !== firstId) return readinessMethod(projectId); await new Promise(resolve => setTimeout(resolve, 60)); return readiness; };
     harness.backend.prepareOptimization = async projectId => { if (projectId !== firstId) return prepareMethod(projectId); await new Promise(resolve => setTimeout(resolve, 60)); return { token: "managed-smoke-definition", name: "Reviewed repair", launchPreview: preview, authority, createdTrainingSnapshot: false, externalCalls: 0 }; };
@@ -172,7 +174,18 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
       if (projectId !== firstId) return optimizeMethod(projectId, request);
       const intent = request as ManagedOptimizationRequest;
       if (intent.action === "start") currentRun = run("planned", "resume");
-      else if (intent.action === "resume") currentRun = run("campaign_active", "authorize-sealed");
+      else if (intent.action === "resume") {
+        const at = new Date().toISOString();
+        currentRun = { ...run("campaign_active", "resume"),
+          recorded_usage: run("planned", "resume").recorded_usage,
+          worker: { state: "running", started_at: at, memory_bytes: 2 * 1024 ** 3, cpu_milliseconds: 4300 },
+          activity: { running: true, phase: "training", completed: 24, total: 120, startedAt: at, updatedAt: at,
+            events: [{ at, phase: "loading_model" }, { at, phase: "preparing_batches" }, { at, phase: "training" }] },
+          timeline: [{ at, label: "Candidate training requested" }] };
+        await trainingPending;
+        currentRun = { ...run("campaign_active", "authorize-sealed"), worker: { state: "idle" } };
+      }
+      else if (intent.action === "status" && statusFails) throw new Error("Worker status connection lost");
       else if (intent.action === "authorize-sealed") currentRun = run("completed", "none", "promote_candidate");
       else if (intent.action === "cancel") currentRun = run("cancelled", "none", undefined, intent.reason);
       else if (intent.action === "report") return report;
@@ -205,7 +218,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await nav("models"); await textButton("Start optimization"); await textButton("Refresh");
     await check("passive readiness refresh stays compact", "document.querySelector('.workspace-progress')?.textContent === 'Checking…'");
     await until("document.querySelector('.launch-definition .section-heading h2')?.textContent === 'Run'");
-    await check("run preparation starts with useful limits only", "document.querySelector('.launch-definition').textContent.includes('Candidates') && document.querySelector('.launch-definition').textContent.includes('Training data') && document.querySelector('.launch-definition').textContent.includes('API calls') && !document.querySelector('.launch-definition').textContent.includes('Repair the observed retrieval regression')");
+    await check("run preparation starts with useful limits only", "document.querySelector('.launch-definition').textContent.includes('Candidates') && document.querySelector('.launch-definition').textContent.includes('Added training data') && document.querySelector('.launch-definition').textContent.includes('API calls') && !document.querySelector('.launch-definition').textContent.includes('Repair the observed retrieval regression')");
     await textButton("Review run");
     await check("preparation has one compact progress state", "document.querySelector('.workspace-progress')?.textContent === 'Preparing…'");
     await until("document.querySelector('.launch-definition details summary')?.textContent === 'Technical details'");
@@ -222,11 +235,29 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await textButton("Start run");
     await check("start visibly enters non-repeatable verification", "document.querySelector('.workspace-progress')?.textContent.includes('Starting…') && document.querySelector('.launch-actions button').disabled && document.querySelector('.launch-actions button').textContent === 'Starting…'");
     await until("document.querySelector('.run-control')?.textContent.includes('Build and evaluate the candidate')");
-    await check("reservation exposes only the next durable stage", "document.querySelector('.run-control').textContent.includes('Reserved run') && [...document.querySelectorAll('.run-control button')].some(b=>b.textContent === 'Build and evaluate the candidate') && document.querySelector('#nav-runs .nav-count').textContent === '1'");
-    await textButton("Build and evaluate the candidate"); await until("document.querySelector('.run-control')?.textContent.includes('Review final acceptance')");
+    await check("reservation exposes only the next durable stage", "document.querySelector('.launch-summary h2').textContent === 'Ready to continue' && [...document.querySelectorAll('.run-control button')].some(b=>b.textContent === 'Build and evaluate the candidate') && document.querySelector('#nav-runs .nav-count').textContent === '1'");
+    await textButton("Build and evaluate the candidate"); await until("document.querySelector('.live-counter progress')?.value === 24");
+    await check("running page shows real counters and activity without contradictory states or duplicate actions", "document.querySelector('.launch-summary h2').textContent === 'Running' && document.querySelector('.live-run h3').textContent === 'Training candidate' && document.querySelector('.live-counter progress').max === 120 && document.querySelectorAll('.run-activity li').length >= 3 && !document.querySelector('.run-actions') && !document.querySelector('.launch-definition') && !document.querySelector('.run-usage').checkVisibility()");
+    await evaluate("window.__elapsed=document.querySelector('[data-elapsed-start]').textContent;document.querySelector('.run-control > details').open=true");
+    await until("document.querySelector('[data-elapsed-start]')?.textContent !== window.__elapsed");
+    await until("document.querySelector('.run-freshness')?.textContent === 'Updated just now'");
+    await check("polling retains expanded details", "document.querySelector('.run-control > details').open");
+    await evaluate("document.querySelector('.run-control > details').open=false");
+    await screenshot("managed-optimization-live");
+    await screenshot("managed-optimization-live-narrow", 760, 800); window.setContentSize(1440, 960);
+    statusFails = true;
+    await until("document.querySelector('.run-connection-warning')?.textContent.includes('Worker status connection lost')");
+    await check("failed status polling stays visible without claiming the worker stopped", "document.querySelector('.launch-summary h2').textContent === 'Running' && document.querySelector('.run-connection-warning')");
+    statusFails = false;
+    await nav("models");
+    currentRun.activity = { ...currentRun.activity!, phase: "evaluating_retrieval", completed: undefined, total: undefined };
+    await textButton("Start optimization");
+    await until("document.querySelector('.live-run h3')?.textContent === 'Evaluating retrieval'");
+    await check("returning to an executing run restores observation without stale training percentages", "!document.querySelector('.live-counter') && document.querySelector('.launch-summary h2').textContent === 'Running' && !document.querySelector('.run-connection-warning')");
+    releaseTraining(); await until("document.querySelector('.run-control')?.textContent.includes('Review final acceptance')");
     await check("run supervision distinguishes completed records from reserved capacity", "document.querySelector('.run-usage').textContent.includes('Recorded work') && document.querySelector('.run-usage').textContent.includes('110s / 2m') && document.querySelector('.run-usage').textContent.includes('2 / 2') && document.querySelector('.run-control').textContent.includes('Journal span')");
     await check("sealed evidence requires its own visible authorization", "document.querySelector('.run-control').textContent.includes('Review final acceptance') && [...document.querySelectorAll('.run-control button')].some(b=>b.textContent === 'Authorize one sealed evaluation')");
-    await screenshot("managed-optimization-running");
+    await screenshot("managed-optimization-awaiting-approval");
     await evaluate("window.__sealedPrompt='';window.confirm=(message)=>{window.__sealedPrompt=message;return true};true");
     await textButton("Authorize one sealed evaluation"); await until("document.querySelector('.promotion-result')?.textContent.includes('passed final acceptance')");
     await check("sealed authorization explains scope before recording consent", "window.__sealedPrompt.includes('exactly one sealed evaluation') && window.__sealedPrompt.includes('cannot be reused')");
@@ -250,10 +281,18 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await check("cancelled run presents the operator reason as a neutral terminal record", "document.querySelector('.launch-summary h2').textContent === 'Run cancelled' && document.querySelector('.run-stage.is-cancelled').textContent.includes('Stop before committing') && !document.querySelector('.run-stage.is-cancelled').matches('[role=alert]') && !document.querySelector('.run-actions')");
     await screenshot("managed-optimization-cancelled");
 
+    currentRun = { ...run("campaign_active", "resume"), worker: { state: "interrupted" }, recorded_usage: run("planned", "resume").recorded_usage,
+      timeline: [{ at: new Date().toISOString(), label: "Candidate training requested" }] };
+    readiness.launchPreview = { ...preview, existingRun: { runId, state: "campaign_active" } };
+    await textButton("Refresh"); await until("document.querySelector('.launch-summary h2')?.textContent === 'Run stopped'");
+    await check("a dead worker cannot masquerade as running or inherit a stale completion report", "!document.querySelector('.live-run') && !document.querySelector('.run-report') && document.querySelector('.run-stage').textContent.includes('worker stopped') && document.querySelector('.run-activity').textContent.includes('Candidate training requested')");
+    await screenshot("managed-optimization-interrupted");
+
     currentRun = run("completed", "none", "promote_candidate");
     readiness.launchPreview = { ...preview, existingRun: { runId, state: "completed" } };
     await textButton("Refresh"); await until("document.querySelector('.launch-summary h2')?.textContent === 'Baseline updated'");
   } finally {
+    releaseTraining();
     harness.backend.readiness = readinessMethod;
     harness.backend.prepareOptimization = prepareMethod;
     harness.backend.optimize = optimizeMethod;

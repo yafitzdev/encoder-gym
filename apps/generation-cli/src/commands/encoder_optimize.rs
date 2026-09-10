@@ -1,3 +1,4 @@
+mod activity;
 mod report;
 
 use std::{
@@ -1003,7 +1004,12 @@ pub async fn execute(command: EncoderOptimizeCommand, database_url: &str) -> any
         }
         command => {
             execute_lifecycle(command, &store, || {
-                NomosBackend::open(&workspace, python).map_err(Into::into)
+                NomosBackend::open(&workspace, python)
+                    .map(|backend| {
+                        backend
+                            .with_progress_observer(std::sync::Arc::new(activity::ProgressOutput))
+                    })
+                    .map_err(Into::into)
             })
             .await
         }
@@ -1033,7 +1039,12 @@ pub(crate) async fn execute_managed(
         }
         command => {
             execute_lifecycle(command, &store, || {
-                NomosBackend::open(&workspace, python).map_err(Into::into)
+                NomosBackend::open(&workspace, python)
+                    .map(|backend| {
+                        backend
+                            .with_progress_observer(std::sync::Arc::new(activity::ProgressOutput))
+                    })
+                    .map_err(Into::into)
             })
             .await
         }
@@ -1354,7 +1365,7 @@ async fn resume<B: EncoderTaskBackend>(
             finalize_campaign_iteration(store, &campaign, experiment).await?;
         }
         CampaignState::AwaitingSealedAuthorization => {
-            return print_status(&context, true, Some(&campaign));
+            return print_current_status(store, &context, true).await;
         }
         CampaignState::SealedAuthorized => {
             ensure_generation_current(store, &context.definition).await?;
@@ -2227,13 +2238,20 @@ async fn print_current_status(
     existing: bool,
 ) -> anyhow::Result<()> {
     let campaign = load_optional_campaign(store, context).await?;
-    print_status(context, existing, campaign.as_ref())
+    let worker = activity::worker_status(
+        store.pool().connect_options().get_filename(),
+        context.run.id,
+    );
+    let timeline = activity::timeline(store, context, campaign.as_ref()).await?;
+    print_status(context, existing, campaign.as_ref(), worker, timeline)
 }
 
 fn print_status(
     context: &LaunchContext,
     existing: bool,
     campaign: Option<&crate::commands::production_campaign::CampaignContext>,
+    worker: serde_json::Value,
+    timeline: Vec<serde_json::Value>,
 ) -> anyhow::Result<()> {
     let campaign_view = campaign.map(|value| &value.view);
     let experiment = campaign.and_then(|value| value.experiment.as_ref());
@@ -2297,6 +2315,8 @@ fn print_status(
     }));
     presentation::print(&serde_json::json!({
         "run_id": context.run.id,
+        "worker": worker,
+        "timeline": timeline,
         "existing": existing,
         "created_at": context.run.created_at,
         "last_transition_at": last_transition_at,

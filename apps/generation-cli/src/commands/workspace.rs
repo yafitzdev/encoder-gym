@@ -491,7 +491,15 @@ async fn managed_optimize(
     folder: &std::path::Path,
     command: ManagedOptimizeCommand,
 ) -> anyhow::Result<()> {
-    let workspace = open_workspace(folder, true).await?;
+    // Polling observes journal state; it must not rehash the model and datasets.
+    let passive = matches!(
+        command,
+        ManagedOptimizeCommand::Status { .. }
+            | ManagedOptimizeCommand::Inspect { .. }
+            | ManagedOptimizeCommand::Report { .. }
+            | ManagedOptimizeCommand::Provenance { .. }
+    );
+    let workspace = open_workspace(folder, !passive).await?;
     let catalog = workspace
         .model_catalog
         .as_ref()
