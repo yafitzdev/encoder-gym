@@ -59,6 +59,18 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
     await evaluate("document.getElementById(" + JSON.stringify("nav-" + page) + ").click()");
     await until("document.querySelector('.workspace-page') && !document.querySelector('.workspace-progress')");
     if (page === "datasets") await until("document.querySelector('.dataset-collection, .empty-state, .operation-failure')");
+    if (page === "benchmarks") {
+      await until("document.querySelector('.benchmark-results, .empty-state, .operation-failure')");
+      await check("!document.querySelector('.operation-failure, .evaluation-plan, .benchmark-section')");
+      if (await evaluate("[...document.querySelectorAll('#page button')].some(button=>button.textContent==='Choose recorded benchmark')")) {
+        await evaluate("[...document.querySelectorAll('#page button')].find(button=>button.textContent==='Choose recorded benchmark').click()");
+        await until("document.querySelector('#benchmark-confirm:not(:disabled)')");
+        await check("document.querySelector('.benchmark-preview').textContent.includes('Primary metric')");
+        await capture("managed-current-benchmark-preview");
+        await evaluate("[...document.querySelectorAll('#project-dialog button')].find(button=>button.textContent==='Cancel').click()");
+        await check("!document.getElementById('project-dialog').open");
+      }
+    }
     await check("!document.getElementById('project-optimize').hidden");
     await capture("managed-current-" + page);
   }

@@ -35,7 +35,8 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceBenchmarkCommand) -
         AdoptRun {
             run_id,
             expected_parent,
-        } => adopt(folder, run_id, expected_parent).await,
+            expected_definition,
+        } => adopt(folder, run_id, expected_parent, expected_definition).await,
         Inspect { version_id } => super::print(&inspect(folder, version_id).await?),
         Results { version_id } => super::print(&results(folder, version_id).await?),
     }
@@ -169,7 +170,12 @@ async fn inspect(folder: &Path, version_id: Uuid) -> Result<ProjectBenchmarkVers
     Ok(version)
 }
 
-async fn adopt(folder: &Path, run_id: Uuid, expected_parent: Option<Uuid>) -> Result<()> {
+async fn adopt(
+    folder: &Path,
+    run_id: Uuid,
+    expected_parent: Option<Uuid>,
+    expected_definition: Option<String>,
+) -> Result<()> {
     initialize_activity(folder).await?;
     let action_id = Uuid::new_v4();
     let refs = vec![ActivityReference::new("run", run_id.to_string())?];
@@ -192,6 +198,12 @@ async fn adopt(folder: &Path, run_id: Uuid, expected_parent: Option<Uuid>) -> Re
     .await?;
     let result: Result<ProjectBenchmarkVersion> = async {
         let preview = preview(folder, run_id).await?;
+        ensure!(
+            expected_definition
+                .as_ref()
+                .is_none_or(|expected| *expected == preview.definition.fingerprint),
+            "Benchmark definition changed since preview. Review it before saving."
+        );
         benchmarks::record(
             folder,
             preview.version_id,

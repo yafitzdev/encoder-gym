@@ -116,6 +116,15 @@ journal linking; retries must preserve child identities and backend call counts.
 No Nomos checkout, Python, model download, GPU, provider key, or paid service is
 required for this acceptance path.
 
+The same feature also builds `synth-benchmark-fixture`, a test-only constructor
+for shared-benchmark desktop acceptance. It requires a new fixture directory
+and uses ordinary domain constructors, scientific journals and managed model
+custody with a tiny deterministic BERT bundle. Electron then calls production
+`synth workspace benchmark` commands for preview/adoption/results. No runtime
+override, real training, provider call or protected-test execution is involved.
+`npm run smoke` in `ui` builds the fixture and tests comparison, version changes,
+original verdicts, model links, history and restart against those persisted facts.
+
 ## Component loop
 
 For each component:

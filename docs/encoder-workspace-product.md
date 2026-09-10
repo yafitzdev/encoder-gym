@@ -79,9 +79,10 @@ decision. No unbounded work or inferred spending.
    new manually created versions are not historical training evidence.
 3. Shared benchmark — model-independent definition, immutable project versions,
    and preview/adoption/inspection CLI implemented. Comparable results across
-   owned bindings and a typed desktop read bridge are implemented. Desktop
-   version selection/results rendering and test-data onboarding remain pending.
-   Verify the final interaction and sealed isolation end to end.
+   owned bindings and typed desktop integration are implemented. Evaluation now
+   offers one results matrix, version selection/history, protocol inspection,
+   and guarded adoption from recorded authority. Initial test-data onboarding
+   and pinning the selected version to automatic Optimize remain pending.
 4. Automatic bounded optimization — pending. Persisted launch scope, agent and
    generation integration, routine continuation, output registration, recovery.
    Verify real CLI composition using deterministic offline fakes.
@@ -314,3 +315,38 @@ and keep outstanding requirements visible.
 - Remaining work includes the version selector/results page, benchmark onboarding,
   model promotion/restoration controls and the complete bounded automatic Optimize
   journey. The overall goal remains incomplete.
+
+### Shared Evaluation interface — 11 September 2026
+
+- Evaluation now shows all registered models against one selected benchmark
+  version. Results, Protocol and Versions share the normal page/viewer layout.
+  Rejected candidates remain visible, missing results say Not evaluated, and
+  distinct repeated measurements remain inspectable rather than selecting a
+  favorable score. Model links open the common viewer. Managed Models no longer
+  duplicates comparison selection controls.
+- Choosing a recorded benchmark previews verified authority and saves only that
+  exact definition and parent. Existing definitions open their original version.
+  The CLI rejects a definition changed since preview; interrupted save/reload
+  retries preserve the same request. Controller tests fence late reads, isolate
+  per-version errors, bound caches and prevent stale mutation retries after a
+  fresh read or new selection.
+- The offline Electron journey uses a test-only Rust fixture to create normal
+  scientific journals and managed model custody, then uses production CLI/IPC
+  for preview, adoption, model comparisons, two versions, report inspection,
+  model links, browser history and restart. Native metadata and protected scores
+  stay absent; scientific database bytes remain unchanged. Desktop, report and
+  narrow layouts are visually inspected under `ui/qa/managed-benchmark-*`.
+- All four Rust gates, UI typecheck/build, 69 unit tests and four offline
+  Electron launches passed. Logs are `target/benchmark-page-rust-tests.log`,
+  `target/benchmark-page-ui-tests.log` and
+  `target/benchmark-page-electron-tests.log`.
+- Real Nomos read-only verification passed both model/dataset journeys, all
+  project pages, optimization status and the recorded-benchmark preview/cancel
+  interaction. The saved library, manifest, custody database and verified
+  workspace facts are unchanged. Nomos still has no adopted catalog version;
+  no run, provider or protected evaluation was started. The result is recorded
+  in `target/benchmark-page-current-ui.log`, with the preview capture under
+  `ui/qa/managed-current-benchmark-preview.png`.
+- Initial benchmark test-data onboarding, model promotion/restoration controls,
+  and the complete automatic bounded optimization journey remain outstanding.
+  This interface stage does not establish goal completion.

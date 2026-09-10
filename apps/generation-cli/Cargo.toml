@@ -10,11 +10,17 @@ name = "synth"
 path = "src/main.rs"
 
 [features]
-test-fixtures = []
+test-fixtures = ["training-transformer/test-fixtures"]
 
 [[bin]]
 name = "synth-optimize-fixture"
 path = "tests/fixtures/encoder_optimize_driver.rs"
+required-features = ["test-fixtures"]
+test = false
+
+[[bin]]
+name = "synth-benchmark-fixture"
+path = "tests/fixtures/benchmark_driver.rs"
 required-features = ["test-fixtures"]
 test = false
 

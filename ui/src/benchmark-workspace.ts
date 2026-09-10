@@ -40,3 +40,9 @@ export interface ProjectBenchmarkResults {
 }
 export type BenchmarkQuery = { kind: "list" } | { kind: "results"; versionId: string };
 export type BenchmarkQueryResult = { kind: "list"; versions: ProjectBenchmarkVersion[] } | { kind: "results"; results: ProjectBenchmarkResults };
+export interface BenchmarkPreview {
+  versionId: string; expectedParent: string | null; existingVersion: string | null;
+  definition: BenchmarkDefinition; source: BenchmarkSource;
+}
+export interface BenchmarkAdoption { runId: string; expectedParent: string | null; definitionFingerprint: string }
+export interface BenchmarkAdoptionResult { actionId: string; version: ProjectBenchmarkVersion }

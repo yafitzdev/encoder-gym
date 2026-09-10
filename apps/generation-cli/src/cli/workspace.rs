@@ -13,6 +13,9 @@ pub enum WorkspaceBenchmarkCommand {
         run_id: Uuid,
         #[arg(long)]
         expected_parent: Option<Uuid>,
+        /// Reject a definition changed since the user previewed it.
+        #[arg(long)]
+        expected_definition: Option<String>,
     },
     /// Reverify a catalog version against its original scientific protocol.
     Inspect { version_id: Uuid },

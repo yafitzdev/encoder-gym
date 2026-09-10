@@ -16,6 +16,8 @@ import { previewBridge } from "./preview-bridge.js";
 import { newProjectDialog } from "./onboarding.js";
 import { renderManagedSettings, type ProviderPageActions, type ProviderPageState } from "./managed-pages.js";
 import { DatasetController } from "./dataset-controller.js";
+import { BenchmarkController } from "./benchmark-controller.js";
+import { renderBenchmarkPage } from "./benchmark-page.js";
 import { renderDatasetPage } from "./dataset-pages.js";
 import { renderOptimization, type OptimizationPageActions, type OptimizationPageState } from "./optimization-page.js";
 import { updateRunClocks } from "./run-progress.js";
@@ -24,7 +26,7 @@ import { scientificRuntimeDialog } from "./scientific-runtime-dialog.js";
 import { renderActivity, type ActivityPageActions, type ActivityPageState } from "./activity-page.js";
 
 const element = (id: string): HTMLElement => { const found = document.getElementById(id); if (!found) throw new Error("Missing #" + id); return found; };
-interface ProjectView { history: NavigationHistory; models: ModelPageState; details: Map<string, DetailState>; optimization: OptimizationPageState; providers: ProviderPageState; activity: ActivityPageState; datasets?: DatasetController }
+interface ProjectView { history: NavigationHistory; models: ModelPageState; details: Map<string, DetailState>; optimization: OptimizationPageState; providers: ProviderPageState; activity: ActivityPageState; datasets?: DatasetController; benchmarks?: BenchmarkController }
 const newView = (): ProjectView => ({ history: new NavigationHistory(), models: { filter: initialFilter(), selected: new Set(), suiteIndex: 0 }, details: new Map(), optimization: { loading: false }, providers: { loading: false }, activity: { loading: false } });
 
 export function mount(): void {
@@ -435,7 +437,7 @@ export function mount(): void {
   const actions: Actions = {
     navigate, render, help, notify, connect: projects.addFolder,
     backTo: page => { if (view.history.returnTo(page, main.scrollTop)) { render(); restorePlace(); } else navigate({ page }); },
-    refresh: () => { view.datasets?.refresh(); if (selection.selectedId) void selectProject(selection.selectedId); else void refreshCollection(); },
+    refresh: () => { view.datasets?.refresh(); view.benchmarks?.refresh(); if (selection.selectedId) void selectProject(selection.selectedId); else void refreshCollection(); },
     copy: value => { void bridge.copyText(value).then(() => notify("Copied to clipboard"), error => notify("Copy failed: " + message(error))); },
     compare: rows => {
       if (!rows.length || rows.length > 3 || rows.some(row => setupId(row.run) !== setupId(rows[0]!.run))) { notify("Select 1–3 candidates from the same evaluation setup."); return; }
@@ -456,6 +458,12 @@ export function mount(): void {
         dialog: () => element("project-dialog") as HTMLDialogElement, copy: actions.copy,
       });
       view.datasets.sync(data.managed);
+      view.benchmarks ??= new BenchmarkController(id, data.managed, bridge, {
+        render: () => { if (selection.selectedId === id) render(); },
+        navigate: location => { if (selection.selectedId === id) navigate(location); },
+        dialog: () => element("project-dialog") as HTMLDialogElement,
+      });
+      view.benchmarks.sync(data.managed);
     }
     const linkedOptimizationIds = new Set(data?.runs.flatMap(run => run.optimizationId ? [run.optimizationId] : []) ?? []);
     const runCount = (data?.runs.filter(run => !run.optimizationId).length ?? 0) + linkedOptimizationIds.size + (view.optimization.run && !linkedOptimizationIds.has(view.optimization.run.run_id) ? 1 : 0);
@@ -508,7 +516,7 @@ export function mount(): void {
       else if (current.page === "model" || current.page === "candidate") content = renderModel(data, current.id ?? "", current.tab ?? "overview", detail, actions, current.runId);
       else if (current.page === "run") content = renderRun(data, current.id ?? "", current.tab ?? "overview", actions);
       else if (current.page === "runs") content = renderRuns(data, actions, view.optimization.run);
-      else if (current.page === "benchmarks") content = renderBenchmarks(data, actions, view.optimization.readiness);
+      else if (current.page === "benchmarks") content = data.managed && view.benchmarks ? renderBenchmarkPage(data, current, view.benchmarks, actions) : renderBenchmarks(data, actions);
       else if (current.page === "baseline") content = renderModel(data, data.baseline.id, current.tab ?? "overview", detail, actions);
       else content = renderCompare(data, candidateRows(data).filter(r => current.candidateIds?.includes(r.candidate.id)), actions);
     }
@@ -527,6 +535,10 @@ export function mount(): void {
     if (data?.managed && view.datasets && ["datasets", "dataset"].includes(current.page) && !loading && !collectionBusy) {
       const controller = view.datasets;
       queueMicrotask(() => { if (view.datasets === controller && !loading && !collectionBusy && workspace()?.managed) void controller.ensure(current); });
+    }
+    if (data?.managed && view.benchmarks && current.page === "benchmarks" && !loading && !collectionBusy) {
+      const controller = view.benchmarks;
+      queueMicrotask(() => { if (view.benchmarks === controller && !loading && !collectionBusy && workspace()?.managed) void controller.ensure(current); });
     }
   }
   for (const [id, offset] of [["navigate-back", -1], ["navigate-forward", 1]] as const) element(id).addEventListener("click", () => { const entry = view.history.move(offset, main.scrollTop); if (entry) { render(); restorePlace(); } });

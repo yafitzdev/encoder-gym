@@ -14,7 +14,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   const web = window.webContents;
   const evaluate = (code: string) => web.executeJavaScript(code, true);
   const until = async (expression: string) => evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(" + expression + ")resolve(true);else if(n++>1000)reject(new Error('Timed out: '+" + JSON.stringify(expression) + "));else setTimeout(poll,20)};poll()})");
-  const check = async (name: string, expression: string) => { if (!await evaluate(expression)) throw new Error("Managed renderer check failed: " + name); console.log("PASS " + name); };
+  const check = async (name: string, expression: string) => { if (!await evaluate(expression)) { writeFileSync(join(output, "managed-failure.png"), (await web.capturePage()).toPNG()); throw new Error("Managed renderer check failed: " + name); } console.log("PASS " + name); };
   const click = async (selector: string) => evaluate("(()=>{const control=document.querySelector(" + JSON.stringify(selector) + ");control.focus();control.click()})()");
   // Chromium input works in hidden QA windows without stealing the user's OS focus.
   const key = async (key: "Enter" | "Tab" | "Escape") => {
@@ -37,7 +37,15 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await until("document.querySelector('#page h1')");
   if (harness.restart) {
     await loaded();
-    await check("managed projects and selected identity survive another Electron process", "document.querySelectorAll('[data-project-id]').length === 2 && document.getElementById('breadcrumb').textContent.includes('Routing encoder') && document.getElementById('source-state').textContent.includes('Managed workspace')");
+    await check("managed projects and selected identity survive another Electron process", "document.querySelectorAll('[data-project-id]').length === 3 && document.getElementById('breadcrumb').textContent.includes('Offline benchmark fixture') && document.getElementById('source-state').textContent.includes('Managed workspace')");
+    await nav("benchmarks"); await until("document.querySelectorAll('[data-benchmark-model]').length === 3");
+    await check("benchmark versions and missing results survive restart", "document.querySelectorAll('#benchmark-version option').length === 2 && document.querySelectorAll('.benchmark-results td').length === 3 && [...document.querySelectorAll('.benchmark-results td')].filter(cell=>cell.textContent.includes('Not evaluated')).length === 2");
+    await evaluate("(()=>{const selector=document.getElementById('benchmark-version');selector.value=selector.options[0].value;selector.dispatchEvent(new Event('change',{bubbles:true}))})()");
+    await until("document.querySelector('.benchmark-results')?.textContent.includes('0.600000')");
+    await check("historical benchmark keeps its rejected candidate after restart", "document.querySelectorAll('[data-benchmark-model]').length === 3 && document.querySelectorAll('.benchmark-score').length === 3");
+    await screenshot("managed-benchmark-restarted");
+    const routing = harness.registry.read().projects.find(project => project.name === "Routing encoder")!;
+    await click('[data-project-id="' + routing.id + '"]'); await loaded();
     await nav("project"); await until("document.querySelectorAll('.provider-summary').length === 2 && !document.querySelector('.provider-state .neutral')");
     await check("provider settings and encrypted credential availability survive restart", "document.querySelectorAll('.provider-state .success').length === 2 && !document.getElementById('page').textContent.includes('smoke-secret')");
     await nav("datasets");
@@ -235,10 +243,10 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await nav("datasets"); await until("document.querySelector('.empty-state h2')?.textContent === 'No datasets'");
     await check("Data contains dataset objects, not optimization authority or decorative counts", "document.querySelector('.page-heading h1').textContent === 'Data' && !document.querySelector('.page-heading p') && !document.querySelector('.scientific-data-card') && !document.querySelector('.page-heading .tag') && !document.getElementById('page').textContent.includes('repair rows')");
     await screenshot("managed-data-with-training-snapshot");
-    await nav("benchmarks"); await until("document.querySelector('.evaluation-plan')");
-    await check("Evaluation separates bound suite authority from recorded results without narration", "document.querySelector('.page-heading h1').textContent === 'Evaluation' && !document.querySelector('.page-heading p') && document.querySelector('.evaluation-plan').textContent.includes('Generic holdout') && document.querySelector('.evaluation-plan').textContent.includes('Nomos sealed acceptance') && document.querySelector('.evaluation-plan').textContent.includes('Development') && document.querySelector('.evaluation-plan').textContent.includes('approval required') && !document.querySelector('.evaluation-plan p') && !document.querySelector('.reading-note')");
-    await screenshot("managed-evaluation-plan");
-    await textButton("Review prepared run"); await until("document.querySelector('.launch-definition .section-heading h2')?.textContent === 'Run'");
+    await nav("benchmarks"); await until("document.querySelector('.empty-state h2')?.textContent === 'No benchmark'");
+    await check("Evaluation does not substitute a prepared run for a project benchmark", "document.querySelector('.page-heading h1').textContent === 'Evaluation' && !document.querySelector('.page-heading p') && !document.querySelector('.evaluation-plan') && !document.querySelector('.benchmark-section')");
+    await screenshot("managed-evaluation-empty");
+    await click("#project-optimize"); await until("document.querySelector('.launch-definition .section-heading h2')?.textContent === 'Run'");
     await textButton("Start run");
     await check("start visibly enters non-repeatable verification", "document.querySelector('.workspace-progress')?.textContent.includes('Starting…') && document.querySelector('.launch-actions button').disabled && document.querySelector('.launch-actions button').textContent === 'Starting…'");
     await until("document.querySelector('.run-control')?.textContent.includes('Build and evaluate the candidate')");
@@ -261,7 +269,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await click("#project-optimize");
     await until("document.querySelector('.live-run h3')?.textContent === 'Evaluating retrieval'");
     await check("returning to an executing run restores observation without stale training percentages", "!document.querySelector('.live-counter') && document.querySelector('.launch-summary h2').textContent === 'Running' && !document.querySelector('.run-connection-warning')");
-    releaseTraining(); await until("document.querySelector('.run-control')?.textContent.includes('Review final acceptance')");
+    releaseTraining(); await until("[...document.querySelectorAll('.run-control button')].some(button=>button.textContent === 'Authorize one sealed evaluation' && !button.disabled)");
     await check("run supervision distinguishes completed records from reserved capacity", "document.querySelector('.run-usage').textContent.includes('Recorded work') && document.querySelector('.run-usage').textContent.includes('110s / 2m') && document.querySelector('.run-usage').textContent.includes('2 / 2') && document.querySelector('.run-control').textContent.includes('Journal span')");
     await check("sealed evidence requires its own visible authorization", "document.querySelector('.run-control').textContent.includes('Review final acceptance') && [...document.querySelectorAll('.run-control button')].some(b=>b.textContent === 'Authorize one sealed evaluation')");
     await screenshot("managed-optimization-awaiting-approval");
@@ -311,7 +319,8 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await check("managed runs keep their optimization parent visible", "document.querySelector('.optimization-run-row').textContent.includes('Latest optimization') && document.querySelector('.optimization-run-row').textContent.includes('promote candidate') && document.querySelector('#nav-runs .nav-count').textContent === '1' && [...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Inspect run')");
   await screenshot("managed-runs-parent");
   await nav("benchmarks");
-  await check("managed Evaluation stays empty without invented evidence or narration", "document.querySelector('.empty-state h2').textContent === 'No evaluations' && !document.querySelector('.empty-state p')");
+  await until("document.querySelector('.empty-state h2')?.textContent === 'No benchmark'");
+  await check("managed Evaluation stays empty without invented evidence or narration", "document.querySelector('.empty-state h2').textContent === 'No benchmark' && !document.querySelector('.empty-state p')");
   await nav("datasets"); await until("document.querySelector('.empty-state h2')?.textContent === 'No datasets'");
   const sealed = join(root, "held-out.jsonl"); writeFileSync(sealed, '{"evaluation_partition":"sealed"}\n');
   harness.chooseFolder(sealed); await textButton("Import dataset"); await until("document.querySelector('.operation-failure')?.textContent.includes('non-training partition')");
@@ -483,5 +492,43 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await nav("project"); await textButton("Remove project entry…"); await textButton("Remove entry");
   await until("!document.querySelector('dialog[open]') && document.querySelectorAll('[data-project-id]').length === 2"); await loaded();
   if (harness.registry.read().selectedId !== firstId) { await click('[data-project-id="' + firstId + '"]'); await loaded(); }
+  // Seed only isolated synthetic records; all benchmark interactions below use
+  // the actual renderer, IPC, production CLI, and project/scientific stores.
+  const fixtureExecutable = join(harness.backend.executable, "..", process.platform === "win32" ? "synth-benchmark-fixture.exe" : "synth-benchmark-fixture");
+  const benchmarkFixture = JSON.parse(execFileSync(fixtureExecutable, [join(root, "benchmark-fixture")], { encoding: "utf8", windowsHide: true, maxBuffer: 16 * 1024 * 1024 })) as { folder: string; firstRun: string; changedRun: string };
+  harness.chooseFolder(benchmarkFixture.folder); await click("#open-project"); await until("document.querySelectorAll('[data-project-id]').length === 3"); await loaded();
+  await check("managed Models remains an inventory without duplicate comparison controls", "document.querySelectorAll('[data-model-id]').length === 3 && !document.querySelector('.artifact-list input[type=checkbox]') && !document.getElementById('compare-selected')");
+  const scientificBefore = readFileSync(join(benchmarkFixture.folder, "runs/scientific.sqlite"));
+  await nav("benchmarks"); await until("document.querySelector('.empty-state h2')?.textContent === 'No benchmark'");
+  const chooseBenchmark = async (runId: string) => {
+    await textButton("Choose recorded benchmark"); await until("document.querySelector('#benchmark-source-run')");
+    await evaluate("document.getElementById('benchmark-source-run').value=" + JSON.stringify(runId) + ";document.getElementById('benchmark-source-run').dispatchEvent(new Event('change',{bubbles:true}))");
+    await until("document.getElementById('benchmark-confirm') && !document.getElementById('benchmark-confirm').disabled");
+    await click("#benchmark-confirm"); await until("document.querySelectorAll('[data-benchmark-model]').length === 3 && !document.querySelector('.dataset-progress')");
+  };
+  await chooseBenchmark(benchmarkFixture.firstRun);
+  await check("one benchmark table shows baseline, rejected candidate and not-evaluated model", "document.querySelectorAll('.benchmark-results').length === 1 && document.querySelectorAll('[data-benchmark-model]').length === 3 && document.querySelector('.benchmark-results').textContent.includes('0.600000') && document.querySelector('.benchmark-results').textContent.includes('Not evaluated') && !document.querySelector('.benchmark-section') && !document.querySelector('.page-heading p')");
+  await check("distinct baseline evaluations are shown without selecting the best score", "document.querySelectorAll('.benchmark-score').length === 3 && document.querySelector('.benchmark-results').textContent.includes('0.700000') && document.querySelector('.benchmark-results').textContent.includes('0.720000')");
+  await screenshot("managed-benchmark-results");
+  await evaluate("[...document.querySelectorAll('.benchmark-score')].find(button=>button.textContent === '0.600000').click()");
+  await until("document.querySelector('.benchmark-report-dialog')");
+  await check("score inspection preserves original rejection and hides sealed evidence", "document.querySelector('.benchmark-report-dialog').textContent.includes('Failed development checks') && !document.querySelector('.benchmark-report-dialog').textContent.includes('99999.125') && !document.querySelector('.benchmark-report-dialog').textContent.includes('NEVER_PROJECT_NATIVE_METADATA')");
+  await screenshot("managed-benchmark-report"); await key("Escape");
+  await evaluate("[...document.querySelectorAll('.benchmark-model-link')].find(button=>button.textContent === 'Candidate 01').click()");
+  await check("comparison opens the shared model viewer", "document.querySelector('.model-view h1').textContent === 'Candidate 01' && document.querySelectorAll('.tabs button').length === 4");
+  await click("#navigate-back"); await until("document.querySelectorAll('[data-benchmark-model]').length === 3");
+  await click("#tab-protocol");
+  await check("scoring rules and protected-test identity stay in Protocol", "document.querySelector('.benchmark-protocol').textContent.includes('Final holdout') && document.querySelector('.benchmark-rules').textContent.includes('Maximum regression') && !document.getElementById('page').textContent.includes('99999.125')");
+  await screenshot("managed-benchmark-protocol");
+  await click("#tab-versions"); await chooseBenchmark(benchmarkFixture.changedRun);
+  await check("changing the benchmark creates a second version without borrowing candidate scores", "document.querySelectorAll('#benchmark-version option').length === 2 && !document.querySelector('.benchmark-results').textContent.includes('0.600000') && [...document.querySelectorAll('.benchmark-results td')].filter(cell=>cell.textContent.includes('Not evaluated')).length === 2");
+  await click("#navigate-back"); await check("Back returns to the earlier benchmark's history tab", "document.getElementById('tab-versions').getAttribute('aria-selected') === 'true'");
+  await click("#navigate-forward"); await until("document.querySelector('.benchmark-results')");
+  for (const width of [760, 390]) {
+    await screenshot("managed-benchmark-results-" + width, width, 800);
+    await check("benchmark table scrolls locally without overflowing the page at " + width, "document.getElementById('page').scrollWidth <= document.getElementById('page').clientWidth + 1 && document.documentElement.scrollWidth <= innerWidth && document.querySelector('.benchmark-table-scroll').clientWidth > 100");
+  }
+  window.setContentSize(1440, 960);
+  if (!scientificBefore.equals(readFileSync(join(benchmarkFixture.folder, "runs/scientific.sqlite")))) throw new Error("Benchmark inspection/adoption changed scientific evidence");
   console.log("Managed-workspace Electron acceptance passed.");
 }

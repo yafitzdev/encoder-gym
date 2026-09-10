@@ -1,13 +1,40 @@
-import type { BenchmarkQueryResult, ProjectBenchmarkResults, ProjectBenchmarkVersion } from "./benchmark-workspace.js";
+import type { BenchmarkAdoptionResult, BenchmarkPreview, BenchmarkQueryResult, ProjectBenchmarkResults, ProjectBenchmarkVersion } from "./benchmark-workspace.js";
 import type { ManagedWorkspace } from "./managed-workspace.js";
 
 interface Ports {
   open(projectId: string): Promise<ManagedWorkspace>;
   command<T>(args: string[]): Promise<T>;
+  exclusive<T>(projectId: string, run: () => Promise<T>): Promise<T>;
 }
-/** Read-only, fixed CLI grammar. Neither paths nor report contents come from the renderer. */
+function uuid(value: unknown): string {
+  if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) throw new Error("Invalid benchmark identity.");
+  return value.toLowerCase();
+}
+/** Fixed project-bound CLI grammar; the renderer supplies no paths or report contents. */
 export class ManagedBenchmarks {
   constructor(private ports: Ports) {}
+  async preview(projectId: string, run: unknown): Promise<BenchmarkPreview> {
+    const runId = uuid(run), workspace = await this.ports.open(projectId);
+    const preview = await this.ports.command<BenchmarkPreview>(["benchmark", workspace.folder, "preview-run", runId]);
+    const binding = workspace.scientificBinding;
+    if (!binding || preview.source.scientificBinding.id !== binding.id || preview.source.scientificBinding.fingerprint !== binding.fingerprint
+      || preview.source.projectSnapshot.id !== binding.runtime.projectSnapshot.id || preview.source.projectSnapshot.fingerprint !== binding.runtime.projectSnapshot.fingerprint) throw new Error("Benchmark source changed. Refresh the project.");
+    return preview;
+  }
+  async adopt(projectId: string, value: unknown): Promise<BenchmarkAdoptionResult> {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid benchmark selection.");
+    const request = value as Record<string, unknown>;
+    if (Object.keys(request).some(key => !["runId", "expectedParent", "definitionFingerprint"].includes(key))) throw new Error("Invalid benchmark selection.");
+    const runId = uuid(request.runId), parent = request.expectedParent === null ? null : uuid(request.expectedParent);
+    const fingerprint = request.definitionFingerprint;
+    if (typeof fingerprint !== "string" || !/^sha256:[a-f0-9]{64}$/.test(fingerprint)) throw new Error("Invalid benchmark definition.");
+    return this.ports.exclusive(projectId, async () => {
+      const workspace = await this.ports.open(projectId);
+      const result = await this.ports.command<BenchmarkAdoptionResult>(["benchmark", workspace.folder, "adopt-run", runId, "--expected-definition", fingerprint, ...(parent ? ["--expected-parent", parent] : [])]);
+      if (result.version.projectId !== workspace.manifest.id || result.version.definition.fingerprint !== fingerprint) throw new Error("Saved benchmark does not match the reviewed definition.");
+      return result;
+    });
+  }
   async query(projectId: string, value: unknown): Promise<BenchmarkQueryResult> {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid benchmark request.");
     const input = value as Record<string, unknown>;

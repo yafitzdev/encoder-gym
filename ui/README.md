@@ -40,8 +40,8 @@ They are labelled Legacy and are not silently converted into managed projects.
   the session; clicking the already-active folder collapses or expands it.
 - **Optimize:** a project-header action available on every managed page.
 - **Models:** the active baseline and every registered model, including rejected
-  candidates and former baselines. Search the inventory or select up to three
-  candidates evaluated under the same benchmark and baseline for comparison.
+  candidates and former baselines. Search the inventory or inspect any model;
+  managed-project comparisons belong in Evaluation.
   **All models** returns from details to the list's previous scroll position
   and originating model control. Back/forward also preserve that context.
 - **Model detail:** one viewer for every model, with Overview, Evaluation,
@@ -66,7 +66,13 @@ They are labelled Legacy and are not silently converted into managed projects.
 - **Runs:** immutable experiment records. A run owns its candidate attempts,
   activity, recorded budgets, provenance, and final decision. Completion does
   not mean the candidate was accepted.
-- **Benchmarks:** what is measured and why evaluation setups are separate.
+- **Evaluation (managed projects):** one shared benchmark, with Results, Protocol
+  and Versions tabs. Select a version and metric to compare all project models.
+  Missing matching reports say Not evaluated. Repeated measurements remain
+  separate; clicking a score reveals its original run/baseline context. Model
+  links open the common viewer. Choose recorded benchmark previews and adopts
+  verified existing authority, without executing an evaluation. Initial test-data
+  onboarding remains pending. Legacy journals retain their earlier benchmark view.
 - **Activity:** immutable project commands grouped by action UUID, with event
   UUIDs, progress, outcomes, linked artifact identities, and JSONL export.
 - **Project settings:** app name, durable organizational ID, folder association,
@@ -103,16 +109,17 @@ outputs produced before automatic registration was implemented. Promotion reuses
 the registered artifact and appends only the baseline revision. Native and managed
 inventory fingerprints are connected through the recorded source-model identity.
 
-Benchmark version management, baseline controls, and automatic agent execution
+Initial benchmark onboarding, baseline controls, and automatic agent execution
 remain tracked in [the product contract](../docs/encoder-workspace-product.md).
 The shared-benchmark domain, immutable project catalog, and read-only
 preview/inspection, adoption and comparable-results CLI are available under
 `workspace benchmark`; see [project benchmarks](../docs/project-benchmark-spec.md).
 The typed `queryBenchmarks` desktop bridge lists versions and reads model results
 using fixed project-bound commands. It rejects substituted versions, inventories,
-baseline roles and protected report content. The existing Evaluation screen is
-not yet wired to that catalog. Catalog adoption does not run evaluation or renew
-protected-test authority.
+baseline roles and protected report content. Evaluation uses that catalog;
+separate preview/adoption intents pin the reviewed definition and parent before
+writing. Catalog adoption does not run evaluation or renew protected-test
+authority. New projects without recorded authority still need test-data onboarding.
 
 Managed onboarding calls the project-owned `synth workspace` commands. It
 accepts self-contained BERT-family safetensors encoder bundles, preserving
@@ -286,6 +293,13 @@ reuses the same version, not a duplicate. The tests also cover folder recovery,
 restart, editable validation errors, busy controls, and narrow diff layouts.
 An additional recorded-input fixture follows model -> training dataset -> model,
 with membership adopted through the ordinary CLI rather than injected UI state.
+The `synth-benchmark-fixture` test-only binary builds an isolated project with
+normal recorded journals and model custody. Electron uses the production CLI to
+adopt two benchmark versions, compare three models, inspect original rejection,
+preserve repeated measurements, follow model links, navigate history and reopen
+both versions after restart. Protected-score and native-metadata canaries must
+remain absent; the scientific database stays byte-identical. `npm run smoke`
+builds this fixture binary explicitly; production execution has no fake override.
 Tiny custody-format model fixtures never
 claim to be trained or executable encoders.
 

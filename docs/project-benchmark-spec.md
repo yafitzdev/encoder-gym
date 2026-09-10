@@ -68,7 +68,7 @@ integration, not implied by a historical-results catalog.
 ```text
 synth workspace benchmark <PROJECT> list
 synth workspace benchmark <PROJECT> preview-run <EXPERIMENT_RUN_ID>
-synth workspace benchmark <PROJECT> adopt-run <EXPERIMENT_RUN_ID> [--expected-parent <VERSION_ID>]
+synth workspace benchmark <PROJECT> adopt-run <EXPERIMENT_RUN_ID> [--expected-parent <VERSION_ID>] [--expected-definition <FINGERPRINT>]
 synth workspace benchmark <PROJECT> inspect <VERSION_ID>
 synth workspace benchmark <PROJECT> results <VERSION_ID>
 ```
@@ -81,6 +81,13 @@ and original provenance even if another run uses it. Inspection reopens the
 version's original binding and reproduces its definition from the verified
 scientific protocol; it neither needs Python nor opens native test files.
 Cataloging a benchmark never creates a fresh generation or consumes a holdout.
+
+The desktop's Choose recorded benchmark dialog previews the selected run before
+saving. It always supplies the reviewed definition fingerprint and exact parent;
+a changed definition is rejected before a version is recorded. Choosing an
+already-cataloged definition opens that version without another mutation. A lost
+save response can retry the exact request without adding a duplicate version.
+This is onboarding from recorded authority, not yet initial test-data import.
 
 Results starts from every registered model and resolves development reports from
 all compatible project-owned scientific bindings. Reused report identities have
@@ -106,4 +113,6 @@ must not label this value as a test-set row count.
   deterministic fixtures; verify safe activity references and no execution.
 - Exercise the actual desktop version selector/results/model links, including
   missing and incompatible results and restart.
+- Exercise preview/adoption through the real production CLI in an isolated
+  offline fixture; reject a definition changed since preview.
 - Keep existing Nomos evidence intact; real inspection is read-only.
