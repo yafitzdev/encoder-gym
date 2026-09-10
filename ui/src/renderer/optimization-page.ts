@@ -255,7 +255,7 @@ export function renderOptimization(workspace: ManagedWorkspace, state: Optimizat
       h("p", { class: "section-note" }, readiness.optimizationAuthority.trainingSnapshotId ? "Its immutable training snapshot is recorded. Prepare replays the complete scientific lineage and resolves the final run definition." : "Prepare replays the complete scientific lineage, freezes the approved native delta as a logical training snapshot, and resolves the final run definition. It does not train, evaluate, expose sealed evidence, or contact a provider."),
       button(state.loading ? "Preparing…" : "Prepare approved run", actions.prepare, "primary", "arrow")) : null,
     readiness && !preview ? readinessList(readiness, actions, readiness.optimizationAuthority ? new Set(["optimization.preview"]) : new Set()) : null,
-    preview ? h("section", { class: "launch-definition" }, sectionHeader("Exact run definition", tag(state.prepared?.name ?? state.manifest?.name ?? "Reviewed selection", "accent")),
+    preview ? h("section", { class: "launch-definition" }, sectionHeader("Exact run definition", tag("Immutable", "accent")),
       h("div", { class: "launch-objective" }, h("div", { class: "eyebrow" }, "Reviewed objective"), h("h3", {}, preview.runName),
         authority?.hypotheses.length ? h("p", {}, authority.hypotheses.join(" ")) : h("p", {}, "The immutable definition references its reviewed proposal; no editable hypothesis is accepted at reservation.")),
       h("dl", { class: "launch-metrics", "aria-label": "Hard run limits" },
@@ -266,10 +266,10 @@ export function renderOptimization(workspace: ManagedWorkspace, state: Optimizat
       h("div", { class: "launch-boundaries" },
         h("section", {}, h("div", { class: "eyebrow" }, "Development evidence"), h("strong", {}, `${preview.developmentSuites.length} ${preview.developmentSuites.length === 1 ? "suite" : "suites"}`), h("p", {}, preview.developmentSuites.join(" · "))),
         h("section", {}, h("div", { class: "eyebrow" }, "Final acceptance"), h("strong", {}, preview.sealedSuite), h("p", {}, "One separately confirmed sealed use after development eligibility."))),
+      h("div", { class: "external-work" }, h("div", { class: "eyebrow" }, "External work"), h("p", {}, externalWork(workspace, state, readiness))),
+      state.run ? null : h("div", { class: "launch-actions" }, button(preview.existingRun ? "Open existing run" : "Reserve optimization run", actions.start, "primary", "runs"), h("p", {}, reservationCopy(state, Boolean(preview.existingRun)))),
       h("div", { class: "launch-disclosures" }, candidateRecipe(preview),
         details("Inspect immutable identities and complete limits", facts([["Baseline", runBaseline?.name ?? active?.name ?? workspace.manifest.name + " baseline"], ["Training snapshot", preview.trainingSnapshotId], ["Benchmark generation", preview.benchmarkGenerationId], ["Evaluation time ceiling", `${preview.maximumEvaluationSeconds.toLocaleString()} seconds`], ...budgetFacts(preview)]))),
-      h("div", { class: "external-work" }, h("div", { class: "eyebrow" }, "External work"), h("p", {}, externalWork(workspace, state, readiness))),
-      state.prepared ? h("p", { class: "section-note" }, state.prepared.createdTrainingSnapshot ? "The approved logical training snapshot was created during preparation." : "The existing approved logical training snapshot was reused exactly.") : null,
-      state.run ? null : h("div", { class: "launch-actions" }, button(preview.existingRun ? "Open existing run" : "Reserve optimization run", actions.start, "primary", "runs"), h("p", {}, reservationCopy(state, Boolean(preview.existingRun))))) : null,
+      state.prepared ? h("p", { class: "section-note" }, state.prepared.createdTrainingSnapshot ? "The approved logical training snapshot was created during preparation." : "The existing approved logical training snapshot was reused exactly.") : null) : null,
   );
 }

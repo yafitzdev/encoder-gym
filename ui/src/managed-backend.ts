@@ -144,7 +144,8 @@ export class ManagedBackend {
     try { return await operation(); } finally { this.activeProjects.delete(projectId); }
   }
   private retainPrepared(projectId: string, workspace: ManagedWorkspace, prepared: PreparedOptimizationWire): PreparedOptimizationChoice {
-    if (typeof prepared.manifestPath !== "string" || typeof prepared.manifestName !== "string" || prepared.readiness?.projectId !== projectId) {
+    const scientificProjectId = workspace.scientificBinding?.runtime.projectSnapshot.id;
+    if (typeof prepared.manifestPath !== "string" || typeof prepared.manifestName !== "string" || !scientificProjectId || prepared.readiness?.projectId !== scientificProjectId) {
       throw new Error("The managed optimization preparation does not match this project.");
     }
     const root = resolve(workspace.folder), manifest = resolve(prepared.manifestPath);

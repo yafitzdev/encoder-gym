@@ -45,7 +45,12 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
   try {
     await evaluate("[...document.querySelectorAll('[data-page=models]')].at(0).click();[...document.querySelectorAll('#page button')].find(button=>button.textContent==='Start optimization').click();true");
     await evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(document.querySelector('.launch-summary')&&!document.querySelector('.workspace-progress'))resolve(true);else if(n++>1500)reject(new Error('Real managed readiness did not render'));else setTimeout(poll,20)};poll()})");
-    await check("[...document.querySelectorAll('#page button')].filter(button=>button.textContent==='Prepare approved run').length === 1 && !document.getElementById('page').textContent.includes('Do these next')");
+    if (readiness.preparedOptimization) {
+      await check("[...document.querySelectorAll('#page button')].filter(button=>button.textContent==='Reserve optimization run').length === 1 && document.getElementById('page').textContent.includes('Prepared for reservation') && document.getElementById('page').textContent.includes('Exact run definition') && !document.getElementById('page').textContent.includes('Do these next')");
+      await check("(()=>{const button=[...document.querySelectorAll('#page button')].find(button=>button.textContent==='Reserve optimization run');if(!button)return false;const rect=button.getBoundingClientRect();return rect.top>=0&&rect.bottom<=window.innerHeight})()");
+    } else {
+      await check("[...document.querySelectorAll('#page button')].filter(button=>button.textContent==='Prepare approved run').length === 1 && !document.getElementById('page').textContent.includes('Do these next')");
+    }
     await capture("managed-current-readiness");
   } finally {
     backend.readiness = readinessMethod;
@@ -64,6 +69,7 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
       runnable: readiness.report.runnable, requiredBlockers,
       exactRun: readiness.launchPreview ?? null,
       reviewedAuthority: readiness.optimizationAuthority ?? null,
+      preparation: readiness.preparedOptimization ? "prepared" : "not_prepared",
       configuredProviderRoles: providers.catalog?.providers.map(provider => provider.role) ?? [],
       externalCallsBeforeAuthorization: 0,
       persistenceBeforeAuthorization: "none; this preflight is read-only",

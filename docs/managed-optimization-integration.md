@@ -583,6 +583,36 @@ it never displays a fabricated percentage. Redundant post-write graph reloads
 and duplicate managed/native project verification were removed, leaving the
 production-repair owner replay as the sole expensive boundary.
 
+On 2026-09-09 the operator explicitly authorized preparation of the real
+managed Nomos workspace, and no later lifecycle boundary. The owner replay
+reused logical training snapshot `2602ef88-db56-4591-8a4c-2581c5613726`, made
+zero external calls, and published the 792-byte immutable definition
+`optimization-f9a4a9e61d2baaec06ae9f2ea5737592ff08accfddc2ea3b0d8d62ed8b73b0a0.toml`
+below the managed `runs/definitions/` directory. Preparation took about 28
+minutes on the real workspace. Host-level readiness then resolved that exact
+definition with no required blockers, reported `runnable: true`, and proved
+that no optimization run had been reserved. No training, evaluation, provider
+call, or sealed use occurred.
+
+The first post-preparation real Electron reopen found an identity-boundary bug
+that deterministic fixtures had hidden by assigning the same UUID to the
+managed workspace and scientific project. A prepared launch preview correctly
+names the bound scientific project; the main-process adapter had incorrectly
+compared it to the managed workspace ID. It now compares the preview identity
+to `scientificBinding.runtime.projectSnapshot.id` while continuing to scope the
+opaque token and contained path to the managed project. The regression fixture
+uses distinct IDs and rejects a foreign scientific project.
+
+The corrected real Electron verifier recovered the prepared definition after a
+fresh process, rendered `Prepared for reservation`, found zero required
+blockers, and byte-compared the saved library, managed manifest, custody
+database, and projected workspace facts unchanged. Its prepared-state contract
+also requires the reservation action to be inside the initial viewport. The
+screen now places the zero-external-work statement and reservation boundary
+immediately after the hard limits and development/sealed evidence boundary;
+candidate parameters and immutable identities remain optional disclosures.
+No run was reserved by this verification.
+
 The accepted-promotion implementation is covered at three boundaries. Workspace
 tests prove content-addressed copying, append-only provenance, idempotent retry,
 stale-baseline rejection, orphan-copy recovery, and tamper detection. CLI tests

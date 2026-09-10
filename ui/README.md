@@ -241,7 +241,10 @@ Chromium state, reads the actual saved library without rewriting it, verifies
 model/data files through the backend, and captures Models/Data/Settings plus the
 real Start-page readiness. Its structured result lists required blockers, any
 exact run/authority, configured provider roles, pre-authorization external
-calls, and persistence. A second verified reopen proves the saved library,
+calls, preparation state, and persistence. It accepts either the truthful
+preparation action or a recovered prepared definition; in the latter state it
+also requires the reservation action to be visible without scrolling. A
+second verified reopen proves the saved library,
 managed manifest, custody database, and workspace facts did not change.
 
 Screenshots are written to ignored `ui/qa/`. Checked viewport sizes include

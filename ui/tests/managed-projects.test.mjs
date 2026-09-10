@@ -106,16 +106,16 @@ test("opening arbitrary repositories fails without mutation and explicit legacy 
 test("managed control accepts only native-picked manifests and fixed project-scoped intents", async () => {
   const root = mkdtempSync(join(tmpdir(), "gym-managed-control-")), folder = join(root, "project");
   mkdirSync(folder);
-  const id = randomUUID(), baseline = { source: join(folder, "baseline"), format: "safetensors-encoder", architecture: "bert", files: [], bytes: 10, fingerprint: "sha256:" + "a".repeat(64), execution: "not-configured" };
-  const workspace = { folder, verified: true, manifest: { version: 1, id, name: "Control fixture", createdAt: new Date().toISOString(), task: "retrieval", baseline }, datasets: [] };
+  const id = randomUUID(), scientificId = randomUUID(), baseline = { source: join(folder, "baseline"), format: "safetensors-encoder", architecture: "bert", files: [], bytes: 10, fingerprint: "sha256:" + "a".repeat(64), execution: "not-configured" };
+  const workspace = { folder, verified: true, manifest: { version: 1, id, name: "Control fixture", createdAt: new Date().toISOString(), task: "retrieval", baseline }, datasets: [], scientificBinding: { runtime: { projectSnapshot: { id: scientificId } } } };
   const registry = new ProjectRegistry(join(root, "profile", "projects.json"));
   registry.addManaged(workspace);
   const calls = [];
-  const readiness = { report: { projectId: id, computedAt: new Date().toISOString(), overall: "ready", runnable: true, checks: [] }, launchPreview: { projectId: id } };
+  const readiness = { report: { projectId: id, computedAt: new Date().toISOString(), overall: "ready", runnable: true, checks: [] }, launchPreview: { projectId: scientificId } };
   const generatedManifest = join(folder, "runs", "definitions", "optimization-fixed.toml");
   const baselineRevision = randomUUID();
-  let escapePrepared = false, restorePrepared = false;
-  const preparedOutput = () => ({ manifestPath: escapePrepared ? join(root, "outside.toml") : generatedManifest, manifestName: "Approved repair", readiness: readiness.launchPreview, authority: { proposalId: randomUUID() }, createdTrainingSnapshot: false, externalCalls: 0 });
+  let escapePrepared = false, mismatchPrepared = false, restorePrepared = false;
+  const preparedOutput = () => ({ manifestPath: escapePrepared ? join(root, "outside.toml") : generatedManifest, manifestName: "Approved repair", readiness: mismatchPrepared ? { projectId: randomUUID() } : readiness.launchPreview, authority: { proposalId: randomUUID() }, createdTrainingSnapshot: false, externalCalls: 0 });
   const executor = async (_executable, args) => {
     calls.push(args);
     if (args[3] === "open") return JSON.stringify(workspace);
@@ -130,7 +130,8 @@ test("managed control accepts only native-picked manifests and fixed project-sco
   await assert.rejects(() => backend.optimize(id, { action: "start", manifestToken: "forged" }), /Choose the optimization definition/);
   const prepared = await backend.prepareOptimization(id);
   assert.equal(prepared.name, "Approved repair");
-  assert.equal(prepared.launchPreview.projectId, id);
+  assert.equal(prepared.launchPreview.projectId, scientificId);
+  assert.notEqual(prepared.launchPreview.projectId, id);
   assert.equal(prepared.externalCalls, 0);
   assert.equal("path" in prepared, false);
   assert.deepEqual(calls.find(args => args[3] === "prepare-optimization"), ["--output", "json", "workspace", "prepare-optimization", folder]);
@@ -145,6 +146,9 @@ test("managed control accepts only native-picked manifests and fixed project-sco
   escapePrepared = true;
   await assert.rejects(() => backend.prepareOptimization(id), /escaped its project workspace/);
   escapePrepared = false;
+  mismatchPrepared = true;
+  await assert.rejects(() => backend.prepareOptimization(id), /does not match this project/);
+  mismatchPrepared = false;
   const manifest = join(root, "reviewed.toml"); writeFileSync(manifest, "fixture");
   const selected = await backend.chooseOptimizationManifest(id, manifest);
   assert.equal(selected.name, "reviewed.toml");

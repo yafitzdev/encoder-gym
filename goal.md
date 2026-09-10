@@ -43,18 +43,18 @@ Do not confuse custody with readiness:
   do not become managed candidate artifacts merely because their database was
   imported. The real Models page therefore truthfully shows one baseline and
   no managed candidates.
-- The final read-only Electron preflight derives every required scientific
-  foundation from persisted facts. Its passive backend projection completes in
-  about two seconds for the real Nomos history; it validates the directly bound
-  fingerprints and approval chain without pretending to replay the entire
-  historical graph. **Prepare approved run** remains the deliberate boundary
-  that rehashes managed artifacts and deeply replays that graph. It covers one
-  reviewed candidate over 192 approved delta rows, with 7,200 seconds maximum
-  training, two development evaluations, one separately authorized sealed use,
-  and zero external calls. Preparation—not runtime setup—is now the remaining
-  local mutation before the exact run can be reserved.
-- The desktop can launch, recover, finish, and promote that real bounded
-  workflow after the operator explicitly prepares its immutable run definition.
+- The operator explicitly authorized real Nomos preparation on 2026-09-09. The
+  owner replay reused training snapshot
+  `2602ef88-db56-4591-8a4c-2581c5613726`, made zero external calls, and
+  published the 792-byte definition with fingerprint
+  `sha256:f9a4a9e61d2baaec06ae9f2ea5737592ff08accfddc2ea3b0d8d62ed8b73b0a0`
+  below the managed `runs/definitions/` directory. It covers one reviewed
+  candidate over 192 approved delta rows, with 7,200 seconds maximum training,
+  two development evaluations, one separately authorized sealed use, and zero
+  external calls. Preparation took about 28 minutes on the real workspace. The
+  exact run is now ready and runnable, but no run identity has been reserved.
+- The desktop can recover, launch, finish, and promote that real bounded
+  workflow from the prepared immutable definition.
   The final reservation review now keeps the human objective visible and names
   the candidate recipe, development suites, sealed suite, execution ceilings,
   external-call allowance, and exact persistence boundary. Sealed use requires
@@ -63,6 +63,14 @@ Do not confuse custody with readiness:
   sealed-accepted source checkpoint, keeps runtime code immutable, creates a
   successor scientific project snapshot for the new baseline, and extends the
   existing scientific store instead of silently starting unrelated history.
+- The first post-preparation real Electron reopen exposed an identity-boundary
+  defect hidden by fixtures that reused one UUID: the prepared definition names
+  the scientific project, not the managed folder. The main-process adapter now
+  verifies it against the bound runtime snapshot identity, while retaining the
+  managed ID for project scoping. A distinct-ID regression and the real
+  read-only verifier both pass. The real reservation action is visible in the
+  initial viewport after the essential limits and evidence boundary, before
+  optional recipe and immutable-ID disclosures.
 - Once reserved, the desktop now puts the active run and its one safe next
   action above the frozen launch definition. Run supervision distinguishes
   completed model/evaluation records from reserved and unreserved capacity,
