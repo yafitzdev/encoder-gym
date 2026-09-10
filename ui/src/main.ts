@@ -205,6 +205,7 @@ ipcMain.handle("encoder-gym:choose-dataset", async (_event, value: unknown, purp
   return path ? backend.chooseDataset(id, path, role) : null;
 });
 ipcMain.handle("encoder-gym:query-datasets", (_event, value: unknown, request: unknown) => backend.datasetVersions.query(projectId(value), request));
+ipcMain.handle("encoder-gym:query-benchmarks", (_event, value: unknown, request: unknown) => backend.benchmarks.query(projectId(value), request));
 ipcMain.handle("encoder-gym:mutate-dataset", (_event, value: unknown, request: unknown) => backend.datasetVersions.mutate(projectId(value), request));
 ipcMain.handle("encoder-gym:import-dataset", async (_event, value: unknown, token: unknown, name: unknown) => {
   const id = projectId(value);

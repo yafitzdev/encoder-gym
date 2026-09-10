@@ -78,9 +78,10 @@ decision. No unbounded work or inferred spending.
    adoption and completed-candidate dataset adoption are implemented;
    new manually created versions are not historical training evidence.
 3. Shared benchmark — model-independent definition, immutable project versions,
-   and preview/adoption/inspection CLI implemented. Desktop version selection,
-   comparable results across owned bindings, and test-data onboarding remain
-   pending. Verify incompatibility and sealed isolation end to end.
+   and preview/adoption/inspection CLI implemented. Comparable results across
+   owned bindings and a typed desktop read bridge are implemented. Desktop
+   version selection/results rendering and test-data onboarding remain pending.
+   Verify the final interaction and sealed isolation end to end.
 4. Automatic bounded optimization — pending. Persisted launch scope, agent and
    generation integration, routine continuation, output registration, recovery.
    Verify real CLI composition using deterministic offline fakes.
@@ -277,3 +278,39 @@ and keep outstanding requirements visible.
 - Comparable model results across historical bindings, desktop integration and
   test-data onboarding remain required; this catalog alone does not complete
   the Evaluation page or authorize an optimization.
+
+### Shared benchmark results — 11 September 2026
+
+- `workspace benchmark <folder> results <version>` now starts with every managed
+  model and attaches only exactly compatible development reports. Rejected
+  candidates remain represented; an empty report list means Not evaluated.
+- The workspace core owns the safe model/report projection. CLI composition
+  resolves all verified project-owned scientific bindings, including intermediate
+  historical bindings in different stores. SQLite owns the project-scoped lookup;
+  the native adapter owns benchmark normalization. No metric policy was copied
+  into the workspace adapter or renderer.
+- Registered outputs require the exact source model and producing-run receipt.
+  Baseline evidence maps through each binding's original baseline revision.
+  Repeated reports retain distinct identities; reuse of a single report retains
+  every run context. Old verdicts are not reinterpreted after a baseline change.
+- CLI process tests cover three owned bindings, foreign co-located projects,
+  incompatible benchmark definitions, registered and unregistered candidates,
+  missing evaluations, retries, folder movement and byte-identical read-only
+  databases. Projection tests reject receipt/source substitution, altered
+  journals and report-ID collisions without partially updating results.
+- The typed read-only desktop bridge rejects renderer paths/commands, foreign
+  version responses, substituted model inventories, changed baseline roles,
+  non-finite scores and protected-suite reports. It is ready for the replacement
+  Evaluation screen, but no new results table has been rendered in this stage.
+- All four Rust gates, UI typecheck/build, all 63 unit tests and four offline
+  Electron launches passed. Local logs are `target/benchmark-results-rust-tests.log`,
+  `target/benchmark-results-ui-tests.log` and
+  `target/benchmark-results-electron-tests.log`.
+- Read-only Nomos inspection confirms both `Nomos baseline` and `Candidate 01`
+  remain registered, with active revision
+  `a1aa8b5b-109c-4423-be7c-aa07c3e02caf` and byte-identical manifest and custody
+  database. It still has no adopted project benchmark version. This stage did
+  not change Nomos, start a run, call a provider or expose protected evidence.
+- Remaining work includes the version selector/results page, benchmark onboarding,
+  model promotion/restoration controls and the complete bounded automatic Optimize
+  journey. The overall goal remains incomplete.

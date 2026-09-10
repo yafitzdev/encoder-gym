@@ -37,7 +37,65 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceBenchmarkCommand) -
             expected_parent,
         } => adopt(folder, run_id, expected_parent).await,
         Inspect { version_id } => super::print(&inspect(folder, version_id).await?),
+        Results { version_id } => super::print(&results(folder, version_id).await?),
     }
+}
+
+async fn results(
+    folder: &Path,
+    version_id: Uuid,
+) -> Result<project_workspace_core::benchmark_results::ProjectBenchmarkResults> {
+    use project_workspace_core::benchmark_results::{
+        BenchmarkRunEvidence, ProjectBenchmarkResults,
+    };
+    let workspace = open_workspace(folder, false).await?;
+    let catalog = workspace
+        .model_catalog
+        .as_ref()
+        .context("Model inventory is not initialized.")?;
+    let version = inspect(folder, version_id).await?;
+    let mut results = ProjectBenchmarkResults::new(version, catalog)?;
+    for binding in project_workspace_local::scientific_binding_history(folder).await? {
+        let backend = &results.version.definition.backend;
+        if binding.adapter.key != backend.name
+            || binding.adapter.protocol != backend.protocol_version
+            || binding.adapter.configuration_fingerprint != backend.configuration_fingerprint
+        {
+            continue;
+        }
+        let store = super::open_bound_store(&workspace.folder, &binding).await?;
+        let project = super::load_bound_project(&store, &binding).await?;
+        for run_id in store.experiment_run_ids_for_project(project.id).await? {
+            let events = store.load_events(run_id).await?;
+            let first = events
+                .first()
+                .context("Recorded experiment journal is missing.")?;
+            ensure!(
+                first.run_id == run_id,
+                "Experiment lookup and journal disagree."
+            );
+            let protocol = store
+                .get_protocol(first.protocol_id)
+                .await?
+                .context("Experiment protocol is missing.")?;
+            let definition = NomosBackend::recorded_benchmark(&project, &protocol)?;
+            if definition != results.version.definition {
+                continue;
+            }
+            results.include_run(
+                catalog,
+                BenchmarkRunEvidence {
+                    binding: &binding,
+                    project: &project,
+                    protocol: &protocol,
+                    definition: &definition,
+                    events: &events,
+                },
+            )?;
+        }
+        store.pool().close().await;
+    }
+    Ok(results)
 }
 
 async fn preview(folder: &Path, run_id: Uuid) -> Result<BenchmarkPreview> {

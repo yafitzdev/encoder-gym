@@ -69,6 +69,15 @@ struct NativeDeltaReviewSummaryRow {
 }
 
 impl SqliteExperimentStore {
+    /// Exact project-scoped lookup; callers replay journals before using results.
+    pub async fn experiment_run_ids_for_project(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<Uuid>, ExperimentStoreError> {
+        sqlx::query_scalar("SELECT runs.id FROM encoder_experiment_runs AS runs JOIN encoder_experiment_protocols AS protocols ON protocols.id = runs.protocol_id WHERE protocols.project_snapshot_id = ? ORDER BY runs.created_at, runs.id")
+            .bind(project_id).fetch_all(&self.pool).await.map_err(store_error)
+    }
+
     /// Return the immutable approved-delta identities associated with one exact
     /// execution-project snapshot. Callers must still load each selection
     /// through its owning store contract before using it.

@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 mod activity;
 mod benchmark;
+pub mod benchmark_results;
 mod models;
 mod providers;
 mod readiness;

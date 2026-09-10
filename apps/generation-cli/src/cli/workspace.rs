@@ -16,6 +16,8 @@ pub enum WorkspaceBenchmarkCommand {
     },
     /// Reverify a catalog version against its original scientific protocol.
     Inspect { version_id: Uuid },
+    /// Compare all project models using only this version's development reports.
+    Results { version_id: Uuid },
 }
 
 #[derive(Debug, Subcommand)]

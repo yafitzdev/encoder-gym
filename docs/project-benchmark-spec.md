@@ -70,6 +70,7 @@ synth workspace benchmark <PROJECT> list
 synth workspace benchmark <PROJECT> preview-run <EXPERIMENT_RUN_ID>
 synth workspace benchmark <PROJECT> adopt-run <EXPERIMENT_RUN_ID> [--expected-parent <VERSION_ID>]
 synth workspace benchmark <PROJECT> inspect <VERSION_ID>
+synth workspace benchmark <PROJECT> results <VERSION_ID>
 ```
 
 Preview is read-only and returns a stable proposed version ID, current parent,
@@ -80,6 +81,14 @@ and original provenance even if another run uses it. Inspection reopens the
 version's original binding and reproduces its definition from the verified
 scientific protocol; it neither needs Python nor opens native test files.
 Cataloging a benchmark never creates a fresh generation or consumes a holdout.
+
+Results starts from every registered model and resolves development reports from
+all compatible project-owned scientific bindings. Reused report identities have
+one result with multiple run contexts; distinct evaluations remain distinct even
+if their metrics coincide. Empty report lists mean Not evaluated. Each original
+development assessment retains its exact baseline revision and producing run.
+The projection validates registered outputs against their training receipt (or
+the terminal head used by older accepted imports), not just matching file hashes.
 
 Suite support is the normalized evaluation report's support, not necessarily
 the number of source rows or the support of every individual metric. Surfaces

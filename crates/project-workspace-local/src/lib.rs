@@ -258,7 +258,9 @@ pub async fn open_workspace(folder: &Path, verify: bool) -> Result<ManagedWorksp
         datasets.push(dataset);
     }
     let model_catalog = load_model_catalog(&mut database, &manifest).await?;
-    let scientific_binding = load_scientific_binding(&mut database, &manifest).await?;
+    let scientific_binding = load_scientific_bindings(&mut database, &manifest)
+        .await?
+        .pop();
     let provider_catalog = load_provider_catalog(&mut database, &manifest).await?;
     let benchmark_versions = benchmarks::load(&mut database, manifest.id).await?;
     let model_dataset_links =
@@ -883,10 +885,19 @@ async fn load_model_catalog(
     Ok(Some(catalog))
 }
 
-async fn load_scientific_binding(
+/// Verified append-only history; callers must still validate each bound store.
+pub async fn scientific_binding_history(folder: &Path) -> Result<Vec<ScientificBinding>> {
+    let workspace = open_workspace(folder, false).await?;
+    let mut database = connect(Path::new(&workspace.folder), true, false).await?;
+    let bindings = load_scientific_bindings(&mut database, &workspace.manifest).await?;
+    database.close().await?;
+    Ok(bindings)
+}
+
+async fn load_scientific_bindings(
     database: &mut SqliteConnection,
     manifest: &ProjectManifest,
-) -> Result<Option<ScientificBinding>> {
+) -> Result<Vec<ScientificBinding>> {
     let exists = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='scientific_binding_state'",
     )
@@ -894,7 +905,7 @@ async fn load_scientific_binding(
     .await?
         == 1;
     if !exists {
-        return Ok(None);
+        return Ok(vec![]);
     }
     let Some(state) = sqlx::query(
         "SELECT project_id, active_binding_id FROM scientific_binding_state WHERE singleton=1",
@@ -902,7 +913,7 @@ async fn load_scientific_binding(
     .fetch_optional(&mut *database)
     .await?
     else {
-        return Ok(None);
+        return Ok(vec![]);
     };
     ensure!(
         state.get::<String, _>("project_id") == manifest.id.to_string(),
@@ -917,7 +928,7 @@ async fn load_scientific_binding(
     .fetch_all(&mut *database)
     .await?;
     let mut previous = None;
-    let mut active = None;
+    let mut bindings = vec![];
     for row in rows {
         let binding: ScientificBinding =
             serde_json::from_str(&row.get::<String, _>("binding_json"))?;
@@ -940,15 +951,13 @@ async fn load_scientific_binding(
             "Scientific binding history or normalized projection is invalid."
         );
         previous = Some(binding.id);
-        if binding.id == active_id {
-            active = Some(binding);
-        }
+        bindings.push(binding);
     }
     ensure!(
-        previous == Some(active_id) && active.is_some(),
+        previous == Some(active_id),
         "The active scientific binding must be the latest append-only record."
     );
-    Ok(active)
+    Ok(bindings)
 }
 
 async fn load_provider_catalog(

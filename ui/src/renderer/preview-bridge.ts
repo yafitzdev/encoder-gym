@@ -7,6 +7,7 @@ export function previewBridge(): EncoderGymBridge {
   let collection: ProjectCollection = { version: 1, selectedId: null, projects: [] };
   const unavailable = async (): Promise<never> => { throw new Error("Open the Encoder Gym desktop app to manage local project folders."); };
   return {
+    queryBenchmarks: unavailable,
     queryDatasets: unavailable, mutateDataset: unavailable,
     openManagedProject: unavailable, chooseLocalModel: unavailable, chooseProjectParent: unavailable, createManagedProject: unavailable,
     chooseDataset: unavailable, importDataset: unavailable, verifyManagedProject: unavailable,
