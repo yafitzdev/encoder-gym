@@ -1,5 +1,6 @@
 //! Local project custody. No training execution or dataset split decisions.
 mod activity;
+pub mod dataset_versions;
 mod datasets;
 mod files;
 mod model;

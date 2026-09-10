@@ -6,6 +6,7 @@ use uuid::Uuid;
 mod workspace;
 pub use workspace::{
     ManagedOptimizeCommand, ManagedProviderCommand, WorkspaceActivityCommand, WorkspaceCommand,
+    WorkspaceDatasetCommand,
 };
 
 #[derive(Debug, Parser)]

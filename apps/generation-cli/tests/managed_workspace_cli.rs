@@ -17,6 +17,125 @@ fn run(root: &Path, args: &[&str]) -> Value {
 }
 
 #[test]
+fn dataset_variants_rows_diffs_and_action_history_are_real_cli_operations() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    training_transformer::fixture::write_tiny_bert_bundle(&root.join("checkpoint")).unwrap();
+    let model = run(root, &["inspect-model", "checkpoint"]);
+    run(
+        root,
+        &[
+            "create",
+            "project",
+            "--name",
+            "Dataset journey",
+            "--model",
+            "checkpoint",
+            "--expected-fingerprint",
+            model["fingerprint"].as_str().unwrap(),
+        ],
+    );
+    fs::write(
+        root.join("rows.jsonl"),
+        "{\"text\":\"first\"}\n{\"text\":\"second\"}\n",
+    )
+    .unwrap();
+    let preview = run(
+        root,
+        &["inspect-dataset", "rows.jsonl", "--purpose", "training"],
+    );
+    let imported = run(
+        root,
+        &[
+            "import-dataset",
+            "project",
+            "--source",
+            "rows.jsonl",
+            "--name",
+            "Source",
+            "--purpose",
+            "training",
+            "--expected-fingerprint",
+            preview["artifact"]["fingerprint"].as_str().unwrap(),
+        ],
+    );
+    let base = run(
+        root,
+        &[
+            "dataset",
+            "project",
+            "create",
+            "--name",
+            "Base dataset",
+            "--source",
+            imported["datasets"][0]["id"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(base["rows"], 2);
+    let base_id = base["version"]["id"].as_str().unwrap();
+    let variant = run(
+        root,
+        &["dataset", "project", "fork", base_id, "--name", "Variant 1"],
+    );
+    let variant_id = variant["version"]["id"].as_str().unwrap();
+    let membership = run(root, &["dataset", "project", "inspect", variant_id]);
+    let update_id = uuid::Uuid::new_v4().to_string();
+    fs::write(root.join("change.json"), serde_json::to_vec(&serde_json::json!({
+        "versionId": update_id, "datasetId": variant["version"]["datasetId"], "parentId": variant_id,
+        "added": [], "removed": [membership["members"][0]["id"]], "replaced": []
+    })).unwrap()).unwrap();
+    let revised = run(
+        root,
+        &["dataset", "project", "revise", "--file", "change.json"],
+    );
+    assert_eq!(revised["version"]["number"], 2);
+    assert_eq!(revised["rows"], 1);
+    assert_eq!(
+        run(
+            root,
+            &["dataset", "project", "revise", "--file", "change.json"]
+        )["version"],
+        revised["version"]
+    );
+    let rows = run(
+        root,
+        &["dataset", "project", "rows", &update_id, "--limit", "1"],
+    );
+    assert_eq!(rows["rows"][0]["value"]["text"], "second");
+    let changes = run(root, &["dataset", "project", "changes", &update_id]);
+    assert_eq!(changes["changes"][0]["kind"], "removed");
+    assert_eq!(changes["changes"][0]["before"]["value"]["text"], "first");
+    assert!(changes["changes"][0]["after"].is_null());
+    assert_eq!(
+        run(root, &["dataset", "project", "rows", base_id])["total"],
+        2
+    );
+    assert_eq!(
+        run(root, &["dataset", "project", "list"])[1]["versions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let history = run(
+        root,
+        &[
+            "activity",
+            "project",
+            "show",
+            revised["actionId"].as_str().unwrap(),
+        ],
+    );
+    assert!(history.to_string().contains("dataset.revise"));
+    assert!(!history.to_string().contains("\"text\""));
+    fs::rename(root.join("project"), root.join("moved")).unwrap();
+    assert_eq!(
+        run(root, &["dataset", "moved", "rows", &update_id])["rows"][0]["value"]["text"],
+        "second"
+    );
+}
+
+#[test]
 fn local_onboarding_import_and_portable_reopen_are_real_cli_operations() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();

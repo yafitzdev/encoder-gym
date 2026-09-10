@@ -3,6 +3,56 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 #[derive(Debug, Subcommand)]
+pub enum WorkspaceDatasetCommand {
+    /// List the project's base dataset, variants, and version summaries.
+    List,
+    /// Create the base dataset from verified training imports.
+    Create {
+        #[arg(long)]
+        name: String,
+        #[arg(long = "source", required = true)]
+        sources: Vec<Uuid>,
+        #[arg(long)]
+        dataset_id: Option<Uuid>,
+        #[arg(long)]
+        version_id: Option<Uuid>,
+    },
+    /// Create a named variant from one exact existing version.
+    Fork {
+        parent_id: Uuid,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        dataset_id: Option<Uuid>,
+        #[arg(long)]
+        version_id: Option<Uuid>,
+    },
+    /// Append an immutable version using an exact-parent JSON change request.
+    Revise {
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// Inspect verified membership and ancestry references without row payloads.
+    Inspect { version_id: Uuid },
+    /// Inspect a bounded page of native training rows.
+    Rows {
+        version_id: Uuid,
+        #[arg(long, default_value_t = 0)]
+        offset: u64,
+        #[arg(long, default_value_t = 25, value_parser = clap::value_parser!(u32).range(1..=100))]
+        limit: u32,
+    },
+    /// Inspect row-level before/after changes for one version.
+    Changes {
+        version_id: Uuid,
+        #[arg(long, default_value_t = 0)]
+        offset: u64,
+        #[arg(long, default_value_t = 25, value_parser = clap::value_parser!(u32).range(1..=50))]
+        limit: u32,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum WorkspaceActivityCommand {
     /// Initialize the activity schema after verifying the project binding.
     Init,
@@ -112,6 +162,12 @@ impl From<WorkspaceDatasetPurpose> for project_workspace_core::DatasetPurpose {
 
 #[derive(Debug, Subcommand)]
 pub enum WorkspaceCommand {
+    /// Manage native training datasets, variants, immutable versions, and diffs.
+    Dataset {
+        folder: PathBuf,
+        #[command(subcommand)]
+        command: WorkspaceDatasetCommand,
+    },
     /// Inspect and fingerprint a local safetensors encoder checkpoint.
     InspectModel { source: PathBuf },
     /// Copy the previewed checkpoint into a NEW managed project folder.

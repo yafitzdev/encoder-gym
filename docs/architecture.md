@@ -477,6 +477,14 @@ Owns immutable snapshot models, deterministic stratified split assignment,
 snapshot statistics/export, and accepted-row/source and snapshot-store ports.
 It knows no generation backend or SQLite type.
 
+Its separate `versions` module owns native-schema-neutral dataset branches,
+stable source-row references, immutable ordered membership, and row-level
+add/remove/replace changes. This does not reinterpret native retrieval rows as
+classification labels and does not grant qualification or training authority.
+The managed workspace adapter persists these versions and verifies the source
+imports. Existing snapshot splitting and curation contracts remain unchanged.
+See `dataset-versions-spec.md`.
+
 ### `dataset-import`
 
 Streams JSONL and CSV records through configurable field mapping and composable
@@ -749,8 +757,12 @@ snapshots. Evidence reads use read-only SQLite connections. Explicit desktop
 commands invoke the same owned CLI contracts as scripts; they do not mutate
 scientific records through renderer state. Each meaningful project command is
 also enclosed by a project-database activity action with a UUID, immutable
-started/progress/terminal events, and safe artifact references. The renderer receives a row-free
-development projection, never native payloads or sealed scores. Core training,
+started/progress/terminal events, and safe artifact references. Scientific journal
+projections remain row-free and never expose sealed scores. The separately
+authorized dataset viewer may request bounded native training rows and diffs
+through a fixed project-scoped CLI contract; source purpose, content identity,
+and membership are verified before returning rows. These values never enter
+activity logs, scientific projections, or sealed/adaptive channels. Core training,
 evaluation, gate decisions, and optimization policy remain owned by their Rust
 contracts; the adapter projects their recorded outcomes rather than recomputing
 them. Report binding checks are not a replacement for native Doctor verification.

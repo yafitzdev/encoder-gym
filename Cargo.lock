@@ -2351,7 +2351,9 @@ name = "project-workspace-local"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "artifact-core",
  "chrono",
+ "dataset-core",
  "project-workspace-core",
  "safetensors",
  "serde",

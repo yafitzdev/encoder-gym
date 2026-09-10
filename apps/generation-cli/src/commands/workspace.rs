@@ -1,4 +1,5 @@
 mod completed_models;
+mod dataset_versions;
 
 use crate::{
     cli::{
@@ -254,6 +255,9 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
         WorkspaceCommand::RegisterRunModels { folder, run_id } => {
             completed_models::register(&folder, run_id).await?;
             print(&open_workspace(&folder, false).await?)
+        }
+        WorkspaceCommand::Dataset { folder, command } => {
+            dataset_versions::execute(&folder, command).await
         }
         WorkspaceCommand::Promote {
             folder,

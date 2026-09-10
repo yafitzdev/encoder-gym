@@ -73,8 +73,9 @@ decision. No unbounded work or inferred spending.
    Unified viewers, rejected project outputs, project Optimize,
    and neutral run/model names are present. Dataset deep links await stage 2;
    model-level baseline promotion/restoration controls remain outstanding.
-2. Dataset versions and changes — pending. Core, persistence, CLI, collection,
-   rows, diff, history, and model links. Verify reconstruction and immutability.
+2. Dataset versions and changes — backend and CLI implemented and verified;
+   desktop bridge implemented. Collection/viewer,
+   model links, and verified Nomos dataset adoption remain pending.
 3. Shared benchmark — pending. Version selection and one results table per exact
    benchmark version. Verify incompatibility and sealed isolation.
 4. Automatic bounded optimization — pending. Persisted launch scope, agent and
@@ -108,3 +109,27 @@ and keep outstanding requirements visible.
   four-tab viewer, showed the rejected candidate's recorded evaluation, visited
   all project pages and optimization preparation, and confirmed byte-identical
   manifest/database/library state. Rendered captures are under `ui/qa/managed-current-*`.
+
+### Dataset versioning progress — 10 September 2026
+
+- `dataset-core::versions` owns native-schema-independent source references,
+  logical row IDs, branches, immutable versions, and add/remove/replace diffs.
+  Four pure tests cover reconstruction, replacement identity, malformed changes,
+  source/project fencing, and tampered fingerprints.
+- Managed project migration 6 adds append-only branches and versions. Creation,
+  forks, and edits preserve exact parents and retry IDs. Paged rows and before/
+  after diffs read verified training imports only. Three persistence tests cover
+  retained history, stale edits, source corruption, protected data, and isolation.
+- `workspace dataset` exposes list/create/fork/revise/inspect/rows/changes.
+  A real CLI process test covers the base-to-variant-to-diff journey, reopening
+  after moving the project, idempotent save, and payload-free activity events.
+- The typed Electron bridge exposes only fixed project-bound requests. Three
+  bridge tests reject renderer paths, invalid pages, and substituted identities,
+  and verify temporary request cleanup. UI typecheck/build and 55 tests pass.
+- No real Nomos datasets have been created, changed, or reclassified by this
+  stage. Existing logical training snapshots still need verified links to the
+  new catalog; matching names or row counts will not suffice.
+- Implementation details and CLI grammar are in `dataset-versions-spec.md`.
+- All four Rust gates pass for this stage. The complete CLI, core, persistence,
+  and existing scientific-governance regression suites passed without real
+  training or external provider use.
