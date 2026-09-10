@@ -195,23 +195,23 @@ function runPanel(run: ManagedRunStatus, state: OptimizationPageState, actions: 
     details("Run identity and journal", facts([["Run", run.run_id], ["Reserved at", localDateTimeLabel(run.created_at)], ["Last durable transition", localDateTimeLabel(run.last_transition_at)], ["Journal span", journalSpanLabel(run.created_at, run.last_transition_at)], ["Stopped because", run.stopped_reason.replaceAll("_", " ")], ["Durable transitions", String(run.last_sequence)], ["Journal head", run.head_fingerprint]])));
 }
 
-function launchSummary(state: OptimizationPageState, readiness: ManagedReadiness | undefined, preview: ManagedLaunchPreview | undefined, unfinished: number, activeAcceptedModel: boolean): { title: string; detail: string; label: string; tone: "success" | "warning" | "danger" | "neutral" } {
+function launchSummary(state: OptimizationPageState, readiness: ManagedReadiness | undefined, preview: ManagedLaunchPreview | undefined, unfinished: number, activeAcceptedModel: boolean): { title: string; label: string; tone: "success" | "warning" | "danger" | "neutral" } {
   const run = state.run;
   if (run) {
-    if (run.state === "failed") return { title: "Run needs attention", detail: "The durable journal stopped on a failed or uncertain stage. Inspect the recorded diagnostic before deciding whether recovery is safe.", label: "Failed", tone: "danger" };
-    if (run.state === "cancelled") return { title: "Run cancelled", detail: "No further stage will execute. Completed artifacts and journal transitions remain available for inspection.", label: "Cancelled", tone: "neutral" };
+    if (run.state === "failed") return { title: "Run needs attention", label: "Failed", tone: "danger" };
+    if (run.state === "cancelled") return { title: "Run cancelled", label: "Cancelled", tone: "neutral" };
     if (run.state === "completed" && run.decision === "promote_candidate") return activeAcceptedModel
-      ? { title: "Baseline updated", detail: "The sealed-accepted checkpoint is now the project's active baseline and the previous revision remains in immutable history.", label: "Promoted", tone: "success" }
-      : { title: "Candidate accepted", detail: "The exact checkpoint passed final acceptance. It remains a candidate until you explicitly advance the project baseline.", label: "Decision required", tone: "warning" };
-    if (run.state === "completed" && run.decision === "retain_baseline") return { title: "Baseline retained", detail: "No candidate satisfied the complete acceptance contract, so the active baseline did not change.", label: "Complete", tone: "neutral" };
-    if (run.state === "completed") return { title: "Run completed", detail: "The run is terminal. Inspect its persisted decision and evidence before taking any model action.", label: "Complete", tone: "success" };
-    return { title: "Run paused at a safe boundary", detail: "The last stage committed its durable facts. The run panel below shows the one action that can advance it.", label: run.state === "planned" ? "Reserved" : "In progress", tone: "warning" };
+      ? { title: "Baseline updated", label: "Promoted", tone: "success" }
+      : { title: "Candidate accepted", label: "Decision required", tone: "warning" };
+    if (run.state === "completed" && run.decision === "retain_baseline") return { title: "Baseline retained", label: "Complete", tone: "neutral" };
+    if (run.state === "completed") return { title: "Run completed", label: "Complete", tone: "success" };
+    return { title: "Run paused", label: run.state === "planned" ? "Reserved" : "In progress", tone: "warning" };
   }
   const existing = preview?.existingRun;
-  if (existing) return { title: "Existing run recovered", detail: "This immutable definition already owns a run. Open it to inspect its persisted stage and next safe action.", label: "Run found", tone: "success" };
-  if (preview) return { title: "Prepared for reservation", detail: "The owner workflow resolved the exact approved snapshot, suites, candidates, and budgets shown below.", label: "Prepared", tone: "success" };
-  if (readiness?.report.runnable) return { title: "Ready to reserve", detail: "Every required fact resolves against the active baseline. Reserving the run makes no external call.", label: "Ready", tone: "success" };
-  return { title: `${unfinished} setup ${unfinished === 1 ? "step" : "steps"} remain`, detail: "Complete these in order. Each step is derived from the workspace and scientific stores—not from what the screen happens to show.", label: readiness ? labels[readiness.report.overall].label : "Checking", tone: readiness ? labels[readiness.report.overall].tone : "neutral" };
+  if (existing) return { title: "Existing run", label: "Run found", tone: "success" };
+  if (preview) return { title: "Prepared", label: "Prepared", tone: "success" };
+  if (readiness?.report.runnable) return { title: "Ready", label: "Ready", tone: "success" };
+  return { title: `${unfinished} setup ${unfinished === 1 ? "step" : "steps"}`, label: readiness ? labels[readiness.report.overall].label : "Checking", tone: readiness ? labels[readiness.report.overall].tone : "neutral" };
 }
 
 export function renderOptimization(workspace: ManagedWorkspace, state: OptimizationPageState, actions: OptimizationPageActions): HTMLElement {

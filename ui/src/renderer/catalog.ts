@@ -1,7 +1,7 @@
 import type { CandidateAttempt, DevelopmentReport, RunRecord, WorkspaceSnapshot } from "../workspace.js";
 
 export interface CandidateRow { candidate: CandidateAttempt; run: RunRecord; attempts: RunRecord[] }
-export interface EvaluationSetup { id: string; label: string; description: string; run: RunRecord; rows: CandidateRow[] }
+export interface EvaluationSetup { id: string; label: string; run: RunRecord; rows: CandidateRow[] }
 export interface CatalogFilter { query: string; setup: string; status: string; sort: string }
 export const initialFilter = (): CatalogFilter => ({ query: "", setup: "all", status: "all", sort: "newest" });
 
@@ -134,7 +134,7 @@ function groupCandidateRows(workspace: WorkspaceSnapshot, rows: CandidateRow[], 
     if (filter.status !== "all" && developmentStatus(row).key !== filter.status) continue;
     if (query && ![candidateName(row.candidate), candidateDescription(row.candidate), row.candidate.id, runName(row.run), runLabel(row.run, workspace)].some(t => t.toLocaleLowerCase().includes(query))) continue;
     let group = groups.get(id);
-    if (!group) { group = { id, label: setupName(row.run), description: "The same baseline artifact, benchmark identities, and scoring requirements are used for these comparisons.", run: row.run, rows: [] }; groups.set(id, group); }
+    if (!group) { group = { id, label: setupName(row.run), run: row.run, rows: [] }; groups.set(id, group); }
     group.rows.push(row);
   }
   for (const group of groups.values()) if (filter.sort === "primary" || filter.sort === "mrr") {

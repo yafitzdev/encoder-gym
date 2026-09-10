@@ -23,8 +23,7 @@ function providerFields(role: "generation" | "advisor", status?: ManagedProvider
   const limit = existing?.limits, fallback = defaults[role];
   const field = (id: string, label: string, value: string | number, type = "text", help?: string) => h("label", { class: "form-field", for: id }, label,
     h("input", { id, class: "text-input", type, value: String(value), required: type !== "password", autocomplete: type === "password" ? "new-password" : "off", ...(type === "number" ? { min: "0", step: "any" } : {}) }), help ? h("span", { class: "field-help" }, help) : null);
-  return h("section", { class: "provider-form-section" }, h("h3", {}, role === "generation" ? "Data generation" : "Advisor / agentic work"),
-    h("p", {}, role === "generation" ? "Creates new source evidence within an authorized generation budget." : "Proposes bounded research or repair work; it is a separate authority."),
+  return h("section", { class: "provider-form-section" }, h("h3", {}, role === "generation" ? "Data generation" : "Agentic work"),
     h("div", { class: "provider-form-grid" },
       field(`${role}-endpoint`, "OpenAI-compatible endpoint", existing?.endpoint ?? "https://api.openai.com/v1", "url"),
       field(`${role}-model`, "Model", existing?.model ?? ""),
@@ -32,7 +31,7 @@ function providerFields(role: "generation" | "advisor", status?: ManagedProvider
       field(`${role}-input`, "Maximum input tokens", limit?.maximumInputTokens ?? fallback.input, "number"),
       field(`${role}-output`, "Maximum output tokens", limit?.maximumOutputTokens ?? fallback.output, "number"),
       field(`${role}-cost`, "Maximum spend (USD)", (limit?.maximumCostMicrousd ?? fallback.cost * 1_000_000) / 1_000_000, "number"),
-      field(`${role}-credential`, existing ? "Replace saved credential (optional)" : "Credential (optional)", "", "password", existing ? "Leave blank to keep the current credential or environment fallback." : "Leave blank to use the environment fallback.")),
+      field(`${role}-credential`, existing ? "Replace credential (optional)" : "Credential (optional)", "", "password")),
   );
 }
 function readProvider(role: "generation" | "advisor"): ProviderInput {
@@ -63,13 +62,13 @@ export function providerDialog(dialog: HTMLDialogElement, status: ManagedProvide
       const generation = readProvider("generation"), advisor = readProvider("advisor");
       const credentials: Partial<Record<ProviderRole, string>> = {};
       for (const role of ["generation", "advisor"] as const) { const value = byId<HTMLInputElement>(`${role}-credential`).value; if (value) credentials[role] = value; }
-      saving = true; dialog.setAttribute("aria-busy", "true"); save.disabled = true; cancel.disabled = true; progress.textContent = "Saving non-secret settings, then storing credentials with operating-system encryption…";
+      saving = true; dialog.setAttribute("aria-busy", "true"); save.disabled = true; cancel.disabled = true; progress.textContent = "Saving…";
       await submit({ settings: { version: 1, generation, advisor, actor: "local-operator", reason: "Configure separate desktop provider authorities" }, credentials });
       dialog.close();
     } catch (failure) { error.replaceChildren(failureNotice(failure)); }
     finally { saving = false; dialog.removeAttribute("aria-busy"); save.disabled = false; cancel.disabled = false; progress.textContent = ""; }
   } },
-    h("div", { class: "onboarding-heading" }, h("h2", { id: "project-dialog-title" }, "Provider authorities"), h("p", {}, "Settings are project records. Credentials are encrypted separately and can never be read back by this screen.")),
+    h("div", { class: "onboarding-heading" }, h("h2", { id: "project-dialog-title" }, "Providers")),
     h("div", { class: "onboarding-fields" }, providerFields("generation", status), providerFields("advisor", status)),
     h("footer", { class: "onboarding-footer" }, progress, error, h("div", { class: "dialog-actions" }, cancel, save)));
   dialog.replaceChildren(form); dialog.showModal(); byId<HTMLInputElement>("generation-model").focus();

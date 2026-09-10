@@ -99,7 +99,6 @@ code { font-size: 12px; overflow-wrap: anywhere; }
 .page-content { max-width: 1440px; margin: 0 auto; padding: 26px clamp(20px, 2.6vw, 42px) 64px; }
 .page-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 22px; }
 .page-heading > div { min-width: 0; overflow-wrap: anywhere; }
-.page-heading p { color: var(--muted); margin-top: 8px; font-size: 14px; }
 .page-heading > .button { flex-shrink: 0; }
 .eyebrow { color: var(--accent); font-size: 10px; letter-spacing: 1.2px; font-weight: 600; text-transform: uppercase; }
 
@@ -292,9 +291,8 @@ input::placeholder { color: var(--subtle); opacity: 1; }
 .reading-note { max-width: 850px; padding: 0 0 25px; margin-bottom: 12px; }
 .reading-note p { color: var(--muted); margin-top: 10px; font-size: 13px; line-height: 1.75; }
 .project-info > .inline-group { margin-top: 20px; }
-.empty-state { display: grid; justify-items: center; gap: 12px; padding: 50px 25px; text-align: center; color: var(--muted); }
+.empty-state { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 58px; padding: 14px 0; color: var(--muted); }
 .empty-state h2 { color: var(--text); }
-.empty-state > svg { width: 26px; height: 26px; margin-bottom: 8px; }
 
 /* Help and feedback */
 dialog { width: min(560px, calc(100% - 36px)); max-height: calc(100% - 60px); padding: 25px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); overflow: auto; }
@@ -429,7 +427,6 @@ dialog::backdrop { background: #0008; }
 .onboarding-form { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; max-height: calc(100vh - 40px); }
 .onboarding-heading { padding: 20px 24px 16px; border-bottom: 1px solid var(--line); }
 #project-dialog .onboarding-heading h2 { margin-bottom: 6px; font-size: 21px; }
-.onboarding-heading p { color: var(--muted); font-size: 13px; }
 .onboarding-footer { min-width: 0; margin: 0; padding: 14px 24px; border: 0; border-top: 1px solid var(--line); }
 .onboarding-footer .form-error { max-height: 28vh; overflow: auto; margin: 0 0 10px; }
 .onboarding-footer .operation-status:not(:empty) { margin: 0 0 10px; }
@@ -514,7 +511,7 @@ dialog::backdrop { background: #0008; }
 .runtime-form { width: 100%; min-width: 0; }
 .runtime-notice { margin: 18px 24px 0; padding: 13px 15px; border-left: 3px solid var(--accent); background: var(--bg); }
 .runtime-notice strong { font-size: 12px; }
-.runtime-notice p { margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.sidebar-help { width: 38px; justify-content: center; }
 .runtime-selection { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-bottom: 15px; border-bottom: 1px solid var(--line); }
 .runtime-selection > div { min-width: 0; display: grid; gap: 5px; }
 .runtime-selection strong { font-size: 12px; }

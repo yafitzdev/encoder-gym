@@ -136,7 +136,7 @@ export function mount(): void {
       finally { saving = false; submit.disabled = false; cancel.disabled = false; input.disabled = false; if (dialog.open) (removing ? cancel : input).focus(); }
     } },
       h("h2", { id: "project-dialog-title" }, removing ? "Remove " + project.name + "?" : "Rename project"),
-      h("p", { class: "section-note" }, removing ? "Only the entry in Encoder Gym will be removed. No files, models, datasets, or experiment history will be deleted." : "This changes the name in Encoder Gym, not the folder name or historical experiment records."),
+      removing ? h("p", { class: "section-note" }, "Removes the library entry only. Project files stay intact.") : null,
       removing ? null : h("label", { class: "form-field", for: "project-name-input" }, "Project name", input),
       error, h("div", { class: "dialog-actions" }, cancel, submit));
     dialog.replaceChildren(form); dialog.showModal();
@@ -157,13 +157,13 @@ export function mount(): void {
     dialog.showModal();
   }
   const projects: ProjectActions = {
-    create: () => { if (loading || collectionBusy) return; newProjectDialog(element("project-dialog") as HTMLDialogElement, bridge, async next => { collection = next; if (next.selectedId) await selectProject(next.selectedId); notify("Project created. The source checkpoint is unchanged."); }); },
+    create: () => { if (loading || collectionBusy) return; newProjectDialog(element("project-dialog") as HTMLDialogElement, bridge, async next => { collection = next; if (next.selectedId) await selectProject(next.selectedId); notify("Project created"); }); },
     openManaged: () => { void changeCollection(() => bridge.openManagedProject()); },
     importDataset: () => {
       const id = selection.selectedId; if (!id || loading || collectionBusy || !workspace()?.managed) return;
       importDatasetDialog(element("project-dialog") as HTMLDialogElement, bridge, id, async result => {
         if (selection.selectedId !== id) return;
-        opened = result; navigate({ page: "datasets" }); notify("Dataset imported. The original file is unchanged.");
+        opened = result; navigate({ page: "datasets" }); notify("Dataset imported");
       });
     },
     verify: () => {
@@ -350,7 +350,7 @@ export function mount(): void {
           const secret = submission.credentials[role];
           if (secret) view.providers.status = await bridge.setProviderCredential(id, role, secret);
         }
-        if (selection.selectedId === id) { notify("Provider authorities saved. No external call was made."); render(); }
+        if (selection.selectedId === id) { notify("Providers saved"); render(); }
       });
     },
     remove: role => {

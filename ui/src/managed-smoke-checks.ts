@@ -70,7 +70,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
       await screenshot("managed-create-preview"); await screenshot("managed-create-760", 760, 800);
       await check("creation confirmation stays visible in the small desktop dialog", "document.getElementById('confirm-new-project').getBoundingClientRect().bottom <= document.getElementById('project-dialog').getBoundingClientRect().bottom");
       await check("dialog fields never overlap fixed actions", "document.querySelector('.onboarding-fields').getBoundingClientRect().bottom <= document.querySelector('.onboarding-footer').getBoundingClientRect().top + 1");
-      await check("creation preview shows the complete destination", "document.getElementById('project-parent-path').textContent.endsWith('\\\\Routing encoder') && document.getElementById('confirm-new-project-hint').textContent.includes('No training starts')");
+      await check("creation preview shows the complete destination", "document.getElementById('project-parent-path').textContent.endsWith('\\\\Routing encoder') && document.getElementById('confirm-new-project-hint').textContent === '189 B'");
       await screenshot("managed-create-760x560", 760, 560);
       await check("minimum desktop keeps fields scrollable and both creation actions visible", "document.querySelector('.onboarding-fields').clientHeight > 100 && document.querySelector('.onboarding-fields').scrollHeight > document.querySelector('.onboarding-fields').clientHeight && [...document.querySelectorAll('.dialog-actions button')].every(b=>b.getBoundingClientRect().bottom < innerHeight)");
       await screenshot("managed-create-390", 390, 700);
@@ -91,7 +91,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await nav("project"); await until("[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Configure providers' && !b.disabled)");
   await check("scientific runtime setup is a real project-settings action", "[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Connect scientific runtime') && !document.getElementById('page').textContent.includes('not implemented')");
   await textButton("Connect scientific runtime"); await until("document.querySelector('#project-dialog[open] .runtime-form')");
-  await check("runtime setup explains isolation, explicit history import, and offline preview", "document.querySelector('.runtime-form').textContent.includes('original source repository is deliberately rejected') && document.querySelector('.runtime-form').textContent.includes('no provider call') && document.querySelector('.runtime-form').textContent.includes('Existing Encoder Gym history') && [...document.querySelectorAll('.runtime-form button')].find(b=>b.textContent === 'Bring existing history') && [...document.querySelectorAll('.runtime-form button')].find(b=>b.textContent === 'Connect runtime').disabled");
+  await check("runtime setup is compact and requires verification", "document.querySelector('.runtime-form').textContent.includes('Isolated clean checkout required') && document.querySelector('.runtime-form').textContent.includes('Existing history') && [...document.querySelectorAll('.runtime-form button')].find(b=>b.textContent === 'Import history') && [...document.querySelectorAll('.runtime-form button')].find(b=>b.textContent === 'Connect runtime').disabled && document.querySelectorAll('.runtime-form p').length === 0");
   await screenshot("managed-runtime-setup", 760, 760); window.setContentSize(1440, 960);
   await textButton("Cancel"); await until("!document.querySelector('#project-dialog[open]')");
   await textButton("Configure providers"); await until("document.querySelector('#project-dialog[open]')");
@@ -274,7 +274,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await screenshot("managed-import-busy-760x560", 760, 560);
     await key("Escape");
     await evaluate("document.querySelector('.onboarding-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}))");
-    await check("slow import keeps progress visible and cannot be dismissed or resubmitted", "document.querySelector('#project-dialog[open]') && document.querySelector('.onboarding-fields').disabled && document.querySelector('.onboarding-footer').disabled && document.querySelector('.operation-status').textContent.includes('Copying and verifying') && document.querySelector('.operation-status').getBoundingClientRect().bottom < innerHeight");
+    await check("slow import keeps progress visible and cannot be dismissed or resubmitted", "document.querySelector('#project-dialog[open]') && document.querySelector('.onboarding-fields').disabled && document.querySelector('.onboarding-footer').disabled && document.querySelector('.operation-status').textContent.includes('Importing dataset') && document.querySelector('.operation-status').getBoundingClientRect().bottom < innerHeight");
     if (importCalls !== 1) throw new Error('Duplicate import reached backend');
     releaseImport(); await until("!document.querySelector('#project-dialog[open]') && document.querySelectorAll('[data-dataset-id]').length === 1");
   } finally { releaseImport(); harness.backend.importDataset = importData; }
