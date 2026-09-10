@@ -25,9 +25,9 @@ use project_workspace_core::{
 };
 use project_workspace_local::{
     AcceptedModelPromotion, AppendActivity, append_activity, backfill_nomos, create_workspace,
-    export_activity, import_dataset, inspect_dataset, inspect_model, open_workspace, read_action,
-    read_activity, record_accepted_model_promotion, record_provider_catalog,
-    record_scientific_binding, upgrade_workspace,
+    export_activity, import_dataset, initialize_activity, inspect_dataset, inspect_model,
+    open_workspace, read_action, read_activity, record_accepted_model_promotion,
+    record_provider_catalog, record_scientific_binding, upgrade_workspace,
 };
 use uuid::Uuid;
 
@@ -332,6 +332,9 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
 
 async fn activity(folder: &Path, command: WorkspaceActivityCommand) -> anyhow::Result<()> {
     match command {
+        WorkspaceActivityCommand::Init => {
+            print(&initialize_activity(folder).await?)?;
+        }
         WorkspaceActivityCommand::List { limit } => {
             print(&read_activity(folder, usize::try_from(limit)?).await?)?;
         }

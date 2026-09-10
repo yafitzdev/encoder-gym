@@ -90,12 +90,14 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await click('[data-project-id]');
   await check("selected project folder expands without changing the page", "document.querySelector('[data-project-id]').getAttribute('aria-expanded') === 'true' && document.querySelector('.project-pages') && document.querySelector('.page-heading h1').textContent === 'Models'");
   const pageFrames: { left: number; top: number; width: number }[] = [];
-  for (const page of ["models", "datasets", "runs", "benchmarks", "project"]) {
+  for (const page of ["models", "datasets", "runs", "benchmarks", "activity", "project"]) {
     await nav(page); await until("document.querySelector('.workspace-page > .page-heading + .workspace-page-body')");
     pageFrames.push(await evaluate("(()=>{const page=document.querySelector('.workspace-page').getBoundingClientRect(),heading=document.querySelector('.workspace-page > .page-heading').getBoundingClientRect();return {left:Math.round(page.left),top:Math.round(heading.top),width:Math.round(page.width)}})()"));
   }
   if (pageFrames.some(frame => JSON.stringify(frame) !== JSON.stringify(pageFrames[0]))) throw new Error("Managed collection pages do not share one frame: " + JSON.stringify(pageFrames));
   console.log("PASS managed collection pages share one frame");
+  await nav("activity"); await until("document.querySelector('.activity-list')");
+  await check("project activity exposes action UUIDs and complete event chains", "document.querySelector('.activity-action') && document.querySelector('.activity-action code').textContent.includes('…') && !document.getElementById('page').textContent.includes('smoke-secret')");
   await nav("models");
   await textButton("Start optimization"); await until("document.querySelector('.launch-summary') && document.querySelectorAll('.readiness-row').length > 0");
   await check("readiness distinguishes ready foundations from missing scientific authority", "document.querySelector('.readiness-list').textContent.includes('Connect scientific runtime') && document.querySelector('.readiness-list > details').textContent.includes('foundations are ready') && document.querySelector('.readiness-list').textContent.includes('Prepare run') && !document.querySelector('.readiness-row > .readiness-copy > p')");
@@ -120,6 +122,9 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   const credentialIndex = readFileSync(join(harness.registry.file, "..", "credentials.json"), "utf8");
   if (credentialIndex.includes("generation-smoke-secret-123") || credentialIndex.includes("advisor-smoke-secret-456")) throw new Error("Credential plaintext reached the desktop profile");
   await screenshot("managed-provider-settings");
+  await nav("activity"); await until("[...document.querySelectorAll('.activity-action strong')].some(e=>e.textContent === 'Providers configured')");
+  await check("provider changes are inspectable by action UUID without credential values", "[...document.querySelectorAll('.activity-action strong')].filter(e=>e.textContent === 'Credential saved').length === 2 && !document.getElementById('page').textContent.includes('smoke-secret')");
+  await nav("project");
 
   // Exercise the actual renderer/preload/main IPC journey using deterministic
   // lifecycle facts. Rust end-to-end tests own the workflow transitions; this

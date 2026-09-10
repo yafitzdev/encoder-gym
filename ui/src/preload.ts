@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedPromotionRequest, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, PreparedOptimizationChoice, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
 import type { OpenedProject, ProjectCollection } from "./projects.js";
 import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, ModelChoice } from "./managed-workspace.js";
+import type { ProjectActivityExport, ProjectActivityLog } from "./project-activity.js";
 
 export interface EncoderGymBridge {
   openManagedProject(): Promise<ProjectCollection | null>;
@@ -27,6 +28,8 @@ export interface EncoderGymBridge {
   previewNomosBinding(id: string, runtimeToken: string, pythonToken: string, historyToken?: string): Promise<NomosBindingPreview>;
   prepareNomosPython(id: string, previewToken: string): Promise<void>;
   bindNomos(id: string, previewToken: string): Promise<OpenedProject>;
+  projectActivity(id: string, limit?: number): Promise<ProjectActivityLog>;
+  exportProjectActivity(id: string): Promise<ProjectActivityExport | null>;
   getProjects(): Promise<ProjectCollection>;
   addProjectFolder(): Promise<ProjectCollection | null>;
   openExample(): Promise<ProjectCollection>;
@@ -64,6 +67,8 @@ const bridge: EncoderGymBridge = {
   previewNomosBinding: (id, runtimeToken, pythonToken, historyToken) => ipcRenderer.invoke("encoder-gym:preview-nomos-binding", id, runtimeToken, pythonToken, historyToken),
   prepareNomosPython: (id, previewToken) => ipcRenderer.invoke("encoder-gym:prepare-nomos-python", id, previewToken),
   bindNomos: (id, previewToken) => ipcRenderer.invoke("encoder-gym:bind-nomos", id, previewToken),
+  projectActivity: (id, limit) => ipcRenderer.invoke("encoder-gym:project-activity", id, limit),
+  exportProjectActivity: id => ipcRenderer.invoke("encoder-gym:export-project-activity", id),
   getProjects: () => ipcRenderer.invoke("encoder-gym:get-projects"),
   addProjectFolder: () => ipcRenderer.invoke("encoder-gym:add-project-folder"),
   openExample: () => ipcRenderer.invoke("encoder-gym:open-example"),

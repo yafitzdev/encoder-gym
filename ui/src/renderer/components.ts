@@ -20,6 +20,7 @@ const paths: Record<string, string[]> = {
   sun: ["M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8", "M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"],
   moon: ["M20 15.5A9 9 0 0 1 8.5 4 9 9 0 1 0 20 15.5Z"],
   refresh: ["M20 7v5h-5M4 17v-5h5", "M6 7a7 7 0 0 1 12 0l2 5M4 12l2 5a7 7 0 0 0 12 0"],
+  activity: ["M5 4h14v16H5z", "M8 8h8M8 12h8M8 16h5"],
   sidebar: ["M3 4h18v16H3zM9 4v16"],
 };
 export function icon(name: string): HTMLElement { return h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", class: "icon" }, ...(paths[name] ?? paths.models!).map(d => h("path", { d }))); }

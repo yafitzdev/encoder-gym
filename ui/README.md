@@ -56,6 +56,8 @@ They are labelled Legacy and are not silently converted into managed projects.
   activity, recorded budgets, provenance, and final decision. Completion does
   not mean the candidate was accepted.
 - **Benchmarks:** what is measured and why evaluation setups are separate.
+- **Activity:** immutable project commands grouped by action UUID, with event
+  UUIDs, progress, outcomes, linked artifact identities, and JSONL export.
 - **Project settings:** app name, durable organizational ID, folder association,
   evidence source, rename/reconnect, and removal from the collection.
 
@@ -132,6 +134,16 @@ through a native file picker. It can reserve a real bound optimization and
 advance it one persisted stage at a time. It does not turn imported source files
 into training authority, infer a scientific store, or fabricate missing history.
 
+Every meaningful managed-project command from the desktop records an immutable
+activity action before it executes and a terminal outcome afterward. Long native
+runs add bounded progress milestones. The Activity page verifies and replays
+those hash-chained records and can export the complete stream as JSONL. Action
+events carry UUIDs and safe artifact references only; credential values and
+sealed or row-level evidence never enter the journal. Automatic polling,
+navigation, window controls, and clipboard operations are intentionally not
+project activity. Scientific journals remain the authority for exact training,
+evaluation, gate, and decision evidence linked by those references.
+
 The **legacy** reader opens `.sqlite`, `.sqlite3`, and `.db` files directly inside
 the selected directory, read-only. It projects the existing
 `encoder_experiment_projects`, `encoder_experiment_protocols`, and
@@ -179,6 +191,7 @@ the built Rust binary's path.
 - `src/project-registry.ts`: atomic, app-owned folder metadata only.
 - `src/managed-backend.ts`: fixed Rust CLI adapter and native-picker tokens.
 - `src/managed-control.ts`: typed readiness and finite optimization intents.
+- `src/project-activity.ts`: typed immutable project-action/event contract.
 - `src/credential-store.ts`: project/role-scoped encrypted secrets and fallback availability.
 - `src/managed-workspace.ts`: row-free managed-workspace presentation contract.
 - `src/renderer/onboarding.ts`: checkpoint-copy and JSONL-import dialogs.
@@ -186,6 +199,7 @@ the built Rust binary's path.
 - `src/evidence/read-workspace.ts`: read-only SQLite-to-presentation projection.
 - `src/workspace.ts`: presentation contract, independent of SQLite and Electron.
 - `src/renderer/`: vanilla TypeScript views, navigation and interaction state.
+- `src/renderer/activity-page.ts`: action replay, UUID inspection, and JSONL export.
 - `src/evidence/nomos-snapshot.json`: explicitly labelled historical example.
 - `tests/fixtures/`: deterministic synthetic data, never registered in a normal
   user profile or presented as real trained projects.

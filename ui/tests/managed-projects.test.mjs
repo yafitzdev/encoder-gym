@@ -40,6 +40,26 @@ test("managed project identity survives independent profiles, move, rename, forg
   assert.equal(f.registry.addManaged(await f.backend.open(moved)).selectedId, id);
 });
 
+test("desktop activity records immutable action and event UUIDs and exports verified JSONL", async () => {
+  const f = fixture(), id = await create(f, "Activity project"), runId = randomUUID();
+  const actionId = await f.backend.startProjectActivity(id, "optimization.resume", [{ kind: "run", id: runId }]);
+  await f.backend.progressProjectActivity(id, actionId, "optimization.resume", "training", 4, 10);
+  await f.backend.succeedProjectActivity(id, actionId, "optimization.resume", [{ kind: "candidate", id: randomUUID() }]);
+  const log = await f.backend.projectActivity(id);
+  assert.equal(log.project_id, id);
+  assert.equal(log.actions.length, 1);
+  assert.equal(log.actions[0].action_id, actionId);
+  assert.equal(log.actions[0].state, "succeeded");
+  assert.equal(log.actions[0].events.length, 3);
+  assert.equal(new Set(log.actions[0].events.map(event => event.id)).size, 3);
+  assert.equal(log.actions[0].events[1].previous_event_fingerprint, log.actions[0].events[0].fingerprint);
+  const output = join(f.root, "activity.jsonl");
+  const exported = await f.backend.exportProjectActivity(id, output);
+  assert.equal(exported.events, 3);
+  const events = readFileSync(output, "utf8").trim().split("\n").map(line => JSON.parse(line));
+  assert.deepEqual(events.map(event => event.id), log.actions[0].events.map(event => event.id));
+});
+
 test("managed snapshots project only their bound scientific experiment store", () => {
   const f = fixture(), project = join(f.root, "bound-project"), runs = join(project, "runs");
   mkdirSync(runs, { recursive: true });
@@ -260,12 +280,14 @@ test("native execution receives only project-scoped provider credentials in fixe
 });
 
 test("backend diagnostics redact bearer, key, and token shaped credentials", () => {
-  const diagnostic = "Bearer secret-value-123 key-live-value-123 token-debug-value-456 sk-project-value-789";
+  const diagnostic = "Bearer secret-value-123 key-live-value-123 token-debug-value-456 sk-project-value-789 https://user:password@example.test/v1?api_key=hidden-value";
   const redacted = redactBackendError(diagnostic);
   assert.equal(redacted.includes("secret-value-123"), false);
   assert.equal(redacted.includes("live-value-123"), false);
   assert.equal(redacted.includes("debug-value-456"), false);
   assert.equal(redacted.includes("project-value-789"), false);
+  assert.equal(redacted.includes("password"), false);
+  assert.equal(redacted.includes("hidden-value"), false);
 });
 
 test("provider configuration serializes only validated non-secret settings to a temporary file", async () => {

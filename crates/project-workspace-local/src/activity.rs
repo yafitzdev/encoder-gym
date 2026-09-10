@@ -9,7 +9,14 @@ use project_workspace_core::{
 use sqlx::{Connection, Row};
 use uuid::Uuid;
 
-use crate::{MANIFEST, canonical_plain, connect, contained, json};
+use crate::{MANIFEST, canonical_plain, connect, contained, hash, json};
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityInitialization {
+    pub project_id: Uuid,
+    pub created: bool,
+}
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -31,6 +38,30 @@ pub struct AppendActivity {
     pub created_at: DateTime<Utc>,
 }
 
+/// Add only missing project-database migrations after verifying that the
+/// immutable manifest still belongs to this database. This deliberately avoids
+/// the deep artifact rehash performed by the explicit workspace upgrade.
+pub async fn initialize_activity(folder: &Path) -> Result<ActivityInitialization> {
+    let root = canonical_plain(folder)?;
+    let manifest_path = contained(&root, MANIFEST)?;
+    let manifest: project_workspace_core::ProjectManifest = json(&manifest_path)?;
+    manifest.validate()?;
+    let mut database = connect(&root, false, false).await?;
+    verify_workspace_binding(&manifest_path, manifest.id, &mut database).await?;
+    let created = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='project_activity_events'",
+    )
+    .fetch_one(&mut database)
+    .await?
+        == 0;
+    sqlx::migrate!("./migrations").run(&mut database).await?;
+    database.close().await?;
+    Ok(ActivityInitialization {
+        project_id: manifest.id,
+        created,
+    })
+}
+
 pub async fn append_activity(
     folder: &Path,
     request: AppendActivity,
@@ -39,6 +70,7 @@ pub async fn append_activity(
     let manifest: project_workspace_core::ProjectManifest = json(&contained(&root, MANIFEST)?)?;
     manifest.validate()?;
     let mut database = connect(&root, false, false).await?;
+    verify_workspace_binding(&contained(&root, MANIFEST)?, manifest.id, &mut database).await?;
     ensure_activity_schema(&mut database).await?;
     let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
     let rows = sqlx::query(
@@ -122,6 +154,7 @@ pub async fn read_activity(folder: &Path, limit: usize) -> Result<ProjectActivit
     let manifest: project_workspace_core::ProjectManifest = json(&contained(&root, MANIFEST)?)?;
     manifest.validate()?;
     let mut database = connect(&root, true, false).await?;
+    verify_workspace_binding(&contained(&root, MANIFEST)?, manifest.id, &mut database).await?;
     ensure_activity_schema(&mut database).await?;
     let rows = sqlx::query("SELECT artifact_json FROM project_activity_events ORDER BY rowid")
         .fetch_all(&mut database)
@@ -190,6 +223,25 @@ pub async fn export_activity(folder: &Path, output: &Path) -> Result<u64> {
 
 async fn ensure_activity_schema(database: &mut sqlx::SqliteConnection) -> Result<()> {
     ensure!(sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='project_activity_events'").fetch_one(database).await? == 1, "Upgrade this managed workspace before recording project activity.");
+    Ok(())
+}
+
+async fn verify_workspace_binding(
+    manifest_path: &Path,
+    project_id: Uuid,
+    database: &mut sqlx::SqliteConnection,
+) -> Result<()> {
+    let binding =
+        sqlx::query("SELECT project_id, manifest_sha256 FROM workspace_identity WHERE singleton=1")
+            .fetch_one(database)
+            .await
+            .context("Invalid workspace database.")?;
+    ensure!(
+        binding.get::<String, _>("project_id") == project_id.to_string()
+            && binding.get::<String, _>("manifest_sha256")
+                == hash(manifest_path, MANIFEST)?.fingerprint,
+        "Project manifest and database do not match. Restore the matching project files."
+    );
     Ok(())
 }
 

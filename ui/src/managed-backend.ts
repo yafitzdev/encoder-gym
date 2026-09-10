@@ -10,6 +10,7 @@ import type { WorkspaceSnapshot } from "./workspace.js";
 import { readWorkspaceDatabase } from "./evidence/read-workspace.js";
 import type { NativeProgress, RunActivity, ManagedRunStatus } from "./managed-control.js";
 import { executeObservedCommand, recordProgress } from "./run-activity.js";
+import type { AppendProjectActivity, ProjectActivityEvent, ProjectActivityExport, ProjectActivityLog, ProjectActivityReference, ProjectActivitySource } from "./project-activity.js";
 
 const purposes = new Set<DatasetPurpose>(["unassigned", "training", "development", "sealed"]);
 export function datasetPurpose(value: unknown): DatasetPurpose {
@@ -77,6 +78,9 @@ export function redactBackendError(value: string): string {
   return value
     .replace(/\bBearer\s+[^\s"']+/gi, "Bearer [redacted]")
     .replace(/\b(sk|key|token)-[A-Za-z0-9._-]{8,}\b/g, "[redacted]")
+    .replace(/([?&](?:api[_-]?key|token|authorization)=)[^&\s]+/gi, "$1[redacted]")
+    .replace(/("(?:api[_-]?key|token|authorization|secret|password)"\s*:\s*")[^"]*/gi, "$1[redacted]")
+    .replace(/(https?:\/\/)[^/@\s]+:[^/@\s]+@/gi, "$1[redacted]@")
     .trim();
 }
 
@@ -119,11 +123,78 @@ export class ManagedBackend {
   private bindingPreviews = new Map<string, { projectId: string; runtime: string; python: string; history?: string; ready: boolean }>();
   private activeProjects = new Set<string>();
   private runActivity = new Map<string, { runId: string; activity: RunActivity }>();
+  private activityInitializers = new Map<string, Promise<void>>();
   private busy = false;
   constructor(readonly executable: string, private registry: ProjectRegistry, private executor: CommandExecutor = executeCommand, private options: ManagedBackendOptions = {}) {}
   private async command<T>(args: string[], environment?: CommandEnvironment, progress?: (value: NativeProgress) => void): Promise<T> {
     const stdout = await this.executor(this.executable, ["--output", "json", "workspace", ...args], environment, progress);
     try { return JSON.parse(stdout) as T; } catch { throw new Error("The workspace backend returned an unreadable response."); }
+  }
+  private activityFolder(projectId: string): string {
+    const project = this.registry.get(projectId);
+    if (project.source.kind !== "folder" || project.source.workspaceId !== projectId) throw new Error("Project activity is available for managed projects.");
+    return project.source.path;
+  }
+  private async appendActivityDirect(folder: string, projectId: string, request: AppendProjectActivity): Promise<ProjectActivityEvent> {
+    const directory = await mkdtemp(join(tmpdir(), "encoder-gym-activity-"));
+    const file = join(directory, "event.json");
+    try {
+      await writeFile(file, JSON.stringify(request), { flag: "wx", mode: 0o600 });
+      const event = await this.command<ProjectActivityEvent>(["activity", folder, "append", "--file", file]);
+      if (event.project_id !== projectId || event.action_id !== request.action_id || event.operation !== request.operation || event.state !== request.state) throw new Error("The activity journal returned a mismatched event.");
+      return event;
+    } finally {
+      try { await unlink(file); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      try { await rmdir(directory); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    }
+  }
+  private async ensureActivity(projectId: string): Promise<void> {
+    const existing = this.activityInitializers.get(projectId);
+    if (existing) return existing;
+    const initializing = (async () => {
+      const folder = this.activityFolder(projectId);
+      const result = await this.command<{ projectId: string; created: boolean }>(["activity", folder, "init"]);
+      if (result.projectId !== projectId) throw new Error("The activity journal belongs to a different project.");
+      if (result.created) {
+        const actionId = randomUUID(), createdAt = new Date().toISOString();
+        await this.appendActivityDirect(folder, projectId, { action_id: actionId, operation: "activity.logging_enabled", source: "system", state: "started", created_at: createdAt });
+        await this.appendActivityDirect(folder, projectId, { action_id: actionId, operation: "activity.logging_enabled", source: "system", state: "succeeded", created_at: new Date().toISOString() });
+      }
+    })();
+    this.activityInitializers.set(projectId, initializing);
+    try { await initializing; }
+    catch (error) { this.activityInitializers.delete(projectId); throw error; }
+  }
+  async appendProjectActivity(projectId: string, request: AppendProjectActivity): Promise<ProjectActivityEvent> {
+    await this.ensureActivity(projectId);
+    return this.appendActivityDirect(this.activityFolder(projectId), projectId, request);
+  }
+  async startProjectActivity(projectId: string, operation: string, references: ProjectActivityReference[] = [], source: ProjectActivitySource = "desktop", createdAt = new Date().toISOString()): Promise<string> {
+    const actionId = randomUUID();
+    await this.appendProjectActivity(projectId, { action_id: actionId, operation, source, state: "started", ...(references.length ? { references } : {}), created_at: createdAt });
+    return actionId;
+  }
+  progressProjectActivity(projectId: string, actionId: string, operation: string, stage: string, completed?: number, total?: number): Promise<ProjectActivityEvent> {
+    return this.appendProjectActivity(projectId, { action_id: actionId, operation, source: "desktop", state: "progress", stage, ...(completed !== undefined && total !== undefined ? { completed, total } : {}), created_at: new Date().toISOString() });
+  }
+  succeedProjectActivity(projectId: string, actionId: string, operation: string, references: ProjectActivityReference[] = []): Promise<ProjectActivityEvent> {
+    return this.appendProjectActivity(projectId, { action_id: actionId, operation, source: "desktop", state: "succeeded", ...(references.length ? { references } : {}), created_at: new Date().toISOString() });
+  }
+  failProjectActivity(projectId: string, actionId: string, operation: string, error: unknown): Promise<ProjectActivityEvent> {
+    const raw = error instanceof Error ? error.message : String(error);
+    const message = (redactBackendError(raw).replace(/[\u0000-\u001f]+/g, " ").trim() || "Operation failed.").slice(0, 1000);
+    return this.appendProjectActivity(projectId, { action_id: actionId, operation, source: "desktop", state: "failed", failure: { code: "operation_failed", message }, created_at: new Date().toISOString() });
+  }
+  async projectActivity(projectId: string, limit = 100): Promise<ProjectActivityLog> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("Activity limit must be between 1 and 1000.");
+    await this.ensureActivity(projectId);
+    const log = await this.command<ProjectActivityLog>(["activity", this.activityFolder(projectId), "list", "--limit", String(limit)]);
+    if (log.project_id !== projectId) throw new Error("The activity journal belongs to a different project.");
+    return log;
+  }
+  async exportProjectActivity(projectId: string, destination: string): Promise<ProjectActivityExport> {
+    await this.ensureActivity(projectId);
+    return this.command<ProjectActivityExport>(["activity", this.activityFolder(projectId), "export", "--destination", destination]);
   }
   async chooseModel(path: string): Promise<ModelChoice> {
     const model = await this.command<LocalModel>(["inspect-model", path]);
@@ -234,7 +305,7 @@ export class ManagedBackend {
     });
   }
 
-  async optimize(projectId: string, value: unknown): Promise<ManagedOptimizationResult> {
+  async optimize(projectId: string, value: unknown, activityProgress?: (value: NativeProgress) => void): Promise<ManagedOptimizationResult> {
     if ((value as { action?: string })?.action === "resume") {
       const runId = uuid((value as { runId?: unknown }).runId, "run identity");
       return this.exclusiveProject(projectId, async () => {
@@ -242,7 +313,10 @@ export class ManagedBackend {
         const activity: RunActivity = { running: true, phase: "checking_files", startedAt: at, updatedAt: at, events: [{ phase: "checking_files", at }] };
         this.runActivity.set(projectId, { runId, activity });
         try {
-          const result = await this.optimizeCommand(projectId, value, progress => recordProgress(activity, progress));
+          const result = await this.optimizeCommand(projectId, value, progress => {
+            recordProgress(activity, progress);
+            activityProgress?.(progress);
+          });
           activity.running = false;
           // The CLI emits its final status before releasing its execution lease.
           // Its successful exit is authoritative for this worker's completion.

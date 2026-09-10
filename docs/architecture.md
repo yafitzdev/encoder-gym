@@ -3,7 +3,7 @@
 ## Managed project custody
 
 `project-workspace-core` owns portable project identities, baseline inventories,
-dataset custody metadata, and pure validation. `project-workspace-local` owns
+dataset custody metadata, the project activity-event contract, and pure validation. `project-workspace-local` owns
 safe local copying, format inspection, hashing and project-bound SQLite.
 `synth workspace` uses that adapter without opening the global synthetic-data
 store. Imported assets do not imply admitted snapshot membership, training
@@ -744,16 +744,20 @@ bridge, read-only experiment-journal adapter, and vanilla TypeScript renderer.
 It organizes persistent local project folders and presents baseline/candidate
 comparisons, run history, benchmark context, and project settings.
 
-The app's organizational project IDs and folder metadata are separate from
-immutable domain snapshots. Only that app-owned metadata is writable; evidence
-reads use read-only SQLite connections. The renderer receives a row-free
+The app's organizational folder metadata is separate from immutable domain
+snapshots. Evidence reads use read-only SQLite connections. Explicit desktop
+commands invoke the same owned CLI contracts as scripts; they do not mutate
+scientific records through renderer state. Each meaningful project command is
+also enclosed by a project-database activity action with a UUID, immutable
+started/progress/terminal events, and safe artifact references. The renderer receives a row-free
 development projection, never native payloads or sealed scores. Core training,
 evaluation, gate decisions, and optimization policy remain owned by their Rust
 contracts; the adapter projects their recorded outcomes rather than recomputing
 them. Report binding checks are not a replacement for native Doctor verification.
 
-The desktop does not expose execution mutations or all platform slice formats.
-The current experiment CLI is composed with the Nomos adapter; generic folder
-organization does not add another execution backend. Training, evaluation,
-approval, and orchestration continue through explicit CLI workflows. See
+The desktop exposes only the finite managed-workspace execution intents, not
+all platform slice formats. The current experiment CLI is composed with the
+Nomos adapter; generic folder organization does not add another execution
+backend. Training, evaluation, approval, and orchestration continue through
+the same explicit CLI contracts. See
 `ui/README.md` for supported evidence, integration boundaries, and tests.

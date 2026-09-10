@@ -4,6 +4,8 @@ use uuid::Uuid;
 
 #[derive(Debug, Subcommand)]
 pub enum WorkspaceActivityCommand {
+    /// Initialize the activity schema after verifying the project binding.
+    Init,
     /// List recent project actions with their complete immutable event chains.
     List {
         #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u32).range(1..=10_000))]

@@ -7,9 +7,9 @@ use project_workspace_core::{
 };
 use project_workspace_local::{
     AcceptedModelPromotion, AppendActivity, append_activity, backfill_nomos, create_workspace,
-    export_activity, import_dataset, inspect_dataset, inspect_model, open_workspace, read_action,
-    read_activity, record_accepted_model_promotion, record_provider_catalog,
-    record_scientific_binding, upgrade_workspace,
+    export_activity, import_dataset, initialize_activity, inspect_dataset, inspect_model,
+    open_workspace, read_action, read_activity, record_accepted_model_promotion,
+    record_provider_catalog, record_scientific_binding, upgrade_workspace,
 };
 use serde_json::json;
 use std::fs;
@@ -23,6 +23,8 @@ fn model(root: &std::path::Path) -> std::path::PathBuf {
 
 #[tokio::test]
 async fn project_activity_is_append_only_hash_chained_and_exportable_jsonl() {
+    use sqlx::{Connection, SqliteConnection};
+
     let temp = TempDir::new().unwrap();
     let source = model(temp.path());
     let preview = inspect_model(&source).unwrap();
@@ -36,6 +38,21 @@ async fn project_activity_is_append_only_hash_chained_and_exportable_jsonl() {
     )
     .await
     .unwrap();
+    let url = format!("sqlite://{}", destination.join("project.sqlite").display());
+    let mut database = SqliteConnection::connect(&url).await.unwrap();
+    sqlx::query("DROP TABLE project_activity_events")
+        .execute(&mut database)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 5")
+        .execute(&mut database)
+        .await
+        .unwrap();
+    database.close().await.unwrap();
+    let initialized = initialize_activity(&destination).await.unwrap();
+    assert_eq!(initialized.project_id, workspace.manifest.id);
+    assert!(initialized.created);
+    assert!(!initialize_activity(&destination).await.unwrap().created);
     let action_id = uuid::Uuid::new_v4();
     let run_id = uuid::Uuid::new_v4();
     let at = Utc.with_ymd_and_hms(2026, 9, 10, 8, 0, 0).unwrap();

@@ -17,10 +17,11 @@ import { renderOptimization, type OptimizationPageActions, type OptimizationPage
 import { updateRunClocks } from "./run-progress.js";
 import { providerDialog } from "./provider-dialog.js";
 import { scientificRuntimeDialog } from "./scientific-runtime-dialog.js";
+import { renderActivity, type ActivityPageActions, type ActivityPageState } from "./activity-page.js";
 
 const element = (id: string): HTMLElement => { const found = document.getElementById(id); if (!found) throw new Error("Missing #" + id); return found; };
-interface ProjectView { history: NavigationHistory; models: ModelPageState; details: Map<string, DetailState>; optimization: OptimizationPageState; providers: ProviderPageState }
-const newView = (): ProjectView => ({ history: new NavigationHistory(), models: { filter: initialFilter(), selected: new Set(), suiteIndex: 0 }, details: new Map(), optimization: { loading: false }, providers: { loading: false } });
+interface ProjectView { history: NavigationHistory; models: ModelPageState; details: Map<string, DetailState>; optimization: OptimizationPageState; providers: ProviderPageState; activity: ActivityPageState }
+const newView = (): ProjectView => ({ history: new NavigationHistory(), models: { filter: initialFilter(), selected: new Set(), suiteIndex: 0 }, details: new Map(), optimization: { loading: false }, providers: { loading: false }, activity: { loading: false } });
 
 export function mount(): void {
   const bridge = window.encoderGym ?? previewBridge();
@@ -61,6 +62,7 @@ export function mount(): void {
     view.history.remember(location, main.scrollTop, contentFocus());
     render(); main.scrollTop = 0; focusHeading();
     if (location.page === "project" && workspace()?.managed && !view.providers.status) void refreshProviders();
+    if (location.page === "activity" && workspace()?.managed) void refreshActivity();
     if (["datasets", "runs", "benchmarks"].includes(location.page) && workspace()?.managed && !view.optimization.readiness && !view.optimization.loading) void refreshOptimization();
   }
   async function selectProject(id: string): Promise<void> {
@@ -77,6 +79,7 @@ export function mount(): void {
       if (!next) return;
       opened = next; loading = false; render();
       if (view.history.current.page === "project" && next.content.state === "ready" && next.content.workspace.managed && !view.providers.status) void refreshProviders();
+      if (view.history.current.page === "activity" && next.content.state === "ready" && next.content.workspace.managed) void refreshActivity();
       if (["datasets", "runs", "benchmarks"].includes(view.history.current.page) && next.content.state === "ready" && next.content.workspace.managed && !view.optimization.readiness && !view.optimization.loading) void refreshOptimization();
       if (changed) restorePlace();
     } catch (error) {
@@ -407,6 +410,31 @@ export function mount(): void {
       });
     },
   };
+  async function refreshActivity(): Promise<void> {
+    const id = selection.selectedId;
+    if (!id || !workspace()?.managed || view.activity.loading) return;
+    const state = view.activity;
+    state.loading = true; state.error = undefined; render();
+    try { state.log = await bridge.projectActivity(id); }
+    catch (error) { state.error = message(error); }
+    finally { state.loading = false; if (selection.selectedId === id) render(); }
+  }
+  async function exportActivity(): Promise<void> {
+    const id = selection.selectedId;
+    if (!id || !workspace()?.managed || view.activity.exporting) return;
+    const state = view.activity;
+    state.exporting = true; state.error = undefined; render();
+    try {
+      const result = await bridge.exportProjectActivity(id);
+      if (result) notify(`Exported ${result.events} events.`);
+    } catch (error) { state.error = message(error); }
+    finally { state.exporting = false; if (selection.selectedId === id) render(); }
+  }
+  const activityActions: ActivityPageActions = {
+    refresh: () => { void refreshActivity(); },
+    export: () => { void exportActivity(); },
+    copy: value => { void bridge.copyText(value).then(() => notify("Copied to clipboard"), error => notify("Copy failed: " + message(error))); },
+  };
   const actions: Actions = {
     navigate, render, help, notify, connect: projects.addFolder,
     backTo: page => { if (view.history.returnTo(page, main.scrollTop)) { render(); restorePlace(); } else navigate({ page }); },
@@ -418,7 +446,7 @@ export function mount(): void {
     },
     prepareOptimization: () => { navigate({ page: "optimization" }); if (!view.optimization.readiness) void refreshOptimization(); },
   };
-  const pages: [Page, string, string][] = [["models", "Models", "models"], ["datasets", "Data", "dataset"], ["runs", "Runs", "runs"], ["benchmarks", "Evaluation", "benchmark"], ["project", "Project settings", "settings"]];
+  const pages: [Page, string, string][] = [["models", "Models", "models"], ["datasets", "Data", "dataset"], ["runs", "Runs", "runs"], ["benchmarks", "Evaluation", "benchmark"], ["activity", "Activity", "activity"], ["project", "Project settings", "settings"]];
   function render(): void {
     const current = view.history.current, data = workspace();
     const project = collection.projects.find(p => p.id === selection.selectedId);
@@ -438,7 +466,7 @@ export function mount(): void {
         if (p.id === selection.selectedId) { collapsedProjects.has(p.id) ? collapsedProjects.delete(p.id) : collapsedProjects.add(p.id); render(); }
         else { collapsedProjects.delete(p.id); projects.select(p.id); }
       } }, icon("project"), h("span", {}, p.name), p.source.kind === "example" ? h("small", {}, "Example") : !p.source.workspaceId ? h("small", {}, "Legacy") : null),
-      expanded ? h("div", { class: "project-pages" }, ...pages.filter(([page]) => page !== "datasets" || (p.source.kind === "folder" && p.source.workspaceId)).map(([page, label, symbol]) => h("button", { type: "button", id: "nav-" + page, disabled: collectionBusy, class: "nav-item" + (page === activePage ? " active" : ""), "aria-current": page === activePage ? "page" : null, "data-page": page, onClick: () => navigate({ page }) }, icon(symbol), label,
+      expanded ? h("div", { class: "project-pages" }, ...pages.filter(([page]) => !["datasets", "activity"].includes(page) || (p.source.kind === "folder" && p.source.workspaceId)).map(([page, label, symbol]) => h("button", { type: "button", id: "nav-" + page, disabled: collectionBusy, class: "nav-item" + (page === activePage ? " active" : ""), "aria-current": page === activePage ? "page" : null, "data-page": page, onClick: () => navigate({ page }) }, icon(symbol), label,
         data && ["models", "runs"].includes(page) ? h("span", { class: "nav-count" }, page === "models" ? candidateRows(data).length + 1 : runCount) : null))) : null);
     }));
     const candidate = data ? candidateRows(data).find(r => r.candidate.id === current.id)?.candidate : undefined;
@@ -456,6 +484,7 @@ export function mount(): void {
     if (collectionError) content = h("div", { class: "page-content" }, h("h1", { tabindex: "-1" }, "Project library unavailable"), h("section", { class: "project-recovery", role: "alert" }, failureNotice(collectionError), button("Try again", () => { void refreshCollection(); }, "primary")));
     else if (!project) content = loading ? h("div", { class: "page-content", role: "status" }, "Opening project collection…") : renderWelcome(projects);
     else if (current.page === "project") content = data?.managed ? renderManagedSettings(project, data.managed, view.providers, providerActions, runtimeActions, actions, projects) : renderProjectSettings(project, opened, actions, projects);
+    else if (current.page === "activity" && data?.managed) content = renderActivity(view.activity, activityActions);
     else if (!data) content = renderProjectState(project, opened, actions, projects, current.page);
     else {
       const detailKey = (current.id ?? "") + ":" + (current.runId ?? "");

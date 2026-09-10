@@ -81,6 +81,37 @@ as the first immutable model artifact and active baseline revision. It is
 idempotent and does not edit `encoder-gym.json`, copy artifacts, or initialize a
 scientific run database.
 
+## Project activity
+
+`project.sqlite` contains a project-wide, append-only activity journal for
+meaningful desktop commands and explicitly recorded CLI integrations. Each action has one UUID and a
+hash-chained event sequence: `started`, optional bounded `progress`, then
+`succeeded` or `failed`. Events have their own UUIDs and may carry only stable,
+row-free artifact references. Provider keys, authorization headers, sealed
+rows, prompts, dataset records, and raw model content are forbidden from this
+journal. Provider failures are redacted before recording.
+
+The desktop Activity page reads verified actions, exposes both action and event
+UUIDs, and exports the complete verified stream as JSON Lines. Navigation,
+automatic status polling, clipboard actions, and window controls are not
+project commands and are deliberately excluded. Slice-owned scientific
+journals remain authoritative for training, evaluation, gate, and decision
+facts; the project activity action links to their run or artifact identities
+instead of duplicating their evidence.
+
+```powershell
+synth workspace activity C:\EncoderGym\Projects\Nomos init
+synth workspace activity C:\EncoderGym\Projects\Nomos list --limit 100
+synth workspace activity C:\EncoderGym\Projects\Nomos show <ACTION_UUID>
+synth workspace activity C:\EncoderGym\Projects\Nomos export --destination C:\exports\nomos-activity.jsonl
+```
+
+`init` verifies the manifest/database binding and applies missing registry
+migrations without rehashing project artifacts. Desktop access runs it
+idempotently so older managed projects gain the journal before the first newly
+tracked action. It does not reconstruct past clicks; historical scientific
+work remains available through its existing immutable journals.
+
 The compiled Nomos adapter can be explicitly bound to a managed project after
 the project is upgraded:
 
