@@ -1,7 +1,7 @@
 import type { OpenedProject, ProjectEntry } from "../projects.js";
 import type { Actions, ProjectActions } from "./actions.js";
 import { candidateRows, dateLabel, timeLabel } from "./catalog.js";
-import { button, copyField, empty, facts, failureNotice, icon, pageHeader, sectionHeader, tag } from "./components.js";
+import { button, copyField, empty, facts, failureNotice, icon, pageHeader, sectionHeader, tag, workspacePage } from "./components.js";
 import { h, type Child } from "./dom.js";
 
 export function renderWelcome(actions: ProjectActions): HTMLElement {
@@ -31,7 +31,7 @@ export function renderProjectSettings(project: ProjectEntry, opened: OpenedProje
   const managed = project.source.kind === "folder" && !!project.source.workspaceId;
   const entries: [string, Child][] = [["Name", project.name], ["Project ID", copyField(project.id, actions.copy)], ["Folder", project.source.kind === "folder" ? copyField(project.source.path, actions.copy) : "Recorded example · no connected folder"]];
   if (workspace) entries.push(["Task", workspace.task.replaceAll("_", " ")], ["Models", `${candidateRows(workspace).length} candidates + 1 baseline`], ["Runs", String(workspace.runs.length)]);
-  return h("div", { class: "page-content" }, pageHeader("Project settings"),
+  return workspacePage("Project settings", null,
     h("section", { class: "project-info" }, sectionHeader(project.name, tag(managed ? "Managed project" : project.source.kind === "folder" ? "Legacy connection" : "Recorded example")), facts(entries),
       h("div", { class: "inline-group settings-actions" }, button("Rename project", projects.rename, "secondary"), project.source.kind === "folder" ? button("Locate folder", projects.relocate, "secondary", "project") : null)),
     h("section", { class: "project-info" }, sectionHeader("Evidence source", tag(!workspace ? opened?.content.state === "error" ? "Unavailable" : "No records yet" : workspace.source === "local" ? "Local journals" : "Recorded snapshot")),

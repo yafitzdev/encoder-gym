@@ -2,13 +2,13 @@ import type { WorkspaceSnapshot } from "../workspace.js";
 import type { ManagedReadiness, ManagedRunStatus } from "../managed-control.js";
 import type { Actions } from "./actions.js";
 import { bytesLabel, comparisonGroups, evaluationGroups, initialFilter, metricInfo, primaryMetric, score, setupName, suiteName, summaryMetrics } from "./catalog.js";
-import { button, copyField, details, empty, facts, pageHeader, sectionHeader, tag } from "./components.js";
+import { button, copyField, details, empty, facts, pageHeader, sectionHeader, tag, workspacePage } from "./components.js";
 import { runListItem } from "./detail-pages.js";
 import { h } from "./dom.js";
 
 export function renderRuns(workspace: WorkspaceSnapshot, actions: Actions, optimization?: ManagedRunStatus): HTMLElement {
   const active = optimization && !["completed", "cancelled", "failed"].includes(optimization.state);
-  return h("div", { class: "page-content" }, pageHeader("Runs", workspace.managed ? button(optimization ? "Open optimization" : "Start optimization", actions.prepareOptimization, "primary", "runs") : tag(String(workspace.runs.length))),
+  return workspacePage("Runs", workspace.managed ? button(optimization ? "Open optimization" : "Start optimization", actions.prepareOptimization, "primary", "runs") : tag(String(workspace.runs.length)),
     optimization ? h("section", { class: "optimization-run-row" },
       h("div", {}, h("div", { class: "eyebrow" }, active ? "Current optimization" : "Latest optimization"), h("h2", {}, optimization.stage.label), facts([["Optimization run", optimization.run_id], ["State", optimization.state.replaceAll("_", " ")], ["Durable transitions", String(optimization.last_sequence)], ...(optimization.decision ? [["Decision", optimization.decision.replaceAll("_", " ")] as [string, string]] : [])])),
       button(active ? "Continue run" : "Inspect run", actions.prepareOptimization, "secondary", "arrow")) : null,
@@ -32,10 +32,10 @@ export function renderBenchmarks(workspace: WorkspaceSnapshot, actions: Actions,
       ["Evaluation time", `At most ${preview.maximumEvaluationSeconds.toLocaleString()} seconds`],
     ])),
     button(preview.existingRun ? "Open optimization run" : "Review prepared run", actions.prepareOptimization, "secondary", "arrow")) : null;
-  if (!groups.length) return h("div", { class: "page-content" }, pageHeader("Evaluation"), planned,
+  if (!groups.length) return workspacePage("Evaluation", null, planned,
     sectionHeader("Recorded evaluation evidence"),
     empty("No evaluations"));
-  return h("div", { class: "page-content" }, pageHeader("Evaluation"), planned,
+  return workspacePage("Evaluation", null, planned,
     sectionHeader("Recorded evaluation evidence"),
     ...groups.map((group, i) => {
       const primary = primaryMetric(group.run);

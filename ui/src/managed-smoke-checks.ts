@@ -84,6 +84,14 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await check("new project shows its baseline without fabricated runs or candidates", "document.querySelector('.baseline-name').textContent.includes('Routing encoder') && document.querySelectorAll('[data-candidate-id]').length === 0 && document.getElementById('source-state').textContent.includes('Managed workspace')");
   await screenshot("managed-baseline");
   await check("Models leads with the baseline, candidates, and one action", "document.querySelector('.page-heading h1').textContent === 'Models' && !document.querySelector('.page-heading p') && document.querySelector('.candidate-empty h3').textContent === 'No candidates' && [...document.querySelectorAll('#page button')].filter(b=>b.textContent === 'Start optimization').length === 1 && !document.querySelector('.candidate-empty p')");
+  const pageFrames: { left: number; top: number; width: number }[] = [];
+  for (const page of ["models", "datasets", "runs", "benchmarks", "project"]) {
+    await nav(page); await until("document.querySelector('.workspace-page > .page-heading + .workspace-page-body')");
+    pageFrames.push(await evaluate("(()=>{const page=document.querySelector('.workspace-page').getBoundingClientRect(),heading=document.querySelector('.workspace-page > .page-heading').getBoundingClientRect();return {left:Math.round(page.left),top:Math.round(heading.top),width:Math.round(page.width)}})()"));
+  }
+  if (pageFrames.some(frame => JSON.stringify(frame) !== JSON.stringify(pageFrames[0]))) throw new Error("Managed collection pages do not share one frame: " + JSON.stringify(pageFrames));
+  console.log("PASS managed collection pages share one frame");
+  await nav("models");
   await textButton("Start optimization"); await until("document.querySelector('.launch-summary') && document.querySelectorAll('.readiness-row').length > 0");
   await check("readiness distinguishes ready foundations from missing scientific authority", "document.querySelector('.readiness-list').textContent.includes('Connect scientific runtime') && document.querySelector('.readiness-list > details').textContent.includes('foundations are ready') && document.querySelector('.readiness-list').textContent.includes('Prepare run') && !document.querySelector('.readiness-row > .readiness-copy > p')");
   await check("readiness exposes no managed paths as editable command input", "!document.querySelector('.optimization-page input') && !document.querySelector('.optimization-page').textContent.includes('project.sqlite')");

@@ -1,7 +1,7 @@
 import type { WorkspaceSnapshot } from "../workspace.js";
 import type { Actions } from "./actions.js";
 import { candidateDescription, candidateName, candidateRows, comparisonGroups, dateLabel, developmentStatus, initialFilter, modelName, runLabel, score, setupId, suiteName, summaryMetrics, type CatalogFilter } from "./catalog.js";
-import { button, empty, icon, metricHeader, pageHeader, scoreStack, sectionHeader, selectControl, status, tag } from "./components.js";
+import { button, empty, icon, metricHeader, scoreStack, sectionHeader, selectControl, status, tag, workspacePage } from "./components.js";
 import { h } from "./dom.js";
 
 export interface ModelPageState { filter: CatalogFilter; selected: Set<string>; suiteIndex: number }
@@ -17,8 +17,7 @@ export function renderModels(workspace: WorkspaceSnapshot, state: ModelPageState
   if (!selectedRows.length) compare.setAttribute("aria-describedby", "compare-selection-hint");
   const filterChange = (key: keyof CatalogFilter, value: string) => { state.filter[key] = value; actions.render(); };
   const selectedSetup = selectedRows[0] ? setupId(selectedRows[0].run) : undefined;
-  return h("div", { class: "page-content" },
-    pageHeader("Models", workspace.managed ? button("Start optimization", actions.prepareOptimization, "primary", "runs") : null),
+  return workspacePage("Models", workspace.managed ? button("Start optimization", actions.prepareOptimization, "primary", "runs") : null,
     h("section", { class: "baseline-anchor", "aria-label": "Baseline encoder" },
       h("div", { class: "baseline-heading" }, h("div", { class: "model-symbol", "aria-hidden": "true" }, icon("models")),
         h("div", { class: "baseline-name" }, h("div", { class: "eyebrow" }, "Baseline"), h("h2", {}, modelName(workspace.baseline.key)), tag(workspace.baseline.format))),

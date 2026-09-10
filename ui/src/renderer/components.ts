@@ -31,6 +31,9 @@ export function status(label: string, tone = "neutral"): HTMLElement { return h(
 export function pageHeader(title: string, action?: Child): HTMLElement {
   return h("header", { class: "page-heading" }, h("h1", { tabindex: "-1" }, title), action ?? null);
 }
+export function workspacePage(title: string, action: Child, ...content: Child[]): HTMLElement {
+  return h("div", { class: "page-content workspace-page" }, pageHeader(title, action), h("div", { class: "workspace-page-body" }, ...content));
+}
 export function sectionHeader(title: string, extra?: Child): HTMLElement { return h("div", { class: "section-heading" }, h("h2", {}, title), extra ?? null); }
 export function empty(title: string, action?: Child): HTMLElement {
   return h("div", { class: "empty-state" }, h("h2", {}, title), action ?? null);

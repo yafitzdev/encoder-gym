@@ -3,7 +3,7 @@ import type { ManagedProviderStatus, ManagedReadiness, ProviderRole } from "../m
 import type { Actions, ProjectActions } from "./actions.js";
 import type { ProjectEntry } from "../projects.js";
 import { bytesLabel, dateLabel, displayPath } from "./catalog.js";
-import { button, copyField, details, empty, facts, pageHeader, sectionHeader, status, tag } from "./components.js";
+import { button, copyField, details, empty, facts, sectionHeader, status, tag, workspacePage } from "./components.js";
 import { h } from "./dom.js";
 
 export function renderDatasets(workspace: ManagedWorkspace, actions: Actions, projects: ProjectActions, readiness?: ManagedReadiness): HTMLElement {
@@ -23,7 +23,7 @@ export function renderDatasets(workspace: ManagedWorkspace, actions: Actions, pr
       ])),
       button(preview?.existingRun ? "Open optimization run" : "Review optimization", actions.prepareOptimization, "secondary", "arrow")) : null;
   const dataActions = h("div", { class: "inline-group" }, tag(trainingSnapshotId ? `${preview ? "1 frozen" : "1 approved"} snapshot` : "No snapshot"), tag(`${workspace.datasets.length} ${workspace.datasets.length === 1 ? "source" : "sources"}`), workspace.datasets.length ? button("Import dataset", projects.importDataset, "primary", "project") : null);
-  return h("div", { class: "page-content" }, pageHeader("Data", dataActions),
+  return workspacePage("Data", dataActions,
     snapshot,
     sectionHeader("Imported sources"),
     !workspace.datasets.length ? trainingSnapshotId ? h("section", { class: "source-empty" }, h("h3", {}, "No imported sources"), button("Import dataset", projects.importDataset, "secondary")) : empty("No imported sources", button("Import dataset", projects.importDataset, "primary")) :
@@ -49,7 +49,7 @@ export function renderManagedSettings(project: ProjectEntry, workspace: ManagedW
   const binding = workspace.scientificBinding, providers = providerState.status?.catalog ?? workspace.providerCatalog;
   const configureProviders = button(providers ? "Edit provider setup" : "Configure providers", providerActions.configure, "secondary");
   configureProviders.disabled = providerState.loading;
-  return h("div", { class: "page-content settings-page" }, pageHeader("Project settings"),
+  return workspacePage("Project settings", null,
     h("section", { class: "project-info" }, sectionHeader("Scientific runtime", tag(binding ? binding.store.snapshotFingerprint ? "History connected" : "Connected" : "Not connected", binding ? "accent" : undefined)),
       binding ? h("div", {}, facts([["Task adapter", binding.adapter.key], ["Protocol", binding.adapter.protocol], ["Baseline revision", binding.baselineRevisionId], ...(binding.store.snapshotBytes ? [["Imported history", bytesLabel(binding.store.snapshotBytes)]] as [string, string][] : [])]),
         details("Runtime and store identity", facts([["Runtime", copyField(displayPath(binding.runtime.location), actions.copy)], ["Scientific store", binding.store.databasePath], ...(binding.store.snapshotFingerprint ? [["History snapshot", copyField(binding.store.snapshotFingerprint, actions.copy)]] as [string, HTMLElement][] : []), ["Binding", copyField(binding.id, actions.copy)]])), h("div", { class: "inline-group settings-actions" }, button("Reverify or change runtime", runtimeActions.configure, "secondary"))) :

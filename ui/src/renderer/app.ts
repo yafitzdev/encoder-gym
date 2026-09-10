@@ -450,6 +450,7 @@ export function mount(): void {
     (element("navigate-forward") as HTMLButtonElement).disabled = !project || !view.history.canNavigate(1);
   }
   for (const [id, offset] of [["navigate-back", -1], ["navigate-forward", 1]] as const) element(id).addEventListener("click", () => { const entry = view.history.move(offset, main.scrollTop); if (entry) { render(); restorePlace(); } });
+  bridge.onNavigationCommand(direction => element(direction === "back" ? "navigate-back" : "navigate-forward").click());
   element("reload-evidence").addEventListener("click", actions.refresh);
   element("open-guide").addEventListener("click", () => help());
   element("add-project").addEventListener("click", projects.create);

@@ -411,6 +411,12 @@ or merely matching filename can become the next baseline.
 
 ## Page responsibilities
 
+Models, Data, Runs, Evaluation, and Project settings share one collection-page
+frame. The frame owns the same content width, horizontal inset, title baseline,
+action slot, and body origin on every route; individual pages supply only their
+body content. Browser Back/Forward, title-bar Back/Forward, `Alt+Left/Right`, and
+Windows mouse navigation commands all advance the same project-scoped history.
+
 - **Models**: active baseline revision, immutable artifacts, candidates grouped
   by their exact comparison baseline/setup, and promotion evidence. It does not
   display dataset inventory as substitute content.

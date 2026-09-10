@@ -238,6 +238,13 @@ ipcMain.handle("encoder-gym:copy-text", (_event, value: unknown) => {
   clipboard.writeText(value);
 });
 
+function bindNavigationCommands(window: BrowserWindow): void {
+  window.on("app-command", (_event, command) => {
+    if (command === "browser-backward") window.webContents.send("encoder-gym:navigation-command", "back");
+    else if (command === "browser-forward") window.webContents.send("encoder-gym:navigation-command", "forward");
+  });
+}
+
 function createWindow(): void {
   const window = new BrowserWindow({
     width: 1440,
@@ -256,6 +263,7 @@ function createWindow(): void {
       webSecurity: true,
     },
   });
+  bindNavigationCommands(window);
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event, url) => {
     if (url !== window.webContents.getURL()) event.preventDefault();
@@ -278,6 +286,7 @@ if (smokeTest || verifyCurrent) {
         backgroundThrottling: false,
       },
     });
+    bindNavigationCommands(window);
     try {
       await window.loadFile(join(directory, "renderer", "index.html"));
       if (verifyCurrent) await checkCurrentManaged(window, join(directory, "..", "qa"), registry, backend);

@@ -27,6 +27,7 @@ export function previewBridge(): EncoderGymBridge {
     forgetProject: async () => { collection = { version: 1, selectedId: null, projects: [] }; return collection; },
     copyText: async value => navigator.clipboard.writeText(value),
     windowAction: async () => {},
+    onNavigationCommand: () => {},
     versions: () => ({ electron: "browser preview", chrome: "browser", node: "none" }),
   };
 }

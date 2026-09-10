@@ -63,6 +63,10 @@ export async function runSmokeChecks(window: BrowserWindow, output: string, harn
   await check("search filters without losing focus", "document.querySelectorAll('[data-candidate-id]').length === 1 && document.activeElement.id === 'candidate-search'");
   await click(".candidate-link"); await click("#navigate-back");
   await check("back retains model search", "document.getElementById('candidate-search').value === 'repair' && document.querySelectorAll('[data-candidate-id]').length === 1");
+  web.send("encoder-gym:navigation-command", "forward"); await until("document.querySelector('.detail-page')");
+  await check("mouse forward uses project navigation history", "document.querySelector('.detail-page h1').textContent === 'Repair fine-tune'");
+  web.send("encoder-gym:navigation-command", "back"); await until("document.getElementById('candidate-search')");
+  await check("mouse back restores page state", "document.getElementById('candidate-search').value === 'repair' && document.querySelectorAll('[data-candidate-id]').length === 1");
   await type("candidate-search", "no-matching-candidate");
   await check("empty search has recovery", "document.querySelector('.empty-state').textContent.includes('Reset filters')");
   await click(".empty-state button");

@@ -35,6 +35,7 @@ export interface EncoderGymBridge {
   relocateProject(id: string): Promise<ProjectCollection | null>;
   forgetProject(id: string): Promise<ProjectCollection>;
   windowAction(action: "minimize" | "maximize" | "close"): Promise<void>;
+  onNavigationCommand(handler: (direction: "back" | "forward") => void): void;
   copyText(value: string): Promise<void>;
   versions(): { electron: string; chrome: string; node: string };
 }
@@ -71,6 +72,11 @@ const bridge: EncoderGymBridge = {
   relocateProject: id => ipcRenderer.invoke("encoder-gym:relocate-project", id),
   forgetProject: id => ipcRenderer.invoke("encoder-gym:forget-project", id),
   windowAction: (action) => ipcRenderer.invoke("encoder-gym:window-action", action),
+  onNavigationCommand: handler => {
+    ipcRenderer.on("encoder-gym:navigation-command", (_event, direction: unknown) => {
+      if (direction === "back" || direction === "forward") handler(direction);
+    });
+  },
   copyText: (value) => ipcRenderer.invoke("encoder-gym:copy-text", value),
   versions: () => {
     const versions = (process as { versions?: Record<string, string | undefined> }).versions ?? {};
