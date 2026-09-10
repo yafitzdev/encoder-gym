@@ -53,6 +53,9 @@ They are labelled Legacy and are not silently converted into managed projects.
   splits, runs, or evaluation results. Training imports reject held-out rows.
   File counts, size, and intended use are visible in the list; expand **File
   details and provenance** for original/copy locations and content identities.
+  The replacement versioned dataset backend is available through `workspace
+  dataset` and the typed desktop bridge; its new collection/viewer is still in
+  development. See [dataset versions](../docs/dataset-versions-spec.md).
 - **Runs:** immutable experiment records. A run owns its candidate attempts,
   activity, recorded budgets, provenance, and final decision. Completion does
   not mean the candidate was accepted.

@@ -1,4 +1,5 @@
-/** Row-free CLI contract. Never send source dataset records to the renderer. */
+/** Row-free workspace metadata. Explicit bounded training-row inspections use
+ * the separate dataset-workspace contract, never this scientific projection. */
 export interface FileIdentity { path: string; bytes: number; fingerprint: string }
 export interface LocalModel {
   source: string; format: string; architecture: string; files: FileIdentity[];

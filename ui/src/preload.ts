@@ -1,10 +1,13 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { DatasetQuery, DatasetQueryResult, DatasetMutation, DatasetMutationResult } from "./dataset-workspace.js";
 import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedPromotionRequest, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, PreparedOptimizationChoice, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
 import type { OpenedProject, ProjectCollection } from "./projects.js";
 import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, ModelChoice } from "./managed-workspace.js";
 import type { ProjectActivityExport, ProjectActivityLog } from "./project-activity.js";
 
 export interface EncoderGymBridge {
+  queryDatasets(id: string, request: DatasetQuery): Promise<DatasetQueryResult>;
+  mutateDataset(id: string, request: DatasetMutation): Promise<DatasetMutationResult>;
   openManagedProject(): Promise<ProjectCollection | null>;
   chooseLocalModel(): Promise<ModelChoice | null>;
   chooseProjectParent(): Promise<FolderChoice | null>;
@@ -44,6 +47,8 @@ export interface EncoderGymBridge {
 }
 
 const bridge: EncoderGymBridge = {
+  queryDatasets: (id, request) => ipcRenderer.invoke("encoder-gym:query-datasets", id, request),
+  mutateDataset: (id, request) => ipcRenderer.invoke("encoder-gym:mutate-dataset", id, request),
   openManagedProject: () => ipcRenderer.invoke("encoder-gym:open-managed"),
   chooseLocalModel: () => ipcRenderer.invoke("encoder-gym:choose-model"),
   chooseProjectParent: () => ipcRenderer.invoke("encoder-gym:choose-parent"),

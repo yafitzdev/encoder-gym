@@ -133,3 +133,6 @@ and keep outstanding requirements visible.
 - All four Rust gates pass for this stage. The complete CLI, core, persistence,
   and existing scientific-governance regression suites passed without real
   training or external provider use.
+- Existing legacy/managed Electron journeys also passed in four launches after
+  adding the desktop bridge. This protects current screens; it is not evidence
+  that the new dataset viewer exists or that its future interaction is complete.

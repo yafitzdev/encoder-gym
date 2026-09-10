@@ -10,6 +10,7 @@ import type { WorkspaceSnapshot } from "./workspace.js";
 import { readWorkspaceDatabase } from "./evidence/read-workspace.js";
 import type { NativeProgress, RunActivity, ManagedRunStatus } from "./managed-control.js";
 import { executeObservedCommand, recordProgress } from "./run-activity.js";
+import { ManagedDatasets } from "./managed-datasets.js";
 import type { AppendProjectActivity, ProjectActivityEvent, ProjectActivityExport, ProjectActivityLog, ProjectActivityReference, ProjectActivitySource } from "./project-activity.js";
 
 const purposes = new Set<DatasetPurpose>(["unassigned", "training", "development", "sealed"]);
@@ -125,7 +126,10 @@ export class ManagedBackend {
   private runActivity = new Map<string, { runId: string; activity: RunActivity }>();
   private activityInitializers = new Map<string, Promise<void>>();
   private busy = false;
-  constructor(readonly executable: string, private registry: ProjectRegistry, private executor: CommandExecutor = executeCommand, private options: ManagedBackendOptions = {}) {}
+  readonly datasetVersions: ManagedDatasets;
+  constructor(readonly executable: string, private registry: ProjectRegistry, private executor: CommandExecutor = executeCommand, private options: ManagedBackendOptions = {}) {
+    this.datasetVersions = new ManagedDatasets({ open: id => this.openRegistered(id), command: args => this.command(args), exclusive: (id, run) => this.exclusiveProject(id, run) });
+  }
   private async command<T>(args: string[], environment?: CommandEnvironment, progress?: (value: NativeProgress) => void): Promise<T> {
     const stdout = await this.executor(this.executable, ["--output", "json", "workspace", ...args], environment, progress);
     try { return JSON.parse(stdout) as T; } catch { throw new Error("The workspace backend returned an unreadable response."); }
