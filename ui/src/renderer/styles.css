@@ -508,8 +508,9 @@ dialog::backdrop { background: #0008; }
 .provider-state { display: flex; align-items: center; justify-content: end; gap: 8px; flex-wrap: wrap; }
 .provider-form-section + .provider-form-section { margin-top: 25px; padding-top: 22px; border-top: 1px solid var(--line); }
 .provider-form-section > p { color: var(--muted); font-size: 12px; margin: 6px 0 16px; }
+.provider-presets { display: flex; gap: 6px; margin: 12px 0; }
+.provider-presets .button.selected { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .provider-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.provider-form-grid .form-field:last-child { grid-column: 1 / -1; }
 #project-dialog:has(.runtime-form) { width: 700px; max-width: min(700px, calc(100vw - 30px)); }
 .runtime-form { width: 100%; min-width: 0; }
 .runtime-notice { margin: 18px 24px 0; padding: 13px 15px; border-left: 3px solid var(--accent); background: var(--bg); }

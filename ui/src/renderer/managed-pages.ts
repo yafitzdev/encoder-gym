@@ -59,7 +59,7 @@ export function renderManagedSettings(project: ProjectEntry, workspace: ManagedW
       providers ? h("div", {}, ...providers.providers.map(provider => {
         const credential = providerState.status?.credentialAvailability.find(item => item.role === provider.role);
         const availability = credential?.availability ?? (provider.authentication === "none" ? "available" : "unavailable");
-        return h("div", { class: "provider-summary" }, h("div", {}, h("strong", {}, provider.role[0]!.toUpperCase() + provider.role.slice(1)), h("small", {}, `${provider.kind} · ${provider.model}`)),
+        return h("div", { class: "provider-summary" }, h("div", {}, h("strong", {}, provider.role === "generation" ? "Data generation" : provider.role === "advisor" ? "Agentic work" : "Evaluation"), h("small", {}, provider.endpoint ?? provider.kind)),
           h("div", { class: "provider-state" }, status(availability === "available" ? credential?.source === "environment" ? "Available from environment" : "Credential available" : availability === "missing" ? "Credential missing" : "Availability unknown", availability === "available" ? "success" : availability === "missing" ? "warning" : "neutral"),
             credential?.source === "credential_store" ? button("Remove saved key", () => providerActions.remove(provider.role), "ghost small") : null));
       })) : null,

@@ -4,6 +4,10 @@ import { h } from "./dom.js";
 
 export interface ProviderDialogSubmission { settings: ProviderSettingsRequest; credentials: Partial<Record<ProviderRole, string>> }
 
+const presets = [
+  { label: "DeepSeek", endpoint: "https://api.deepseek.com", generation: "deepseek-v4-flash", advisor: "deepseek-v4-pro" },
+  { label: "Yan", endpoint: "https://yan.tail85512d.ts.net", generation: "deepseek-v4-flash", advisor: "deepseek-v4-pro" },
+] as const;
 const defaults = {
   generation: { requests: 100, input: 1_000_000, output: 200_000, cost: 5 },
   advisor: { requests: 20, input: 200_000, output: 50_000, cost: 2 },
@@ -13,41 +17,57 @@ const byId = <T extends HTMLElement>(id: string): T => {
   if (!value) throw new Error(`Missing #${id}`);
   return value as T;
 };
-function number(id: string, label: string, minimum: number): number {
-  const value = Number(byId<HTMLInputElement>(id).value);
-  if (!Number.isSafeInteger(value) || value < minimum) throw new Error(`${label} must be ${minimum ? "a positive" : "a non-negative"} whole number.`);
-  return value;
-}
+const normalizedEndpoint = (value: string): string => value.trim().replace(/\/+$/, "").toLowerCase();
+const matchingPreset = (endpoint: string) => presets.find(preset => normalizedEndpoint(preset.endpoint) === normalizedEndpoint(endpoint));
 function providerFields(role: "generation" | "advisor", status?: ManagedProviderStatus): HTMLElement {
   const existing = status?.catalog?.providers.find(provider => provider.role === role);
-  const limit = existing?.limits, fallback = defaults[role];
-  const field = (id: string, label: string, value: string | number, type = "text", help?: string) => h("label", { class: "form-field", for: id }, label,
-    h("input", { id, class: "text-input", type, value: String(value), required: type !== "password", autocomplete: type === "password" ? "new-password" : "off", ...(type === "number" ? { min: "0", step: "any" } : {}) }), help ? h("span", { class: "field-help" }, help) : null);
+  const availability = status?.credentialAvailability.find(item => item.role === role)?.availability;
+  const endpoint = existing?.endpoint ?? presets[0].endpoint;
+  const url = h("input", { id: `${role}-endpoint`, class: "text-input", type: "url", value: endpoint, required: true, autocomplete: "url" }) as HTMLInputElement;
+  const key = h("input", {
+    id: `${role}-credential`, class: "text-input", type: "password", required: availability !== "available",
+    autocomplete: "new-password", placeholder: availability === "available" ? "Saved" : "",
+  }) as HTMLInputElement;
+  const presetButtons = presets.map(preset => {
+    const control = button(preset.label, () => {
+      url.value = preset.endpoint;
+      url.dispatchEvent(new Event("input", { bubbles: true }));
+    }, "ghost small");
+    control.dataset.endpoint = preset.endpoint;
+    return control;
+  });
+  const updatePreset = () => {
+    for (const control of presetButtons) control.classList.toggle("selected", normalizedEndpoint(control.dataset.endpoint ?? "") === normalizedEndpoint(url.value));
+    const reusesSavedKey = availability === "available" && existing?.endpoint && normalizedEndpoint(existing.endpoint) === normalizedEndpoint(url.value);
+    key.required = !reusesSavedKey;
+    key.placeholder = reusesSavedKey ? "Saved" : "";
+  };
+  url.addEventListener("input", updatePreset);
+  updatePreset();
   return h("section", { class: "provider-form-section" }, h("h3", {}, role === "generation" ? "Data generation" : "Agentic work"),
+    h("div", { class: "provider-presets", "aria-label": `${role} provider presets` }, ...presetButtons),
     h("div", { class: "provider-form-grid" },
-      field(`${role}-endpoint`, "OpenAI-compatible endpoint", existing?.endpoint ?? "https://api.openai.com/v1", "url"),
-      field(`${role}-model`, "Model", existing?.model ?? ""),
-      field(`${role}-requests`, "Maximum requests", limit?.maximumRequests ?? fallback.requests, "number"),
-      field(`${role}-input`, "Maximum input tokens", limit?.maximumInputTokens ?? fallback.input, "number"),
-      field(`${role}-output`, "Maximum output tokens", limit?.maximumOutputTokens ?? fallback.output, "number"),
-      field(`${role}-cost`, "Maximum spend (USD)", (limit?.maximumCostMicrousd ?? fallback.cost * 1_000_000) / 1_000_000, "number"),
-      field(`${role}-credential`, existing ? "Replace credential (optional)" : "Credential (optional)", "", "password")),
+      h("label", { class: "form-field", for: url.id }, "URL", url),
+      h("label", { class: "form-field", for: key.id }, "API key", key)),
   );
 }
-function readProvider(role: "generation" | "advisor"): ProviderInput {
-  const endpoint = byId<HTMLInputElement>(`${role}-endpoint`).value.trim(), model = byId<HTMLInputElement>(`${role}-model`).value.trim();
-  const cost = Number(byId<HTMLInputElement>(`${role}-cost`).value);
-  if (!endpoint || !model) throw new Error(`Complete the ${role} endpoint and model.`);
-  if (!Number.isFinite(cost) || cost < 0 || cost > Number.MAX_SAFE_INTEGER / 1_000_000) throw new Error(`Enter a valid finite ${role} spend ceiling.`);
+function readProvider(role: "generation" | "advisor", status?: ManagedProviderStatus): ProviderInput {
+  const endpoint = byId<HTMLInputElement>(`${role}-endpoint`).value.trim();
+  if (!endpoint) throw new Error(`Enter the ${role} URL.`);
+  const existing = status?.catalog?.providers.find(provider => provider.role === role);
+  const sameEndpoint = existing?.endpoint && normalizedEndpoint(existing.endpoint) === normalizedEndpoint(endpoint);
+  const preset = matchingPreset(endpoint), fallback = defaults[role];
+  const model = preset?.[role] ?? (sameEndpoint ? existing.model : "default");
+  const limits = sameEndpoint ? existing.limits : {
+    maximumRequests: fallback.requests,
+    maximumInputTokens: fallback.input,
+    maximumOutputTokens: fallback.output,
+    maximumCostMicrousd: fallback.cost * 1_000_000,
+  };
   return {
     kind: "openai-compatible", endpoint, model, authentication: "bearer",
     environmentFallback: role === "generation" ? "SYNTH_OPENAI_API_KEY" : "SYNTH_ADVISOR_API_KEY",
-    limits: {
-      maximumRequests: number(`${role}-requests`, `${role} request limit`, 1),
-      maximumInputTokens: number(`${role}-input`, `${role} input-token limit`, 1),
-      maximumOutputTokens: number(`${role}-output`, `${role} output-token limit`, 1),
-      maximumCostMicrousd: Math.round(cost * 1_000_000),
-    },
+    limits,
   };
 }
 
@@ -59,7 +79,7 @@ export function providerDialog(dialog: HTMLDialogElement, status: ManagedProvide
     event.preventDefault(); if (saving) return;
     error.replaceChildren();
     try {
-      const generation = readProvider("generation"), advisor = readProvider("advisor");
+      const generation = readProvider("generation", status), advisor = readProvider("advisor", status);
       const credentials: Partial<Record<ProviderRole, string>> = {};
       for (const role of ["generation", "advisor"] as const) { const value = byId<HTMLInputElement>(`${role}-credential`).value; if (value) credentials[role] = value; }
       saving = true; dialog.setAttribute("aria-busy", "true"); save.disabled = true; cancel.disabled = true; progress.textContent = "Saving…";
@@ -71,5 +91,5 @@ export function providerDialog(dialog: HTMLDialogElement, status: ManagedProvide
     h("div", { class: "onboarding-heading" }, h("h2", { id: "project-dialog-title" }, "Providers")),
     h("div", { class: "onboarding-fields" }, providerFields("generation", status), providerFields("advisor", status)),
     h("footer", { class: "onboarding-footer" }, progress, error, h("div", { class: "dialog-actions" }, cancel, save)));
-  dialog.replaceChildren(form); dialog.showModal(); byId<HTMLInputElement>("generation-model").focus();
+  dialog.replaceChildren(form); dialog.showModal(); byId<HTMLInputElement>("generation-endpoint").focus();
 }

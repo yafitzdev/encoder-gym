@@ -108,10 +108,15 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await screenshot("managed-runtime-setup", 760, 760); window.setContentSize(1440, 960);
   await textButton("Cancel"); await until("!document.querySelector('#project-dialog[open]')");
   await textButton("Configure providers"); await until("document.querySelector('#project-dialog[open]')");
-  await type("generation-model", "generation-smoke-model"); await type("advisor-model", "advisor-smoke-model");
+  await check("provider setup exposes only URL and API key", "document.querySelectorAll('.provider-form input').length === 4 && [...document.querySelectorAll('.provider-form label')].map(e=>e.firstChild.textContent.trim()).join('|') === 'URL|API key|URL|API key' && !document.querySelector('.provider-form').textContent.includes('Model') && !document.querySelector('.provider-form').textContent.includes('Maximum')");
+  await check("DeepSeek and Yan are one-click provider presets", "[...document.querySelectorAll('.provider-presets button')].filter(b=>b.textContent === 'DeepSeek').length === 2 && [...document.querySelectorAll('.provider-presets button')].filter(b=>b.textContent === 'Yan').length === 2");
+  await evaluate("[...document.querySelectorAll('.provider-presets')][0].querySelector('[data-endpoint=\"https://yan.tail85512d.ts.net\"]').click();[...document.querySelectorAll('.provider-presets')][1].querySelector('[data-endpoint=\"https://yan.tail85512d.ts.net\"]').click();true");
   await type("generation-credential", "generation-smoke-secret-123"); await type("advisor-credential", "advisor-smoke-secret-456");
   await textButton("Save provider setup"); await until("!document.querySelector('#project-dialog[open]') && document.querySelectorAll('.provider-summary').length === 2");
   await check("separate provider authorities expose availability without secret values", "document.querySelectorAll('.provider-state .success').length === 2 && !document.getElementById('page').textContent.includes('generation-smoke-secret-123') && !document.getElementById('page').textContent.includes('advisor-smoke-secret-456')");
+  const savedProviders = (await harness.backend.providerStatus(firstId)).catalog?.providers;
+  if (savedProviders?.find(provider => provider.role === "generation")?.model !== "deepseek-v4-flash" || savedProviders.find(provider => provider.role === "advisor")?.model !== "deepseek-v4-pro") throw new Error("Provider presets did not resolve their app-managed model choices.");
+  console.log("PASS provider presets persist app-managed models without exposing model inputs");
   const credentialIndex = readFileSync(join(harness.registry.file, "..", "credentials.json"), "utf8");
   if (credentialIndex.includes("generation-smoke-secret-123") || credentialIndex.includes("advisor-smoke-secret-456")) throw new Error("Credential plaintext reached the desktop profile");
   await screenshot("managed-provider-settings");

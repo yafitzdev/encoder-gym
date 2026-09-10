@@ -209,6 +209,12 @@ Generation and advisor authorities are configured separately. An evaluator is
 optional. Save only non-secret endpoint, model, authentication mode, and finite
 limits in a strict JSON file:
 
+The desktop setup intentionally exposes only a URL and API key for each of the
+generation and advisor authorities. DeepSeek and the operator's Yan gateway are
+available as URL presets. The desktop owns the model choice and finite default
+limits; the lower-level CLI retains the complete explicit contract below for
+automation and reproducibility.
+
 ```json
 {
   "version": 1,
