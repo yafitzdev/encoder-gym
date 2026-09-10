@@ -331,7 +331,7 @@ pub async fn record_provider_catalog(
         );
         transaction.rollback().await?;
         database.close().await?;
-        return open_workspace(root, true).await;
+        return open_workspace(root, false).await;
     }
     ensure!(
         current == expected_active_revision_id
@@ -362,7 +362,9 @@ pub async fn record_provider_catalog(
     .await?;
     transaction.commit().await?;
     database.close().await?;
-    open_workspace(root, true).await
+    // This mutation changes only the append-only provider catalog. Do not
+    // rehash unrelated model and dataset artifacts before acknowledging it.
+    open_workspace(root, false).await
 }
 
 /// Append and activate a verified scientific runtime/store binding.

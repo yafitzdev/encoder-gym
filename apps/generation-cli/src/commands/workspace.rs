@@ -332,7 +332,11 @@ async fn providers(
     folder: &std::path::Path,
     command: ManagedProviderCommand,
 ) -> anyhow::Result<()> {
-    let workspace = open_workspace(folder, true).await?;
+    // Provider settings are project-scoped metadata. Their identities do not
+    // derive from model or dataset bytes, so saving or displaying them must not
+    // turn into a full artifact rehash. Explicit verify/readiness operations
+    // remain responsible for deep workspace integrity checks.
+    let workspace = open_workspace(folder, false).await?;
     match command {
         ManagedProviderCommand::Show => print(&provider_status(&workspace)),
         ManagedProviderCommand::Configure {

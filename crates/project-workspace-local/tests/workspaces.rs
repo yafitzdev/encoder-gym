@@ -457,6 +457,7 @@ async fn provider_settings_are_non_secret_append_only_compare_and_append_records
     let configured = record_provider_catalog(&destination, first.clone(), None)
         .await
         .unwrap();
+    assert!(!configured.verified);
     assert_eq!(configured.provider_catalog, Some(first.clone()));
     assert!(!serde_json::to_string(&first).unwrap().contains("sk-"));
     assert_eq!(
@@ -479,6 +480,7 @@ async fn provider_settings_are_non_secret_append_only_compare_and_append_records
     let updated = record_provider_catalog(&destination, second, Some(first_id))
         .await
         .unwrap();
+    assert!(!updated.verified);
     assert_eq!(updated.provider_catalog.unwrap().id, second_id);
 }
 

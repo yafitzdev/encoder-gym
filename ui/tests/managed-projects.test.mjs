@@ -242,10 +242,11 @@ test("provider configuration serializes only validated non-secret settings to a 
   const workspace = { folder, verified: true, manifest: { version: 1, id, name: "Provider fixture", createdAt: new Date().toISOString(), task: null, baseline }, datasets: [] };
   const registry = new ProjectRegistry(join(root, "profile", "projects.json")); registry.addManaged(workspace);
   let temporary, serialized;
+  const calls = [];
   const emptyStatus = { projectId: id, configured: false, catalog: null, credentialAvailability: [], liveProbePerformed: false };
   const executor = async (_executable, args) => {
+    calls.push(args);
     if (args[3] === "open") return JSON.stringify(workspace);
-    if (args[3] === "providers" && args[5] === "show") return JSON.stringify(emptyStatus);
     if (args[3] === "providers" && args[5] === "configure") {
       temporary = args[args.indexOf("--file") + 1]; serialized = readFileSync(temporary, "utf8"); return JSON.stringify(emptyStatus);
     }
@@ -262,6 +263,9 @@ test("provider configuration serializes only validated non-secret settings to a 
   assert.equal(parsed.generation.environment_fallback, "SYNTH_OPENAI_API_KEY");
   assert.equal(parsed.advisor.environment_fallback, "SYNTH_ADVISOR_API_KEY");
   assert.equal(existsSync(temporary), false);
+  await backend.providerStatus(id);
+  assert.equal(calls.filter(args => args[3] === "open").length, 2);
+  assert.equal(calls.some(args => args[3] === "providers" && args[5] === "show"), false, "desktop status must not launch a second workspace scan");
 });
 
 test("scientific binding uses only native-picked runtime tokens and requires a successful preview", async () => {

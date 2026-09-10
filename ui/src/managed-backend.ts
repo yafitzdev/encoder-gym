@@ -287,7 +287,15 @@ export class ManagedBackend {
 
   async providerStatus(projectId: string): Promise<ManagedProviderStatus> {
     const workspace = await this.openRegistered(projectId);
-    return this.command<ManagedProviderStatus>(["providers", workspace.folder, "show"]);
+    const catalog = workspace.providerCatalog ?? null;
+    return {
+      projectId: workspace.manifest.id, configured: catalog !== null, catalog,
+      credentialAvailability: catalog?.providers.map(provider => ({
+        role: provider.role, authentication: provider.authentication,
+        availability: provider.authentication === "none" ? "available" : "missing",
+      })) ?? [],
+      liveProbePerformed: false,
+    };
   }
 
   async chooseNomosRuntime(projectId: string, path: string): Promise<NativePathChoice> {
@@ -354,13 +362,12 @@ export class ManagedBackend {
     const settings = providerSettings(value);
     const workspace = await this.openRegistered(projectId);
     return this.exclusiveProject(projectId, async () => {
-      const current = await this.command<ManagedProviderStatus>(["providers", workspace.folder, "show"]);
       const directory = await mkdtemp(join(tmpdir(), "encoder-gym-providers-"));
       const file = join(directory, "settings.json");
       try {
         await writeFile(file, JSON.stringify(providerFile(settings)), { flag: "wx", mode: 0o600 });
         return await this.command<ManagedProviderStatus>(["providers", workspace.folder, "configure", "--file", file,
-          ...(current.catalog?.id ? ["--expected-revision-id", current.catalog.id] : []), "--actor", settings.actor ?? "local-operator", "--reason", settings.reason ?? "Configure project providers"]);
+          ...(workspace.providerCatalog?.id ? ["--expected-revision-id", workspace.providerCatalog.id] : []), "--actor", settings.actor ?? "local-operator", "--reason", settings.reason ?? "Configure project providers"]);
       } finally {
         try { await unlink(file); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
         try { await rmdir(directory); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }

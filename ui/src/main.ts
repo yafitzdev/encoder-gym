@@ -189,13 +189,13 @@ ipcMain.handle("encoder-gym:set-provider-credential", async (_event, value: unkn
   const provider = status.catalog?.providers.find(candidate => candidate.role === role);
   if (!provider?.secret || provider.authentication !== "bearer" || provider.secret.id !== `${id}:${role}`) throw new Error("Configure bearer authentication for this provider before saving its credential.");
   credentials.set(provider.secret.id, secret);
-  return desktopProviderStatus(await backend.providerStatus(id));
+  return desktopProviderStatus(status);
 });
 ipcMain.handle("encoder-gym:remove-provider-credential", async (_event, value: unknown, roleValue: unknown) => {
   const id = projectId(value), role = providerRole(roleValue), status = await backend.providerStatus(id);
   const provider = status.catalog?.providers.find(candidate => candidate.role === role);
   if (provider?.secret?.id === `${id}:${role}`) credentials.remove(provider.secret.id);
-  return desktopProviderStatus(await backend.providerStatus(id));
+  return desktopProviderStatus(status);
 });
 ipcMain.handle("encoder-gym:choose-nomos-runtime", async (_event, value: unknown) => {
   const id = projectId(value), path = await pickFolder("Choose the isolated Nomos runtime");
