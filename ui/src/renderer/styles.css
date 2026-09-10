@@ -397,6 +397,7 @@ dialog::backdrop { background: #0008; }
 .welcome-action > svg { width: 34px; height: 34px; color: var(--accent); }
 .welcome-action > div { flex: 1; }
 .welcome-action h2 { margin-bottom: 8px; }
+.welcome-action > h2 { flex: 1; margin-bottom: 0; }
 .welcome-action p { color: var(--muted); max-width: 470px; font-size: 13px; }
 .welcome-example { margin-top: 23px; color: var(--muted); font-size: 13px; }
 .empty-baseline { display: flex; align-items: center; gap: 18px; border: 1px dashed var(--line); border-radius: 7px; padding: 22px; }

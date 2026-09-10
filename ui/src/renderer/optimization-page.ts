@@ -49,8 +49,8 @@ function budgetFacts(preview: ManagedLaunchPreview): [string, string][] {
     ["Backend operations", String(budget.maximum_backend_operations)],
   ];
 }
-function launchMetric(label: string, value: string, detail: string): HTMLElement {
-  return h("div", { class: "launch-metric" }, h("dt", {}, label), h("dd", {}, value), h("span", {}, detail));
+function launchMetric(label: string, value: string, _detail?: string): HTMLElement {
+  return h("div", { class: "launch-metric" }, h("dt", {}, label), h("dd", {}, value));
 }
 function durationLabel(seconds: number): string {
   if (seconds === 0) return "0s";
@@ -77,13 +77,13 @@ function reportPanel(report: ManagedOptimizationReport): HTMLElement {
   return h("section", { class: "run-report", "aria-label": "Complete run report" },
     sectionHeader("Complete run report", tag("Aggregate evidence", "accent")),
     h("div", { class: "report-outcome" }, h("div", { class: "eyebrow" }, "Persisted decision"), h("h3", {}, decision),
-      h("p", {}, report.sealed_evidence.used ? "One authorized sealed result informed the terminal decision. Sealed rows and scores remain outside this report." : "No sealed result was used in this run.")),
+      tag(report.sealed_evidence.used ? "Sealed evidence used" : "No sealed evidence")),
     h("div", { class: "report-summary" },
       facts([["Training population", `${report.training_data_change.total_rows.toLocaleString()} rows`], ["Approved change", `+${report.training_data_change.delta_rows.toLocaleString()} rows over ${report.training_data_change.base_rows.toLocaleString()} base`], ["Candidate hypotheses", String(report.approved_repair.candidate_hypotheses.length)], ["Recorded failures", String(report.budget_and_recovery.candidate_failure_events)]]),
       facts([["Training recorded", durationLabel(report.budget_and_recovery.observed_training_seconds)], ["Development reports", String(report.budget_and_recovery.observed_development_evaluations)], ["Sealed reports", String(report.budget_and_recovery.observed_sealed_evaluations)], ["Journal events", String(report.budget_and_recovery.optimization_event_count + report.budget_and_recovery.campaign_event_count + report.budget_and_recovery.experiment_event_count)]])),
     h("div", { class: "report-candidates" }, ...report.candidate_results.map((candidate, index) => h("section", { class: "report-candidate" },
       h("div", { class: "report-candidate-heading" }, h("div", {}, h("div", { class: "eyebrow" }, `Candidate ${index + 1}`), h("h3", {}, candidate.checkpoint?.key ?? candidate.candidate_id)), status(candidate.state.replaceAll("_", " "), candidate.state === "failed" ? "danger" : "neutral")),
-      candidate.checkpoint ? facts([["Format", candidate.checkpoint.format], ["Artifact size", `${candidate.checkpoint.bytes.toLocaleString()} bytes`], ["Completed training", durationLabel(candidate.checkpoint.training_duration_seconds)], ["Checkpoint fingerprint", candidate.checkpoint.fingerprint]]) : h("p", { class: "section-note" }, "No completed checkpoint was recorded for this candidate."),
+      candidate.checkpoint ? facts([["Format", candidate.checkpoint.format], ["Artifact size", `${candidate.checkpoint.bytes.toLocaleString()} bytes`], ["Completed training", durationLabel(candidate.checkpoint.training_duration_seconds)], ["Checkpoint fingerprint", candidate.checkpoint.fingerprint]]) : tag("No checkpoint", "warning"),
       ...candidate.development_suites.map(suite => {
         const keys = [...new Set([...Object.keys(suite.baseline_metrics), ...Object.keys(suite.candidate_metrics)])];
         return details(`${suite.suite} · ${suite.verdict.replaceAll("_", " ")}`, h("div", { class: "report-suite" },
@@ -103,20 +103,6 @@ function candidateRecipe(preview: ManagedLaunchPreview): HTMLElement {
       h("strong", {}, `Candidate ${recipe.sequence}`),
       facts([["Training ceiling", `${recipe.maximumTrainingSeconds.toLocaleString()} seconds`], ...Object.entries(recipe.parameters).map(([key, value]) => [fieldLabel(key), parameterLabel(value)] as [string, string])])))));
 }
-function externalWork(workspace: ManagedWorkspace, state: OptimizationPageState, readiness: ManagedReadiness | undefined): string {
-  const authorizedCalls = state.prepared?.externalCalls ?? readiness?.optimizationAuthority?.budget.maximum_external_calls;
-  if (authorizedCalls === 0) return "No external provider calls are authorized for this run. Reserving it will not read a provider credential.";
-  if (authorizedCalls === undefined) return "No provider operation is part of reservation. Any external prerequisite must already be approved and frozen by its owning workflow.";
-  const configured = workspace.providerCatalog?.providers.map(provider => `${fieldLabel(provider.role)}: ${provider.model}`).join(" · ");
-  return `The frozen repair authority records a ceiling of ${authorizedCalls} external ${authorizedCalls === 1 ? "call" : "calls"}; reservation does not execute them.${configured ? ` Configured providers: ${configured}.` : " Required provider configuration must be completed before any external work."}`;
-}
-function reservationCopy(state: OptimizationPageState, existing: boolean): string {
-  if (existing) return "This definition already owns a run; no duplicate will be created.";
-  const externalCalls = state.prepared?.externalCalls;
-  return externalCalls === undefined
-    ? "This persists the immutable definition and one run identity. Reservation does not train, evaluate, or contact a provider."
-    : `This persists the immutable definition and one run identity. The frozen authority records ${externalCalls} external ${externalCalls === 1 ? "call" : "calls"}; reservation does not execute them.`;
-}
 function actionFor(check: ReadinessCheck, actions: OptimizationPageActions): HTMLElement | null {
   const key = check.nextAction?.key;
   if (!key) return null;
@@ -128,14 +114,14 @@ function actionFor(check: ReadinessCheck, actions: OptimizationPageActions): HTM
   if (key === "resume-optimization") return button("Open existing run", actions.start, "secondary");
   return null;
 }
-const categoryCopy: Record<string, [string, string]> = {
-  workspace: ["Repair the managed workspace", "Verify the files and project registry before relying on any scientific result."],
-  models: ["Establish the active baseline", "A run must be tied to exactly one current immutable reference model."],
-  scientific: ["Connect the scientific runtime", "Verify the task adapter, its exact project snapshot, and the contained scientific store."],
-  data: ["Approve the training input", "Imported sources are custody only; training needs immutable scientific authority."],
-  evaluation: ["Prepare development and sealed evaluation", "Both evidence roles must exist before candidates can be compared and accepted."],
-  optimization: ["Prepare the reviewed run", "Freeze the approved snapshot and bind its benchmark generation, candidate space, and finite budgets."],
-  recovery: ["Resolve the existing run", "Continue or replace the run already associated with this exact definition."],
+const categoryCopy: Record<string, string> = {
+  workspace: "Repair managed workspace",
+  models: "Establish active baseline",
+  scientific: "Connect scientific runtime",
+  data: "Approve training input",
+  evaluation: "Prepare evaluation",
+  optimization: "Prepare run",
+  recovery: "Resolve existing run",
 };
 const severity: Record<ReadinessState, number> = { ready: 0, action_required: 1, unavailable: 2, stale: 3, blocked: 4 };
 function readinessList(readiness: ManagedReadiness, actions: OptimizationPageActions, handledKeys: ReadonlySet<string> = new Set()): HTMLElement {
@@ -147,10 +133,10 @@ function readinessList(readiness: ManagedReadiness, actions: OptimizationPageAct
     groups.length ? sectionHeader("Do these next", tag(String(groups.length))) : sectionHeader("Required foundations", tag("Complete", "accent")),
     ...groups.map(group => {
       const state = group.reduce((worst, check) => severity[check.state] > severity[worst] ? check.state : worst, group[0]!.state);
-      const display = labels[state], copy = categoryCopy[group[0]!.category] ?? [group[0]!.summary, group[0]!.evidence];
+      const display = labels[state], copy = categoryCopy[group[0]!.category] ?? group[0]!.summary;
       const actionable = group.find(check => check.nextAction && actionFor(check, actions));
       return h("section", { class: `readiness-row readiness-${state}` },
-        h("div", { class: "readiness-copy" }, h("div", { class: "readiness-heading" }, h("h3", {}, copy[0]), status(display.label, display.tone)), h("p", {}, copy[1]),
+        h("div", { class: "readiness-copy" }, h("div", { class: "readiness-heading" }, h("h3", {}, copy), status(display.label, display.tone)),
           details(`Inspect ${group.length} backend ${group.length === 1 ? "check" : "checks"}`, h("div", { class: "readiness-details" }, ...group.map(check => h("section", {}, h("strong", {}, check.summary), h("p", {}, check.evidence)))))),
         actionable ? actionFor(actionable, actions) : null);
     }),
@@ -179,20 +165,19 @@ function runPanel(run: ManagedRunStatus, state: OptimizationPageState, actions: 
   return h("section", { class: "run-control" }, sectionHeader(terminal ? "Run record" : "Reserved run", tag(run.state.replaceAll("_", " "))),
     !finalDecisionCard ? h("div", { class: `run-stage ${busy ? "is-running" : ""} ${terminalReason ? `is-${run.state}` : ""}`, role: busy ? "status" : run.state === "failed" ? "alert" : undefined },
       h("div", { class: "eyebrow" }, busy ? "Executing now" : run.state === "failed" ? "Recorded failure" : run.state === "cancelled" ? "Operator cancellation" : terminal ? "Final state" : "Next safe stage"),
-      h("h3", {}, run.stage.label), h("p", {}, run.stage.detail),
+      h("h3", {}, run.stage.label),
       terminalReason ? h("p", { class: "terminal-reason" }, terminalReason) : null,
-      run.state === "failed" && terminalReason ? h("p", { class: "terminal-guidance" }, "No further stage will execute automatically. Inspect the complete report and journal before deciding whether a successor run is safe.") : null,
-      progress && progress.total_units > 0 ? h("p", { class: "stage-progress" }, `${progress.completed_units} of ${progress.total_units} candidate build and development-evaluation steps durably recorded`) : null,
-      busy && run.stage.execution === "native" ? h("p", { class: "stage-caution" }, "This native stage can take a while. The screen is reading the journal as new facts are committed; it does not estimate unfinished work.") : null) : null,
+      run.state === "failed" && terminalReason ? tag("No automatic continuation", "danger") : null,
+      progress && progress.total_units > 0 ? tag(`${progress.completed_units} / ${progress.total_units} stages recorded`, "accent") : null,
+      busy && run.stage.execution === "native" ? tag("Native stage running") : null) : null,
     next || !terminal && !busy ? h("div", { class: "run-actions" }, next, !terminal && !busy ? button("Cancel before next stage", actions.cancel, "secondary") : null) : null,
     accepted ? h("div", { class: `promotion-result ${activeAcceptedModel ? "is-active" : "is-pending"}` },
       h("div", {}, h("div", { class: "eyebrow" }, activeAcceptedModel ? "Baseline updated" : "Operator decision required"),
-        h("h3", {}, activeAcceptedModel ? "The accepted candidate is now the project baseline" : "The candidate passed final acceptance"),
-        h("p", {}, activeAcceptedModel ? "Its checkpoint is in managed custody. Reconnect a scientific runtime for this new baseline before starting another run." : "The run proved this exact checkpoint passed the sealed gates. It remains a candidate until you explicitly promote it.")),
-      promote) : run.state === "completed" && run.decision === "retain_baseline" ? h("div", { class: "promotion-result is-retained" }, h("div", {}, h("div", { class: "eyebrow" }, "Final decision"), h("h3", {}, "The project baseline was retained"), h("p", {}, "No candidate met the complete acceptance contract, so the baseline pointer did not change."))) : null,
-    inspectReport ? h("div", { class: "report-action" }, inspectReport, h("p", {}, "Loads the persisted aggregate development evidence and provenance. It never reveals sealed rows or sealed scores.")) : null,
+        h("h3", {}, activeAcceptedModel ? "Accepted candidate is now the baseline" : "Candidate passed final acceptance")),
+      promote) : run.state === "completed" && run.decision === "retain_baseline" ? h("div", { class: "promotion-result is-retained" }, h("div", {}, h("div", { class: "eyebrow" }, "Final decision"), h("h3", {}, "Baseline retained"))) : null,
+    inspectReport ? h("div", { class: "report-action" }, inspectReport) : null,
     h("section", { class: "run-usage", "aria-label": "Recorded work" },
-      h("div", { class: "run-usage-heading" }, h("div", {}, h("div", { class: "eyebrow" }, "Recorded work"), h("p", {}, `Completed outputs compared with the ${limitKind} capacity. These are durable records, not a live utilization estimate.`))),
+      h("div", { class: "run-usage-heading" }, h("div", {}, h("div", { class: "eyebrow" }, "Recorded work"))),
       h("dl", { class: "run-metrics" },
         launchMetric("Models trained", `${recorded.models_trained} / ${reserved?.candidates ?? ceiling.maximum_candidates}`, `completed / ${limitKind}`),
         launchMetric("Training time", `${durationLabel(recorded.training_seconds)} / ${durationLabel(reserved?.training_seconds ?? ceiling.maximum_training_seconds)}`, `completed outputs / ${limitKind}`),
@@ -240,36 +225,35 @@ export function renderOptimization(workspace: ManagedWorkspace, state: Optimizat
   const authority = state.prepared?.authority ?? readiness?.optimizationAuthority;
   const summary = launchSummary(state, readiness, preview, unfinished, activeAcceptedModel);
   return h("div", { class: "page-content optimization-page" },
-    pageHeader(state.run ? "Optimization run" : "Start optimization", state.run ? "Follow one finite run from reservation through evidence-backed baseline decision." : "Turn this project's reviewed scientific inputs into one finite, recoverable run.", button("Refresh checks", actions.refresh, "ghost", "refresh")),
+    pageHeader(state.run ? "Optimization run" : "Start optimization", button("Refresh checks", actions.refresh, "ghost", "refresh")),
     state.error ? h("section", { class: "operation-failure", role: "alert" }, h("strong", {}, state.errorTitle ?? "Could not inspect launch readiness"), h("p", {}, state.error)) : null,
     state.loading && !state.executing ? h("div", { class: "workspace-progress", role: "status" }, "Checking persisted project state…") : null,
-    state.executing === "prepare" ? h("div", { class: "workspace-progress", role: "status" }, "Replaying the approved native evidence and verifying its artifact tree… This one-time integrity step can take several minutes for a large encoder project.") : null,
+    state.executing === "prepare" ? h("div", { class: "workspace-progress", role: "status" }, "Preparing run…") : null,
     state.executing && state.executing !== "prepare" && !state.run ? h("div", { class: "workspace-progress", role: "status" }, state.executing === "start" ? "Reserving the immutable run…" : "Updating the durable run record…") : null,
     report ? h("section", { class: "launch-summary" },
-      h("div", {}, h("div", { class: "eyebrow" }, state.run ? "Run outcome" : "Launch status"), h("h2", {}, summary.title), h("p", {}, summary.detail)),
+      h("div", {}, h("div", { class: "eyebrow" }, state.run ? "Run outcome" : "Launch status"), h("h2", {}, summary.title)),
       status(summary.label, summary.tone)) : null,
     state.run ? runPanel(state.run, state, actions, activeAcceptedModel) : null,
     readiness?.optimizationAuthority && !preview ? h("section", { class: "launch-definition" }, sectionHeader("Approved repair on record", tag("Recorded", "accent")),
       h("p", { class: "section-note" }, readiness.optimizationAuthority.hypotheses.join(" ")),
       facts([["Candidates", String(readiness.optimizationAuthority.candidateCount)], ["Qualified repair rows", readiness.optimizationAuthority.deltaRows.toLocaleString()], ["Training ceiling", `${readiness.optimizationAuthority.budget.maximum_training_seconds.toLocaleString()} seconds`], ["External calls", String(readiness.optimizationAuthority.budget.maximum_external_calls)], ["Sealed uses", String(readiness.optimizationAuthority.budget.maximum_sealed_uses)], ["Authority expires", localDateTimeLabel(readiness.optimizationAuthority.validUntil)]]),
-      h("p", { class: "section-note" }, readiness.optimizationAuthority.trainingSnapshotId ? "Its immutable training snapshot is recorded. Prepare replays the complete scientific lineage and resolves the final run definition." : "Prepare replays the complete scientific lineage, freezes the approved native delta as a logical training snapshot, and resolves the final run definition. It does not train, evaluate, expose sealed evidence, or contact a provider."),
       button(state.loading ? "Preparing…" : "Prepare approved run", actions.prepare, "primary", "arrow")) : null,
     readiness && !preview ? readinessList(readiness, actions, readiness.optimizationAuthority ? new Set(["optimization.preview"]) : new Set()) : null,
     preview ? h("section", { class: "launch-definition" }, sectionHeader("Exact run definition", tag("Immutable", "accent")),
       h("div", { class: "launch-objective" }, h("div", { class: "eyebrow" }, "Reviewed objective"), h("h3", {}, preview.runName),
-        authority?.hypotheses.length ? h("p", {}, authority.hypotheses.join(" ")) : h("p", {}, "The immutable definition references its reviewed proposal; no editable hypothesis is accepted at reservation.")),
+        authority?.hypotheses.length ? h("p", {}, authority.hypotheses.join(" ")) : null),
       h("dl", { class: "launch-metrics", "aria-label": "Hard run limits" },
         launchMetric("Candidates", `${preview.candidateCount}`, `${preview.candidateRecipes.length} frozen ${preview.candidateRecipes.length === 1 ? "recipe" : "recipes"}`),
         launchMetric("Iterations", `${preview.budget.maximum_iterations}`, "finite campaign"),
         launchMetric("Training", durationLabel(preview.budget.maximum_training_seconds), `${preview.budget.maximum_training_seconds.toLocaleString()} seconds ceiling`),
         launchMetric("Development", `${preview.budget.maximum_development_evaluations}`, "evaluations maximum")),
       h("div", { class: "launch-boundaries" },
-        h("section", {}, h("div", { class: "eyebrow" }, "Development evidence"), h("strong", {}, `${preview.developmentSuites.length} ${preview.developmentSuites.length === 1 ? "suite" : "suites"}`), h("p", {}, preview.developmentSuites.join(" · "))),
-        h("section", {}, h("div", { class: "eyebrow" }, "Final acceptance"), h("strong", {}, preview.sealedSuite), h("p", {}, "One separately confirmed sealed use after development eligibility."))),
-      h("div", { class: "external-work" }, h("div", { class: "eyebrow" }, "External work"), h("p", {}, externalWork(workspace, state, readiness))),
-      state.run ? null : h("div", { class: "launch-actions" }, button(preview.existingRun ? "Open existing run" : "Reserve optimization run", actions.start, "primary", "runs"), h("p", {}, reservationCopy(state, Boolean(preview.existingRun)))),
+        h("section", {}, h("div", { class: "eyebrow" }, "Development"), h("strong", {}, preview.developmentSuites.join(" · "))),
+        h("section", {}, h("div", { class: "eyebrow" }, "Sealed"), h("strong", {}, preview.sealedSuite), tag("Approval required", "warning")),
+        h("section", {}, h("div", { class: "eyebrow" }, "External calls"), h("strong", {}, String(preview.budget.maximum_external_calls)))),
+      state.run ? null : h("div", { class: "launch-actions" }, button(preview.existingRun ? "Open existing run" : "Reserve optimization run", actions.start, "primary", "runs")),
       h("div", { class: "launch-disclosures" }, candidateRecipe(preview),
         details("Inspect immutable identities and complete limits", facts([["Baseline", runBaseline?.name ?? active?.name ?? workspace.manifest.name + " baseline"], ["Training snapshot", preview.trainingSnapshotId], ["Benchmark generation", preview.benchmarkGenerationId], ["Evaluation time ceiling", `${preview.maximumEvaluationSeconds.toLocaleString()} seconds`], ...budgetFacts(preview)]))),
-      state.prepared ? h("p", { class: "section-note" }, state.prepared.createdTrainingSnapshot ? "The approved logical training snapshot was created during preparation." : "The existing approved logical training snapshot was reused exactly.") : null) : null,
+      ) : null,
   );
 }

@@ -28,11 +28,17 @@ export function button(label: string, action: () => void, kind = "secondary", sy
 }
 export function tag(label: string, tone = "neutral"): HTMLElement { return h("span", { class: `tag ${tone}` }, label); }
 export function status(label: string, tone = "neutral"): HTMLElement { return h("span", { class: `status ${tone}` }, h("span", { class: "status-dot", "aria-hidden": "true" }), label); }
-export function pageHeader(title: string, description: string, action?: Child): HTMLElement {
-  return h("header", { class: "page-heading" }, h("div", {}, h("h1", { tabindex: "-1" }, title), h("p", {}, description)), action ?? null);
+export function pageHeader(title: string, descriptionOrAction?: string | Child, action?: Child): HTMLElement {
+  const description = typeof descriptionOrAction === "string" ? descriptionOrAction : undefined;
+  const trailing = typeof descriptionOrAction === "string" ? action : descriptionOrAction;
+  return h("header", { class: "page-heading" }, h("div", {}, h("h1", { tabindex: "-1" }, title), description ? h("p", {}, description) : null), trailing ?? null);
 }
 export function sectionHeader(title: string, extra?: Child): HTMLElement { return h("div", { class: "section-heading" }, h("h2", {}, title), extra ?? null); }
-export function empty(title: string, description: string, action?: Child): HTMLElement { return h("div", { class: "empty-state" }, icon("search"), h("h2", {}, title), h("p", {}, description), action ?? null); }
+export function empty(title: string, descriptionOrAction?: string | Child, action?: Child): HTMLElement {
+  const description = typeof descriptionOrAction === "string" ? descriptionOrAction : undefined;
+  const trailing = typeof descriptionOrAction === "string" ? action : descriptionOrAction;
+  return h("div", { class: "empty-state" }, icon("search"), h("h2", {}, title), description ? h("p", {}, description) : null, trailing ?? null);
+}
 export function metricHeader(key: string, help: (key: string) => void, direction?: string): HTMLElement {
   const info = metricInfo(key);
   return h("button", { type: "button", class: "metric-heading", onClick: () => help(key), "aria-label": `About ${info.label}` }, info.label, h("span", { class: "metric-subtitle" }, info.short + (direction === "lower_is_better" ? " ↓" : direction === "higher_is_better" ? " ↑" : "")));

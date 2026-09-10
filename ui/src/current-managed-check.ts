@@ -41,7 +41,7 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
     const snapshotId = readiness.preparedOptimization?.launchPreview.trainingSnapshotId ?? readiness.launchPreview?.trainingSnapshotId ?? readiness.optimizationAuthority?.trainingSnapshotId;
     if (snapshotId) {
       await evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(document.querySelector('.scientific-data-card'))resolve(true);else if(n++>1000)reject(new Error('Real training snapshot did not render'));else setTimeout(poll,20)};poll()})");
-      await check("document.querySelector('.scientific-data-card').textContent.includes('training snapshot') && document.querySelector('.scientific-data-card').textContent.includes('custody records')");
+      await check("document.querySelector('.scientific-data-card').textContent.includes('training snapshot') && !document.querySelector('.scientific-data-card p')");
     }
     await capture("managed-current-datasets");
     const launch = readiness.preparedOptimization?.launchPreview ?? readiness.launchPreview;
@@ -49,7 +49,7 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
     if (launch) {
       await evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(document.querySelector('.evaluation-plan'))resolve(true);else if(n++>1000)reject(new Error('Real evaluation plan did not render'));else setTimeout(poll,20)};poll()})");
       await check(`document.querySelectorAll('.evaluation-plan-row').length === ${launch.developmentSuites.length + 1}`);
-      await check("document.querySelector('.page-heading h1').textContent === 'Evaluation' && document.querySelector('.evaluation-plan').textContent.includes('not candidate results') && document.querySelector('.evaluation-plan').textContent.includes('Separate authorization')");
+      await check("document.querySelector('.page-heading h1').textContent === 'Evaluation' && !document.querySelector('.page-heading p') && !document.querySelector('.evaluation-plan p') && document.querySelector('.evaluation-plan').textContent.includes('approval required')");
     }
     await check("document.querySelectorAll('.benchmark-section').length > 0 && !document.getElementById('page').textContent.includes('No run evaluations recorded yet')");
     await capture("managed-current-evaluation");

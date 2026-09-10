@@ -127,10 +127,10 @@ export async function runSmokeChecks(window: BrowserWindow, output: string, harn
   const open = async (id: string) => { await click('[data-project-id="' + id + '"]'); await loaded(); };
   await add(draft);
   const draftId = harness.registry.read().selectedId!;
-  await check("an empty project is a valid first-use state", "document.querySelector('.empty-baseline') && document.getElementById('page').textContent.includes('No baseline recorded yet')");
+  await check("an empty project is a valid first-use state", "document.querySelector('.empty-baseline') && document.getElementById('page').textContent.includes('No baseline')");
   await screenshot("empty-project");
-  await nav("runs"); await check("empty project run page has its own purpose", "document.querySelector('#page h1').textContent === 'Runs' && document.getElementById('page').textContent.includes('No runs recorded yet')");
-  await nav("benchmarks"); await check("empty project benchmark page has its own purpose", "document.querySelector('#page h1').textContent === 'Benchmarks' && document.getElementById('page').textContent.includes('No benchmark results recorded yet')");
+  await nav("runs"); await check("empty project run page has its own purpose", "document.querySelector('#page h1').textContent === 'Runs' && document.getElementById('page').textContent.includes('No runs')");
+  await nav("benchmarks"); await check("empty project evaluation page has its own purpose", "document.querySelector('#page h1').textContent === 'Evaluation' && document.getElementById('page').textContent.includes('No evaluations')");
   await add(support);
   const supportId = harness.registry.read().selectedId!;
   await check("generic project uses its own model and metrics", "document.querySelector('.baseline-name h2').textContent === 'support-encoder' && document.querySelector('.candidate-table thead').textContent.includes('Macro F1') && !document.querySelector('.candidate-table').textContent.includes('MRR')");
@@ -159,7 +159,7 @@ export async function runSmokeChecks(window: BrowserWindow, output: string, harn
   await open(draftId);
   writeExperimentDatabase(join(draft, "prepared.db"), experimentFixture("draft"), false);
   await click("#reload-evidence"); await loaded(); await nav("models");
-  await check("baseline-only project has a useful no-candidates state", "document.querySelector('.baseline-name') && document.getElementById('page').textContent.includes('No candidates recorded yet') && document.querySelectorAll('[data-candidate-id]').length === 0");
+  await check("baseline-only project has a useful no-candidates state", "document.querySelector('.baseline-name') && document.getElementById('page').textContent.includes('No candidates') && document.querySelectorAll('[data-candidate-id]').length === 0");
   await screenshot("baseline-only");
   await open(semanticId);
   const moved = join(root, "semantic-moved"); renameSync(semantic, moved);
