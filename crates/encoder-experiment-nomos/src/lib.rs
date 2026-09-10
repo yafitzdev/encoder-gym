@@ -1,5 +1,6 @@
 //! Compiled adapter for the isolated Nomos retrieval-ranking production pilot.
 
+mod benchmark;
 mod progress;
 mod repair_delta;
 mod training_data;

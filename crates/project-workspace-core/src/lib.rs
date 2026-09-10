@@ -7,11 +7,13 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 mod activity;
+mod benchmark;
 mod models;
 mod providers;
 mod readiness;
 mod scientific;
 mod training_data;
+pub use benchmark::{BenchmarkSource, ProjectBenchmarkVersion};
 pub use training_data::{ModelDatasetLink, ModelTrainingEvidence, TrainingDatasetInput};
 
 pub use activity::{

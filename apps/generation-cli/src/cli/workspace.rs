@@ -3,6 +3,22 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 #[derive(Debug, Subcommand)]
+pub enum WorkspaceBenchmarkCommand {
+    /// List immutable versions of the project's shared evaluation benchmark.
+    List,
+    /// Preview the benchmark pinned by a recorded experiment without writing.
+    PreviewRun { run_id: Uuid },
+    /// Adopt a recorded experiment's benchmark; never executes evaluation.
+    AdoptRun {
+        run_id: Uuid,
+        #[arg(long)]
+        expected_parent: Option<Uuid>,
+    },
+    /// Reverify a catalog version against its original scientific protocol.
+    Inspect { version_id: Uuid },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum WorkspaceDatasetCommand {
     /// List the project's base dataset, variants, and version summaries.
     List,
@@ -171,6 +187,12 @@ pub enum WorkspaceCommand {
         folder: PathBuf,
         #[command(subcommand)]
         command: WorkspaceDatasetCommand,
+    },
+    /// Manage one shared, versioned evaluation benchmark for this project.
+    Benchmark {
+        folder: PathBuf,
+        #[command(subcommand)]
+        command: WorkspaceBenchmarkCommand,
     },
     /// Inspect and fingerprint a local safetensors encoder checkpoint.
     InspectModel { source: PathBuf },

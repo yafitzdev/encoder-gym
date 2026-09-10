@@ -34,6 +34,7 @@ const operationLabels: Record<string, string> = {
   "dataset.revise": "Dataset version saved",
   "dataset.adopt_baseline": "Recorded training data linked",
   "dataset.adopt_run": "Run training data linked",
+  "benchmark.adopt_run": "Benchmark version saved",
   "optimization.authorize_external": "External calls authorized",
   "optimization.authorize_sealed": "Sealed evaluation authorized",
   "optimization.cancel": "Run cancelled",

@@ -4,6 +4,7 @@
 //! immutable identities, finite candidate authority, normalized metric contracts, deterministic
 //! comparison, and the development/sealed evidence boundary.
 
+pub mod benchmark;
 pub mod domain;
 pub mod journal;
 pub mod metrics;

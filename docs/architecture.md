@@ -776,3 +776,14 @@ Nomos adapter; generic folder organization does not add another execution
 backend. Training, evaluation, approval, and orchestration continue through
 the same explicit CLI contracts. See
 `ui/README.md` for supported evidence, integration boundaries, and tests.
+
+The shared project benchmark catalog references an `encoder-experiment-core`
+definition that excludes model/training/run identity and pins suite membership,
+roles, the existing metric contract, and adapter-normalized evaluator context.
+`project-workspace-core` depends on this domain contract for its numbered
+immutable versions; it does not implement metric or acceptance policy.
+`project-workspace-local` owns catalog persistence and source-binding checks.
+CLI composition verifies original scientific protocols and asks the native
+adapter to normalize evaluation settings without opening native test files.
+Catalog versions do not replace benchmark generations, qualification, exposure
+or run authorization. See `project-benchmark-spec.md`.

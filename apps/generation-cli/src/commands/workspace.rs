@@ -1,3 +1,4 @@
+mod benchmarks;
 mod completed_models;
 mod dataset_versions;
 
@@ -258,6 +259,9 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
         }
         WorkspaceCommand::Dataset { folder, command } => {
             dataset_versions::execute(&folder, command).await
+        }
+        WorkspaceCommand::Benchmark { folder, command } => {
+            benchmarks::execute(&folder, command).await
         }
         WorkspaceCommand::Promote {
             folder,

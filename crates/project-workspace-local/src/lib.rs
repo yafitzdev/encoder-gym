@@ -1,5 +1,6 @@
 //! Local project custody. No training execution or dataset split decisions.
 mod activity;
+pub mod benchmarks;
 pub mod dataset_versions;
 mod datasets;
 mod files;
@@ -54,6 +55,7 @@ pub struct ManagedWorkspace {
     pub manifest: ProjectManifest,
     pub datasets: Vec<DatasetImport>,
     pub model_dataset_links: Vec<project_workspace_core::ModelDatasetLink>,
+    pub benchmark_versions: Vec<project_workspace_core::ProjectBenchmarkVersion>,
     /// Absent only when an older workspace requires an explicit registry upgrade.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_catalog: Option<ModelCatalog>,
@@ -258,6 +260,7 @@ pub async fn open_workspace(folder: &Path, verify: bool) -> Result<ManagedWorksp
     let model_catalog = load_model_catalog(&mut database, &manifest).await?;
     let scientific_binding = load_scientific_binding(&mut database, &manifest).await?;
     let provider_catalog = load_provider_catalog(&mut database, &manifest).await?;
+    let benchmark_versions = benchmarks::load(&mut database, manifest.id).await?;
     let model_dataset_links =
         model_datasets::load_links(&mut database, &root, model_catalog.as_ref(), &datasets).await?;
     database.close().await?;
@@ -289,6 +292,7 @@ pub async fn open_workspace(folder: &Path, verify: bool) -> Result<ManagedWorksp
         manifest,
         datasets,
         model_dataset_links,
+        benchmark_versions,
         model_catalog,
         scientific_binding,
         provider_catalog,

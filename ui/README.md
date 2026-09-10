@@ -105,6 +105,11 @@ inventory fingerprints are connected through the recorded source-model identity.
 
 Benchmark version management, baseline controls, and automatic agent execution
 remain tracked in [the product contract](../docs/encoder-workspace-product.md).
+The shared-benchmark domain, immutable project catalog, and read-only
+preview/inspection plus adoption CLI are available under `workspace benchmark`;
+see [project benchmarks](../docs/project-benchmark-spec.md). The existing
+Evaluation screen is not yet wired to that catalog. Catalog adoption does not
+run evaluation or renew protected-test authority.
 
 Managed onboarding calls the project-owned `synth workspace` commands. It
 accepts self-contained BERT-family safetensors encoder bundles, preserving

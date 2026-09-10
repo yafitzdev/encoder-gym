@@ -5,8 +5,8 @@ use uuid::Uuid;
 #[path = "cli/workspace.rs"]
 mod workspace;
 pub use workspace::{
-    ManagedOptimizeCommand, ManagedProviderCommand, WorkspaceActivityCommand, WorkspaceCommand,
-    WorkspaceDatasetCommand,
+    ManagedOptimizeCommand, ManagedProviderCommand, WorkspaceActivityCommand,
+    WorkspaceBenchmarkCommand, WorkspaceCommand, WorkspaceDatasetCommand,
 };
 
 #[derive(Debug, Parser)]

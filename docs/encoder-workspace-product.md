@@ -77,8 +77,10 @@ decision. No unbounded work or inferred spending.
    viewer implemented. Immutable model links and imported-baseline dataset
    adoption and completed-candidate dataset adoption are implemented;
    new manually created versions are not historical training evidence.
-3. Shared benchmark — pending. Version selection and one results table per exact
-   benchmark version. Verify incompatibility and sealed isolation.
+3. Shared benchmark — model-independent definition, immutable project versions,
+   and preview/adoption/inspection CLI implemented. Desktop version selection,
+   comparable results across owned bindings, and test-data onboarding remain
+   pending. Verify incompatibility and sealed isolation end to end.
 4. Automatic bounded optimization — pending. Persisted launch scope, agent and
    generation integration, routine continuation, output registration, recovery.
    Verify real CLI composition using deterministic offline fakes.
@@ -252,3 +254,26 @@ and keep outstanding requirements visible.
   Shared benchmark versions/results, model-level baseline promotion/restoration,
   and the automatic bounded agent journey with complete offline end-to-end
   acceptance remain outstanding.
+
+### Shared benchmark catalog — 11 September 2026
+
+- Experiment core now owns a model-independent benchmark definition. It pins
+  suite membership, roles, metric rules and adapter-normalized evaluation
+  configuration. Baseline identities, training recipes and run IDs are excluded.
+- Managed projects retain immutable numbered versions and original scientific
+  provenance. The CLI previews, adopts, lists and deeply inspects recorded
+  definitions without running evaluation or reading native holdout files.
+- Pure, persistence and CLI process tests cover compatible model changes,
+  incompatible evaluator changes, sealed-score exclusion, exact source binding,
+  immutable history, stale writes, retries, tampering and folder movement.
+- All four Rust gates passed, along with UI typecheck/build, 61 unit tests and
+  the four-launch offline Electron suite. Local outputs are recorded in
+  `target/project-benchmark-rust-tests.log`, `target/project-benchmark-ui-tests.log`
+  and `target/project-benchmark-electron-tests.log`.
+- A read-only preview of Nomos experiment
+  `aad51ade-b04f-41c2-bbeb-4916fc1ae602` reproduced its shared definition in
+  0.13 seconds, with byte-identical custody and scientific databases. No real
+  benchmark version was adopted and no evaluation, provider or holdout work ran.
+- Comparable model results across historical bindings, desktop integration and
+  test-data onboarding remain required; this catalog alone does not complete
+  the Evaluation page or authorize an optimization.

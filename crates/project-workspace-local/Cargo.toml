@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 project-workspace-core.workspace = true
 dataset-core.workspace = true
+encoder-experiment-core.workspace = true
 artifact-core.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
