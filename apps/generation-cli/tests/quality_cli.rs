@@ -1183,7 +1183,12 @@ fn accept_optional_quality_connection(
     let deadline = Instant::now() + timeout;
     loop {
         match listener.accept() {
-            Ok((stream, _)) => return Ok(Some(stream)),
+            Ok((stream, _)) => {
+                stream
+                    .set_nonblocking(false)
+                    .map_err(|error| format!("provider blocking stream failed: {error}"))?;
+                return Ok(Some(stream));
+            }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 if Instant::now() >= deadline {
                     return Ok(None);
@@ -1209,6 +1214,11 @@ fn accept_quality_connection(listener: &TcpListener) -> Result<TcpStream, String
             Err(error) => return Err(format!("provider accept failed: {error}")),
         }
     };
+    // Windows accepted sockets can inherit the listener's nonblocking mode.
+    // The request reader uses a bounded blocking read, not readiness polling.
+    stream
+        .set_nonblocking(false)
+        .map_err(|error| format!("provider blocking stream failed: {error}"))?;
     Ok(stream)
 }
 
