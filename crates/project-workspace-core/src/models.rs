@@ -502,14 +502,14 @@ impl ModelCatalog {
         require(
             artifact.project_id == self.project_id
                 && artifact.parent_model_id == Some(self.active_model().id)
-                && !self.artifacts.iter().any(|value| value.id == artifact.id)
+                && self.artifacts.iter().all(|value| value.id != artifact.id || value == &artifact)
                 && !self.baseline_revisions.iter().any(|revision| {
                     matches!(
                         &revision.change,
                         BaselineChange::Promotion { decision_id: existing, .. } if existing == &decision_id
                     )
                 }),
-            "A promoted model must be a new project-local child of the active baseline with a new decision.",
+            "A promoted model must be an unchanged project-local child of the active baseline with a new decision.",
         )?;
         let revision = BaselineRevision::promotion(
             revision_id,
@@ -527,9 +527,31 @@ impl ModelCatalog {
             created_at,
         )?;
         let mut next = self.clone();
-        next.artifacts.push(artifact);
+        if !next.artifacts.iter().any(|value| value.id == artifact.id) {
+            next.artifacts.push(artifact);
+        }
         next.baseline_revisions.push(revision);
         next.active_baseline_revision_id = revision_id;
+        next.validate()?;
+        Ok(next)
+    }
+
+    /// Register an output independently of its evaluation or baseline status.
+    pub fn with_artifact(&self, artifact: ModelArtifact) -> Result<Self, Invalid> {
+        self.validate()?;
+        if let Some(existing) = self.artifacts.iter().find(|value| value.id == artifact.id) {
+            require(
+                existing == &artifact,
+                "A model identity cannot change its artifact.",
+            )?;
+            return Ok(self.clone());
+        }
+        require(
+            artifact.project_id == self.project_id,
+            "A model must belong to this project.",
+        )?;
+        let mut next = self.clone();
+        next.artifacts.push(artifact);
         next.validate()?;
         Ok(next)
     }
@@ -714,7 +736,17 @@ mod tests {
         )
         .unwrap();
         let decision_id = format!("experiment-final:{}:9", Uuid::new_v4());
-        let promoted = catalog
+        let registered = catalog.with_artifact(candidate.clone()).unwrap();
+        assert_eq!(registered.active_model(), &baseline);
+        assert_eq!(registered.baseline_revisions, catalog.baseline_revisions);
+        assert_eq!(
+            registered.with_artifact(candidate.clone()).unwrap(),
+            registered
+        );
+        let mut changed = candidate.clone();
+        changed.source_revision = Some("changed".into());
+        assert!(registered.with_artifact(changed).is_err());
+        let promoted = registered
             .with_promotion(
                 candidate.clone(),
                 Uuid::new_v4(),
@@ -726,6 +758,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(promoted.active_model(), &candidate);
+        assert_eq!(promoted.artifacts.len(), 2);
         assert_eq!(promoted.baseline_revisions.len(), 2);
         assert!(matches!(
             &promoted.active_revision().change,

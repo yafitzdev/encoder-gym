@@ -1,3 +1,5 @@
+mod completed_models;
+
 use crate::{
     cli::{
         EncoderOptimizeAuthorizeArgs, EncoderOptimizeCancelArgs, EncoderOptimizeCommand,
@@ -249,6 +251,10 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
             print(&prepare_optimization(&folder).await?)
         }
         WorkspaceCommand::Optimize { folder, command } => managed_optimize(&folder, *command).await,
+        WorkspaceCommand::RegisterRunModels { folder, run_id } => {
+            completed_models::register(&folder, run_id).await?;
+            print(&open_workspace(&folder, false).await?)
+        }
         WorkspaceCommand::Promote {
             folder,
             run_id,
@@ -522,6 +528,10 @@ async fn managed_optimize(
     folder: &std::path::Path,
     command: ManagedOptimizeCommand,
 ) -> anyhow::Result<()> {
+    let completed_run = match &command {
+        ManagedOptimizeCommand::Resume { run_id } => Some(*run_id),
+        _ => None,
+    };
     // Polling observes journal state; it must not rehash the model and datasets.
     let passive = matches!(
         command,
@@ -566,7 +576,11 @@ async fn managed_optimize(
         project.id,
         &project.fingerprint,
     )
-    .await
+    .await?;
+    if let Some(run_id) = completed_run {
+        completed_models::register(folder, run_id).await?;
+    }
+    Ok(())
 }
 
 async fn promote_accepted(

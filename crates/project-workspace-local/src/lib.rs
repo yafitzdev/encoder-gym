@@ -3,6 +3,7 @@ mod activity;
 mod datasets;
 mod files;
 mod model;
+mod model_registration;
 
 use std::{fs, path::Path};
 
@@ -24,6 +25,7 @@ pub use activity::{
 pub use datasets::{DatasetPreview, backfill_nomos, import_dataset, inspect_dataset};
 use files::{canonical_plain, contained, copy_verified, hash, json, plain, write_new};
 pub use model::inspect_model;
+pub use model_registration::{CompletedModelRegistration, register_completed_model};
 
 #[derive(Debug, Clone)]
 pub struct AcceptedModelPromotion {
@@ -508,7 +510,7 @@ pub async fn record_accepted_model_promotion(
     let relative = format!("models/candidates/{digest}");
     let root = Path::new(&workspace.folder);
     publish_model_copy(&source_model, root, &relative)?;
-    let artifact = ModelArtifact::trained(
+    let mut artifact = ModelArtifact::trained(
         workspace.manifest.id,
         Uuid::new_v4(),
         request.name,
@@ -523,6 +525,24 @@ pub async fn record_accepted_model_promotion(
         request.source_revision,
         Utc::now(),
     )?;
+    if let Some(existing) = catalog.artifacts.iter().find(|value| {
+        value.source_model == artifact.source_model
+            && value.producing_run.as_ref().map(|value| &value.id)
+                == artifact.producing_run.as_ref().map(|value| &value.id)
+    }) {
+        ensure!(
+            existing.fingerprint == artifact.fingerprint
+                && existing.parent_model_id == artifact.parent_model_id
+                && existing.training_snapshot == artifact.training_snapshot
+                && existing.trainer == artifact.trainer
+                && existing.effective_configuration_fingerprint
+                    == artifact.effective_configuration_fingerprint
+                && existing.source_revision == artifact.source_revision,
+            "The accepted model differs from its registered output."
+        );
+        artifact = existing.clone();
+    }
+    let artifact_id = artifact.id;
     let next = catalog.with_promotion(
         artifact,
         Uuid::new_v4(),
@@ -534,8 +554,9 @@ pub async fn record_accepted_model_promotion(
     )?;
     let artifact = next
         .artifacts
-        .last()
-        .expect("promotion appends an artifact");
+        .iter()
+        .find(|value| value.id == artifact_id)
+        .expect("promotion references an artifact");
     let revision = next
         .baseline_revisions
         .last()
@@ -555,7 +576,7 @@ pub async fn record_accepted_model_promotion(
     );
     sqlx::query(
         "INSERT INTO model_artifacts \
-         (id, project_id, content_fingerprint, origin, metadata_json) VALUES (?, ?, ?, ?, ?)",
+         (id, project_id, content_fingerprint, origin, metadata_json) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING",
     )
     .bind(artifact.id.to_string())
     .bind(artifact.project_id.to_string())

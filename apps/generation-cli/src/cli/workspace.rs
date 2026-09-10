@@ -147,6 +147,12 @@ pub enum WorkspaceCommand {
     },
     /// Freeze the one current approved repair and create its managed run definition.
     PrepareOptimization { folder: PathBuf },
+    /// Bring completed optimization checkpoints into project custody, including rejected models.
+    RegisterRunModels {
+        folder: PathBuf,
+        #[arg(long)]
+        run_id: Uuid,
+    },
     /// Operate the bound finite optimizer through fixed project-scoped intents.
     Optimize {
         folder: PathBuf,

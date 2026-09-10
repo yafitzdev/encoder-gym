@@ -111,14 +111,21 @@ fn validate_modules(root: &Path) -> Result<()> {
         let path = module.get("path").and_then(Value::as_str).unwrap_or("");
         if index == 0 {
             ensure!(
-                kind == "sentence_transformers.models.Transformer" && path.is_empty(),
+                [
+                    "sentence_transformers.models.Transformer",
+                    "sentence_transformers.base.modules.transformer.Transformer"
+                ]
+                .contains(&kind)
+                    && path.is_empty(),
                 "The first module must use the local root transformer."
             );
         } else {
             ensure!(
                 [
                     "sentence_transformers.models.Pooling",
-                    "sentence_transformers.models.Normalize"
+                    "sentence_transformers.models.Normalize",
+                    "sentence_transformers.sentence_transformer.modules.pooling.Pooling",
+                    "sentence_transformers.base.modules.normalize.Normalize"
                 ]
                 .contains(&kind),
                 "Unsupported sentence-transformer module: {kind}"

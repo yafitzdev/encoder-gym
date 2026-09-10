@@ -305,6 +305,17 @@ struct RecordedOptimizationUsage {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct CompletedModelEvidence {
+    pub project: ExternalProjectSnapshot,
+    pub candidate: TrainingCandidate,
+    pub model: ModelArtifactIdentity,
+    pub training_snapshot_id: Uuid,
+    pub training_snapshot_fingerprint: String,
+    pub experiment_run_id: Uuid,
+    pub training_receipt_fingerprint: String,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct AcceptedPromotionEvidence {
     pub project: ExternalProjectSnapshot,
     pub candidate: TrainingCandidate,
@@ -1829,6 +1840,56 @@ async fn load_launch(store: &SqliteExperimentStore, run_id: Uuid) -> anyhow::Res
         run,
         view,
     })
+}
+
+/// Project outputs are durable artifacts even when development rejects them.
+pub(crate) async fn completed_model_evidence(
+    store: &SqliteExperimentStore,
+    run_id: Uuid,
+    expected_project: &ExternalProjectSnapshot,
+) -> anyhow::Result<Vec<CompletedModelEvidence>> {
+    let launch = load_launch(store, run_id).await?;
+    anyhow::ensure!(
+        launch.definition.project.id == expected_project.id
+            && launch.definition.project.fingerprint == expected_project.fingerprint,
+        "The optimization belongs to another scientific project."
+    );
+    let Some(campaign) = load_optional_campaign(store, &launch).await? else {
+        return Ok(Vec::new());
+    };
+    let Some(experiment) = campaign.experiment else {
+        return Ok(Vec::new());
+    };
+    anyhow::ensure!(
+        experiment.run_id == launch.run.reserved_experiment_run_id,
+        "The optimization references another experiment."
+    );
+    let events = store.load_events(experiment.run_id).await?;
+    let mut outputs = Vec::new();
+    for candidate in &launch.definition.candidates {
+        let Some(output) = experiment
+            .candidates
+            .get(&candidate.id)
+            .and_then(|value| value.train_output.as_ref())
+        else {
+            continue;
+        };
+        candidate.validate_integrity(expected_project)?;
+        let receipt = events.iter().find(|event| matches!(&event.event,
+            ExperimentEventKind::CandidateTrainingCompleted { candidate_id, output: recorded }
+                if *candidate_id == candidate.id && recorded.model == output.model
+        )).context("The completed model has no training receipt.")?;
+        outputs.push(CompletedModelEvidence {
+            project: expected_project.clone(),
+            candidate: candidate.clone(),
+            model: output.model.clone(),
+            training_snapshot_id: launch.definition.training_snapshot.id,
+            training_snapshot_fingerprint: launch.definition.training_snapshot.fingerprint.clone(),
+            experiment_run_id: experiment.run_id,
+            training_receipt_fingerprint: receipt.fingerprint.clone(),
+        });
+    }
+    Ok(outputs)
 }
 
 /// Reproduce the complete accepted scientific lineage for one promotion.

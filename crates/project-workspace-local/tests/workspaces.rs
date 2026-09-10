@@ -6,10 +6,11 @@ use project_workspace_core::{
     ScientificBinding, ScientificStoreBinding, SecretReference,
 };
 use project_workspace_local::{
-    AcceptedModelPromotion, AppendActivity, append_activity, backfill_nomos, create_workspace,
-    export_activity, import_dataset, initialize_activity, inspect_dataset, inspect_model,
-    open_workspace, read_action, read_activity, record_accepted_model_promotion,
-    record_provider_catalog, record_scientific_binding, upgrade_workspace,
+    AcceptedModelPromotion, AppendActivity, CompletedModelRegistration, append_activity,
+    backfill_nomos, create_workspace, export_activity, import_dataset, initialize_activity,
+    inspect_dataset, inspect_model, open_workspace, read_action, read_activity,
+    record_accepted_model_promotion, record_provider_catalog, record_scientific_binding,
+    register_completed_model, upgrade_workspace,
 };
 use serde_json::json;
 use std::fs;
@@ -147,6 +148,47 @@ async fn project_activity_is_append_only_hash_chained_and_exportable_jsonl() {
         .collect::<Vec<_>>();
     assert_eq!(lines.len(), 3);
     assert!(lines.iter().all(|event| event.action_id == action_id));
+}
+
+#[test]
+fn native_trainer_module_paths_are_supported_without_accepting_custom_modules() {
+    let temp = TempDir::new().unwrap();
+    let source = model(temp.path());
+    fs::create_dir(source.join("1_Pooling")).unwrap();
+    fs::create_dir(source.join("2_Normalize")).unwrap();
+    fs::write(source.join("1_Pooling/config.json"), b"{}").unwrap();
+    for kinds in [
+        [
+            "sentence_transformers.models.Transformer",
+            "sentence_transformers.models.Pooling",
+            "sentence_transformers.models.Normalize",
+        ],
+        [
+            "sentence_transformers.base.modules.transformer.Transformer",
+            "sentence_transformers.sentence_transformer.modules.pooling.Pooling",
+            "sentence_transformers.base.modules.normalize.Normalize",
+        ],
+    ] {
+        let modules = json!([
+            {"idx":0,"path":"","type":kinds[0]},
+            {"idx":1,"path":"1_Pooling","type":kinds[1]},
+            {"idx":2,"path":"2_Normalize","type":kinds[2]}
+        ]);
+        fs::write(
+            source.join("modules.json"),
+            serde_json::to_vec(&modules).unwrap(),
+        )
+        .unwrap();
+        assert!(inspect_model(&source).is_ok());
+        let mut unsafe_module = modules;
+        unsafe_module[0]["type"] = json!("custom.Transformer");
+        fs::write(
+            source.join("modules.json"),
+            serde_json::to_vec(&unsafe_module).unwrap(),
+        )
+        .unwrap();
+        assert!(inspect_model(&source).is_err());
+    }
 }
 
 fn digest(character: char) -> String {
@@ -424,10 +466,49 @@ async fn accepted_model_promotion_copies_once_and_advances_the_baseline_atomical
         actor: "fixture-operator".into(),
         reason: "Passed explicit sealed acceptance".into(),
     };
+    let registration = CompletedModelRegistration {
+        parent_model_id: created.model_catalog.as_ref().unwrap().active_model().id,
+        name: request.name.clone(),
+        source_model: request.source_model.clone(),
+        source_model_format: request.source_model_format.clone(),
+        source_model_bytes: request.source_model_bytes,
+        producing_run: request.producing_run.clone(),
+        training_snapshot: request.training_snapshot.clone(),
+        trainer: request.trainer.clone(),
+        effective_configuration_fingerprint: request.effective_configuration_fingerprint.clone(),
+        source_revision: request.source_revision.clone(),
+    };
+    let registered = register_completed_model(&destination, &candidate, registration.clone())
+        .await
+        .unwrap();
+    let registered_catalog = registered.model_catalog.as_ref().unwrap();
+    assert_eq!(registered_catalog.artifacts.len(), 2);
+    assert_eq!(registered_catalog.active_baseline_revision_id, expected);
+    assert_eq!(registered_catalog.baseline_revisions.len(), 1);
+    let again = register_completed_model(&destination, &candidate, registration.clone())
+        .await
+        .unwrap();
+    assert_eq!(again.model_catalog.as_ref().unwrap(), registered_catalog);
+    let mut invalid = registration;
+    invalid.training_snapshot.fingerprint = digest('9');
+    assert!(
+        register_completed_model(&destination, &candidate, invalid)
+            .await
+            .is_err()
+    );
     let promoted = record_accepted_model_promotion(&destination, &candidate, request.clone())
         .await
         .unwrap();
     let catalog = promoted.model_catalog.as_ref().unwrap();
+    assert_eq!(
+        catalog.artifacts.len(),
+        2,
+        "promotion reuses the registered model"
+    );
+    assert_eq!(
+        catalog.active_model().id,
+        registered_catalog.artifacts[1].id
+    );
     assert_eq!(catalog.baseline_revisions.len(), 2);
     assert_eq!(catalog.active_model().name, "Accepted candidate");
     assert_eq!(
