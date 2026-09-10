@@ -228,9 +228,12 @@ export function mount(): void {
     const id = selection.selectedId;
     if (!id || view.optimization.loading) return;
     const state = view.optimization;
-    state.loading = true; state.executing = request.action; state.error = undefined; state.errorTitle = undefined;
+    state.loading = true; state.executing = request.action; state.operationStartedAt = Date.now(); state.error = undefined; state.errorTitle = undefined;
     if (request.action !== "status") state.report = undefined;
     render();
+    const elapsedTicker = request.action === "start" ? window.setInterval(() => {
+      if (selection.selectedId === id && state.executing === "start") render();
+    }, 1000) : undefined;
     let polling = request.action === "resume";
     const poll = async (): Promise<void> => {
       if (request.action !== "resume") return;
@@ -262,7 +265,12 @@ export function mount(): void {
       state.errorTitle = ({ start: "Could not reserve the optimization run", resume: "Could not execute this stage", "authorize-sealed": "Could not authorize final acceptance", cancel: "Could not cancel the run" } as Record<string, string>)[request.action] ?? "Could not update the optimization run";
       state.error = message(error);
     }
-    finally { polling = false; state.loading = false; state.executing = undefined; if (selection.selectedId === id) render(); }
+    finally {
+      polling = false;
+      if (elapsedTicker !== undefined) window.clearInterval(elapsedTicker);
+      state.loading = false; state.executing = undefined; state.operationStartedAt = undefined;
+      if (selection.selectedId === id) render();
+    }
   }
   async function promoteAccepted(): Promise<void> {
     const id = selection.selectedId, run = view.optimization.run, managed = workspace()?.managed;

@@ -7,6 +7,7 @@ import { h } from "./dom.js";
 export interface OptimizationPageState {
   loading: boolean;
   executing?: string;
+  operationStartedAt?: number;
   error?: string;
   errorTitle?: string;
   readiness?: ManagedReadiness;
@@ -57,6 +58,12 @@ function durationLabel(seconds: number): string {
   if (seconds % 3600 === 0) return `${seconds / 3600}h`;
   if (seconds % 60 === 0) return `${seconds / 60}m`;
   return `${seconds}s`;
+}
+function elapsedLabel(startedAt: number | undefined): string {
+  if (startedAt === undefined) return "";
+  const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  return minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
 }
 function journalSpanLabel(createdAt: string, updatedAt: string): string {
   const seconds = Math.max(0, Math.floor((Date.parse(updatedAt) - Date.parse(createdAt)) / 1000));
@@ -224,12 +231,16 @@ export function renderOptimization(workspace: ManagedWorkspace, state: Optimizat
   const activeAcceptedModel = Boolean(state.run && active?.producingRun?.id === state.run.artifacts.experiment_run_id);
   const authority = state.prepared?.authority ?? readiness?.optimizationAuthority;
   const summary = launchSummary(state, readiness, preview, unfinished, activeAcceptedModel);
+  const reserveAction = preview && !state.run
+    ? button(state.executing === "start" ? "Verifying…" : preview.existingRun ? "Open existing run" : "Reserve optimization run", actions.start, "primary", "runs")
+    : null;
+  if (reserveAction instanceof HTMLButtonElement) reserveAction.disabled = Boolean(state.executing);
   return h("div", { class: "page-content optimization-page" },
     pageHeader(state.run ? "Optimization run" : "Start optimization", button("Refresh checks", actions.refresh, "ghost", "refresh")),
     state.error ? h("section", { class: "operation-failure", role: "alert" }, h("strong", {}, state.errorTitle ?? "Could not inspect launch readiness"), h("p", {}, state.error)) : null,
     state.loading && !state.executing ? h("div", { class: "workspace-progress", role: "status" }, "Checking persisted project state…") : null,
     state.executing === "prepare" ? h("div", { class: "workspace-progress", role: "status" }, "Preparing run…") : null,
-    state.executing && state.executing !== "prepare" && !state.run ? h("div", { class: "workspace-progress", role: "status" }, state.executing === "start" ? "Reserving the immutable run…" : "Updating the durable run record…") : null,
+    state.executing && state.executing !== "prepare" && !state.run ? h("div", { class: "workspace-progress", role: "status" }, state.executing === "start" ? `Verifying run authority · ${elapsedLabel(state.operationStartedAt)}` : "Updating the durable run record…") : null,
     report ? h("section", { class: "launch-summary" },
       h("div", {}, h("div", { class: "eyebrow" }, state.run ? "Run outcome" : "Launch status"), h("h2", {}, summary.title)),
       status(summary.label, summary.tone)) : null,
@@ -250,8 +261,8 @@ export function renderOptimization(workspace: ManagedWorkspace, state: Optimizat
       h("div", { class: "launch-boundaries" },
         h("section", {}, h("div", { class: "eyebrow" }, "Development"), h("strong", {}, preview.developmentSuites.join(" · "))),
         h("section", {}, h("div", { class: "eyebrow" }, "Sealed"), h("strong", {}, preview.sealedSuite), tag("Approval required", "warning")),
-        h("section", {}, h("div", { class: "eyebrow" }, "External calls"), h("strong", {}, String(preview.budget.maximum_external_calls)))),
-      state.run ? null : h("div", { class: "launch-actions" }, button(preview.existingRun ? "Open existing run" : "Reserve optimization run", actions.start, "primary", "runs")),
+        h("section", {}, h("div", { class: "eyebrow" }, "External calls"), h("strong", {}, String(authority?.budget.maximum_external_calls ?? 0)))),
+      reserveAction ? h("div", { class: "launch-actions" }, reserveAction) : null,
       h("div", { class: "launch-disclosures" }, candidateRecipe(preview),
         details("Inspect immutable identities and complete limits", facts([["Baseline", runBaseline?.name ?? active?.name ?? workspace.manifest.name + " baseline"], ["Training snapshot", preview.trainingSnapshotId], ["Benchmark generation", preview.benchmarkGenerationId], ["Evaluation time ceiling", `${preview.maximumEvaluationSeconds.toLocaleString()} seconds`], ...budgetFacts(preview)]))),
       ) : null,
