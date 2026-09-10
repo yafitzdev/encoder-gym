@@ -1,8 +1,8 @@
 import type { EncoderGymBridge } from "../preload.js";
-import type { ProjectCollection, OpenedProject } from "../projects.js";
-import type { DatasetChoice, DatasetPurpose, FolderChoice, ModelChoice } from "../managed-workspace.js";
+import type { ProjectCollection } from "../projects.js";
+import type { FolderChoice, ModelChoice } from "../managed-workspace.js";
 import { bytesLabel, displayPath } from "./catalog.js";
-import { button, details, facts, failureNotice, tag } from "./components.js";
+import { button, details, failureNotice, tag } from "./components.js";
 import { h } from "./dom.js";
 
 function dialogState(dialog: HTMLDialogElement) {
@@ -76,49 +76,4 @@ export function newProjectDialog(dialog: HTMLDialogElement, bridge: EncoderGymBr
     void state.run(async () => { const collection = await bridge.createManagedProject(request); dialog.close(); await created(collection); }, "Creating project…");
   } }, h("header", { class: "onboarding-heading" }, h("h2", { id: "project-dialog-title" }, "New encoder project")), state.fields, state.footer);
   update(); dialog.replaceChildren(form); dialog.showModal(); name.focus();
-}
-
-export function importDatasetDialog(dialog: HTMLDialogElement, bridge: EncoderGymBridge, projectId: string, imported: (project: OpenedProject) => Promise<void>): void {
-  const state = dialogState(dialog);
-  let choice: DatasetChoice | null = null;
-  const [nameField, name] = field("Dataset name", "import-dataset-name", "e.g. Training examples");
-  const preview = h("div", { id: "dataset-preview", class: "import-preview" }, "No file selected");
-  const hint = h("div", { id: "confirm-dataset-hint", class: "confirmation-hint" }, "File required");
-  const confirm = button("Import dataset", () => {}, "primary"); confirm.id = "confirm-dataset-import"; confirm.type = "submit"; confirm.disabled = true;
-  confirm.setAttribute("aria-describedby", hint.id);
-  const purposes: [DatasetPurpose, string][] = [
-    ["unassigned", "Unassigned"],
-    ["training", "Training"],
-    ["development", "Development"],
-    ["sealed", "Sealed holdout"],
-  ];
-  const purpose = h("select", { id: "dataset-purpose", class: "text-input", value: "unassigned", onChange: () => {
-    choice = null; confirm.disabled = true; state.error.replaceChildren();
-    preview.textContent = "Select file again";
-    hint.textContent = "File required";
-  } }, ...purposes.map(([value, label]) => h("option", { value }, label))) as HTMLSelectElement;
-  name.addEventListener("input", () => { confirm.disabled = !choice || !name.value.trim(); });
-  const choose = button("Choose JSONL file…", () => { void state.run(async () => {
-    try {
-      const result = await bridge.chooseDataset(projectId, purpose.value as DatasetPurpose);
-      if (!result) return;
-      choice = result; if (!name.value) name.value = result.source.split(/[\\/]/).at(-1) ?? "Imported dataset";
-      preview.replaceChildren(h("div", { class: "preview-summary" }, h("strong", {}, result.rows.toLocaleString() + " records"), h("span", {}, bytesLabel(result.artifact.bytes) + " to copy")),
-        facts([["Declared partitions", Object.entries(result.partitions).map(([key, count]) => key + ": " + count.toLocaleString()).join(" · ") || "Not declared"]]),
-        details("Source file", h("div", { class: "path-note" }, displayPath(result.source))));
-      confirm.disabled = !name.value.trim();
-      hint.textContent = bytesLabel(result.artifact.bytes);
-    } catch (error) {
-      choice = null; confirm.disabled = true; preview.textContent = "This file could not be selected.";
-      hint.textContent = "Valid file required"; throw error;
-    }
-  }, "Checking file…"); }, "secondary", "project");
-  choose.id = "choose-dataset-file";
-  state.fields.append(h("label", { class: "form-field", for: "dataset-purpose" }, "Purpose", purpose), choose, preview, nameField);
-  state.footer.append(state.progress, state.error, hint, h("div", { class: "dialog-actions" }, button("Cancel", () => dialog.close(), "secondary"), confirm));
-  dialog.replaceChildren(h("form", { class: "onboarding-form", onSubmit: (event: Event) => {
-    event.preventDefault(); if (!choice) return; const token = choice.token;
-    void state.run(async () => { const result = await bridge.importDataset(projectId, token, name.value); dialog.close(); await imported(result); }, "Importing dataset…");
-  } }, h("header", { class: "onboarding-heading" }, h("h2", { id: "project-dialog-title" }, "Import dataset")), state.fields, state.footer));
-  dialog.showModal(); purpose.focus();
 }

@@ -47,15 +47,18 @@ They are labelled Legacy and are not silently converted into managed projects.
 - **Model detail:** one viewer for every model, with Overview, Evaluation,
   Training, and Details. Status is a relationship, not a different page type.
   Models without a known training version or evaluation show that absence.
-- **Datasets (managed projects):** import native JSONL with an explicit purpose,
-  preview record counts and partitions, and inspect copied-file provenance.
-  Imports are not admitted training snapshots and do not create class labels,
-  splits, runs, or evaluation results. Training imports reject held-out rows.
-  File counts, size, and intended use are visible in the list; expand **File
-  details and provenance** for original/copy locations and content identities.
-  The replacement versioned dataset backend is available through `workspace
-  dataset` and the typed desktop bridge; its new collection/viewer is still in
-  development. See [dataset versions](../docs/dataset-versions-spec.md).
+- **Data (managed projects):** a base dataset and named variants. Create a base
+  from imported training data or choose a JSONL file. Every dataset opens the
+  same Rows, Changes, Versions, and Models viewer. Add rows from a JSONL file,
+  replace a row from a one-record file, or remove a row; each edit saves a new
+  immutable version with inspectable before/after values. Older versions remain
+  read-only and can be forked. The native JSON and row identity are available
+  through **Inspect**. Pages contain at most 25 rows or changes; back/forward
+  preserve the selected version and page. Training imports reject held-out rows.
+  Creating a version does not grant training qualification. Verified links from
+  Nomos's historical training snapshots into this catalog are still pending;
+  the viewer does not infer them from names or row counts. See
+  [dataset versions](../docs/dataset-versions-spec.md).
 - **Runs:** immutable experiment records. A run owns its candidate attempts,
   activity, recorded budgets, provenance, and final decision. Completion does
   not mean the candidate was accepted.
@@ -94,8 +97,8 @@ outputs produced before automatic registration was implemented. Promotion reuses
 the registered artifact and appends only the baseline revision. Native and managed
 inventory fingerprints are connected through the recorded source-model identity.
 
-Dataset variants, benchmark version management, and automatic agent execution
-are tracked separately in [the product contract](../docs/encoder-workspace-product.md).
+Remaining model/dataset links, benchmark version management, and automatic agent
+execution are tracked in [the product contract](../docs/encoder-workspace-product.md).
 
 Managed onboarding calls the project-owned `synth workspace` commands. It
 accepts self-contained BERT-family safetensors encoder bundles, preserving
@@ -253,7 +256,7 @@ The test controls the folder picker's returned selection; the native OS dialog
 itself is not automated. Experiment database bytes are checked unchanged.
 
 Managed checks exercise New, checkpoint preview/cancel, copied baselines,
-dataset preview/import and held-out rejection, two-project isolation, invalid
+dataset import and held-out rejection, two-project isolation, invalid
 Open, moved-folder recovery with identity checks, verification, forget/reopen,
 and responsive dialogs/dataset pages. A deterministic lifecycle fixture drives
 the real renderer/preload/main IPC through approved-repair preparation, finite
@@ -262,6 +265,11 @@ candidate status, and explicit baseline promotion. Additional checks cover
 760×560 dialog actions and errors, Enter/Tab/Escape using hidden Chromium input,
 slow-import duplicate/dismissal guards, long project names, persistent Open
 failures, and revision-fenced verification after switching away and back.
+The dataset journey creates a base and variant, removes/replaces/adds rows,
+inspects before/after changes, pages rows, and reopens every prior version.
+A deliberately lost response after a real committed edit verifies that retry
+reuses the same version, not a duplicate. The tests also cover folder recovery,
+restart, editable validation errors, busy controls, and narrow diff layouts.
 Tiny custody-format model fixtures never
 claim to be trained or executable encoders.
 

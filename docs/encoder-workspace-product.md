@@ -73,9 +73,9 @@ decision. No unbounded work or inferred spending.
    Unified viewers, rejected project outputs, project Optimize,
    and neutral run/model names are present. Dataset deep links await stage 2;
    model-level baseline promotion/restoration controls remain outstanding.
-2. Dataset versions and changes — backend and CLI implemented and verified;
-   desktop bridge implemented. Collection/viewer,
-   model links, and verified Nomos dataset adoption remain pending.
+2. Dataset versions and changes — backend, CLI, desktop collection and version
+   viewer implemented. Model links and verified Nomos dataset adoption remain
+   pending; new manually created versions are not historical training evidence.
 3. Shared benchmark — pending. Version selection and one results table per exact
    benchmark version. Verify incompatibility and sealed isolation.
 4. Automatic bounded optimization — pending. Persisted launch scope, agent and
@@ -136,3 +136,34 @@ and keep outstanding requirements visible.
 - Existing legacy/managed Electron journeys also passed in four launches after
   adding the desktop bridge. This protects current screens; it is not evidence
   that the new dataset viewer exists or that its future interaction is complete.
+
+### Dataset interface evidence — 10 September 2026
+
+- Data now lists base/variant objects using the Models inventory layout. The old
+  snapshot authority box, source-file cards, and duplicate purpose/import dialog
+  are removed. Details use Rows, Changes, Versions, and Models tabs.
+- Users can create a base from training imports, fork an exact version, add rows,
+  remove a stable row ID, and replace a row from a one-record JSONL file. The
+  viewer shows persisted versions and before/after evidence without rewriting
+  history. Native JSON is explicitly inspectable in a bounded dialog.
+- The offline Electron journey exercises all three edits, four variant versions,
+  paged inspection/back navigation, held-out/source-change rejection, a lost
+  mutation response after commit, project isolation, folder movement, and restart.
+  Desktop and narrow row/diff/collection captures were inspected under `ui/qa/`.
+- Six new controller tests cover duplicate requests, late failed reads, moved
+  folders, lost save/list responses, invalid edit targets, and bounded per-project
+  page caches. UI typecheck/build and all 61 unit tests pass.
+- Folder recovery invalidates queries to the old location. Save retries retain
+  exact version IDs; busy controls cannot submit duplicate work.
+- All four Rust gates pass for this UI stage; the full deterministic suite is
+  recorded in `target/dataset-ui-rust-tests.log` (local test output, not a tracked
+  artifact). Renderer code calls the typed dataset bridge; row membership and
+  mutation rules remain in the existing Rust dataset contracts.
+- Nomos's two custody imports and native 6,992-row training snapshot have not yet
+  been adopted into these dataset objects. Verified adapter-owned membership
+  links, benchmark versions, baseline promotion/restoration controls, and the
+  full automatic bounded agent journey remain required by the goal.
+- A read-only CLI check of the real Nomos project confirms two model artifacts,
+  two training imports, and no dataset catalog entries yet. The candidate still
+  pins native snapshot `2602ef88-db56-4591-8a4c-2581c5613726`; its identity must
+  not be replaced with a guessed catalog version.

@@ -1,7 +1,7 @@
 import type { CandidateRow } from "./catalog.js";
 
-export type Page = "models" | "model" | "datasets" | "runs" | "benchmarks" | "activity" | "project" | "optimization" | "candidate" | "baseline" | "run" | "compare";
-export interface Location { page: Page; id?: string; tab?: string; runId?: string; candidateIds?: string[] }
+export type Page = "models" | "model" | "datasets" | "dataset" | "runs" | "benchmarks" | "activity" | "project" | "optimization" | "candidate" | "baseline" | "run" | "compare";
+export interface Location { page: Page; id?: string; tab?: string; offset?: number; runId?: string; candidateIds?: string[] }
 export interface Actions {
   navigate(location: Location): void;
   backTo(page: Page): void;
@@ -18,7 +18,6 @@ export interface Actions {
 export interface ProjectActions {
   create(): void;
   openManaged(): void;
-  importDataset(): void;
   verify(): void;
   addFolder(): void;
   openExample(): void;

@@ -40,7 +40,8 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await nav("project"); await until("document.querySelectorAll('.provider-summary').length === 2 && !document.querySelector('.provider-state .neutral')");
     await check("provider settings and encrypted credential availability survive restart", "document.querySelectorAll('.provider-state .success').length === 2 && !document.getElementById('page').textContent.includes('smoke-secret')");
     await nav("datasets");
-    await check("imported dataset metadata survives restart", "document.querySelectorAll('[data-dataset-id]').length === 1 && document.querySelector('.dataset-summary').textContent.includes('2 records')");
+    await until("document.querySelectorAll('[data-dataset-id]').length === 2");
+    await check("dataset variants and versions survive restart", "document.querySelector('.dataset-collection').textContent.includes('Base dataset') && document.querySelector('.dataset-collection').textContent.includes('Version 4')");
     await screenshot("managed-restarted"); return;
   }
   const root = join(harness.registry.file, "..", "managed-fixtures"); mkdirSync(root, { recursive: true });
@@ -230,8 +231,8 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await check("technical disclosure retains exact execution facts", "document.querySelector('.launch-definition').textContent.includes('generic_holdout') && document.querySelector('.launch-definition').textContent.includes('nomos_sealed_acceptance') && document.querySelector('.launch-definition').textContent.includes('Learning rate')");
     await check("prepared run exposes the useful summary without research prose", "document.querySelector('.launch-definition').textContent.includes('2m') && document.querySelector('.launch-definition').textContent.includes('API calls0') && document.querySelector('.launch-actions button').textContent === 'Start run' && !document.querySelector('.launch-definition').textContent.includes('Reviewed objective') && document.querySelector('.launch-definition details summary').textContent === 'Technical details'");
     await screenshot("managed-optimization-prepared");
-    await nav("datasets"); await until("document.querySelector('.scientific-data-card')");
-    await check("Data distinguishes source custody from the frozen training snapshot without narration", "document.querySelector('.page-heading h1').textContent === 'Data' && !document.querySelector('.page-heading p') && document.querySelector('.scientific-data-card').textContent.includes('24') && document.querySelector('.scientific-data-card').textContent.includes('approved repair rows') && document.querySelector('.scientific-data-card').textContent.includes('Prepared definition; no run reserved') && !document.querySelector('.scientific-data-card p') && !document.querySelector('.preparation-note')");
+    await nav("datasets"); await until("document.querySelector('.empty-state h2')?.textContent === 'No datasets'");
+    await check("Data contains dataset objects, not optimization authority or decorative counts", "document.querySelector('.page-heading h1').textContent === 'Data' && !document.querySelector('.page-heading p') && !document.querySelector('.scientific-data-card') && !document.querySelector('.page-heading .tag') && !document.getElementById('page').textContent.includes('repair rows')");
     await screenshot("managed-data-with-training-snapshot");
     await nav("benchmarks"); await until("document.querySelector('.evaluation-plan')");
     await check("Evaluation separates bound suite authority from recorded results without narration", "document.querySelector('.page-heading h1').textContent === 'Evaluation' && !document.querySelector('.page-heading p') && document.querySelector('.evaluation-plan').textContent.includes('Generic holdout') && document.querySelector('.evaluation-plan').textContent.includes('Nomos sealed acceptance') && document.querySelector('.evaluation-plan').textContent.includes('Development') && document.querySelector('.evaluation-plan').textContent.includes('approval required') && !document.querySelector('.evaluation-plan p') && !document.querySelector('.reading-note')");
@@ -310,44 +311,95 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await screenshot("managed-runs-parent");
   await nav("benchmarks");
   await check("managed Evaluation stays empty without invented evidence or narration", "document.querySelector('.empty-state h2').textContent === 'No evaluations' && !document.querySelector('.empty-state p')");
-  await nav("datasets"); await textButton("Import dataset");
+  await nav("datasets"); await until("document.querySelector('.empty-state h2')?.textContent === 'No datasets'");
   const sealed = join(root, "held-out.jsonl"); writeFileSync(sealed, '{"evaluation_partition":"sealed"}\n');
-  await evaluate("document.getElementById('dataset-purpose').value='training';document.getElementById('dataset-purpose').dispatchEvent(new Event('change',{bubbles:true}))");
-  harness.chooseFolder(sealed); await click("#choose-dataset-file"); await until("document.querySelector('dialog .form-error').textContent.includes('non-training partition')");
-  await check("training import rejects held-out rows visibly before copying", "document.getElementById('confirm-dataset-import').disabled && document.querySelectorAll('[data-dataset-id]').length === 0");
-  await check("import error leads with recovery and keeps diagnostics collapsed", "document.querySelector('.form-error strong').textContent === 'This file contains held-out data' && !document.querySelector('.form-error details').open && document.querySelector('.form-error').getBoundingClientRect().bottom < innerHeight");
+  harness.chooseFolder(sealed); await textButton("Import dataset"); await until("document.querySelector('.operation-failure')?.textContent.includes('non-training partition')");
+  await check("training import rejects held-out rows visibly before copying", "document.querySelectorAll('[data-dataset-id]').length === 0 && !document.querySelector('.dataset-progress')");
+  await check("import error leads with recovery and keeps diagnostics collapsed", "document.querySelector('.operation-failure strong').textContent === 'This file contains held-out data' && !document.querySelector('.operation-failure details').open");
   await screenshot("managed-import-rejection", 760, 800); window.setContentSize(1440, 960);
   await screenshot("managed-import-error-760x560", 760, 560);
-  await check("minimum desktop import error leaves input and actions reachable", "document.querySelector('.onboarding-fields').clientHeight > 80 && document.querySelector('.form-error').getBoundingClientRect().bottom <= document.querySelector('.dialog-actions').getBoundingClientRect().top && document.getElementById('confirm-dataset-import').getBoundingClientRect().bottom < innerHeight");
+  await check("minimum desktop import error leaves recovery actions reachable", "document.querySelector('.operation-failure button').getBoundingClientRect().bottom < innerHeight");
   window.setContentSize(1440, 960);
   const sourceData = join(root, "train.jsonl"); writeFileSync(sourceData, '{"text":"source only one","split":"train"}\n{"text":"source only two","split":"train"}\n');
-  harness.chooseFolder(sourceData); await click("#choose-dataset-file"); await until("!document.getElementById('confirm-dataset-import').disabled && !document.querySelector('.onboarding-fields').disabled");
-  await type("import-dataset-name", "Routing training source"); await screenshot("managed-import-preview");
   const sourceBytes = readFileSync(sourceData);
-  writeFileSync(sourceData, sourceBytes.toString() + '{"text":"changed after preview","split":"train"}\n');
-  await click("#confirm-dataset-import"); await until("document.querySelector('dialog .form-error').textContent.includes('Dataset changed after preview')");
-  await check("failed import preserves input and creates no dataset", "document.getElementById('import-dataset-name').value === 'Routing training source' && document.querySelectorAll('[data-dataset-id]').length === 0 && document.querySelector('#project-dialog[open]')");
+  const chooseData = harness.backend.chooseDataset.bind(harness.backend);
+  harness.backend.chooseDataset = async (...args) => { const choice = await chooseData(...args); writeFileSync(sourceData, sourceBytes.toString() + '{"text":"changed after preview","split":"train"}\n'); return choice; };
+  try {
+    harness.chooseFolder(sourceData); await textButton("Import dataset"); await until("document.querySelector('.operation-failure')?.textContent.includes('Dataset changed after preview')");
+    await check("changed input cannot create a dataset from stale preview evidence", "document.querySelectorAll('[data-dataset-id]').length === 0 && !document.querySelector('.dataset-progress')");
+  } finally { harness.backend.chooseDataset = chooseData; }
   writeFileSync(sourceData, sourceBytes);
-  harness.chooseFolder(sourceData); await click("#choose-dataset-file"); await until("!document.querySelector('.onboarding-fields').disabled && !document.getElementById('confirm-dataset-import').disabled");
   const importData = harness.backend.importDataset.bind(harness.backend);
   let releaseImport!: () => void, importCalls = 0;
   const pendingImport = new Promise<void>(resolve => { releaseImport = resolve; });
-  harness.backend.importDataset = async (...args) => { importCalls++; await pendingImport; return importData(...args); };
+  let enteredImport!: () => void;
+  const importStarted = new Promise<void>(resolve => { enteredImport = resolve; });
+  harness.backend.importDataset = async (...args) => { importCalls++; enteredImport(); await pendingImport; return importData(...args); };
   try {
-    await click("#confirm-dataset-import"); await until("document.getElementById('project-dialog').getAttribute('aria-busy') === 'true'");
+    harness.chooseFolder(sourceData); await textButton("Import dataset"); await until("document.querySelector('.dataset-progress')");
+    await importStarted;
     await screenshot("managed-import-busy-760x560", 760, 560);
     await key("Escape");
-    await evaluate("document.querySelector('.onboarding-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}))");
-    await check("slow import keeps progress visible and cannot be dismissed or resubmitted", "document.querySelector('#project-dialog[open]') && document.querySelector('.onboarding-fields').disabled && document.querySelector('.onboarding-footer').disabled && document.querySelector('.operation-status').textContent.includes('Importing dataset') && document.querySelector('.operation-status').getBoundingClientRect().bottom < innerHeight");
+    await textButton("Import dataset");
+    await check("slow import keeps progress visible and cannot be resubmitted", "document.querySelector('.dataset-progress').textContent.includes('Saving dataset') && document.querySelector('.dataset-progress').getBoundingClientRect().bottom < innerHeight && [...document.querySelectorAll('#page button')].filter(b=>['Import dataset','Create dataset'].includes(b.textContent)).every(b=>b.disabled)");
     if (importCalls !== 1) throw new Error('Duplicate import reached backend');
-    releaseImport(); await until("!document.querySelector('#project-dialog[open]') && document.querySelectorAll('[data-dataset-id]').length === 1");
+    releaseImport(); await until("document.querySelectorAll('.dataset-row-entry').length === 2 && !document.querySelector('.dataset-progress')");
   } finally { releaseImport(); harness.backend.importDataset = importData; }
   window.setContentSize(1440, 960);
-  await check("dataset view exposes provenance and counts, not native payloads", "document.querySelector('.dataset-summary').textContent.includes('2 records') && !document.getElementById('page').textContent.includes('source only one')");
-  await check("dataset details are optional and the collection has no instructional footer", "!document.querySelector('[data-dataset-id] details').open && !document.querySelector('.preparation-note')");
-  await click("[data-dataset-id] summary");
-  await check("expanded dataset retains source identities and copy actions", "document.querySelector('[data-dataset-id] details').open && document.querySelector('[data-dataset-id] details').textContent.includes('Content identity') && document.querySelector('[data-dataset-id] .copy-field button')");
-  await click("[data-dataset-id] summary");
+  await check("dataset viewer shows real rows and shares a four-tab object layout", "document.querySelector('.dataset-view h1').textContent === 'Base dataset' && document.querySelectorAll('.tabs button').length === 4 && document.querySelector('.dataset-rows').textContent.includes('source only one')");
+  await evaluate("document.querySelector('.dataset-row-entry button').click()");
+  await check("row inspection reveals exact native data only on request", "document.querySelector('dialog[open] .native-row').textContent.includes('source only one') && !document.querySelector('dialog[open] details').open");
+  await textButton("Close");
+  await textButton("Create variant");
+  await type("dataset-name", "   "); await click("#dataset-confirm");
+  await until("document.querySelector('dialog[open] .form-error').textContent.includes('Enter a dataset name')");
+  await check("invalid dataset name stays editable without creating a variant", "!document.getElementById('dataset-name').disabled && !document.getElementById('dataset-confirm').disabled");
+  await type("dataset-name", "Candidate dataset"); await click("#dataset-confirm");
+  await until("document.querySelector('.dataset-view h1')?.textContent === 'Candidate dataset' && document.querySelectorAll('.dataset-row-entry').length === 2 && !document.querySelector('dialog[open]')");
+  const firstRowId = await evaluate("document.querySelector('.dataset-row-entry').dataset.rowId");
+  const mutateDataset = harness.backend.datasetVersions.mutate.bind(harness.backend.datasetVersions), savedRequests: unknown[] = [];
+  harness.backend.datasetVersions.mutate = async (id, request) => {
+    savedRequests.push(structuredClone(request));
+    const result = await mutateDataset(id, request);
+    if (savedRequests.length === 1) throw new Error("Dataset response lost after commit");
+    return result;
+  };
+  try {
+    await evaluate("[...document.querySelectorAll('.dataset-row-entry:first-child button')].find(b=>b.textContent==='Remove').click()"); await click("#dataset-confirm");
+    await until("document.querySelector('dialog[open] .form-error').textContent.includes('Dataset response lost')");
+    await click("#dataset-confirm");
+    await until("document.querySelector('[data-change-kind=removed]') && !document.querySelector('dialog[open]')");
+    if (savedRequests.length !== 2 || JSON.stringify(savedRequests[0]) !== JSON.stringify(savedRequests[1])) throw new Error("Dataset retry changed its reserved identity");
+    await check("retry after a committed save preserves one version and dismisses the error", "document.querySelectorAll('#dataset-version option').length === 2 && !document.querySelector('.operation-failure')");
+  } finally { harness.backend.datasetVersions.mutate = mutateDataset; }
+  await check("removal saves a new version with inspectable before evidence", "document.querySelector('#dataset-version option:checked').textContent === 'Version 2' && document.querySelector('[data-change-kind=removed]').textContent.includes('source only one')");
+  await click("#tab-rows"); await until("document.querySelectorAll('.dataset-row-entry').length === 1");
+  if (await evaluate("document.querySelector('.dataset-row-entry').dataset.rowId") === firstRowId) throw new Error("Removed row survived in variant");
+  const replacement = join(root, "replacement.jsonl"); writeFileSync(replacement, '{"text":"replacement row","split":"train"}\n');
+  harness.chooseFolder(replacement); await textButton("Replace"); await until("document.querySelector('[data-change-kind=replaced]')");
+  await check("replacement displays before and after without overwriting prior history", "document.querySelector('[data-change-kind=replaced]').textContent.includes('source only two') && document.querySelector('[data-change-kind=replaced]').textContent.includes('replacement row')");
+  await screenshot("managed-dataset-changes");
+  for (const width of [760, 390]) {
+    await screenshot("managed-dataset-changes-" + width, width, 820);
+    await check("dataset changes fit width " + width, "document.getElementById('page').scrollWidth <= document.getElementById('page').clientWidth + 1");
+  }
+  window.setContentSize(1440, 960);
+  await click("#tab-rows"); await until("document.querySelectorAll('.dataset-row-entry').length === 1");
+  const extra = join(root, "extra.jsonl"); writeFileSync(extra, Array.from({length:26},(_,i)=>JSON.stringify({text:'added '+i,split:'train'})+'\n').join(''));
+  harness.chooseFolder(extra); await textButton("Add rows"); await until("document.querySelectorAll('[data-change-kind=added]').length === 25");
+  await click("#tab-rows"); await until("document.querySelectorAll('.dataset-row-entry').length === 25");
+  await screenshot("managed-dataset-rows");
+  await textButton("Next"); await until("document.querySelectorAll('.dataset-row-entry').length === 2");
+  await check("row pagination is bounded and counts persisted membership", "document.querySelector('.dataset-pagination').textContent.includes('26–27 of 27')");
+  await click("#navigate-back"); await until("document.querySelectorAll('.dataset-row-entry').length === 25");
+  await check("back restores the previous row page", "document.querySelector('.dataset-pagination').textContent.includes('1–25 of 27')");
+  await click("#tab-versions");
+  await check("all four immutable versions remain inspectable", "document.querySelectorAll('.dataset-versions .artifact-row').length === 4");
+  await screenshot("managed-dataset-versions");
+  await evaluate("[...document.querySelectorAll('.dataset-versions .artifact-row')].at(-1).querySelector('button').click()"); await until("document.querySelectorAll('.dataset-row-entry').length === 2");
+  await check("old version preserves original content and cannot be edited in place", "document.querySelector('.dataset-rows').textContent.includes('source only one') && ![...document.querySelectorAll('#page button')].some(b=>b.textContent==='Remove')");
+  await textButton("All datasets");
+  await check("collection lists datasets rather than source files or snapshot badges", "document.querySelectorAll('[data-dataset-id]').length === 2 && document.querySelector('.dataset-collection').textContent.includes('Base dataset') && document.querySelector('.dataset-collection').textContent.includes('Candidate dataset') && !document.querySelector('.dataset-collection').textContent.includes('train.jsonl') && !document.querySelector('.scientific-data-card')");
   await screenshot("managed-datasets");
   await click("#theme-toggle"); await screenshot("managed-datasets-light"); await click("#theme-toggle");
   for (const width of [760, 390]) {
@@ -356,14 +408,15 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   }
   window.setContentSize(1440, 960);
   const secondId = await create("Support encoder", two);
-  await nav("datasets"); await check("second project never inherits first project's data", "document.querySelectorAll('[data-dataset-id]').length === 0 && document.getElementById('page').textContent.includes('No imported sources')");
+  await nav("datasets"); await until("document.querySelector('.empty-state h2')?.textContent === 'No datasets'"); await check("second project never inherits first project's data", "document.querySelectorAll('[data-dataset-id]').length === 0");
   await click('[data-project-id="' + firstId + '"]'); await loaded();
-  await check("switching back restores only this project's imports", "document.querySelectorAll('[data-dataset-id]').length === 1 && document.getElementById('page').textContent.includes('Routing training source')");
+  await until("document.querySelectorAll('[data-dataset-id]').length === 2");
+  await check("switching back restores only this project's datasets", "document.getElementById('page').textContent.includes('Candidate dataset')");
   await check("switching projects restores the previous dataset page", "document.querySelector('#nav-datasets').getAttribute('aria-current') === 'page'");
   harness.chooseFolder(root); await click("#open-project"); await until("document.querySelector('#operation-error strong')?.textContent === 'This folder is not a Gym project'");
   await check("Open rejects an arbitrary folder and keeps the collection", "document.querySelectorAll('[data-project-id]').length === 2");
   await evaluate("new Promise(resolve=>setTimeout(resolve,6100))");
-  await check("Open failure remains available after the toast lifetime", "document.querySelector('#operation-error') && !document.querySelector('#operation-error details').open && document.querySelectorAll('[data-dataset-id]').length === 1");
+  await check("Open failure remains available after the toast lifetime", "document.querySelector('#operation-error') && !document.querySelector('#operation-error details').open && document.querySelectorAll('[data-dataset-id]').length === 2");
   await screenshot("managed-open-error"); await textButton("Dismiss");
   const original = join(root, "Routing encoder"), moved = join(root, "routing-moved"); renameSync(original, moved);
   await click("#reload-evidence"); await loaded();
@@ -373,7 +426,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await nav("datasets");
   harness.chooseFolder(join(root, "Support encoder")); await textButton("Locate folder"); await until("document.querySelector('#operation-error')?.textContent.includes('different project identity')");
   if (harness.registry.get(firstId).source.kind !== "folder") throw new Error("Managed source lost");
-  harness.chooseFolder(moved); await textButton("Locate folder"); await until("document.querySelectorAll('[data-dataset-id]').length === 1"); await loaded();
+  harness.chooseFolder(moved); await textButton("Locate folder"); await until("document.querySelectorAll('[data-dataset-id]').length === 2"); await loaded();
   await nav("project");
   // Hold an actual verified response, not fabricated evidence, to exercise a slow operation.
   const read = harness.backend.openRegistered.bind(harness.backend);
