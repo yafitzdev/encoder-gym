@@ -54,24 +54,16 @@ export function delta(value: number | undefined, key: string): string {
 export function candidateName(candidate: CandidateAttempt): string {
   const p = candidate.parameters;
   if (typeof p.name === "string" && p.name.trim()) return p.name;
-  if (p.repair_total_rows) return "Repair fine-tune";
-  if (p.strategy === "linear_interpolation") return `${Number(p.specialist_weight) * 100}% ${String(p.reference_model).includes("mnrl") ? "MNRL" : String(p.reference_model).includes("triplet") ? "triplet" : "checkpoint"} blend`;
-  if (typeof p.learning_rate === "number") return `${p.loss ? humanize(String(p.loss)) : "Fine-tune"} · LR ${p.learning_rate.toExponential(0)}`;
   return `Candidate ${String(candidate.sequence).padStart(2, "0")}`;
 }
 export function candidateDescription(candidate: CandidateAttempt): string {
   const p = candidate.parameters;
-  if (p.repair_total_rows) return `${Number(p.repair_base_rows).toLocaleString("en")} base + ${p.repair_delta_rows} repair examples`;
+  if (p.repair_total_rows) return `${Number(p.repair_total_rows).toLocaleString("en")} training examples`;
   if (p.strategy === "linear_interpolation") return `${100 - Number(p.specialist_weight) * 100}% baseline + ${Number(p.specialist_weight) * 100}% reference checkpoint`;
   return [p.epochs ? `${p.epochs} ${p.epochs === 1 ? "epoch" : "epochs"}` : undefined, p.device, p.margin !== undefined ? `margin ${p.margin}` : undefined].filter(v => v !== undefined).join(" · ") || "Configuration available in details";
 }
 export function runName(run: RunRecord): string {
-  const c = run.candidates[0];
-  if (!c) return "Experiment";
-  if (c.parameters.repair_total_rows) return "Repair training";
-  if (run.baselines.length > 1 && c.parameters.strategy === "linear_interpolation") return "Multi-suite interpolation";
-  if (c.parameters.strategy === "linear_interpolation") return run.agentTopK === 1 ? "Interpolation qualification" : String(c.parameters.reference_model).includes("mnrl") ? "MNRL interpolation" : String(c.parameters.reference_model).includes("triplet") ? "Triplet interpolation" : "Checkpoint interpolation";
-  return run.candidates.some(c => c.failure) ? "Experiment with execution errors" : "Training experiment";
+  return "Optimization";
 }
 export function runLabel(run: RunRecord, workspace: WorkspaceSnapshot): string {
   return `Run ${String(workspace.runs.length - workspace.runs.findIndex(r => r.id === run.id)).padStart(2, "0")}`;
@@ -98,7 +90,7 @@ function collectCandidateRows(workspace: WorkspaceSnapshot, catalogOnly: boolean
       // Runs and Evaluation still expose that evidence, but Models represents
       // only project-catalog artifacts and their baseline/candidate relations.
       if (catalogOnly && candidateArtifacts && !candidateArtifacts.some(artifact =>
-        candidate.model?.fingerprint === artifact.fingerprint &&
+        candidate.model?.fingerprint === (artifact.sourceModel?.fingerprint ?? artifact.fingerprint) &&
         (!artifact.producingRun || artifact.producingRun.id === run.id)
       )) continue;
       const previous = rows.get(candidate.id);

@@ -28,6 +28,7 @@ const operationLabels: Record<string, string> = {
   "optimization.prepare": "Optimization prepared",
   "optimization.reserve": "Run reserved",
   "optimization.resume": "Run continued",
+  "models.register_run": "Models registered",
   "optimization.authorize_external": "External calls authorized",
   "optimization.authorize_sealed": "Sealed evaluation authorized",
   "optimization.cancel": "Run cancelled",

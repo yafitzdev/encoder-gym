@@ -44,33 +44,12 @@ function parameterLabel(key: string): string {
   const labels: Record<string, string> = { learning_rate: "Learning rate", specialist_weight: "Reference weight", reference_model: "Reference checkpoint", query_strategy: "Query representation", positive_strategy: "Positive representation", repair_snapshot_id: "Training snapshot", repair_snapshot_fingerprint: "Snapshot fingerprint", repair_total_rows: "Training examples", repair_base_rows: "Base examples", repair_delta_rows: "Repair examples" };
   return labels[key] ?? key.replaceAll("_", " ").replace(/^./, c => c.toUpperCase());
 }
-function trainingDetails(candidate: CandidateAttempt, run: RunRecord, actions: Actions): HTMLElement {
+export function trainingDetails(candidate: CandidateAttempt, run: RunRecord, actions: Actions): HTMLElement {
   return h("div", { class: "detail-columns" },
     h("section", {}, sectionHeader("Training configuration"), facts(Object.entries(candidate.parameters).filter(([k]) => !k.startsWith("repair_") || k === "repair_total_rows").map(([k, v]) => [parameterLabel(k), String(v)]))),
     h("section", {}, sectionHeader("Training data"), ...run.inputs.map(i => h("div", { class: "artifact-item" }, h("strong", {}, i.key.split(/[\\/]/).at(-1)), h("span", { class: "muted" }, bytesLabel(i.bytes)), details("Identity", copyField(i.fingerprint, actions.copy)))),
-      candidate.parameters.repair_delta_rows ? h("div", { class: "artifact-item" }, h("strong", {}, "Approved repair delta"), h("span", { class: "muted" }, `${candidate.parameters.repair_delta_rows} examples`)) : null,
+      candidate.parameters.repair_delta_rows ? h("div", { class: "artifact-item" }, h("strong", {}, "Added training data"), h("span", { class: "muted" }, `${candidate.parameters.repair_delta_rows} examples`)) : null,
       candidate.parameters.repair_snapshot_id ? details("Immutable training snapshot", facts([["Snapshot", copyField(String(candidate.parameters.repair_snapshot_id), actions.copy)], ["Fingerprint", copyField(String(candidate.parameters.repair_snapshot_fingerprint), actions.copy)]])) : null),
-  );
-}
-function candidateArtifact(candidate: CandidateAttempt, actions: Actions): HTMLElement {
-  const m = candidate.model;
-  return h("section", {}, sectionHeader("Candidate artifact"), m ? facts([["Format", m.format], ["Size", bytesLabel(m.bytes)], ["Build time", durationLabel(candidate.durationSeconds)], ["Artifact", copyField(m.key, actions.copy)], ["Model fingerprint", copyField(m.fingerprint, actions.copy)], ["Candidate ID", copyField(candidate.id, actions.copy)]]) : empty("No model artifact"));
-}
-export function renderCandidate(workspace: WorkspaceSnapshot, id: string, tab: string, state: DetailState, actions: Actions, runId?: string): HTMLElement {
-  let row = candidateRows(workspace).find(r => r.candidate.id === id);
-  const exactRun = runId ? workspace.runs.find(r => r.id === runId) : undefined;
-  const exactCandidate = exactRun?.candidates.find(c => c.id === id);
-  if (runId && (!exactRun || !exactCandidate)) return empty("Attempt not found", button("Back to models", () => actions.navigate({ page: "models" })));
-  if (row && exactRun && exactCandidate) row = { ...row, run: exactRun, candidate: exactCandidate };
-  if (!row) return empty("Candidate not found", button("Back to models", () => actions.navigate({ page: "models" })));
-  const c = row.candidate;
-  return h("div", { class: "page-content detail-page" },
-    button("All models", () => actions.backTo("models"), "back-link", "back"),
-    pageHeader(candidateName(c), button(`Open ${runLabel(row.run, workspace)}`, () => actions.navigate({ page: "run", id: row.run.id }), "secondary", "arrow")),
-    h("div", { class: "detail-context" }, tag("Candidate"), h("span", {}, setupName(row.run)), h("span", {}, dateLabel(row.run.createdAt))),
-    tabs([["results", "Results"], ["training", "Training & data"], ["artifact", "Model & history"]], tab, value => actions.navigate({ page: "candidate", id, tab: value, runId })),
-    h("div", { id: "detail-panel", role: "tabpanel", "aria-labelledby": `tab-${tab}` },
-      tab === "training" ? trainingDetails(c, row.run, actions) : tab === "artifact" ? h("div", {}, candidateArtifact(c, actions), sectionHeader("Run history"), ...row.attempts.map(r => runListItem(r, workspace, actions))) : renderResults(row, state, actions)),
   );
 }
 
@@ -99,7 +78,7 @@ export function renderRun(workspace: WorkspaceSnapshot, id: string, tab: string,
   const usedSealed = ["passed", "failed"].includes(run.acceptance.state);
   const changeTab = (t: string) => actions.navigate({ page: "run", id, tab: t });
   return h("div", { class: "page-content detail-page" }, button("All runs", () => actions.backTo("runs"), "back-link", "back"),
-    pageHeader(runName(run), h("div", { class: "inline-group" }, tag(runLabel(run, workspace)), tag(dateLabel(run.createdAt)), tag(timeLabel(run.createdAt)))),
+    pageHeader(runLabel(run, workspace), h("div", { class: "inline-group" }, tag(dateLabel(run.createdAt)), tag(timeLabel(run.createdAt)))),
     tabs([["overview", "Overview"], ["activity", "Activity"], ["record", "Budget & record"]], tab, changeTab),
     h("div", { id: "detail-panel", role: "tabpanel", "aria-labelledby": `tab-${tab}` },
       tab === "activity" ? h("ol", { class: "activity-list" }, ...run.activity.map(e => h("li", {}, h("span", { class: "activity-sequence" }, e.sequence), h("div", {}, h("strong", {}, eventLabel(e.kind)), e.candidateId ? h("span", {}, run.candidates.find(c => c.id === e.candidateId) ? candidateName(run.candidates.find(c => c.id === e.candidateId)!) : e.candidateId) : null), h("time", {}, timeLabel(e.at))))) : tab === "record" ? runRecord(run, actions) : h("div", {},
@@ -110,7 +89,7 @@ export function renderRun(workspace: WorkspaceSnapshot, id: string, tab: string,
         ...run.candidates.map(c => {
           const row = { candidate: c, run, attempts: [run] };
           const s = developmentStatus(row);
-          return h("div", { class: "run-candidate" }, h("div", {}, h("h3", {}, candidateName(c)), c.failure ? h("p", { class: "danger" }, c.failure.reason) : status(s.label, s.tone)), button("Inspect candidate", () => actions.navigate({ page: "candidate", id: c.id, runId: run.id }), "secondary", "arrow"));
+          return h("div", { class: "run-candidate" }, h("div", {}, h("h3", {}, candidateName(c)), c.failure ? h("p", { class: "danger" }, c.failure.reason) : status(s.label, s.tone)), c.model ? button("Inspect model", () => actions.navigate({ page: "model", id: c.model!.id, runId: run.id }), "secondary", "arrow") : null);
         }),
         sectionHeader("Evaluation", tag(setupName(run))), h("div", { class: "inline-group" }, ...run.baselines.map(b => tag(suiteName(b.suite)))),
         h("section", { class: "acceptance-note" }, h("div", {}, status(usedSealed ? "Final acceptance used" : run.acceptance.state === "unused" ? "Final acceptance not used" : "Final acceptance " + run.acceptance.state, "neutral")),

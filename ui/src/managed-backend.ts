@@ -499,7 +499,10 @@ export function managedSnapshot(managed: ManagedWorkspace): WorkspaceSnapshot {
     baseline: active
       ? { id: active.id, key: active.name, format: active.format, bytes: active.bytes, fingerprint: active.fingerprint }
       : { id: model.fingerprint, key: `${manifest.name} baseline`, format: model.format, bytes: model.bytes, fingerprint: model.fingerprint },
-    baselineEvaluations: scientific?.baselineEvaluations,
+    baselineEvaluations: scientific?.runs.find(run =>
+      run.projectId === managed.scientificBinding?.runtime.projectSnapshot.id &&
+      managed.scientificBinding?.baselineRevisionId === catalog?.activeBaselineRevisionId
+    )?.baselines ?? [],
     deployment: scientific?.deployment,
     runs: scientific?.runs ?? [], databases: ["project.sqlite", ...(scientific?.databases ?? [])], managed,
   };

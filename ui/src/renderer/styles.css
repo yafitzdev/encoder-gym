@@ -717,3 +717,16 @@ dialog::backdrop { background: #0008; }
   .welcome-page h1 { font-size: 27px; }
   .empty-baseline { align-items: start; padding: 17px; gap: 12px; }
 }
+/* Shared artifact collection and viewer. */
+.collection-toolbar { display:flex; gap:16px; align-items:center; margin-bottom:20px; }
+.collection-toolbar .text-input { max-width:360px; }
+.artifact-list { border-top:1px solid var(--line); }
+.artifact-row { display:flex; align-items:center; gap:24px; padding:24px 4px; border-bottom:1px solid var(--line); }
+.artifact-row-name { flex:1; min-width:0; }
+.artifact-row-name h2 { font-size:18px; margin:0 0 10px; overflow-wrap:anywhere; }
+.artifact-row .candidate-link { white-space:nowrap; }
+.model-view .detail-columns { margin-top:24px; }
+@media(max-width:760px) {
+  .artifact-row { flex-wrap:wrap; gap:14px; }
+  .artifact-row-name { flex-basis:65%; }
+}

@@ -69,8 +69,8 @@ decision. No unbounded work or inferred spending.
 
 ## Stages and acceptance evidence
 
-1. Model inventory and navigation — implemented, real-project UI verification
-   in progress. Unified viewers, rejected project outputs, project Optimize,
+1. Model inventory and navigation — implemented and verified on real Nomos.
+   Unified viewers, rejected project outputs, project Optimize,
    and neutral run/model names are present. Dataset deep links await stage 2;
    model-level baseline promotion/restoration controls remain outstanding.
 2. Dataset versions and changes — pending. Core, persistence, CLI, collection,
@@ -104,3 +104,7 @@ and keep outstanding requirements visible.
 - The protected native import whitelist now accepts the exact newer standard
   transformer/pooling/normalization class paths emitted by the real trainer.
   Arbitrary custom code remains rejected.
+- The read-only real-project Electron check opened both models in the common
+  four-tab viewer, showed the rejected candidate's recorded evaluation, visited
+  all project pages and optimization preparation, and confirmed byte-identical
+  manifest/database/library state. Rendered captures are under `ui/qa/managed-current-*`.

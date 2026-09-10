@@ -37,15 +37,16 @@ They are labelled Legacy and are not silently converted into managed projects.
 
 - **Project folders:** persistent entries in the sidebar. A newly opened project
   starts on Models. Switching projects resumes each project's last page during
-  the session; clicking the already-active folder returns to Models.
-- **Models:** the baseline reference and all unique candidate identities,
-  grouped by compatible baseline, benchmarks, metric contract, and evaluation
-  policy. Search and filter, select a benchmark, sort by its primary score,
-  or compare up to three candidates from one setup.
+  the session; clicking the already-active folder collapses or expands it.
+- **Optimize:** a project-header action available on every managed page.
+- **Models:** the active baseline and every registered model, including rejected
+  candidates and former baselines. Search the inventory or select up to three
+  candidates evaluated under the same benchmark and baseline for comparison.
   **All models** returns from details to the list's previous scroll position
   and originating model control. Back/forward also preserve that context.
-- **Candidate detail:** exact development checks, training configuration and
-  immutable input references, model artifact, and historical attempts.
+- **Model detail:** one viewer for every model, with Overview, Evaluation,
+  Training, and Details. Status is a relationship, not a different page type.
+  Models without a known training version or evaluation show that absence.
 - **Datasets (managed projects):** import native JSONL with an explicit purpose,
   preview record counts and partitions, and inspect copied-file provenance.
   Imports are not admitted training snapshots and do not create class labels,
@@ -80,6 +81,18 @@ the current page's actions are unavailable, but switching projects is allowed;
 a late verification result cannot overwrite a newer read of the same project.
 
 ## Local models, imported datasets, and legacy evidence
+
+Every successful managed optimization stage registers completed checkpoints
+through `synth workspace register-run-models <folder> --run-id <optimization>`.
+Registration verifies the native receipt and model bytes, copies the checkpoint
+into managed custody, preserves training provenance, and records project activity.
+Evaluation rejection does not prevent registration. This command also recovers
+outputs produced before automatic registration was implemented. Promotion reuses
+the registered artifact and appends only the baseline revision. Native and managed
+inventory fingerprints are connected through the recorded source-model identity.
+
+Dataset variants, benchmark version management, and automatic agent execution
+are tracked separately in [the product contract](../docs/encoder-workspace-product.md).
 
 Managed onboarding calls the project-owned `synth workspace` commands. It
 accepts self-contained BERT-family safetensors encoder bundles, preserving

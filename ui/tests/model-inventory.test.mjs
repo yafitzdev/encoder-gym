@@ -1,0 +1,29 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { projectRun } from "../dist/evidence/read-workspace.js";
+import { modelInventory, findModel } from "../dist/evidence/model-inventory.js";
+import { candidateRows } from "../dist/evidence/catalog.js";
+import { experimentFixture } from "./fixtures/experiment.mjs";
+
+test("registered rejected outputs survive inventory and follow scientific source identity", () => {
+  const f = experimentFixture(), run = projectRun(f.protocol, f.project, f.events, "science.db");
+  const candidate = run.candidates[0];
+  candidate.development[0].verdict = "failed";
+  const baseline = { id: "managed-base", name: "Starting encoder", fingerprint: "managed-base-hash", sourceModel: { id: run.baseline.id, fingerprint: run.baseline.fingerprint } };
+  const output = { id: "managed-output", name: "Candidate 01", fingerprint: "managed-copy-hash", sourceModel: { id: candidate.model.id, fingerprint: candidate.model.fingerprint }, producingRun: { id: run.id } };
+  const catalog = { artifacts: [baseline], baselineRevisions: [{ id: "revision-1", modelArtifactId: baseline.id }], activeBaselineRevisionId: "revision-1" };
+  const world = { baseline: run.baseline, runs: [run], managed: { modelCatalog: catalog } };
+  assert.equal(modelInventory(world).length, 1, "unregistered historical outputs are not project models");
+  catalog.artifacts.push(output);
+  assert.equal(modelInventory(world).length, 2);
+  assert.equal(findModel(world, output.id).evidence.candidate.development[0].verdict, "failed");
+  assert.equal(candidateRows(world).length, 1, "different inventory hash must still bind the native evidence");
+  assert.equal(findModel(world, candidate.model.id).id, output.id);
+  catalog.baselineRevisions.push({ id: "revision-2", modelArtifactId: output.id });
+  catalog.activeBaselineRevisionId = "revision-2";
+  assert.equal(findModel(world, output.id).role, "Baseline");
+  assert.equal(findModel(world, baseline.id).role, "Previous baseline");
+  assert.equal(modelInventory(world).length, 2, "promotion never erases either model");
+  output.producingRun.id = "another-run";
+  assert.equal(findModel(world, output.id).evidence, undefined, "same bytes cannot borrow unrelated evidence");
+});

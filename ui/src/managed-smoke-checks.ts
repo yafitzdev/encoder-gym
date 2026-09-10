@@ -81,9 +81,9 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     return harness.registry.read().selectedId!;
   };
   const firstId = await create("Routing encoder", one);
-  await check("new project shows its baseline without fabricated runs or candidates", "document.querySelector('.baseline-name').textContent.includes('Routing encoder') && document.querySelectorAll('[data-candidate-id]').length === 0 && document.getElementById('source-state').textContent.includes('Managed workspace')");
+  await check("new project shows its baseline without fabricated runs or candidates", "document.querySelector('.artifact-row-name').textContent.includes('Routing encoder') && document.querySelectorAll('[data-candidate-id]').length === 0 && document.getElementById('source-state').textContent.includes('Managed workspace')");
   await screenshot("managed-baseline");
-  await check("Models leads with the baseline, candidates, and one action", "document.querySelector('.page-heading h1').textContent === 'Models' && !document.querySelector('.page-heading p') && document.querySelector('.candidate-empty h3').textContent === 'No candidates' && [...document.querySelectorAll('#page button')].filter(b=>b.textContent === 'Start optimization').length === 1 && !document.querySelector('.candidate-empty p')");
+  await check("Models is an inventory with a project-level Optimize action", "document.querySelector('.page-heading h1').textContent === 'Models' && !document.querySelector('.page-heading p') && document.querySelectorAll('.artifact-row').length === 1 && !document.getElementById('project-optimize').hidden && !document.getElementById('page').textContent.includes('Start optimization')");
   await check("Models omits decorative model and candidate count badges", "![...document.querySelectorAll('.baseline-name .tag')].some(e=>e.textContent.includes('sentence-transformers')) && document.querySelector('.candidate-section > .section-heading .tag') === null");
   await click('[data-project-id]');
   await check("selected project folder collapses independently", "document.querySelector('[data-project-id]').getAttribute('aria-expanded') === 'false' && !document.querySelector('.project-pages')");
@@ -99,7 +99,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await nav("activity"); await until("document.querySelector('.activity-list')");
   await check("project activity exposes action UUIDs and complete event chains", "document.querySelector('.activity-action') && document.querySelector('.activity-action code').textContent.includes('…') && !document.getElementById('page').textContent.includes('smoke-secret')");
   await nav("models");
-  await textButton("Start optimization"); await until("document.querySelector('.launch-summary') && document.querySelectorAll('.readiness-row').length > 0");
+  await click("#project-optimize"); await until("document.querySelector('.launch-summary') && document.querySelectorAll('.readiness-row').length > 0");
   await check("readiness distinguishes ready foundations from missing scientific authority", "document.querySelector('.readiness-list').textContent.includes('Connect scientific runtime') && document.querySelector('.readiness-list > details').textContent.includes('foundations are ready') && document.querySelector('.readiness-list').textContent.includes('Prepare run') && !document.querySelector('.readiness-row > .readiness-copy > p')");
   await check("readiness exposes no managed paths as editable command input", "!document.querySelector('.optimization-page input') && !document.querySelector('.optimization-page').textContent.includes('project.sqlite')");
   await screenshot("managed-readiness");
@@ -212,15 +212,15 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
       { key: "recovery.current-run", category: "recovery", state: "stale", required: true, summary: "Existing optimization journal cannot be recovered", evidence: "Inspect the persisted run records before continuing.", nextAction: { key: "inspect-scientific-history", label: "Inspect scientific history" } },
     ];
     readiness.optimizationAuthority = undefined;
-    await nav("models"); await textButton("Start optimization"); await textButton("Refresh");
+    await nav("models"); await click("#project-optimize"); await textButton("Refresh");
     await until("[...document.querySelectorAll('.readiness-row button')].some(b=>b.textContent === 'Inspect scientific history')");
     await check("credential and journal readiness actions have honest desktop destinations", "[...document.querySelectorAll('.readiness-row button')].some(b=>b.textContent === 'Open project settings') && [...document.querySelectorAll('.readiness-row button')].some(b=>b.textContent === 'Inspect scientific history')");
     await textButton("Inspect scientific history"); await until("document.querySelector('.page-heading h1')?.textContent === 'Runs'");
-    await nav("models"); await textButton("Start optimization"); await textButton("Open project settings"); await until("document.querySelector('.page-heading h1')?.textContent === 'Project settings'");
+    await nav("models"); await click("#project-optimize"); await textButton("Open project settings"); await until("document.querySelector('.page-heading h1')?.textContent === 'Project settings'");
     readiness.report.checks = ordinaryChecks;
     readiness.optimizationAuthority = authority;
 
-    await nav("models"); await textButton("Start optimization"); await textButton("Refresh");
+    await nav("models"); await click("#project-optimize"); await textButton("Refresh");
     await check("passive readiness refresh stays compact", "document.querySelector('.workspace-progress')?.textContent === 'Checking…'");
     await until("document.querySelector('.launch-definition .section-heading h2')?.textContent === 'Run'");
     await check("run preparation starts with useful limits only", "document.querySelector('.launch-definition').textContent.includes('Candidates') && document.querySelector('.launch-definition').textContent.includes('Added training data') && document.querySelector('.launch-definition').textContent.includes('API calls') && !document.querySelector('.launch-definition').textContent.includes('Repair the observed retrieval regression')");
@@ -256,7 +256,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     statusFails = false;
     await nav("models");
     currentRun.activity = { ...currentRun.activity!, phase: "evaluating_retrieval", completed: undefined, total: undefined };
-    await textButton("Start optimization");
+    await click("#project-optimize");
     await until("document.querySelector('.live-run h3')?.textContent === 'Evaluating retrieval'");
     await check("returning to an executing run restores observation without stale training percentages", "!document.querySelector('.live-counter') && document.querySelector('.launch-summary h2').textContent === 'Running' && !document.querySelector('.run-connection-warning')");
     releaseTraining(); await until("document.querySelector('.run-control')?.textContent.includes('Review final acceptance')");

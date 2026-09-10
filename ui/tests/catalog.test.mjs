@@ -58,7 +58,7 @@ test("positive metric delta does not override the persisted failure", () => {
   assert.ok(row.candidate.development[0].report.metrics.mrr > row.candidate.development[0].baseline.metrics.mrr);
 });
 test("search, setup and status filters are real and do not alter source data", () => {
-  assert.equal(comparisonGroups(snapshot, { ...initialFilter(), query: "repair fine-tune" }).flatMap(g => g.rows).length, 1);
+  assert.equal(comparisonGroups(snapshot, { ...initialFilter(), query: "6,992" }).flatMap(g => g.rows).length, 1);
   assert.equal(comparisonGroups(snapshot, { ...initialFilter(), query: "does not exist" }).length, 0);
   const passed = comparisonGroups(snapshot, { ...initialFilter(), status: "passed" }).flatMap(g => g.rows);
   assert.equal(passed.length, 2);
@@ -77,7 +77,7 @@ test("generic projects use their primary metric and never invent triplet trainin
   const f = experimentFixture();
   const run = projectRun(f.protocol, f.project, f.events, "experiment.db");
   assert.deepEqual(summaryMetrics(run), ["macro_f1", "accuracy", "loss"]);
-  assert.match(candidateName(run.candidates[0]), /^Fine-tune/);
+  assert.equal(candidateName(run.candidates[0]), "Candidate 01");
   assert.equal(candidateName({ id: "untouched", sequence: 2, parameters: {}, development: [] }), "Candidate 02");
 });
 test("sorting follows the declared primary direction and puts missing evidence last", () => {
