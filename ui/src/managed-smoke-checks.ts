@@ -194,7 +194,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
       { key: "recovery.current-run", category: "recovery", state: "stale", required: true, summary: "Existing optimization journal cannot be recovered", evidence: "Inspect the persisted run records before continuing.", nextAction: { key: "inspect-scientific-history", label: "Inspect scientific history" } },
     ];
     readiness.optimizationAuthority = undefined;
-    await nav("models"); await textButton("Start optimization"); await textButton("Refresh checks");
+    await nav("models"); await textButton("Start optimization"); await textButton("Refresh");
     await until("[...document.querySelectorAll('.readiness-row button')].some(b=>b.textContent === 'Inspect scientific history')");
     await check("credential and journal readiness actions have honest desktop destinations", "[...document.querySelectorAll('.readiness-row button')].some(b=>b.textContent === 'Open project settings') && [...document.querySelectorAll('.readiness-row button')].some(b=>b.textContent === 'Inspect scientific history')");
     await textButton("Inspect scientific history"); await until("document.querySelector('.page-heading h1')?.textContent === 'Runs'");
@@ -202,15 +202,15 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     readiness.report.checks = ordinaryChecks;
     readiness.optimizationAuthority = authority;
 
-    await nav("models"); await textButton("Start optimization"); await textButton("Refresh checks");
-    await check("passive readiness refresh never claims to perform deep preparation", "document.querySelector('.workspace-progress').textContent.includes('Checking persisted project state') && !document.querySelector('.workspace-progress').textContent.includes('Replaying')");
-    await until("document.querySelector('.launch-definition')?.textContent.includes('Approved repair on record')");
-    await check("approved repair is understandable before preparation", "document.querySelector('.launch-definition').textContent.includes('one candidate') || document.querySelector('.launch-definition').textContent.includes('Candidates') && document.querySelector('.launch-definition').textContent.includes('External calls')");
-    await textButton("Prepare approved run");
-    await check("preparation has one compact progress state", "document.querySelector('.workspace-progress').textContent === 'Preparing run…'");
-    await until("document.querySelector('.launch-definition')?.textContent.includes('Exact run definition')");
-    await check("prepared definition exposes the reviewed objective and exact execution recipe", "document.querySelector('.launch-definition').textContent.includes('Repair the observed retrieval regression') && document.querySelector('.launch-definition').textContent.includes('generic_holdout') && document.querySelector('.launch-definition').textContent.includes('nomos_sealed_acceptance') && document.querySelector('.launch-definition').textContent.includes('Learning rate')");
-    await check("prepared definition exposes finite execution and external limits", "document.querySelector('.launch-definition').textContent.includes('120 seconds') && document.querySelector('.launch-definition').textContent.includes('Sealed evaluations') && document.querySelector('.launch-definition').textContent.includes('External calls0') && document.querySelector('.launch-actions button').textContent === 'Reserve optimization run'");
+    await nav("models"); await textButton("Start optimization"); await textButton("Refresh");
+    await check("passive readiness refresh stays compact", "document.querySelector('.workspace-progress')?.textContent === 'Checking…'");
+    await until("document.querySelector('.launch-definition .section-heading h2')?.textContent === 'Run'");
+    await check("run preparation starts with useful limits only", "document.querySelector('.launch-definition').textContent.includes('Candidates') && document.querySelector('.launch-definition').textContent.includes('Training data') && document.querySelector('.launch-definition').textContent.includes('API calls') && !document.querySelector('.launch-definition').textContent.includes('Repair the observed retrieval regression')");
+    await textButton("Review run");
+    await check("preparation has one compact progress state", "document.querySelector('.workspace-progress')?.textContent === 'Preparing…'");
+    await until("document.querySelector('.launch-definition details summary')?.textContent === 'Technical details'");
+    await check("technical disclosure retains exact execution facts", "document.querySelector('.launch-definition').textContent.includes('generic_holdout') && document.querySelector('.launch-definition').textContent.includes('nomos_sealed_acceptance') && document.querySelector('.launch-definition').textContent.includes('Learning rate')");
+    await check("prepared run exposes the useful summary without research prose", "document.querySelector('.launch-definition').textContent.includes('2m') && document.querySelector('.launch-definition').textContent.includes('API calls0') && document.querySelector('.launch-actions button').textContent === 'Start run' && !document.querySelector('.launch-definition').textContent.includes('Reviewed objective') && document.querySelector('.launch-definition details summary').textContent === 'Technical details'");
     await screenshot("managed-optimization-prepared");
     await nav("datasets"); await until("document.querySelector('.scientific-data-card')");
     await check("Data distinguishes source custody from the frozen training snapshot without narration", "document.querySelector('.page-heading h1').textContent === 'Data' && !document.querySelector('.page-heading p') && document.querySelector('.scientific-data-card').textContent.includes('24') && document.querySelector('.scientific-data-card').textContent.includes('approved repair rows') && document.querySelector('.scientific-data-card').textContent.includes('Prepared definition; no run reserved') && !document.querySelector('.scientific-data-card p') && !document.querySelector('.preparation-note')");
@@ -218,9 +218,9 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await nav("benchmarks"); await until("document.querySelector('.evaluation-plan')");
     await check("Evaluation separates bound suite authority from recorded results without narration", "document.querySelector('.page-heading h1').textContent === 'Evaluation' && !document.querySelector('.page-heading p') && document.querySelector('.evaluation-plan').textContent.includes('Generic holdout') && document.querySelector('.evaluation-plan').textContent.includes('Nomos sealed acceptance') && document.querySelector('.evaluation-plan').textContent.includes('Development') && document.querySelector('.evaluation-plan').textContent.includes('approval required') && !document.querySelector('.evaluation-plan p') && !document.querySelector('.reading-note')");
     await screenshot("managed-evaluation-plan");
-    await textButton("Review prepared run"); await until("document.querySelector('.launch-definition')?.textContent.includes('Exact run definition')");
-    await textButton("Reserve optimization run");
-    await check("reservation visibly enters non-repeatable verification", "document.querySelector('.workspace-progress').textContent.includes('Verifying run authority') && document.querySelector('.launch-actions button').disabled && document.querySelector('.launch-actions button').textContent === 'Verifying…'");
+    await textButton("Review prepared run"); await until("document.querySelector('.launch-definition .section-heading h2')?.textContent === 'Run'");
+    await textButton("Start run");
+    await check("start visibly enters non-repeatable verification", "document.querySelector('.workspace-progress')?.textContent.includes('Starting…') && document.querySelector('.launch-actions button').disabled && document.querySelector('.launch-actions button').textContent === 'Starting…'");
     await until("document.querySelector('.run-control')?.textContent.includes('Build and evaluate the candidate')");
     await check("reservation exposes only the next durable stage", "document.querySelector('.run-control').textContent.includes('Reserved run') && [...document.querySelectorAll('.run-control button')].some(b=>b.textContent === 'Build and evaluate the candidate') && document.querySelector('#nav-runs .nav-count').textContent === '1'");
     await textButton("Build and evaluate the candidate"); await until("document.querySelector('.run-control')?.textContent.includes('Review final acceptance')");
@@ -240,19 +240,19 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
 
     currentRun = run("failed", "none", undefined, "Native trainer exited before the checkpoint was committed.");
     readiness.launchPreview = { ...preview, existingRun: { runId, state: "failed" } };
-    await textButton("Refresh checks"); await until("document.querySelector('.run-stage.is-failed')");
+    await textButton("Refresh"); await until("document.querySelector('.run-stage.is-failed')");
     await check("failed run leads with its durable diagnostic and no unsafe continuation", "document.querySelector('.launch-summary h2').textContent === 'Run needs attention' && document.querySelector('.run-stage.is-failed').textContent.includes('Native trainer exited') && ![...document.querySelectorAll('.run-actions button')].some(b=>b.textContent.includes('Build')) && document.querySelector('.usage-caution')");
     await screenshot("managed-optimization-failed");
 
     currentRun = run("cancelled", "none", undefined, "Stop before committing more local compute.");
     readiness.launchPreview = { ...preview, existingRun: { runId, state: "cancelled" } };
-    await textButton("Refresh checks"); await until("document.querySelector('.run-stage.is-cancelled')");
+    await textButton("Refresh"); await until("document.querySelector('.run-stage.is-cancelled')");
     await check("cancelled run presents the operator reason as a neutral terminal record", "document.querySelector('.launch-summary h2').textContent === 'Run cancelled' && document.querySelector('.run-stage.is-cancelled').textContent.includes('Stop before committing') && !document.querySelector('.run-stage.is-cancelled').matches('[role=alert]') && !document.querySelector('.run-actions')");
     await screenshot("managed-optimization-cancelled");
 
     currentRun = run("completed", "none", "promote_candidate");
     readiness.launchPreview = { ...preview, existingRun: { runId, state: "completed" } };
-    await textButton("Refresh checks"); await until("document.querySelector('.launch-summary h2')?.textContent === 'Baseline updated'");
+    await textButton("Refresh"); await until("document.querySelector('.launch-summary h2')?.textContent === 'Baseline updated'");
   } finally {
     harness.backend.readiness = readinessMethod;
     harness.backend.prepareOptimization = prepareMethod;

@@ -571,11 +571,11 @@ dialog::backdrop { background: #0008; }
 .launch-metric dt { color: var(--muted); font-size: 11px; }
 .launch-metric dd { margin: 4px 0 2px; font: 600 19px var(--font); }
 .launch-metric span { display: block; color: var(--subtle); font-size: 10px; line-height: 1.35; }
-.launch-boundaries { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+.launch-boundaries { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
 .launch-boundaries section { min-width: 0; padding: 13px 14px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); }
 .launch-boundaries strong { display: block; margin-top: 4px; font-size: 13px; overflow-wrap: anywhere; }
 .launch-boundaries p { margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
-.launch-disclosures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 10px; }
+.launch-disclosures { margin-top: 10px; }
 .launch-disclosures > .disclosure { margin: 0; }
 .external-work { margin-top: 14px; padding: 10px 12px; border-left: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 4%, transparent); }
 .external-work p { margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.5; }

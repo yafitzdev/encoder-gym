@@ -57,12 +57,12 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
     await evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(![...document.querySelectorAll('#page button')].some(button=>button.textContent.includes('Checking')))resolve(true);else if(n++>1000)reject(new Error('Provider availability did not resolve'));else setTimeout(poll,20)};poll()})");
     await capture("managed-current-settings");
     await evaluate("[...document.querySelectorAll('[data-page=models]')].at(0).click();[...document.querySelectorAll('#page button')].find(button=>button.textContent==='Start optimization').click();true");
-    await evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(document.querySelector('.launch-summary')&&!document.querySelector('.workspace-progress'))resolve(true);else if(n++>1500)reject(new Error('Real managed readiness did not render'));else setTimeout(poll,20)};poll()})");
+    await evaluate("new Promise((resolve,reject)=>{let n=0;const poll=()=>{if(document.querySelector('.launch-definition')&&!document.querySelector('.workspace-progress'))resolve(true);else if(n++>1500)reject(new Error('Real managed readiness did not render'));else setTimeout(poll,20)};poll()})");
     if (readiness.preparedOptimization) {
-      await check("[...document.querySelectorAll('#page button')].filter(button=>button.textContent==='Reserve optimization run').length === 1 && document.getElementById('page').textContent.includes('Prepared for reservation') && document.getElementById('page').textContent.includes('Exact run definition') && !document.getElementById('page').textContent.includes('Do these next')");
-      await check("(()=>{const button=[...document.querySelectorAll('#page button')].find(button=>button.textContent==='Reserve optimization run');if(!button)return false;const rect=button.getBoundingClientRect();return rect.top>=0&&rect.bottom<=window.innerHeight})()");
+      await check("[...document.querySelectorAll('#page button')].filter(button=>button.textContent==='Start run').length === 1 && document.querySelector('.launch-definition .section-heading h2')?.textContent === 'Run' && !document.getElementById('page').textContent.includes('Reviewed objective') && !document.getElementById('page').textContent.includes('Do these next')");
+      await check("(()=>{const button=[...document.querySelectorAll('#page button')].find(button=>button.textContent==='Start run');if(!button)return false;const rect=button.getBoundingClientRect();return rect.top>=0&&rect.bottom<=window.innerHeight})()");
     } else {
-      await check("[...document.querySelectorAll('#page button')].filter(button=>button.textContent==='Prepare approved run').length === 1 && !document.getElementById('page').textContent.includes('Do these next')");
+      await check("[...document.querySelectorAll('#page button')].filter(button=>button.textContent==='Review run').length === 1 && !document.getElementById('page').textContent.includes('Do these next')");
     }
     await capture("managed-current-readiness");
   } finally {

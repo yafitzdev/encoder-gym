@@ -104,9 +104,14 @@ function reportPanel(report: ManagedOptimizationReport): HTMLElement {
     ])),
     h("div", { class: "evidence-limits" }, h("div", { class: "eyebrow" }, "Known evidence limits"), h("ul", {}, ...report.known_evidence_limits.map(limit => h("li", {}, limit)))));
 }
-function candidateRecipe(preview: ManagedLaunchPreview): HTMLElement {
-  return details(`Inspect ${preview.candidateRecipes.length === 1 ? "the candidate recipe" : `${preview.candidateRecipes.length} candidate recipes`}`,
-    h("div", { class: "readiness-details" }, ...preview.candidateRecipes.map(recipe => h("section", { class: "candidate-recipe" },
+function technicalRunDetails(preview: ManagedLaunchPreview, baseline: string): HTMLElement {
+  return details("Technical details", h("div", { class: "readiness-details" },
+    facts([
+      ["Definition", preview.runName], ["Baseline", baseline], ["Training snapshot", preview.trainingSnapshotId],
+      ["Benchmark generation", preview.benchmarkGenerationId], ["Final evaluation", preview.sealedSuite], ["Evaluation time ceiling", `${preview.maximumEvaluationSeconds.toLocaleString()} seconds`],
+      ...budgetFacts(preview),
+    ]),
+    ...preview.candidateRecipes.map(recipe => h("section", { class: "candidate-recipe" },
       h("strong", {}, `Candidate ${recipe.sequence}`),
       facts([["Training ceiling", `${recipe.maximumTrainingSeconds.toLocaleString()} seconds`], ...Object.entries(recipe.parameters).map(([key, value]) => [fieldLabel(key), parameterLabel(value)] as [string, string])])))));
 }
@@ -117,7 +122,7 @@ function actionFor(check: ReadinessCheck, actions: OptimizationPageActions): HTM
   if (key === "import-dataset") return button(check.nextAction!.label, actions.openData, "secondary");
   if (key.startsWith("bind-") || key.startsWith("rebind-") || key.startsWith("repair-scientific") || key === "configure-providers" || key === "configure-provider-secret") return button("Open project settings", actions.openSettings, "secondary");
   if (key === "inspect-scientific-history") return button(check.nextAction!.label, actions.openRuns, "secondary");
-  if (key === "prepare-optimization") return button("Prepare approved run", actions.prepare, "secondary");
+  if (key === "prepare-optimization") return button("Review run", actions.prepare, "secondary");
   if (key === "resume-optimization") return button("Open existing run", actions.start, "secondary");
   return null;
 }
@@ -232,39 +237,38 @@ export function renderOptimization(workspace: ManagedWorkspace, state: Optimizat
   const authority = state.prepared?.authority ?? readiness?.optimizationAuthority;
   const summary = launchSummary(state, readiness, preview, unfinished, activeAcceptedModel);
   const reserveAction = preview && !state.run
-    ? button(state.executing === "start" ? "Verifying…" : preview.existingRun ? "Open existing run" : "Reserve optimization run", actions.start, "primary", "runs")
+    ? button(state.executing === "start" ? "Starting…" : preview.existingRun ? "Open run" : "Start run", actions.start, "primary", "runs")
     : null;
   if (reserveAction instanceof HTMLButtonElement) reserveAction.disabled = Boolean(state.executing);
   return h("div", { class: "page-content optimization-page" },
-    pageHeader(state.run ? "Optimization run" : "Start optimization", button("Refresh checks", actions.refresh, "ghost", "refresh")),
+    pageHeader(state.run ? "Run" : "New run", button("Refresh", actions.refresh, "ghost", "refresh")),
     state.error ? h("section", { class: "operation-failure", role: "alert" }, h("strong", {}, state.errorTitle ?? "Could not inspect launch readiness"), h("p", {}, state.error)) : null,
-    state.loading && !state.executing ? h("div", { class: "workspace-progress", role: "status" }, "Checking persisted project state…") : null,
-    state.executing === "prepare" ? h("div", { class: "workspace-progress", role: "status" }, "Preparing run…") : null,
-    state.executing && state.executing !== "prepare" && !state.run ? h("div", { class: "workspace-progress", role: "status" }, state.executing === "start" ? `Verifying run authority · ${elapsedLabel(state.operationStartedAt)}` : "Updating the durable run record…") : null,
-    report ? h("section", { class: "launch-summary" },
+    state.loading && !state.executing ? h("div", { class: "workspace-progress", role: "status" }, "Checking…") : null,
+    state.executing === "prepare" ? h("div", { class: "workspace-progress", role: "status" }, "Preparing…") : null,
+    state.executing && state.executing !== "prepare" && !state.run ? h("div", { class: "workspace-progress", role: "status" }, state.executing === "start" ? `Starting… ${elapsedLabel(state.operationStartedAt)}` : "Updating…") : null,
+    report && (!preview || state.run) ? h("section", { class: "launch-summary" },
       h("div", {}, h("div", { class: "eyebrow" }, state.run ? "Run outcome" : "Launch status"), h("h2", {}, summary.title)),
       status(summary.label, summary.tone)) : null,
     state.run ? runPanel(state.run, state, actions, activeAcceptedModel) : null,
-    readiness?.optimizationAuthority && !preview ? h("section", { class: "launch-definition" }, sectionHeader("Approved repair on record", tag("Recorded", "accent")),
-      h("p", { class: "section-note" }, readiness.optimizationAuthority.hypotheses.join(" ")),
-      facts([["Candidates", String(readiness.optimizationAuthority.candidateCount)], ["Qualified repair rows", readiness.optimizationAuthority.deltaRows.toLocaleString()], ["Training ceiling", `${readiness.optimizationAuthority.budget.maximum_training_seconds.toLocaleString()} seconds`], ["External calls", String(readiness.optimizationAuthority.budget.maximum_external_calls)], ["Sealed uses", String(readiness.optimizationAuthority.budget.maximum_sealed_uses)], ["Authority expires", localDateTimeLabel(readiness.optimizationAuthority.validUntil)]]),
-      button(state.loading ? "Preparing…" : "Prepare approved run", actions.prepare, "primary", "arrow")) : null,
+    readiness?.optimizationAuthority && !preview ? h("section", { class: "launch-definition" }, sectionHeader("Run", tag("Ready", "accent")),
+      h("dl", { class: "launch-metrics", "aria-label": "Run limits" },
+        launchMetric("Candidates", String(readiness.optimizationAuthority.candidateCount)),
+        launchMetric("Training", durationLabel(readiness.optimizationAuthority.budget.maximum_training_seconds)),
+        launchMetric("Training data", `${(readiness.optimizationAuthority.baseTrainingInputs + readiness.optimizationAuthority.deltaRows).toLocaleString()} rows`),
+        launchMetric("API calls", String(readiness.optimizationAuthority.budget.maximum_external_calls))),
+      h("div", { class: "launch-actions" }, button(state.loading ? "Preparing…" : "Review run", actions.prepare, "primary", "arrow"))) : null,
     readiness && !preview ? readinessList(readiness, actions, readiness.optimizationAuthority ? new Set(["optimization.preview"]) : new Set()) : null,
-    preview ? h("section", { class: "launch-definition" }, sectionHeader("Exact run definition", tag("Immutable", "accent")),
-      h("div", { class: "launch-objective" }, h("div", { class: "eyebrow" }, "Reviewed objective"), h("h3", {}, preview.runName),
-        authority?.hypotheses.length ? h("p", {}, authority.hypotheses.join(" ")) : null),
-      h("dl", { class: "launch-metrics", "aria-label": "Hard run limits" },
-        launchMetric("Candidates", `${preview.candidateCount}`, `${preview.candidateRecipes.length} frozen ${preview.candidateRecipes.length === 1 ? "recipe" : "recipes"}`),
-        launchMetric("Iterations", `${preview.budget.maximum_iterations}`, "finite campaign"),
-        launchMetric("Training", durationLabel(preview.budget.maximum_training_seconds), `${preview.budget.maximum_training_seconds.toLocaleString()} seconds ceiling`),
-        launchMetric("Development", `${preview.budget.maximum_development_evaluations}`, "evaluations maximum")),
+    preview ? h("section", { class: "launch-definition" }, sectionHeader("Run", tag("Ready", "accent")),
+      h("dl", { class: "launch-metrics", "aria-label": "Run summary" },
+        launchMetric("Candidates", String(preview.candidateCount)),
+        launchMetric("Training", durationLabel(preview.budget.maximum_training_seconds)),
+        launchMetric("Evaluations", String(preview.budget.maximum_development_evaluations)),
+        launchMetric("API calls", String(authority?.budget.maximum_external_calls ?? 0))),
       h("div", { class: "launch-boundaries" },
-        h("section", {}, h("div", { class: "eyebrow" }, "Development"), h("strong", {}, preview.developmentSuites.join(" · "))),
-        h("section", {}, h("div", { class: "eyebrow" }, "Sealed"), h("strong", {}, preview.sealedSuite), tag("Approval required", "warning")),
-        h("section", {}, h("div", { class: "eyebrow" }, "External calls"), h("strong", {}, String(authority?.budget.maximum_external_calls ?? 0)))),
+        h("section", {}, h("div", { class: "eyebrow" }, "Baseline"), h("strong", {}, runBaseline?.name ?? active?.name ?? `${workspace.manifest.name} baseline`)),
+        h("section", {}, h("div", { class: "eyebrow" }, "Training data"), h("strong", {}, authority ? `${(authority.baseTrainingInputs + authority.deltaRows).toLocaleString()} rows` : preview.trainingSnapshotId)),
+        h("section", {}, h("div", { class: "eyebrow" }, "Evaluation"), h("strong", {}, preview.developmentSuites.join(" · ")))),
       reserveAction ? h("div", { class: "launch-actions" }, reserveAction) : null,
-      h("div", { class: "launch-disclosures" }, candidateRecipe(preview),
-        details("Inspect immutable identities and complete limits", facts([["Baseline", runBaseline?.name ?? active?.name ?? workspace.manifest.name + " baseline"], ["Training snapshot", preview.trainingSnapshotId], ["Benchmark generation", preview.benchmarkGenerationId], ["Evaluation time ceiling", `${preview.maximumEvaluationSeconds.toLocaleString()} seconds`], ...budgetFacts(preview)]))),
-      ) : null,
+      h("div", { class: "launch-disclosures" }, technicalRunDetails(preview, runBaseline?.name ?? active?.name ?? `${workspace.manifest.name} baseline`))) : null,
   );
 }
