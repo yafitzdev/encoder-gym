@@ -53,13 +53,17 @@ export function trainingDetails(candidate: CandidateAttempt, run: RunRecord, act
   );
 }
 
-export function runListItem(run: RunRecord, workspace: WorkspaceSnapshot, actions: Actions): HTMLElement {
+export function runListItem(run: RunRecord, workspace: WorkspaceSnapshot, actions: Actions, open?: () => void): HTMLElement {
   const failed = run.candidates.filter(c => c.failure).length;
-  return h("button", { type: "button", id: "run-" + run.id, class: "run-list-item", onClick: () => actions.navigate({ page: "run", id: run.id }) },
+  const row = h("button", { type: "button", id: "run-" + run.id, class: "run-list-item", onClick: () => actions.navigate({ page: "run", id: run.id }) },
     h("span", { class: "run-number" }, runLabel(run, workspace)), h("span", { class: "run-list-name" }, h("strong", {}, runName(run)), h("small", {}, `${run.candidates.length} ${run.candidates.length === 1 ? "candidate" : "candidates"} · ${setupName(run)}`)),
     h("span", {}, status(failed ? "Execution errors" : run.decision === "retain_baseline" ? "Baseline kept" : run.decision === "promote_candidate" ? "Candidate accepted" : "No final decision", failed ? "danger" : "neutral")),
     h("time", {}, dateLabel(run.createdAt)),
   );
+  if (!open) return row;
+  const continuation = button("Continue", open, "secondary", "arrow");
+  continuation.dataset.optimizationLink = "true";
+  return h("article", { class: "run-list-linked" }, row, continuation);
 }
 function eventLabel(kind: string): string {
   return ({ run_created: "Run created", candidate_training_started: "Model build started", candidate_training_completed: "Model artifact recorded", candidate_development_completed: "Development evaluation recorded", candidate_development_suite_completed: "Development suite recorded", development_selected: "Development selection completed", sealed_authorized: "Final acceptance authorized", sealed_started: "Final acceptance started", sealed_completed: "Final acceptance recorded", finalized: "Final decision recorded", candidate_failed: "Candidate execution failed" } as Record<string, string>)[kind] ?? kind.replaceAll("_", " ");

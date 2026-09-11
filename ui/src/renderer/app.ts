@@ -546,7 +546,7 @@ export function mount(): void {
       else if (current.page === "optimization" && data.managed) content = renderOptimization(data.managed, view.optimization, optimizationActions);
       else if (current.page === "model" || current.page === "candidate") content = renderModel(data, current.id ?? "", current.tab ?? "overview", detail, actions, current.runId);
       else if (current.page === "run") content = renderRun(data, current.id ?? "", current.tab ?? "overview", actions);
-      else if (current.page === "runs") content = renderRuns(data, actions, view.optimization.run, data.managed ? view.inputRuns : undefined);
+      else if (current.page === "runs") content = renderRuns(data, actions, view.optimization.run, data.managed ? view.inputRuns : undefined, data.managed ? view.setup : undefined);
       else if (current.page === "benchmarks") content = data.managed && view.benchmarks ? renderBenchmarkPage(data, current, view.benchmarks, actions) : renderBenchmarks(data, actions);
       else if (current.page === "baseline") content = renderModel(data, data.baseline.id, current.tab ?? "overview", detail, actions);
       else content = renderCompare(data, candidateRows(data).filter(r => current.candidateIds?.includes(r.candidate.id)), actions);
@@ -571,7 +571,7 @@ export function mount(): void {
       const controller = view.benchmarks;
       queueMicrotask(() => { if (view.benchmarks === controller && !loading && !collectionBusy && workspace()?.managed) void controller.ensure(current); });
     }
-    if (data?.managed && view.setup && current.page === "optimization" && current.tab === "setup" && !loading && !collectionBusy) {
+    if (data?.managed && view.setup && ((current.page === "optimization" && current.tab === "setup") || current.page === "runs") && !loading && !collectionBusy) {
       const controller = view.setup;
       queueMicrotask(() => { if (view.setup === controller && !loading && !collectionBusy && workspace()?.managed) void controller.ensure(); });
     }

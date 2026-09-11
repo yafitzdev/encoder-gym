@@ -241,7 +241,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await nav("benchmarks"); await until("document.querySelector('.empty-state h2')?.textContent === 'No benchmark'");
     await check("Evaluation does not substitute a prepared run for a project benchmark", "document.querySelector('.page-heading h1').textContent === 'Evaluation' && !document.querySelector('.page-heading p') && !document.querySelector('.evaluation-plan') && !document.querySelector('.benchmark-section')");
     await screenshot("managed-evaluation-empty");
-    await nav("runs"); await until("document.querySelector('.optimization-run-row')"); await textButton("Continue run");
+    await nav("runs"); await until("[...document.querySelectorAll('.unified-run-list button')].some(button=>button.textContent === 'Continue')"); await textButton("Continue");
     await until("document.querySelector('.run-control')?.textContent.includes('Build and evaluate the candidate')");
     await check("reservation exposes only the next durable stage", "document.querySelector('.launch-summary h2').textContent === 'Ready to continue' && [...document.querySelectorAll('.run-control button')].some(b=>b.textContent === 'Build and evaluate the candidate') && document.querySelector('#nav-runs .nav-count').textContent === '1'");
     await textButton("Build and evaluate the candidate"); await until("document.querySelector('.live-counter progress')?.value === 24");
@@ -259,7 +259,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     statusFails = false;
     await nav("models");
     currentRun.activity = { ...currentRun.activity!, phase: "evaluating_retrieval", completed: undefined, total: undefined };
-    await nav("runs"); await textButton("Continue run");
+    await nav("runs"); await textButton("Continue");
     await until("document.querySelector('.live-run h3')?.textContent === 'Evaluating retrieval'");
     await check("returning to an executing run restores observation without stale training percentages", "!document.querySelector('.live-counter') && document.querySelector('.launch-summary h2').textContent === 'Running' && !document.querySelector('.run-connection-warning')");
     releaseTraining(); await until("[...document.querySelectorAll('.run-control button')].some(button=>button.textContent === 'Authorize one sealed evaluation' && !button.disabled)");
@@ -317,7 +317,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
 
   await nav("models");
   await nav("runs");
-  await check("managed runs keep their optimization parent visible", "document.querySelector('.optimization-run-row').textContent.includes('Latest optimization') && document.querySelector('.optimization-run-row').textContent.includes('promote candidate') && document.querySelector('#nav-runs .nav-count').textContent === '1' && [...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Inspect run')");
+  await check("managed runs remain one flat list without current or earlier hierarchy", "(document.querySelector('[data-optimization-link]') || document.querySelector('[data-managed-run-id]')) && document.querySelector('#nav-runs .nav-count').textContent === '1' && !document.querySelector('.optimization-run-row') && !document.querySelector('.unified-run-list > details')");
   await screenshot("managed-runs-parent");
   await nav("benchmarks");
   await until("document.querySelector('.empty-state h2')?.textContent === 'No benchmark'");
@@ -608,6 +608,10 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await until("document.querySelector('.optimization-progress')?.textContent.includes('Building training dataset')");
   await check("Optimize names the exact current work and shows both activity spinners", "document.querySelector('.optimization-progress').textContent.includes('Variant · v1 · 1 row · 1 / 1 written') && document.querySelector('.optimization-progress').getAttribute('aria-busy') === 'true' && document.querySelector('#nav-runs .spinner')");
   await screenshot("managed-optimization-live");
+  await nav("runs");
+  await until("document.querySelector('.unified-run-entry.is-running .optimization-progress')?.textContent.includes('Building training dataset')");
+  await check("Runs preserves the full live progress view after leaving Optimize", "document.querySelector('.unified-run-entry.is-running .optimization-progress').textContent.includes('Variant · v1 · 1 row · 1 / 1 written') && document.querySelector('.unified-run-entry.is-running .optimization-progress').getAttribute('aria-busy') === 'true' && document.querySelector('#nav-runs .spinner') && !document.querySelector('.unified-run-list > details')");
+  await screenshot("managed-runs-live");
   finishOptimizationStatus();
   await until("!document.querySelector('.optimization-progress .spinner')");
   harness.backend.optimizationLaunch.drive = driveInputRun;
@@ -623,7 +627,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   };
   await nav("runs"); await until("document.querySelector('[data-project-run-id=" + JSON.stringify(queued.id) + "]')");
   await check("project optimization survives as a resumable top-level run", "document.querySelector('[data-project-run-id=" + JSON.stringify(queued.id) + "]').textContent.includes('Checking inputs') && document.querySelector('[data-project-run-id=" + JSON.stringify(queued.id) + "] button').textContent === 'Continue'");
-  await check("Runs does not expose repair recipes as the product workflow", "!document.querySelector('.project-run-section').textContent.toLowerCase().includes('repair')");
+  await check("Runs does not expose repair recipes as the product workflow", "!document.querySelector('.unified-run-list').textContent.toLowerCase().includes('repair')");
   await textButton("Continue");
   await until("document.querySelector('[data-project-run-id=" + JSON.stringify(queued.id) + "]')?.textContent.includes('Training candidate')");
   await check("project run shows its persisted native stage, counter and sidebar spinner", "(()=>{const row=document.querySelector('[data-project-run-id=" + JSON.stringify(queued.id) + "]');const bar=row.querySelector('progress');return row.textContent.includes('Training candidate') && bar.value===40 && bar.max===100 && document.querySelector('#nav-runs .spinner')})()");

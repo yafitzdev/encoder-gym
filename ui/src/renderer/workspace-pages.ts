@@ -6,50 +6,83 @@ import { button, copyField, details, empty, facts, pageHeader, sectionHeader, ta
 import { runListItem } from "./detail-pages.js";
 import { h } from "./dom.js";
 import type { InputRunsController } from "./input-runs-controller.js";
+import type { OptimizationSetupController } from "./optimization-setup-controller.js";
 import { inputOptimizationPhase, inputOptimizationTerminal, type InputOptimizationPhase, type InputOptimizationRun } from "../input-optimization.js";
-import { inputRunStageLabel } from "./input-run-activity.js";
+import { inputRunStageLabel, type InputRunStageContext } from "./input-run-activity.js";
+import { inputRunProgress } from "./input-run-progress.js";
 
-export function renderRuns(workspace: WorkspaceSnapshot, actions: Actions, optimization?: ManagedRunStatus, projectRuns?: InputRunsController): HTMLElement {
-  const active = optimization && !["completed", "cancelled", "failed"].includes(optimization.state);
-  const projectRunIds = new Set(projectRuns?.runs?.map(run => run.id) ?? []);
+export function renderRuns(workspace: WorkspaceSnapshot, actions: Actions, optimization?: ManagedRunStatus, projectRuns?: InputRunsController, setup?: OptimizationSetupController): HTMLElement {
+  const knownProjectRuns = projectRuns?.runs ?? [];
+  const projectRunValues = setup?.run && !knownProjectRuns.some(run => run.id === setup.run!.id) ? [setup.run, ...knownProjectRuns] : knownProjectRuns;
+  const projectRunIds = new Set(projectRunValues.map(run => run.id));
   const experimentRuns = workspace.runs.filter(run => !run.optimizationId || !projectRunIds.has(run.optimizationId));
-  const experiments = experimentRuns.length
-    ? projectRuns?.runs?.length
-      ? [details(`Earlier runs · ${experimentRuns.length}`, h("div", { class: "run-list" }, ...experimentRuns.map(run => runListItem(run, workspace, actions))))]
-      : [sectionHeader("Runs"), h("div", { class: "run-list" }, ...experimentRuns.map(run => runListItem(run, workspace, actions)))]
-    : projectRuns?.runs?.length ? [] : [sectionHeader("Runs"), empty(optimization ? "No run record" : "No runs")];
+  const optimizationIsListed = !!optimization && (projectRunIds.has(optimization.run_id) || experimentRuns.some(run => run.optimizationId === optimization.run_id));
+  const entries: { createdAt: string; node: HTMLElement }[] = [
+    ...projectRunValues.map(run => ({ createdAt: run.createdAt, node: projectRun(run, workspace, actions, projectRuns!, setup) })),
+    ...experimentRuns.map(run => ({ createdAt: run.createdAt, node: runListItem(run, workspace, actions, run.optimizationId === optimization?.run_id ? () => actions.navigate({ page: "optimization" }) : undefined) })),
+    ...(optimization && !optimizationIsListed ? [{ createdAt: optimization.created_at, node: managedRun(optimization, actions) }] : []),
+  ].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return workspacePage("Runs", null,
     projectRuns?.error ? h("section", { class: "operation-failure", role: "alert" }, "Could not load runs. ", button("Retry", () => projectRuns.refresh(), "secondary")) : null,
     projectRuns?.loading ? h("div", { class: "workspace-progress", role: "status" }, "Loading runs…") : null,
-    projectRuns?.runs?.length ? h("section", { class: "project-run-section" },
-      sectionHeader("Optimization runs"),
-      h("div", { class: "project-run-list" }, ...projectRuns.runs.map(run => projectRun(run, workspace, actions, projectRuns)))) : null,
-    optimization ? h("section", { class: "optimization-run-row" },
-      h("div", {}, h("div", { class: "eyebrow" }, active ? "Current optimization" : "Latest optimization"), h("h2", {}, optimization.stage.label), facts([["Optimization run", optimization.run_id], ["State", optimization.state.replaceAll("_", " ")], ["Durable transitions", String(optimization.last_sequence)], ...(optimization.decision ? [["Decision", optimization.decision.replaceAll("_", " ")] as [string, string]] : [])])),
-      button(active ? "Continue run" : "Inspect run", () => actions.navigate({ page: "optimization" }), "secondary", "arrow")) : null,
-    ...experiments);
+    entries.length ? h("div", { class: "unified-run-list", "aria-label": "Optimization runs" }, ...entries.map(entry => entry.node)) : empty("No runs"));
 }
 
 const phaseLabels: Record<InputOptimizationPhase, string> = {
   checking_inputs: "Checking inputs", preparing_data: "Preparing data", starting: "Starting", training: "Training",
   saving_candidate: "Saving candidate", evaluating: "Evaluating", complete: "Complete",
 };
-function projectRun(run: InputOptimizationRun, workspace: WorkspaceSnapshot, actions: Actions, controller: InputRunsController): HTMLElement {
+function projectRun(run: InputOptimizationRun, workspace: WorkspaceSnapshot, actions: Actions, controller: InputRunsController, setup?: OptimizationSetupController): HTMLElement {
   const outcome = run.state === "candidate_accepted" ? "Candidate passed" : run.state === "candidate_rejected" ? "Candidate did not pass" : run.state === "baseline_retained" ? "No improvement" : run.state === "cancelled" ? "Cancelled" : undefined;
-  const failed = run.state.endsWith("_failed"), terminal = inputOptimizationTerminal(run.state), busy = controller.runningId === run.id, cancelling = controller.cancellingId === run.id;
-  const activity = controller.activities.get(run.id), progress = activity?.progress;
+  const failed = run.state.endsWith("_failed"), terminal = inputOptimizationTerminal(run.state);
+  const setupBusy = !!setup?.running && setup.run?.id === run.id;
+  const busy = setupBusy || controller.runningId === run.id;
+  const setupCancelling = !!setup?.cancelling && setup.run?.id === run.id;
+  const cancelling = setupCancelling || controller.cancellingId === run.id;
+  const activity = setupBusy ? setup?.activity : controller.activities.get(run.id);
   const selected = run.finalResult?.modelId ?? run.outcome?.selectedModelId;
   const model = selected ? workspace.managed?.modelCatalog?.artifacts.find(artifact => artifact.sourceModel?.id === selected) : undefined;
-  const current = outcome ?? (busy && progress ? inputRunStageLabel(progress.phase) : phaseLabels[inputOptimizationPhase(run.state)]);
-  return h("article", { class: "project-run-item", "data-project-run-id": run.id },
-    h("div", { class: "project-run-main" }, h("strong", {}, current), h("time", {}, dateLabel(run.createdAt))),
-    h("code", {}, run.id.slice(0, 8)),
-    progress?.completed !== undefined && progress.total !== undefined && busy && !terminal ? h("progress", { class: "project-run-progress", value: progress.completed, max: progress.total }) : null,
-    h("div", { class: "project-run-action" }, cancelling && !terminal ? tag("Stopping", "warning") : busy && !terminal ? tag("Running", "accent") : null,
-      !terminal && !cancelling && !busy ? button(failed ? "Retry" : "Continue", () => { void controller.resume(run); }, "secondary", "arrow") : null,
-      !terminal ? button(cancelling ? "Stopping…" : "Stop", () => { void controller.cancel(run); }, "ghost danger")
-      : model ? button("Candidate", () => actions.navigate({ page: "model", id: model.id }), "ghost", "arrow")
-      : button("Activity", () => actions.navigate({ page: "activity" }), "ghost", "arrow")));
+  const current = outcome ?? (busy && activity?.progress ? inputRunStageLabel(activity.progress.phase) : phaseLabels[inputOptimizationPhase(run.state)]);
+  return h("article", { class: "unified-run-entry" + (busy ? " is-running" : ""), "data-project-run-id": run.id },
+    h("div", { class: "project-run-item" },
+      h("div", { class: "project-run-main" }, h("strong", {}, current), h("time", {}, dateLabel(run.createdAt))),
+      h("code", {}, run.id.slice(0, 8)),
+      h("div", { class: "project-run-state" }, cancelling && !terminal ? tag("Stopping", "warning") : busy && !terminal ? tag("Running", "accent") : tag(outcome ?? (failed ? "Needs attention" : phaseLabels[inputOptimizationPhase(run.state)]), failed ? "danger" : "neutral")),
+      h("div", { class: "project-run-action" },
+        !terminal && !cancelling && !busy ? button(failed ? "Retry" : "Continue", () => { void controller.resume(run); }, "secondary", "arrow") : null,
+        !terminal && busy ? button(cancelling ? "Stopping…" : "Stop", () => { void (setupBusy ? setup!.cancel() : controller.cancel(run)); }, "ghost danger")
+          : terminal && model ? button("Candidate", () => actions.navigate({ page: "model", id: model.id }), "ghost", "arrow")
+          : terminal ? button("Activity", () => actions.navigate({ page: "activity" }), "ghost", "arrow") : null)),
+    busy && !terminal ? inputRunProgress({ run, running: true, startedAt: setupBusy ? setup?.startedAt : activity ? Date.parse(activity.startedAt) : undefined, activity, context: runContext(run, workspace, setup) }) : null);
+}
+
+function runContext(run: InputOptimizationRun, workspace: WorkspaceSnapshot, controller?: OptimizationSetupController): InputRunStageContext {
+  const saved = controller?.data?.history.find(item => item.id === run.setupId);
+  const modelId = saved?.inputs.model.id ?? (controller?.run?.id === run.id ? controller.model?.id : undefined);
+  const model = modelId ? workspace.managed?.modelCatalog?.artifacts.find(item => item.id === modelId) : controller?.model;
+  const datasetId = saved?.inputs.dataset.id ?? (controller?.run?.id === run.id ? controller.datasetId : undefined);
+  const dataset = datasetId ? controller?.data?.datasets.flatMap(entry => entry.versions.map(version => ({ entry, version }))).find(item => item.version.version.id === datasetId) : controller?.dataset;
+  const benchmarkId = saved?.inputs.benchmark.id ?? (controller?.run?.id === run.id ? controller.benchmarkId : undefined);
+  const benchmark = benchmarkId ? controller?.data?.benchmarks.find(item => item.id === benchmarkId) : controller?.benchmark;
+  return {
+    model: model?.name ?? "Baseline model",
+    dataset: dataset ? `${dataset.entry.dataset.name} · v${dataset.version.version.number}` : "Starting dataset",
+    datasetRows: dataset?.version.rows ?? 0,
+    evaluation: benchmark ? `Evaluation · Version ${benchmark.number}` : "Evaluation",
+    developmentSuites: benchmark?.definition.suites.filter(suite => suite.role === "development").map(suite => suite.key.replaceAll("_", " ")) ?? [],
+    finalSuite: benchmark?.definition.suites.find(suite => suite.role === "sealed_acceptance")?.key.replaceAll("_", " "),
+    finalEvaluation: run.state === "evaluating_final" || run.state === "final_evaluation_failed",
+  };
+}
+
+function managedRun(run: ManagedRunStatus, actions: Actions): HTMLElement {
+  const active = !["completed", "cancelled", "failed"].includes(run.state);
+  return h("article", { class: "unified-run-entry", "data-managed-run-id": run.run_id },
+    h("div", { class: "project-run-item" },
+      h("div", { class: "project-run-main" }, h("strong", {}, run.stage.label), h("time", {}, dateLabel(run.created_at))),
+      h("code", {}, run.run_id.slice(0, 8)),
+      h("div", { class: "project-run-state" }, tag(run.decision?.replaceAll("_", " ") ?? run.state.replaceAll("_", " "), "neutral")),
+      h("div", { class: "project-run-action" }, button(active ? "Continue" : "Open", () => actions.navigate({ page: "optimization" }), "secondary", "arrow"))));
 }
 export function renderBenchmarks(workspace: WorkspaceSnapshot, actions: Actions, readiness?: ManagedReadiness): HTMLElement {
   const groups = evaluationGroups(workspace, initialFilter());

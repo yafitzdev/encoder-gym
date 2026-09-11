@@ -82,6 +82,7 @@ test("one-click optimization reserves exact current inputs and removes its priva
   }));
   const started = await backend.start(f.projectId, f.setupId);
   assert.equal(started.run.id, wire.run.id);
+  assert.equal(started.run.setupId, f.setupId);
   assert.equal(started.run.state, "queued");
   for (const file of files) { await assert.rejects(() => access(file)); await assert.rejects(() => access(dirname(file))); }
 });
@@ -130,6 +131,7 @@ test("project optimization history is a typed project-owned read", async () => {
   const backend = new ManagedOptimizationLaunch(ports(f, async args => { assert.deepEqual(args, ["optimization-run", "owned-project", "list"]); return [older, newer]; }));
   const runs = await backend.runs(f.projectId);
   assert.deepEqual(runs.map(run => run.id), [older.run.id, newer.run.id]);
+  assert.deepEqual(runs.map(run => run.setupId), [f.setupId, f.setupId]);
   const foreign = structuredClone(newer); foreign.run.projectId = randomUUID();
   await assert.rejects(() => new ManagedOptimizationLaunch(ports(f, async () => [foreign])).runs(f.projectId));
 });

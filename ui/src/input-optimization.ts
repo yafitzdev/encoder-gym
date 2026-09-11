@@ -11,6 +11,7 @@ export type InputOptimizationPhase = "checking_inputs" | "preparing_data" | "sta
 export interface InputOptimizationRun {
   id: string;
   projectId: string;
+  setupId: string;
   createdAt: string;
   state: InputOptimizationState;
   attempt: number;
@@ -67,10 +68,10 @@ export function parseInputOptimizationRun(value: unknown, expectedProjectId: str
   const identity = record(item.run, "optimization run identity", ["id", "projectId", "launch", "setup", "createdAt", "fingerprint"]);
   const id = uuid(identity.id), projectId = uuid(identity.projectId);
   if (projectId !== expectedProjectId) throw new Error("Optimization run belongs to another project.");
-  bound(identity.launch); bound(identity.setup); const createdAt = instant(identity.createdAt); fingerprint(identity.fingerprint); fingerprint(item.headFingerprint);
+  bound(identity.launch); const setup = bound(identity.setup); const createdAt = instant(identity.createdAt); fingerprint(identity.fingerprint); fingerprint(item.headFingerprint);
   if (typeof item.state !== "string" || !states.has(item.state as InputOptimizationState)) throw new Error("Invalid optimization state.");
   const run: InputOptimizationRun = {
-    id, projectId, createdAt, state: item.state as InputOptimizationState,
+    id, projectId, setupId: setup.id, createdAt, state: item.state as InputOptimizationState,
     attempt: integer(item.attempt), materializationAttempt: integer(item.materializationAttempt), experimentAttempt: integer(item.experimentAttempt),
     executionAttempt: integer(item.executionAttempt), finalAttempt: integer(item.finalAttempt), lastSequence: integer(item.lastSequence), updatedAt: instant(item.updatedAt),
   };
