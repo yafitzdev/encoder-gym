@@ -141,6 +141,38 @@ impl std::fmt::Debug for NomosTrainingDatasetWriter {
 }
 
 impl NomosBackend {
+    /// Reopen an already-published managed training artifact from its exact
+    /// project-run identity. This never scans for a substitute dataset.
+    pub fn load_training_dataset(
+        &self,
+        run_id: Uuid,
+        dataset_version_id: Uuid,
+        dataset_version_fingerprint: &str,
+    ) -> Result<NomosTrainingDataset, EncoderTaskAdapterError> {
+        let artifact = artifact_key(run_id, dataset_version_id, dataset_version_fingerprint)?;
+        let receipt = Path::new(&artifact)
+            .parent()
+            .ok_or_else(|| adapter_error("Nomos training artifact has no parent"))?
+            .join("materialization.json")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let receipt = contained_existing(&self.root, &receipt)?;
+        let dataset: NomosTrainingDataset =
+            serde_json::from_slice(&fs::read(receipt).map_err(adapter_error)?)
+                .map_err(adapter_error)?;
+        if dataset.run_id != run_id
+            || dataset.dataset_version_id != dataset_version_id
+            || dataset.dataset_version_fingerprint != dataset_version_fingerprint
+            || dataset.artifact.key != artifact
+        {
+            return Err(adapter_error(
+                "Nomos training receipt belongs to another project run",
+            ));
+        }
+        dataset.verify_in(&self.root)?;
+        Ok(dataset)
+    }
+
     /// Start an isolated rendering attempt. Existing completed content is never
     /// overwritten; a retry must reproduce it byte for byte.
     pub fn materialize_training_dataset(
@@ -647,6 +679,12 @@ mod tests {
             .unwrap();
         let materialized = writer.finish().unwrap();
         materialized.verify_in(&root).unwrap();
+        assert_eq!(
+            backend
+                .load_training_dataset(run_id, version_id, &version_fingerprint)
+                .unwrap(),
+            materialized
+        );
         assert_eq!(materialized.rows, 2);
         assert_eq!(
             fs::read_to_string(root.join(&materialized.artifact.key))

@@ -2,14 +2,15 @@ use crate::cli::WorkspaceOptimizationRunCommand;
 use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use encoder_experiment_core::{
-    domain::EvidenceRole,
+    domain::{EvidenceRole, OptimizationBudget},
     ports::{EncoderTaskBackend, ExperimentStore},
 };
 use encoder_experiment_nomos::NomosBackend;
+use encoder_experiment_runner::ExperimentRunner;
 use project_workspace_core::{
     ActivityEventState, ActivityFailure, ActivityReference, ActivitySource, BoundIdentity,
-    ProjectOptimizationMaterialization, ProjectOptimizationPreparation,
-    ProjectOptimizationRunState,
+    ProjectOptimizationExperiment, ProjectOptimizationMaterialization,
+    ProjectOptimizationPreparation, ProjectOptimizationRunState,
 };
 use project_workspace_local::{
     AppendActivity, append_activity, dataset_versions, initialize_activity, open_workspace,
@@ -25,6 +26,7 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunComm
         Show { run_id } => super::print(&optimization_runs::show(folder, run_id).await?),
         Prepare { run_id } => prepare(folder, run_id).await,
         Materialize { run_id } => materialize(folder, run_id).await,
+        Attach { run_id } => attach(folder, run_id).await,
         Start {
             file,
             authorized_by,
@@ -83,6 +85,71 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunComm
             super::print(&serde_json::json!({"actionId":action_id,"run":result?}))
         }
     }
+}
+
+async fn attach(folder: &Path, run_id: Uuid) -> Result<()> {
+    initialize_activity(folder).await?;
+    let action_id = Uuid::new_v4();
+    let references = vec![ActivityReference::new("run", run_id.to_string())?];
+    let activity = |state, failure| AppendActivity {
+        action_id,
+        operation: "optimization.attach_experiment".into(),
+        source: ActivitySource::Cli,
+        state,
+        stage: None,
+        completed: None,
+        total: None,
+        references: references.clone(),
+        failure,
+        created_at: Utc::now(),
+    };
+    append_activity(folder, activity(ActivityEventState::Started, None)).await?;
+    let outcome: Result<_> = async {
+        let started = optimization_runs::begin_experiment_attachment(folder, run_id).await?;
+        if started.state.has_experiment() {
+            return Ok(started);
+        }
+        ensure!(
+            started.state == ProjectOptimizationRunState::AttachingExperiment,
+            "Optimization run could not enter experiment attachment."
+        );
+        match attach_experiment(folder, &started).await {
+            Ok(receipt) => {
+                optimization_runs::finish_experiment_attachment(
+                    folder,
+                    run_id,
+                    &started.head_fingerprint,
+                    receipt,
+                )
+                .await
+            }
+            Err(error) => {
+                optimization_runs::fail_experiment_attachment(
+                    folder,
+                    run_id,
+                    &started.head_fingerprint,
+                    "experiment_attachment_failed",
+                )
+                .await
+                .context("Experiment attachment failed and its outcome could not be recorded.")?;
+                Err(error)
+            }
+        }
+    }
+    .await;
+    let terminal = if outcome.is_ok() {
+        activity(ActivityEventState::Succeeded, None)
+    } else {
+        activity(
+            ActivityEventState::Failed,
+            Some(ActivityFailure::new(
+                "experiment_attachment_failed",
+                "The finite candidate experiment was not attached. No model was trained.",
+            )?),
+        )
+    };
+    append_activity(folder, terminal).await?;
+    super::print(&serde_json::json!({"actionId":action_id,"run":outcome?}))
 }
 
 async fn prepare(folder: &Path, run_id: Uuid) -> Result<()> {
@@ -215,6 +282,184 @@ async fn materialize(folder: &Path, run_id: Uuid) -> Result<()> {
     super::print(&serde_json::json!({"actionId":action_id,"run":outcome?}))
 }
 
+async fn attach_experiment(
+    folder: &Path,
+    view: &project_workspace_core::ProjectOptimizationRunView,
+) -> Result<ProjectOptimizationExperiment> {
+    let workspace = open_workspace(folder, true).await?;
+    let launch = optimization_launch::list(folder)
+        .await?
+        .into_iter()
+        .find(|value| value.id.to_string() == view.run.launch.id)
+        .context("Optimization launch authorization is missing.")?;
+    let preparation = view
+        .preparation
+        .as_ref()
+        .context("Verify optimization inputs before attaching an experiment.")?;
+    let materialization = view
+        .materialization
+        .as_ref()
+        .context("Materialize training data before attaching an experiment.")?;
+    materialization.validate_for(&view.run, &launch, preparation)?;
+    let benchmark_id: Uuid = preparation.benchmark.id.parse()?;
+    let benchmark = super::benchmarks::inspect(folder, benchmark_id).await?;
+    ensure!(
+        benchmark.fingerprint == preparation.benchmark.fingerprint,
+        "Selected benchmark changed."
+    );
+
+    let source_binding = project_workspace_local::scientific_binding_history(folder)
+        .await?
+        .into_iter()
+        .find(|binding| {
+            binding.id.to_string() == benchmark.source.scientific_binding.id
+                && binding.fingerprint == benchmark.source.scientific_binding.fingerprint
+        })
+        .context("The benchmark's scientific source binding is missing.")?;
+    ensure!(
+        source_binding.runtime.project_snapshot == benchmark.source.project_snapshot,
+        "Benchmark source project changed."
+    );
+    let source_store = super::open_bound_store(&workspace.folder, &source_binding).await?;
+    let source_project_id: Uuid = benchmark.source.project_snapshot.id.parse()?;
+    let source_project = source_store
+        .get_project(source_project_id)
+        .await?
+        .context("The benchmark's source project is missing.")?;
+    ensure!(
+        source_project.fingerprint == benchmark.source.project_snapshot.fingerprint,
+        "Benchmark source project fingerprint changed."
+    );
+    let source_protocol_id: Uuid = benchmark.source.protocol.id.parse()?;
+    let source_protocol = source_store
+        .get_protocol(source_protocol_id)
+        .await?
+        .context("The benchmark's source protocol is missing.")?;
+    ensure!(
+        source_protocol.fingerprint == benchmark.source.protocol.fingerprint
+            && NomosBackend::recorded_benchmark(&source_project, &source_protocol)?
+                == benchmark.definition,
+        "Benchmark source protocol changed."
+    );
+    source_store.pool().close().await;
+
+    let binding = workspace
+        .scientific_binding
+        .as_ref()
+        .context("Connect the native evaluation and training runtime.")?;
+    ensure!(
+        binding.id.to_string() == preparation.execution_binding.id
+            && binding.fingerprint == preparation.execution_binding.fingerprint,
+        "Native runtime changed after input verification."
+    );
+    let store = super::open_bound_store_mutable(&workspace.folder, binding).await?;
+    let bound_project = super::load_bound_project(&store, binding).await?;
+    let base_backend = super::open_nomos_binding(binding, &bound_project)?;
+    let native = base_backend.load_training_dataset(
+        view.run.id,
+        preparation.dataset.id,
+        &preparation.dataset.fingerprint,
+    )?;
+    ensure!(
+        materialization.native_materialization.id
+            == format!("{}:{}", native.run_id, native.dataset_version_id)
+            && materialization.native_materialization.fingerprint == native.fingerprint
+            && materialization.training_artifact == native.artifact
+            && preparation.dataset_rows == native.rows,
+        "Native training materialization changed."
+    );
+    let backend = base_backend.with_training_dataset(native)?;
+    let target_project_id: Uuid = materialization.scientific_project.id.parse()?;
+    let target_project = store
+        .get_project(target_project_id)
+        .await?
+        .context("The materialized scientific project is missing.")?;
+    ensure!(
+        target_project.fingerprint == materialization.scientific_project.fingerprint,
+        "Materialized scientific project changed."
+    );
+    backend
+        .verify_current_snapshot(target_project.clone())
+        .await?;
+    NomosBackend::verify_benchmark_definition(&target_project, &benchmark.definition)?;
+
+    match store.get_project(source_project.id).await? {
+        Some(existing) => ensure!(
+            existing == source_project,
+            "Benchmark source project identity has conflicting contents."
+        ),
+        None => store.create_project(source_project.clone()).await?,
+    }
+    match store.get_protocol(source_protocol.id).await? {
+        Some(existing) => ensure!(
+            existing == source_protocol,
+            "Benchmark source protocol identity has conflicting contents."
+        ),
+        None => store.create_protocol(source_protocol.clone()).await?,
+    }
+
+    let maximum_training_seconds = launch.scope.limits.maximum_training_seconds
+        / u64::from(launch.scope.limits.maximum_models);
+    ensure!(
+        maximum_training_seconds > 0,
+        "Optimization training budget cannot fund one candidate."
+    );
+    let candidate = backend
+        .initial_training_candidate(
+            view.run.child_id("candidate", 1)?,
+            &target_project,
+            maximum_training_seconds,
+        )
+        .await?;
+    let runner = ExperimentRunner::new(&store, &backend);
+    let protocol = runner
+        .prepare_multi_protocol_from_benchmark_identified(
+            view.run.child_id("experiment-protocol", 1)?,
+            target_project.id,
+            source_protocol.id,
+            benchmark.definition,
+            OptimizationBudget {
+                maximum_candidates: 1,
+                maximum_training_seconds,
+                maximum_development_evaluations: u32::try_from(
+                    preparation.development_suites.len(),
+                )?,
+                maximum_sealed_evaluations: launch.scope.limits.maximum_final_evaluations,
+            },
+            source_protocol.maximum_evaluation_seconds,
+            vec![candidate.clone()],
+        )
+        .await?;
+    let experiment = runner
+        .create_run_identified(protocol.id, view.run.child_id("experiment-run", 1)?)
+        .await?;
+    let receipt = ProjectOptimizationExperiment::create(
+        &view.run,
+        &launch,
+        preparation,
+        materialization,
+        BoundIdentity {
+            id: source_protocol.id.to_string(),
+            fingerprint: source_protocol.fingerprint,
+        },
+        BoundIdentity {
+            id: candidate.id.to_string(),
+            fingerprint: candidate.fingerprint,
+        },
+        BoundIdentity {
+            id: protocol.id.to_string(),
+            fingerprint: protocol.fingerprint,
+        },
+        BoundIdentity {
+            id: experiment.run_id.to_string(),
+            fingerprint: experiment.last_event_fingerprint,
+        },
+        Utc::now(),
+    )?;
+    store.pool().close().await;
+    Ok(receipt)
+}
+
 async fn materialize_training_project(
     folder: &Path,
     view: &project_workspace_core::ProjectOptimizationRunView,
@@ -250,7 +495,7 @@ async fn materialize_training_project(
         "Selected training rows are incomplete."
     );
 
-    let store = super::open_bound_store(&workspace.folder, binding).await?;
+    let store = super::open_bound_store_mutable(&workspace.folder, binding).await?;
     let source_project = super::load_bound_project(&store, binding).await?;
     let backend = super::open_nomos_binding(binding, &source_project)?;
     let mut writer = backend.materialize_training_dataset(

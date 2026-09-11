@@ -120,6 +120,17 @@ silently change a score, suite, model, support count or source fingerprint. This
 prepares candidate comparison without rerunning the baseline or claiming that a
 new baseline evaluation occurred.
 
+`workspace optimization-run <PROJECT> attach <RUN_ID>` creates the first
+finite candidate protocol and experiment beneath the materialized project run.
+The parent run deterministically reserves the candidate, protocol and experiment
+UUIDs, so interruption before the final journal append cannot create duplicates.
+The Nomos adapter owns the explicit conservative native training parameters;
+the project layer supplies only the exact project and its per-model share of the
+finite training budget. Attachment verifies or imports the benchmark's immutable
+source project/protocol into the selected scientific store, creates referenced
+baseline evidence, and records a row-free child receipt. It performs no training,
+candidate evaluation, provider request or final evaluation.
+
 The Electron main-process bridge now exposes those three fixed project-scoped
 operations. It validates every response, rejects renderer-supplied paths,
 credentials, commands or execution fields, writes authorization requests only
@@ -145,7 +156,8 @@ The main process writes only a strict temporary request and removes it on both
 success and failure. Each explicit save retains the ordinary CLI action UUID.
 
 Saving inputs, one-click authorization and the project-owned materialized-run
-root are available now. The bounded child executor is not connected yet and the
+root are available now. The first finite experiment can be attached, but its
+development executor is not connected to the project run yet and the
 desktop must not imply work is running or fall back to a previously prepared recipe.
 Existing runs are opened from Runs and retain their current supervision,
 recovery and approval controls.

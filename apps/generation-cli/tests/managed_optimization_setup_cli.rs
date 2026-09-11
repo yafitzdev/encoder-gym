@@ -11,8 +11,9 @@ use encoder_experiment_nomos::NomosBackend;
 use encoder_experiment_sqlite::SqliteExperimentStore;
 use project_workspace_core::{
     BaselineRevision, BoundIdentity, OptimizationLaunchAuthorization, OptimizationSetup,
-    ProjectOptimizationMaterialization, ProjectOptimizationPreparation, ProviderAuthentication,
-    ProviderCatalog, ProviderConfiguration, ProviderKind, ProviderLimits, ProviderRole,
+    ProjectOptimizationExperiment, ProjectOptimizationMaterialization,
+    ProjectOptimizationPreparation, ProviderAuthentication, ProviderCatalog, ProviderConfiguration,
+    ProviderKind, ProviderLimits, ProviderRole,
 };
 use project_workspace_local::{
     dataset_versions, import_dataset, inspect_dataset, open_workspace, optimization_runs,
@@ -588,6 +589,99 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
         prepared["run"]["preparation"]
     );
     assert!(!materialized.to_string().contains("SETUP_ROW_CANARY"));
+
+    // The fixture has no native materialization on disk, so the actual CLI
+    // records an honest attachment failure. A typed child receipt proves the
+    // recovery transition and exact idempotent CLI replay without execution.
+    let failed_attachment = invoke(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "attach",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert!(!failed_attachment.status.success());
+    let failed_attachment_view = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "show",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(
+        failed_attachment_view["state"],
+        "experiment_attachment_failed"
+    );
+    let attaching = optimization_runs::begin_experiment_attachment(
+        &folder,
+        started["run"]["run"]["id"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    let attached_receipt = ProjectOptimizationExperiment::create(
+        &attaching.run,
+        &typed_launch,
+        attaching.preparation.as_ref().unwrap(),
+        attaching.materialization.as_ref().unwrap(),
+        BoundIdentity {
+            id: Uuid::new_v4().to_string(),
+            fingerprint: format!("sha256:{}", "a".repeat(64)),
+        },
+        BoundIdentity {
+            id: attaching.run.child_id("candidate", 1).unwrap().to_string(),
+            fingerprint: format!("sha256:{}", "b".repeat(64)),
+        },
+        BoundIdentity {
+            id: attaching
+                .run
+                .child_id("experiment-protocol", 1)
+                .unwrap()
+                .to_string(),
+            fingerprint: format!("sha256:{}", "c".repeat(64)),
+        },
+        BoundIdentity {
+            id: attaching
+                .run
+                .child_id("experiment-run", 1)
+                .unwrap()
+                .to_string(),
+            fingerprint: format!("sha256:{}", "d".repeat(64)),
+        },
+        Utc::now(),
+    )
+    .unwrap();
+    let attached = optimization_runs::finish_experiment_attachment(
+        &folder,
+        attaching.run.id,
+        &attaching.head_fingerprint,
+        attached_receipt,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        attached.state,
+        project_workspace_core::ProjectOptimizationRunState::ReadyToRun
+    );
+    let attached = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "attach",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(attached["run"]["state"], "ready_to_run");
+    assert_eq!(attached["run"]["experimentAttempt"], 2);
+    assert!(!attached.to_string().contains("SETUP_ROW_CANARY"));
     let orphan_request = json!({"id":Uuid::new_v4(),"scope":launch["scope"]});
     fs::write(
         root.join("orphan-launch.json"),
@@ -619,7 +713,7 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
                 "launch.json",
             ],
         )["run"],
-        materialized["run"],
+        attached["run"],
         "an exact retry returns its already-reserved run after later settings change"
     );
     assert!(
@@ -665,7 +759,7 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     );
     assert_eq!(
         run(root, &["optimization-run", "project", "list"]),
-        json!([materialized["run"]])
+        json!([attached["run"]])
     );
     let activity = run(root, &["activity", "project", "list"]);
     let text = activity.to_string();
@@ -673,6 +767,7 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     assert!(text.contains("optimization.start"));
     assert!(text.contains("optimization.prepare"));
     assert!(text.contains("optimization.materialize"));
+    assert!(text.contains("optimization.attach_experiment"));
     assert!(text.contains(started["run"]["run"]["id"].as_str().unwrap()));
     assert!(!text.contains("SETUP_ROW_CANARY"));
     assert!(!text.contains("apiKey"));

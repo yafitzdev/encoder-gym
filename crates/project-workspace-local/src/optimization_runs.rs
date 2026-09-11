@@ -10,8 +10,9 @@ use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use project_workspace_core::{
     OptimizationLaunchAuthorization, OptimizationSetup, ProjectOptimizationEvent,
-    ProjectOptimizationMaterialization, ProjectOptimizationPreparation, ProjectOptimizationRun,
-    ProjectOptimizationRunState, ProjectOptimizationRunView, replay_project_optimization,
+    ProjectOptimizationExperiment, ProjectOptimizationMaterialization,
+    ProjectOptimizationPreparation, ProjectOptimizationRun, ProjectOptimizationRunState,
+    ProjectOptimizationRunView, replay_project_optimization,
 };
 use sqlx::{Connection, Row, SqliteConnection};
 use std::path::Path;
@@ -472,6 +473,165 @@ async fn record_materialization(
     Ok(result)
 }
 
+/// Start or recover creation of the first finite experiment child. No trainer
+/// or evaluator is invoked by this custody transition.
+pub async fn begin_experiment_attachment(
+    folder: &Path,
+    run_id: Uuid,
+) -> Result<ProjectOptimizationRunView> {
+    let workspace = open_workspace(folder, true).await?;
+    let mut database = connect(Path::new(&workspace.folder), false, false).await?;
+    sqlx::migrate!("./migrations").run(&mut database).await?;
+    let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
+    let setups = optimization_setup::load(&mut transaction, &workspace).await?;
+    let providers = load_provider_catalog_history(&mut transaction, &workspace.manifest).await?;
+    let launches =
+        optimization_launch::load(&mut transaction, &workspace, &setups, &providers).await?;
+    let view = load(&mut transaction, workspace.manifest.id, &launches, &setups)
+        .await?
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .context("Project optimization run was not found.")?;
+    if view.state == ProjectOptimizationRunState::AttachingExperiment || view.state.has_experiment()
+    {
+        transaction.commit().await?;
+        database.close().await?;
+        return Ok(view);
+    }
+    ensure!(
+        matches!(
+            view.state,
+            ProjectOptimizationRunState::Materialized
+                | ProjectOptimizationRunState::ExperimentAttachmentFailed
+        ),
+        "Materialize training data before attaching an experiment."
+    );
+    let previous = last_event(&mut transaction, run_id).await?;
+    let event = ProjectOptimizationEvent::experiment_attachment_started(
+        Uuid::new_v4(),
+        &view.run,
+        &previous,
+        view.experiment_attempt + 1,
+        Utc::now(),
+    )?;
+    insert_event(&mut transaction, &event).await?;
+    let result = load(&mut transaction, workspace.manifest.id, &launches, &setups)
+        .await?
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .expect("inserted attachment belongs to loaded run");
+    transaction.commit().await?;
+    database.close().await?;
+    Ok(result)
+}
+
+pub async fn finish_experiment_attachment(
+    folder: &Path,
+    run_id: Uuid,
+    expected_head: &str,
+    experiment: ProjectOptimizationExperiment,
+) -> Result<ProjectOptimizationRunView> {
+    record_experiment_attachment(folder, run_id, expected_head, Some(experiment), None).await
+}
+
+pub async fn fail_experiment_attachment(
+    folder: &Path,
+    run_id: Uuid,
+    expected_head: &str,
+    failure_code: &str,
+) -> Result<ProjectOptimizationRunView> {
+    record_experiment_attachment(folder, run_id, expected_head, None, Some(failure_code)).await
+}
+
+async fn record_experiment_attachment(
+    folder: &Path,
+    run_id: Uuid,
+    expected_head: &str,
+    experiment: Option<ProjectOptimizationExperiment>,
+    failure_code: Option<&str>,
+) -> Result<ProjectOptimizationRunView> {
+    let workspace = open_workspace(folder, true).await?;
+    let mut database = connect(Path::new(&workspace.folder), false, false).await?;
+    sqlx::migrate!("./migrations").run(&mut database).await?;
+    let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
+    let setups = optimization_setup::load(&mut transaction, &workspace).await?;
+    let providers = load_provider_catalog_history(&mut transaction, &workspace.manifest).await?;
+    let launches =
+        optimization_launch::load(&mut transaction, &workspace, &setups, &providers).await?;
+    let view = load(&mut transaction, workspace.manifest.id, &launches, &setups)
+        .await?
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .context("Project optimization run was not found.")?;
+    if view.state.has_experiment() {
+        ensure!(
+            experiment.as_ref() == view.experiment.as_ref(),
+            "Optimization run already attached another experiment."
+        );
+        transaction.commit().await?;
+        database.close().await?;
+        return Ok(view);
+    }
+    if view.state == ProjectOptimizationRunState::ExperimentAttachmentFailed {
+        ensure!(
+            experiment.is_none() && failure_code == view.failure_code.as_deref(),
+            "Experiment attachment attempt already recorded another outcome."
+        );
+        transaction.commit().await?;
+        database.close().await?;
+        return Ok(view);
+    }
+    ensure!(
+        view.state == ProjectOptimizationRunState::AttachingExperiment
+            && view.head_fingerprint == expected_head,
+        "Optimization journal changed; reload it before attaching the experiment."
+    );
+    let launch = launches
+        .iter()
+        .find(|value| value.id.to_string() == view.run.launch.id)
+        .context("Optimization launch authorization is missing.")?;
+    let preparation = view
+        .preparation
+        .as_ref()
+        .context("Optimization preparation is missing.")?;
+    let materialization = view
+        .materialization
+        .as_ref()
+        .context("Optimization materialization is missing.")?;
+    if let Some(receipt) = &experiment {
+        receipt.validate_for(&view.run, launch, preparation, materialization)?;
+    }
+    let previous = last_event(&mut transaction, run_id).await?;
+    let event = match (experiment, failure_code) {
+        (Some(receipt), None) => ProjectOptimizationEvent::experiment_attached(
+            Uuid::new_v4(),
+            &view.run,
+            &previous,
+            view.experiment_attempt,
+            receipt,
+            Utc::now(),
+        )?,
+        (None, Some(code)) => ProjectOptimizationEvent::experiment_attachment_failed(
+            Uuid::new_v4(),
+            &view.run,
+            &previous,
+            view.experiment_attempt,
+            code,
+            Utc::now(),
+        )?,
+        _ => anyhow::bail!("Experiment attachment must record exactly one outcome."),
+    };
+    insert_event(&mut transaction, &event).await?;
+    let result = load(&mut transaction, workspace.manifest.id, &launches, &setups)
+        .await?
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .expect("inserted attachment outcome belongs to loaded run");
+    transaction.commit().await?;
+    database.close().await?;
+    Ok(result)
+}
+
 async fn last_event(
     database: &mut SqliteConnection,
     run_id: Uuid,
@@ -568,6 +728,9 @@ async fn load(
             preparation.validate_for(&run, launch, setup)?;
             if let Some(materialization) = &view.materialization {
                 materialization.validate_for(&run, launch, preparation)?;
+                if let Some(experiment) = &view.experiment {
+                    experiment.validate_for(&run, launch, preparation, materialization)?;
+                }
             }
         }
         result.push(view);

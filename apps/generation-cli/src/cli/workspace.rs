@@ -57,6 +57,8 @@ pub enum WorkspaceOptimizationRunCommand {
     Prepare { run_id: Uuid },
     /// Render the selected dataset into the task adapter's immutable format.
     Materialize { run_id: Uuid },
+    /// Attach the first finite candidate experiment without executing it.
+    Attach { run_id: Uuid },
 }
 
 #[derive(Debug, Subcommand)]

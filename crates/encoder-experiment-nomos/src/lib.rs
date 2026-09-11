@@ -226,6 +226,37 @@ impl NomosBackend {
         Ok(self)
     }
 
+    /// Compile the adapter's conservative first candidate. The application
+    /// chooses only the identity and finite time ceiling; native knobs remain
+    /// explicit and owned by this task adapter.
+    pub async fn initial_training_candidate(
+        &self,
+        id: Uuid,
+        project: &ExternalProjectSnapshot,
+        maximum_training_seconds: u64,
+    ) -> Result<TrainingCandidate, EncoderTaskAdapterError> {
+        self.verify_current_snapshot(project.clone()).await?;
+        let parameters = BTreeMap::from([
+            ("strategy".into(), ParameterValue::Text("fine_tune".into())),
+            ("loss".into(), ParameterValue::Text("triplet".into())),
+            ("epochs".into(), ParameterValue::Number(1.0)),
+            ("batch_size".into(), ParameterValue::Integer(64)),
+            ("mining_batch_size".into(), ParameterValue::Integer(256)),
+            ("learning_rate".into(), ParameterValue::Number(0.000_003)),
+            ("margin".into(), ParameterValue::Number(0.1)),
+            ("query_strategy".into(), ParameterValue::Text("full".into())),
+            (
+                "positive_strategy".into(),
+                ParameterValue::Text("best".into()),
+            ),
+            ("seed".into(), ParameterValue::Integer(20_260_902)),
+            ("device".into(), ParameterValue::Text("cuda".into())),
+        ]);
+        NativeCandidateStrategy::parse(&parameters)?;
+        TrainingCandidate::create_identified(id, project, 1, maximum_training_seconds, parameters)
+            .map_err(adapter_error)
+    }
+
     pub fn project_snapshot(&self) -> Result<ExternalProjectSnapshot, EncoderTaskAdapterError> {
         self.verify_no_remote()?;
         self.verify_clean_worktree()?;

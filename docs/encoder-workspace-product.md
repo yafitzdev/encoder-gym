@@ -578,3 +578,24 @@ and keep outstanding requirements visible.
 - This removes redundant baseline work only. It does not authorize candidate
   training, provider calls or final evaluation. The next boundary remains the
   finite execution child attached to the project run.
+
+### First finite experiment attachment — 11 September 2026
+
+- A materialized project run now advances through retryable experiment
+  attachment to `ready_to_run`. It records one row-free child receipt containing
+  the exact materialized project, benchmark source, candidate, protocol and
+  experiment-run identities.
+- Candidate, protocol and experiment UUIDs are deterministically reserved from
+  the parent run. Retry after child persistence but before the parent journal
+  append reuses the same immutable children.
+- The Nomos adapter, not project custody or presentation, compiles the explicit
+  conservative first training candidate. The launch envelope contributes only
+  a finite per-model time ceiling.
+- Attachment reopens and verifies the native materialization, target project,
+  benchmark source protocol and current adapter. It prepares referenced
+  baseline evidence without trainer, evaluator or provider calls.
+- Core, adapter and actual-CLI tests cover stable child identities, attachment
+  recovery, typed custody and idempotent replay. The fixture's absent native
+  runtime records an honest failed attempt before typed recovery.
+- Candidate development execution and progress projection remain the next
+  boundary; `ready_to_run` does not claim that training has started.

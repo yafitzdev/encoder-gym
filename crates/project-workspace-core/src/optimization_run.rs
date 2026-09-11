@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use dataset_core::versions::DatasetVersionRef;
 use encoder_experiment_core::domain::{EvidenceRole, ExternalArtifactIdentity};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use uuid::Uuid;
 
@@ -54,6 +55,27 @@ impl ProjectOptimizationRun {
             id: self.id.to_string(),
             fingerprint: self.fingerprint.clone(),
         }
+    }
+
+    /// Stable slice-child identity that survives a process interruption before
+    /// the child can be attached to this journal.
+    pub fn child_id(&self, kind: &str, sequence: u64) -> Result<Uuid, Invalid> {
+        validate_name(kind)?;
+        require(
+            sequence > 0,
+            "Optimization child sequence must be positive.",
+        )?;
+        let mut hash = Sha256::new();
+        hash.update(b"project-optimization-child-v1");
+        hash.update(self.fingerprint.as_bytes());
+        hash.update(kind.as_bytes());
+        hash.update(sequence.to_le_bytes());
+        let mut bytes: [u8; 16] = hash.finalize()[..16]
+            .try_into()
+            .expect("SHA-256 contains 16 UUID bytes");
+        bytes[6] = (bytes[6] & 0x0f) | 0x80;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        Ok(Uuid::from_bytes(bytes))
     }
 
     pub fn reproduce(&self) -> Result<String, Invalid> {
@@ -233,6 +255,100 @@ pub struct ProjectOptimizationMaterialization {
     pub fingerprint: String,
 }
 
+/// Row-free link to the first finite encoder experiment. Creating this link
+/// reserves work but does not itself train or evaluate a model.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectOptimizationExperiment {
+    pub run: BoundIdentity,
+    pub materialization_fingerprint: String,
+    pub scientific_project: BoundIdentity,
+    pub benchmark: BoundIdentity,
+    pub source_protocol: BoundIdentity,
+    pub candidate: BoundIdentity,
+    pub protocol: BoundIdentity,
+    pub experiment_run: BoundIdentity,
+    pub created_at: DateTime<Utc>,
+    pub fingerprint: String,
+}
+
+impl ProjectOptimizationExperiment {
+    #[allow(clippy::too_many_arguments)]
+    pub fn create(
+        run: &ProjectOptimizationRun,
+        launch: &OptimizationLaunchAuthorization,
+        preparation: &ProjectOptimizationPreparation,
+        materialization: &ProjectOptimizationMaterialization,
+        source_protocol: BoundIdentity,
+        candidate: BoundIdentity,
+        protocol: BoundIdentity,
+        experiment_run: BoundIdentity,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        materialization.validate_for(run, launch, preparation)?;
+        let mut value = Self {
+            run: run.identity(),
+            materialization_fingerprint: materialization.fingerprint.clone(),
+            scientific_project: materialization.scientific_project.clone(),
+            benchmark: preparation.benchmark.clone(),
+            source_protocol,
+            candidate,
+            protocol,
+            experiment_run,
+            created_at,
+            fingerprint: String::new(),
+        };
+        value.fingerprint = value.reproduce()?;
+        value.validate_for(run, launch, preparation, materialization)?;
+        Ok(value)
+    }
+
+    pub fn reproduce(&self) -> Result<String, Invalid> {
+        artifact_core::fingerprint(&serde_json::json!({
+            "run":self.run,"materializationFingerprint":self.materialization_fingerprint,
+            "scientificProject":self.scientific_project,"benchmark":self.benchmark,
+            "sourceProtocol":self.source_protocol,"candidate":self.candidate,
+            "protocol":self.protocol,"experimentRun":self.experiment_run,
+            "createdAt":self.created_at,
+        }))
+        .map_err(|error| Invalid(error.to_string()))
+    }
+
+    pub fn validate_for(
+        &self,
+        run: &ProjectOptimizationRun,
+        launch: &OptimizationLaunchAuthorization,
+        preparation: &ProjectOptimizationPreparation,
+        materialization: &ProjectOptimizationMaterialization,
+    ) -> Result<(), Invalid> {
+        materialization.validate_for(run, launch, preparation)?;
+        for (label, value) in [
+            ("Optimization run", &self.run),
+            ("Scientific project", &self.scientific_project),
+            ("Benchmark", &self.benchmark),
+            ("Source protocol", &self.source_protocol),
+            ("Candidate", &self.candidate),
+            ("Experiment protocol", &self.protocol),
+            ("Experiment run", &self.experiment_run),
+        ] {
+            value.validate(label)?;
+        }
+        require(
+            self.run == run.identity()
+                && self.materialization_fingerprint == materialization.fingerprint
+                && self.scientific_project == materialization.scientific_project
+                && self.benchmark == preparation.benchmark
+                && Uuid::parse_str(&self.source_protocol.id).is_ok_and(|id| !id.is_nil())
+                && self.candidate.id == run.child_id("candidate", 1)?.to_string()
+                && self.protocol.id == run.child_id("experiment-protocol", 1)?.to_string()
+                && self.experiment_run.id == run.child_id("experiment-run", 1)?.to_string()
+                && self.created_at >= materialization.created_at
+                && self.reproduce()? == self.fingerprint,
+            "Attached experiment changed or does not match its materialized run.",
+        )
+    }
+}
+
 impl ProjectOptimizationMaterialization {
     #[allow(clippy::too_many_arguments)]
     pub fn create(
@@ -312,6 +428,9 @@ pub enum ProjectOptimizationEventKind {
     MaterializationStarted,
     MaterializationCompleted,
     MaterializationFailed,
+    ExperimentAttachmentStarted,
+    ExperimentAttached,
+    ExperimentAttachmentFailed,
 }
 
 impl ProjectOptimizationEventKind {
@@ -324,6 +443,9 @@ impl ProjectOptimizationEventKind {
             Self::MaterializationStarted => "materialization_started",
             Self::MaterializationCompleted => "materialization_completed",
             Self::MaterializationFailed => "materialization_failed",
+            Self::ExperimentAttachmentStarted => "experiment_attachment_started",
+            Self::ExperimentAttached => "experiment_attached",
+            Self::ExperimentAttachmentFailed => "experiment_attachment_failed",
         }
     }
 }
@@ -343,6 +465,8 @@ pub struct ProjectOptimizationEvent {
     pub preparation: Option<ProjectOptimizationPreparation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub materialization: Option<ProjectOptimizationMaterialization>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub experiment: Option<ProjectOptimizationExperiment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_code: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -365,6 +489,7 @@ impl ProjectOptimizationEvent {
             attempt: None,
             preparation: None,
             materialization: None,
+            experiment: None,
             failure_code: None,
             created_at,
             fingerprint: String::new(),
@@ -390,6 +515,7 @@ impl ProjectOptimizationEvent {
             None,
             None,
             None,
+            None,
             created_at,
         )
     }
@@ -409,6 +535,7 @@ impl ProjectOptimizationEvent {
             ProjectOptimizationEventKind::PreparationCompleted,
             attempt,
             Some(preparation),
+            None,
             None,
             None,
             created_at,
@@ -431,6 +558,7 @@ impl ProjectOptimizationEvent {
             attempt,
             None,
             None,
+            None,
             Some(failure_code.into()),
             created_at,
         )
@@ -449,6 +577,7 @@ impl ProjectOptimizationEvent {
             previous,
             ProjectOptimizationEventKind::MaterializationStarted,
             attempt,
+            None,
             None,
             None,
             None,
@@ -473,6 +602,7 @@ impl ProjectOptimizationEvent {
             None,
             Some(materialization),
             None,
+            None,
             created_at,
         )
     }
@@ -493,6 +623,72 @@ impl ProjectOptimizationEvent {
             attempt,
             None,
             None,
+            None,
+            Some(failure_code.into()),
+            created_at,
+        )
+    }
+
+    pub fn experiment_attachment_started(
+        id: Uuid,
+        run: &ProjectOptimizationRun,
+        previous: &Self,
+        attempt: u32,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        Self::next(
+            id,
+            run,
+            previous,
+            ProjectOptimizationEventKind::ExperimentAttachmentStarted,
+            attempt,
+            None,
+            None,
+            None,
+            None,
+            created_at,
+        )
+    }
+
+    pub fn experiment_attached(
+        id: Uuid,
+        run: &ProjectOptimizationRun,
+        previous: &Self,
+        attempt: u32,
+        experiment: ProjectOptimizationExperiment,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        Self::next(
+            id,
+            run,
+            previous,
+            ProjectOptimizationEventKind::ExperimentAttached,
+            attempt,
+            None,
+            None,
+            Some(experiment),
+            None,
+            created_at,
+        )
+    }
+
+    pub fn experiment_attachment_failed(
+        id: Uuid,
+        run: &ProjectOptimizationRun,
+        previous: &Self,
+        attempt: u32,
+        failure_code: impl Into<String>,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        Self::next(
+            id,
+            run,
+            previous,
+            ProjectOptimizationEventKind::ExperimentAttachmentFailed,
+            attempt,
+            None,
+            None,
+            None,
             Some(failure_code.into()),
             created_at,
         )
@@ -507,6 +703,7 @@ impl ProjectOptimizationEvent {
         attempt: u32,
         preparation: Option<ProjectOptimizationPreparation>,
         materialization: Option<ProjectOptimizationMaterialization>,
+        experiment: Option<ProjectOptimizationExperiment>,
         failure_code: Option<String>,
         created_at: DateTime<Utc>,
     ) -> Result<Self, Invalid> {
@@ -523,6 +720,7 @@ impl ProjectOptimizationEvent {
             attempt: Some(attempt),
             preparation,
             materialization,
+            experiment,
             failure_code,
             created_at,
             fingerprint: String::new(),
@@ -554,13 +752,28 @@ impl ProjectOptimizationEvent {
                 "preparation":self.preparation,"failureCode":self.failure_code,
                 "createdAt":self.created_at,
             })
-        } else {
+        } else if matches!(
+            self.kind,
+            ProjectOptimizationEventKind::MaterializationStarted
+                | ProjectOptimizationEventKind::MaterializationCompleted
+                | ProjectOptimizationEventKind::MaterializationFailed
+        ) {
+            // Preserve fingerprints from the shipped materialization schema.
             serde_json::json!({
                 "id":self.id,"runId":self.run_id,"sequence":self.sequence,
                 "previousEventFingerprint":self.previous_event_fingerprint,
                 "kind":self.kind,"launch":self.launch,"attempt":self.attempt,
                 "preparation":self.preparation,"materialization":self.materialization,
                 "failureCode":self.failure_code,"createdAt":self.created_at,
+            })
+        } else {
+            serde_json::json!({
+                "id":self.id,"runId":self.run_id,"sequence":self.sequence,
+                "previousEventFingerprint":self.previous_event_fingerprint,
+                "kind":self.kind,"launch":self.launch,"attempt":self.attempt,
+                "preparation":self.preparation,"materialization":self.materialization,
+                "experiment":self.experiment,"failureCode":self.failure_code,
+                "createdAt":self.created_at,
             })
         };
         artifact_core::fingerprint(&value).map_err(|error| Invalid(error.to_string()))
@@ -586,6 +799,7 @@ impl ProjectOptimizationEvent {
                 && self.attempt.is_none()
                 && self.preparation.is_none()
                 && self.materialization.is_none()
+                && self.experiment.is_none()
                 && self.failure_code.is_none()
                 && self.created_at == run.created_at,
             "Project optimization reservation event changed or is invalid.",
@@ -612,12 +826,14 @@ impl ProjectOptimizationEvent {
             ProjectOptimizationEventKind::PreparationStarted => require(
                 self.preparation.is_none()
                     && self.materialization.is_none()
+                    && self.experiment.is_none()
                     && self.failure_code.is_none(),
                 "Preparation start cannot contain a result or failure.",
             ),
             ProjectOptimizationEventKind::PreparationCompleted => require(
                 self.preparation.is_some()
                     && self.materialization.is_none()
+                    && self.experiment.is_none()
                     && self.failure_code.is_none(),
                 "Preparation completion requires exactly one verified receipt.",
             ),
@@ -626,6 +842,7 @@ impl ProjectOptimizationEvent {
                 require(
                     self.preparation.is_none()
                         && self.materialization.is_none()
+                        && self.experiment.is_none()
                         && !code.is_empty()
                         && code.len() <= 80
                         && code.bytes().all(|byte| {
@@ -639,12 +856,14 @@ impl ProjectOptimizationEvent {
             ProjectOptimizationEventKind::MaterializationStarted => require(
                 self.preparation.is_none()
                     && self.materialization.is_none()
+                    && self.experiment.is_none()
                     && self.failure_code.is_none(),
                 "Materialization start cannot contain a result or failure.",
             ),
             ProjectOptimizationEventKind::MaterializationCompleted => require(
                 self.preparation.is_none()
                     && self.materialization.is_some()
+                    && self.experiment.is_none()
                     && self.failure_code.is_none(),
                 "Materialization completion requires exactly one verified receipt.",
             ),
@@ -653,6 +872,7 @@ impl ProjectOptimizationEvent {
                 require(
                     self.preparation.is_none()
                         && self.materialization.is_none()
+                        && self.experiment.is_none()
                         && !code.is_empty()
                         && code.len() <= 80
                         && code.bytes().all(|byte| {
@@ -661,6 +881,36 @@ impl ProjectOptimizationEvent {
                                 || matches!(byte, b'_' | b'-' | b'.')
                         }),
                     "Materialization failure requires a safe stable code.",
+                )
+            }
+            ProjectOptimizationEventKind::ExperimentAttachmentStarted => require(
+                self.preparation.is_none()
+                    && self.materialization.is_none()
+                    && self.experiment.is_none()
+                    && self.failure_code.is_none(),
+                "Experiment attachment start cannot contain a result or failure.",
+            ),
+            ProjectOptimizationEventKind::ExperimentAttached => require(
+                self.preparation.is_none()
+                    && self.materialization.is_none()
+                    && self.experiment.is_some()
+                    && self.failure_code.is_none(),
+                "Experiment attachment requires exactly one child receipt.",
+            ),
+            ProjectOptimizationEventKind::ExperimentAttachmentFailed => {
+                let code = self.failure_code.as_deref().unwrap_or_default();
+                require(
+                    self.preparation.is_none()
+                        && self.materialization.is_none()
+                        && self.experiment.is_none()
+                        && !code.is_empty()
+                        && code.len() <= 80
+                        && code.bytes().all(|byte| {
+                            byte.is_ascii_lowercase()
+                                || byte.is_ascii_digit()
+                                || matches!(byte, b'_' | b'-' | b'.')
+                        }),
+                    "Experiment attachment failure requires a safe stable code.",
                 )
             }
         }
@@ -677,18 +927,37 @@ pub enum ProjectOptimizationRunState {
     Materializing,
     Materialized,
     MaterializationFailed,
+    AttachingExperiment,
+    ReadyToRun,
+    ExperimentAttachmentFailed,
 }
 
 impl ProjectOptimizationRunState {
     pub const fn has_preparation(self) -> bool {
         matches!(
             self,
-            Self::Ready | Self::Materializing | Self::Materialized | Self::MaterializationFailed
+            Self::Ready
+                | Self::Materializing
+                | Self::Materialized
+                | Self::MaterializationFailed
+                | Self::AttachingExperiment
+                | Self::ReadyToRun
+                | Self::ExperimentAttachmentFailed
         )
     }
 
     pub const fn has_materialization(self) -> bool {
-        matches!(self, Self::Materialized)
+        matches!(
+            self,
+            Self::Materialized
+                | Self::AttachingExperiment
+                | Self::ReadyToRun
+                | Self::ExperimentAttachmentFailed
+        )
+    }
+
+    pub const fn has_experiment(self) -> bool {
+        matches!(self, Self::ReadyToRun)
     }
 }
 
@@ -703,6 +972,9 @@ pub struct ProjectOptimizationRunView {
     pub materialization_attempt: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub materialization: Option<ProjectOptimizationMaterialization>,
+    pub experiment_attempt: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub experiment: Option<ProjectOptimizationExperiment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_code: Option<String>,
     pub last_sequence: u64,
@@ -725,6 +997,8 @@ pub fn replay_project_optimization(
     let mut preparation = None;
     let mut materialization_attempt = 0;
     let mut materialization = None;
+    let mut experiment_attempt = 0;
+    let mut experiment = None;
     let mut failure_code = None;
     let mut previous = first;
     for event in &events[1..] {
@@ -807,6 +1081,46 @@ pub fn replay_project_optimization(
                 state = ProjectOptimizationRunState::MaterializationFailed;
                 failure_code.clone_from(&event.failure_code);
             }
+            ProjectOptimizationEventKind::ExperimentAttachmentStarted => {
+                require(
+                    matches!(
+                        state,
+                        ProjectOptimizationRunState::Materialized
+                            | ProjectOptimizationRunState::ExperimentAttachmentFailed
+                    ) && event_attempt == experiment_attempt + 1,
+                    "Experiment attachment cannot start from this state.",
+                )?;
+                state = ProjectOptimizationRunState::AttachingExperiment;
+                experiment_attempt = event_attempt;
+                failure_code = None;
+            }
+            ProjectOptimizationEventKind::ExperimentAttached => {
+                require(
+                    state == ProjectOptimizationRunState::AttachingExperiment
+                        && event_attempt == experiment_attempt,
+                    "Experiment attachment has no matching active attempt.",
+                )?;
+                let receipt = event.experiment.clone().expect("validated experiment");
+                receipt.validate_for(
+                    run,
+                    launch,
+                    preparation.as_ref().expect("prepared run has preparation"),
+                    materialization
+                        .as_ref()
+                        .expect("materialized run has materialization"),
+                )?;
+                state = ProjectOptimizationRunState::ReadyToRun;
+                experiment = Some(receipt);
+            }
+            ProjectOptimizationEventKind::ExperimentAttachmentFailed => {
+                require(
+                    state == ProjectOptimizationRunState::AttachingExperiment
+                        && event_attempt == experiment_attempt,
+                    "Experiment attachment failure has no matching active attempt.",
+                )?;
+                state = ProjectOptimizationRunState::ExperimentAttachmentFailed;
+                failure_code.clone_from(&event.failure_code);
+            }
         }
         previous = event;
     }
@@ -817,6 +1131,8 @@ pub fn replay_project_optimization(
         preparation,
         materialization_attempt,
         materialization,
+        experiment_attempt,
+        experiment,
         failure_code,
         last_sequence: previous.sequence,
         head_fingerprint: previous.fingerprint.clone(),
@@ -1054,6 +1370,123 @@ mod tests {
         assert_eq!(view.preparation, Some(preparation));
         assert_eq!(view.materialization, Some(materialization));
         assert!(view.failure_code.is_none());
+    }
+
+    #[test]
+    fn materialized_run_attaches_one_stable_finite_experiment() {
+        let (setup, launch) = fixture();
+        let now = Utc::now();
+        let run = ProjectOptimizationRun::reserve(Uuid::new_v4(), &launch, now).unwrap();
+        assert_eq!(
+            run.child_id("candidate", 1).unwrap(),
+            run.child_id("candidate", 1).unwrap()
+        );
+        assert_ne!(
+            run.child_id("candidate", 1).unwrap(),
+            run.child_id("experiment-run", 1).unwrap()
+        );
+        let reserved = ProjectOptimizationEvent::reserved(Uuid::new_v4(), &run, now).unwrap();
+        let preparing =
+            ProjectOptimizationEvent::preparation_started(Uuid::new_v4(), &run, &reserved, 1, now)
+                .unwrap();
+        let preparation = preparation(&run, &launch, &setup);
+        let ready = ProjectOptimizationEvent::preparation_completed(
+            Uuid::new_v4(),
+            &run,
+            &preparing,
+            1,
+            preparation.clone(),
+            preparation.created_at,
+        )
+        .unwrap();
+        let materializing = ProjectOptimizationEvent::materialization_started(
+            Uuid::new_v4(),
+            &run,
+            &ready,
+            1,
+            Utc::now(),
+        )
+        .unwrap();
+        let materialization = ProjectOptimizationMaterialization::create(
+            &run,
+            &launch,
+            &preparation,
+            reference('8'),
+            ExternalArtifactIdentity::new(
+                "runs/project/training.jsonl",
+                EvidenceRole::Training,
+                42,
+                digest('7'),
+            )
+            .unwrap(),
+            reference('9'),
+            Utc::now(),
+        )
+        .unwrap();
+        let materialized = ProjectOptimizationEvent::materialization_completed(
+            Uuid::new_v4(),
+            &run,
+            &materializing,
+            1,
+            materialization.clone(),
+            materialization.created_at,
+        )
+        .unwrap();
+        let attaching = ProjectOptimizationEvent::experiment_attachment_started(
+            Uuid::new_v4(),
+            &run,
+            &materialized,
+            1,
+            Utc::now(),
+        )
+        .unwrap();
+        let experiment = ProjectOptimizationExperiment::create(
+            &run,
+            &launch,
+            &preparation,
+            &materialization,
+            reference('a'),
+            BoundIdentity {
+                id: run.child_id("candidate", 1).unwrap().to_string(),
+                fingerprint: digest('b'),
+            },
+            BoundIdentity {
+                id: run.child_id("experiment-protocol", 1).unwrap().to_string(),
+                fingerprint: digest('c'),
+            },
+            BoundIdentity {
+                id: run.child_id("experiment-run", 1).unwrap().to_string(),
+                fingerprint: digest('d'),
+            },
+            Utc::now(),
+        )
+        .unwrap();
+        let attached = ProjectOptimizationEvent::experiment_attached(
+            Uuid::new_v4(),
+            &run,
+            &attaching,
+            1,
+            experiment.clone(),
+            experiment.created_at,
+        )
+        .unwrap();
+        let view = replay_project_optimization(
+            &run,
+            &launch,
+            &[
+                reserved,
+                preparing,
+                ready,
+                materializing,
+                materialized,
+                attaching,
+                attached,
+            ],
+        )
+        .unwrap();
+        assert_eq!(view.state, ProjectOptimizationRunState::ReadyToRun);
+        assert_eq!(view.experiment_attempt, 1);
+        assert_eq!(view.experiment, Some(experiment));
     }
 
     #[test]
