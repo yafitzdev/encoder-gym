@@ -3,6 +3,26 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 #[derive(Debug, Subcommand)]
+pub enum WorkspaceOptimizationSetupCommand {
+    /// Read-only preview of the exact model, training version and benchmark.
+    Preview {
+        #[arg(long)]
+        model: Uuid,
+        #[arg(long)]
+        dataset_version: Uuid,
+        #[arg(long)]
+        benchmark_version: Uuid,
+    },
+    /// Save the reviewed identity-only setup; does not start a run.
+    Save {
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// Read immutable setup history; the last entry is the current selection.
+    List,
+}
+
+#[derive(Debug, Subcommand)]
 pub enum WorkspaceBenchmarkCommand {
     /// List immutable versions of the project's shared evaluation benchmark.
     List,
@@ -187,6 +207,12 @@ impl From<WorkspaceDatasetPurpose> for project_workspace_core::DatasetPurpose {
 
 #[derive(Debug, Subcommand)]
 pub enum WorkspaceCommand {
+    /// Select the baseline, starting dataset and shared evaluation version.
+    OptimizationSetup {
+        folder: PathBuf,
+        #[command(subcommand)]
+        command: WorkspaceOptimizationSetupCommand,
+    },
     /// Manage native training datasets, variants, immutable versions, and diffs.
     Dataset {
         folder: PathBuf,

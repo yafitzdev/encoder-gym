@@ -83,8 +83,10 @@ decision. No unbounded work or inferred spending.
    offers one results matrix, version selection/history, protocol inspection,
    and guarded adoption from recorded authority. Initial test-data onboarding
    and pinning the selected version to automatic Optimize remain pending.
-4. Automatic bounded optimization — pending. Persisted launch scope, agent and
-   generation integration, routine continuation, output registration, recovery.
+4. Automatic bounded optimization — the input-selection domain, persistence and
+   CLI are implemented. Desktop selection, persisted launch scope, agent and
+   generation integration, routine continuation, output registration and recovery
+   remain pending.
    Verify real CLI composition using deterministic offline fakes.
 5. Complete journey — pending. Renderer interactions for setup, Optimize,
    results, artifact inspection, and promotion; read-only Nomos verification.
@@ -350,3 +352,35 @@ and keep outstanding requirements visible.
 - Initial benchmark test-data onboarding, model promotion/restoration controls,
   and the complete automatic bounded optimization journey remain outstanding.
   This interface stage does not establish goal completion.
+
+### Input-first optimization setup — 11 September 2026
+
+- `OptimizationInputs` binds the active model/baseline revision, one exact
+  training dataset version and one exact shared benchmark version. It neither
+  changes the baseline's historical training link nor chooses an old repair
+  recipe. The domain consumes existing artifact contracts and owns no trainer,
+  evaluator, qualification or acceptance policy.
+- The custody adapter stores append-only setup revisions in migration 9.
+  Preview is read-only, including for older project databases. Save verifies
+  custody and selected references, rechecks the baseline under the write
+  transaction, and requires the expected previous setup. Exact request retries
+  return their original revision without reactivating historical settings.
+- `workspace optimization-setup` provides preview, audited save and history
+  through actual CLI processes. Tests cover changed selections, same-model
+  baseline revision changes, stale parents, foreign/substituted inputs, test and
+  empty membership, changed source bytes, immutable storage, tampered history,
+  schema upgrade, folder movement and payload-free activity UUIDs.
+- All four Rust gates passed, along with UI typecheck/build, 69 unit tests and
+  the existing four-launch Electron suite. Logs are
+  `target/optimization-setup-rust-tests.log`,
+  `target/optimization-setup-ui-tests.log` and
+  `target/optimization-setup-electron-tests.log`. These prove backend behavior
+  and desktop compatibility, not the still-missing input-first GUI journey.
+- A real read-only Nomos setup-history query returned no saved setups and
+  byte-identical manifest and custody database. No setup, migration, training,
+  provider call or protected evaluation was performed on the real project.
+- This is a saved configuration, not a runnable optimization or authorization.
+  No new setup was written to Nomos. Desktop setup, fresh benchmark onboarding,
+  execution scope/budgets and the full bounded agent/optimization integration
+  still have to consume this selection end to end. See
+  `optimization-launch-spec.md` for the contract and remaining execution boundary.

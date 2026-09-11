@@ -10,11 +10,13 @@ mod activity;
 mod benchmark;
 pub mod benchmark_results;
 mod models;
+mod optimization_setup;
 mod providers;
 mod readiness;
 mod scientific;
 mod training_data;
 pub use benchmark::{BenchmarkSource, ProjectBenchmarkVersion};
+pub use optimization_setup::{OptimizationInputs, OptimizationSetup};
 pub use training_data::{ModelDatasetLink, ModelTrainingEvidence, TrainingDatasetInput};
 
 pub use activity::{

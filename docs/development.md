@@ -216,6 +216,11 @@ diagnosable:
   artifacts are persisted.
 - `project_preparation_cli.rs` covers strict preview, atomic preparation,
   preparation idempotency, and the handoff to an initialized workflow.
+- `managed_optimization_setup_cli.rs` covers the active-model/dataset-version/
+  benchmark-version selection through actual CLI processes. It checks read-only
+  preview, version-8 migration, exact retry history, stale baseline/parent,
+  foreign or altered input, test-data exclusion, folder movement and activity
+  redaction. Saving setup does not start training or grant provider/holdout use.
 
 All ordinary acceptance tests use fake or loopback-only backends. An ignored
 OpenAI-compatible smoke boundary exists for deliberate provider verification:

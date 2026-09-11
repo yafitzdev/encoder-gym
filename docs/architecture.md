@@ -787,3 +787,12 @@ CLI composition verifies original scientific protocols and asks the native
 adapter to normalize evaluation settings without opening native test files.
 Catalog versions do not replace benchmark generations, qualification, exposure
 or run authorization. See `project-benchmark-spec.md`.
+
+The project-owned optimization setup separately pins the active baseline
+revision/model, a dataset-core version reference and a shared benchmark version.
+The local adapter stores compare-and-append setup history; the CLI previews and
+saves only verified project references. No rows, secrets, scientific workflow
+journal or execution permission enter this record. Automatic execution must
+consume the exact setup and resolve its own bounded authorization and existing
+admission contracts; the post-review compatibility workflow must not ignore
+the user's selection. See `optimization-launch-spec.md`.
