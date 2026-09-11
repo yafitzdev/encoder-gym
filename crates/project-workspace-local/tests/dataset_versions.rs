@@ -343,3 +343,41 @@ async fn sparse_pages_preserve_source_positions_and_exact_content_fingerprints()
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn training_materialization_is_not_limited_to_one_ui_page() {
+    let temp = TempDir::new().unwrap();
+    let folder = fixture(temp.path()).await;
+    let payload = "x".repeat(6 * 1_048_576);
+    let values = (0..3)
+        .map(|index| json!({"text": payload, "index": index}))
+        .collect::<Vec<_>>();
+    let input = import(
+        &folder,
+        temp.path(),
+        "large-training-input",
+        &values,
+        DatasetPurpose::Training,
+    )
+    .await;
+    let version = datasets::create_base(
+        &folder,
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        "Large training dataset",
+        &[input],
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        datasets::read_rows(&folder, version.id, 0, 3)
+            .await
+            .is_err()
+    );
+    let materialized = datasets::materialization_rows(&folder, version.id)
+        .await
+        .unwrap();
+    assert_eq!(materialized.len(), 3);
+    assert_eq!(materialized[2].value, values[2]);
+}

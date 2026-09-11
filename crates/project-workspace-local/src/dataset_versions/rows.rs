@@ -46,6 +46,8 @@ fn scan(
     workspace: &ManagedWorkspace,
     import_id: Uuid,
     selected: Option<&BTreeSet<u64>>,
+    selected_maximum_bytes: usize,
+    selected_maximum_message: &str,
 ) -> Result<SourceContents> {
     let source = workspace
         .datasets
@@ -112,8 +114,8 @@ fn scan(
         if selected.is_some() {
             returned_bytes += line.len();
             ensure!(
-                returned_bytes <= 16 * 1_048_576,
-                "Selected rows exceed 16 MiB. Request a smaller page."
+                returned_bytes <= selected_maximum_bytes,
+                "{selected_maximum_message}"
             );
             payloads.insert(record, value);
         }
@@ -132,7 +134,7 @@ pub(crate) fn source_members(
     workspace: &ManagedWorkspace,
     import_id: Uuid,
 ) -> Result<Vec<DatasetMember>> {
-    Ok(scan(workspace, import_id, None)?
+    Ok(scan(workspace, import_id, None, 0, "")?
         .members
         .into_values()
         .collect())
@@ -228,7 +230,16 @@ fn inspect_members_bounded(
     }
     let mut sources = BTreeMap::new();
     for (id, records) in requested {
-        sources.insert(id, scan(workspace, id, Some(&records))?);
+        sources.insert(
+            id,
+            scan(
+                workspace,
+                id,
+                Some(&records),
+                maximum_bytes,
+                maximum_message,
+            )?,
+        );
     }
     let mut rows = Vec::new();
     let mut bytes = 0;
