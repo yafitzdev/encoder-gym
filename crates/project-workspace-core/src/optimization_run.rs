@@ -630,6 +630,7 @@ pub enum ProjectOptimizationEventKind {
     FinalEvaluationStarted,
     FinalEvaluationCompleted,
     FinalEvaluationFailed,
+    Cancelled,
 }
 
 impl ProjectOptimizationEventKind {
@@ -651,6 +652,7 @@ impl ProjectOptimizationEventKind {
             Self::FinalEvaluationStarted => "final_evaluation_started",
             Self::FinalEvaluationCompleted => "final_evaluation_completed",
             Self::FinalEvaluationFailed => "final_evaluation_failed",
+            Self::Cancelled => "cancelled",
         }
     }
 }
@@ -1065,6 +1067,38 @@ impl ProjectOptimizationEvent {
         )
     }
 
+    pub fn cancelled(
+        id: Uuid,
+        run: &ProjectOptimizationRun,
+        previous: &Self,
+        failure_code: impl Into<String>,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        let mut value = Self {
+            id,
+            run_id: run.id,
+            sequence: previous
+                .sequence
+                .checked_add(1)
+                .ok_or_else(|| Invalid("Optimization journal sequence overflowed.".into()))?,
+            previous_event_fingerprint: Some(previous.fingerprint.clone()),
+            kind: ProjectOptimizationEventKind::Cancelled,
+            launch: run.launch.clone(),
+            attempt: None,
+            preparation: None,
+            materialization: None,
+            experiment: None,
+            outcome: None,
+            final_result: None,
+            failure_code: Some(failure_code.into()),
+            created_at,
+            fingerprint: String::new(),
+        };
+        value.fingerprint = value.reproduce()?;
+        value.validate_after(run, previous)?;
+        Ok(value)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn next(
         id: Uuid,
@@ -1216,15 +1250,13 @@ impl ProjectOptimizationEvent {
 
     fn validate_after(&self, run: &ProjectOptimizationRun, previous: &Self) -> Result<(), Invalid> {
         self.validate_common(run)?;
-        let attempt = self
-            .attempt
-            .ok_or_else(|| Invalid("Optimization preparation attempt is missing.".into()))?;
+        let attempt = self.attempt.unwrap_or_default();
         require(
             self.sequence == previous.sequence.checked_add(1).unwrap_or(0)
                 && self.previous_event_fingerprint.as_deref()
                     == Some(previous.fingerprint.as_str())
                 && self.created_at >= previous.created_at
-                && attempt > 0,
+                && (self.kind == ProjectOptimizationEventKind::Cancelled || attempt > 0),
             "Optimization preparation event does not continue the journal.",
         )?;
         match self.kind {
@@ -1411,6 +1443,25 @@ impl ProjectOptimizationEvent {
                     "Final evaluation failure requires a safe stable code.",
                 )
             }
+            ProjectOptimizationEventKind::Cancelled => {
+                let code = self.failure_code.as_deref().unwrap_or_default();
+                require(
+                    self.attempt.is_none()
+                        && self.preparation.is_none()
+                        && self.materialization.is_none()
+                        && self.experiment.is_none()
+                        && self.outcome.is_none()
+                        && self.final_result.is_none()
+                        && !code.is_empty()
+                        && code.len() <= 80
+                        && code.bytes().all(|byte| {
+                            byte.is_ascii_lowercase()
+                                || byte.is_ascii_digit()
+                                || matches!(byte, b'_' | b'-' | b'.')
+                        }),
+                    "Optimization cancellation requires a safe stable code.",
+                )
+            }
         }
     }
 }
@@ -1436,6 +1487,7 @@ pub enum ProjectOptimizationRunState {
     CandidateAccepted,
     CandidateRejected,
     FinalEvaluationFailed,
+    Cancelled,
 }
 
 impl ProjectOptimizationRunState {
@@ -1508,6 +1560,16 @@ impl ProjectOptimizationRunState {
     pub const fn has_final_result(self) -> bool {
         matches!(self, Self::CandidateAccepted | Self::CandidateRejected)
     }
+
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::BaselineRetained
+                | Self::CandidateAccepted
+                | Self::CandidateRejected
+                | Self::Cancelled
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1562,7 +1624,7 @@ pub fn replay_project_optimization(
     let mut previous = first;
     for event in &events[1..] {
         event.validate_after(run, previous)?;
-        let event_attempt = event.attempt.expect("validated attempt");
+        let event_attempt = event.attempt.unwrap_or_default();
         match event.kind {
             ProjectOptimizationEventKind::Reserved => {
                 return Err(Invalid(
@@ -1775,6 +1837,14 @@ pub fn replay_project_optimization(
                     "Final evaluation failure has no matching active attempt.",
                 )?;
                 state = ProjectOptimizationRunState::FinalEvaluationFailed;
+                failure_code.clone_from(&event.failure_code);
+            }
+            ProjectOptimizationEventKind::Cancelled => {
+                require(
+                    !state.is_terminal(),
+                    "A completed optimization run cannot be cancelled.",
+                )?;
+                state = ProjectOptimizationRunState::Cancelled;
                 failure_code.clone_from(&event.failure_code);
             }
         }
@@ -2325,5 +2395,51 @@ mod tests {
         );
         assert!(replay_project_optimization(&run, &launch, &[]).is_err());
         assert!(replay_project_optimization(&run, &launch, &[reserved.clone(), reserved]).is_err());
+    }
+
+    #[test]
+    fn cancellation_is_terminal_and_keeps_the_exact_journal_head() {
+        let (_, launch) = fixture();
+        let now = Utc::now();
+        let run = ProjectOptimizationRun::reserve(Uuid::new_v4(), &launch, now).unwrap();
+        let reserved = ProjectOptimizationEvent::reserved(Uuid::new_v4(), &run, now).unwrap();
+        assert!(
+            ProjectOptimizationEvent::cancelled(
+                Uuid::new_v4(),
+                &run,
+                &reserved,
+                "unsafe cancellation message!",
+                Utc::now(),
+            )
+            .is_err()
+        );
+        let cancelled = ProjectOptimizationEvent::cancelled(
+            Uuid::new_v4(),
+            &run,
+            &reserved,
+            "user_requested",
+            Utc::now(),
+        )
+        .unwrap();
+        let view =
+            replay_project_optimization(&run, &launch, &[reserved.clone(), cancelled.clone()])
+                .unwrap();
+        assert_eq!(view.state, ProjectOptimizationRunState::Cancelled);
+        assert_eq!(view.failure_code.as_deref(), Some("user_requested"));
+        assert_eq!(view.last_sequence, 2);
+        assert_eq!(view.head_fingerprint, cancelled.fingerprint);
+
+        let after_cancel = ProjectOptimizationEvent::cancelled(
+            Uuid::new_v4(),
+            &run,
+            &cancelled,
+            "user_requested",
+            Utc::now(),
+        )
+        .unwrap();
+        assert!(
+            replay_project_optimization(&run, &launch, &[reserved, cancelled, after_cancel])
+                .is_err()
+        );
     }
 }

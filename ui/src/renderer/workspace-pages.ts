@@ -35,18 +35,19 @@ const phaseLabels: Record<InputOptimizationPhase, string> = {
   saving_candidate: "Saving candidate", evaluating: "Evaluating", complete: "Complete",
 };
 function projectRun(run: InputOptimizationRun, workspace: WorkspaceSnapshot, actions: Actions, controller: InputRunsController): HTMLElement {
-  const outcome = run.state === "candidate_accepted" ? "Candidate passed" : run.state === "candidate_rejected" ? "Candidate did not pass" : run.state === "baseline_retained" ? "No improvement" : undefined;
-  const failed = run.state.endsWith("_failed"), terminal = inputOptimizationTerminal(run.state), busy = controller.runningId === run.id;
+  const outcome = run.state === "candidate_accepted" ? "Candidate passed" : run.state === "candidate_rejected" ? "Candidate did not pass" : run.state === "baseline_retained" ? "No improvement" : run.state === "cancelled" ? "Cancelled" : undefined;
+  const failed = run.state.endsWith("_failed"), terminal = inputOptimizationTerminal(run.state), busy = controller.runningId === run.id, cancelling = controller.cancellingId === run.id;
   const activity = controller.activities.get(run.id), progress = activity?.progress;
   const selected = run.finalResult?.modelId ?? run.outcome?.selectedModelId;
   const model = selected ? workspace.managed?.modelCatalog?.artifacts.find(artifact => artifact.sourceModel?.id === selected) : undefined;
-  const current = busy && progress ? inputRunStageLabel(progress.phase) : outcome ?? phaseLabels[inputOptimizationPhase(run.state)];
+  const current = outcome ?? (busy && progress ? inputRunStageLabel(progress.phase) : phaseLabels[inputOptimizationPhase(run.state)]);
   return h("article", { class: "project-run-item", "data-project-run-id": run.id },
     h("div", { class: "project-run-main" }, h("strong", {}, current), h("time", {}, dateLabel(run.createdAt))),
     h("code", {}, run.id.slice(0, 8)),
-    progress?.completed !== undefined && progress.total !== undefined && busy ? h("progress", { class: "project-run-progress", value: progress.completed, max: progress.total }) : null,
-    h("div", { class: "project-run-action" }, busy ? tag("Running", "accent")
-      : !terminal ? button(failed ? "Retry" : "Continue", () => { void controller.resume(run); }, "secondary", "arrow")
+    progress?.completed !== undefined && progress.total !== undefined && busy && !terminal ? h("progress", { class: "project-run-progress", value: progress.completed, max: progress.total }) : null,
+    h("div", { class: "project-run-action" }, cancelling && !terminal ? tag("Stopping", "warning") : busy && !terminal ? tag("Running", "accent") : null,
+      !terminal && !cancelling && !busy ? button(failed ? "Retry" : "Continue", () => { void controller.resume(run); }, "secondary", "arrow") : null,
+      !terminal ? button(cancelling ? "Stopping…" : "Stop", () => { void controller.cancel(run); }, "ghost danger")
       : model ? button("Candidate", () => actions.navigate({ page: "model", id: model.id }), "ghost", "arrow")
       : button("Activity", () => actions.navigate({ page: "activity" }), "ghost", "arrow")));
 }

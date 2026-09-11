@@ -27,6 +27,7 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunComm
     match command {
         List => super::print(&optimization_runs::list(folder).await?),
         Show { run_id } => super::print(&optimization_runs::show(folder, run_id).await?),
+        Cancel { run_id } => cancel(folder, run_id).await,
         Prepare { run_id } => prepare(folder, run_id).await,
         Materialize { run_id } => materialize(folder, run_id).await,
         Attach { run_id } => attach(folder, run_id).await,
@@ -91,6 +92,38 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunComm
             super::print(&serde_json::json!({"actionId":action_id,"run":result?}))
         }
     }
+}
+
+async fn cancel(folder: &Path, run_id: Uuid) -> Result<()> {
+    initialize_activity(folder).await?;
+    let action_id = Uuid::new_v4();
+    let references = vec![ActivityReference::new("run", run_id.to_string())?];
+    let activity = |state, failure| AppendActivity {
+        action_id,
+        operation: "optimization.cancel".into(),
+        source: ActivitySource::Cli,
+        state,
+        stage: None,
+        completed: None,
+        total: None,
+        references: references.clone(),
+        failure,
+        created_at: Utc::now(),
+    };
+    append_activity(folder, activity(ActivityEventState::Started, None)).await?;
+    let result = optimization_runs::cancel(folder, run_id).await;
+    let terminal = match &result {
+        Ok(_) => activity(ActivityEventState::Succeeded, None),
+        Err(_) => activity(
+            ActivityEventState::Failed,
+            Some(ActivityFailure::new(
+                "optimization_cancel_failed",
+                "The run could not be cancelled.",
+            )?),
+        ),
+    };
+    append_activity(folder, terminal).await?;
+    super::print(&serde_json::json!({"actionId":action_id,"run":result?}))
 }
 
 async fn finalize_candidate(folder: &Path, run_id: Uuid) -> Result<()> {

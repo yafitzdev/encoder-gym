@@ -5,11 +5,11 @@ import { h } from "./dom.js";
 import { inputRunStageLabel } from "./input-run-activity.js";
 
 export function renderOptimizationSetup(controller: OptimizationSetupController, actions: Actions): HTMLElement {
-  const model = controller.model, selectedDataset = controller.dataset, busy = controller.loading || controller.saving || controller.running;
+  const model = controller.model, selectedDataset = controller.dataset, busy = controller.loading || controller.saving || controller.running || controller.cancelling;
   const datasets: [string, string][] = controller.data?.datasets.flatMap(entry => entry.versions.map(item => [item.version.id, `${entry.dataset.name} · v${item.version.number} · ${item.rows.toLocaleString()} ${item.rows === 1 ? "row" : "rows"}`] as [string, string])) ?? [];
   const benchmarks: [string, string][] = controller.data?.benchmarks.map(version => [version.id, `Benchmark v${version.number}`]) ?? [];
   const refresh = button("Refresh", actions.refresh, "ghost", "refresh"); refresh.disabled = busy;
-  const optimize = button(controller.running ? "Optimizing…" : controller.error && controller.run ? "Retry" : "Optimize", () => { void controller.optimize(); }, "primary");
+  const optimize = button(controller.error && controller.run ? "Retry" : "Optimize", () => { void controller.optimize(); }, "primary");
   optimize.id = "optimization-start"; optimize.disabled = !controller.canOptimize;
   const datasetSelect = selectControl("optimization-dataset", "Dataset version", [["", "Choose dataset"], ...datasets], controller.datasetId, value => controller.select("dataset", value));
   const benchmarkSelect = selectControl("optimization-benchmark", "Benchmark version", [["", "Choose benchmark"], ...benchmarks], controller.benchmarkId, value => controller.select("benchmark", value));
@@ -27,7 +27,8 @@ export function renderOptimizationSetup(controller: OptimizationSetupController,
       h("section", { class: "optimization-input" }, h("h2", {}, "Evaluation"),
         benchmarks.length ? benchmarkSelect : button("Set up evaluation", () => actions.navigate({ page: "benchmarks" }), "secondary"),
         controller.benchmark ? button("Inspect benchmark", () => actions.navigate({ page: "benchmarks", id: controller.benchmark!.id, tab: "protocol" }), "ghost", "arrow") : null)),
-    h("div", { class: "optimization-input-actions" }, optimize),
+    h("div", { class: "optimization-input-actions" }, optimize,
+      controller.canCancel || controller.cancelling ? button(controller.cancelling ? "Stopping…" : "Stop", () => { void controller.cancel(); }, "secondary danger") : null),
     controller.saving ? h("div", { role: "status", class: "workspace-progress" }, controller.phase ?? "Saving…", " ", h("span", { "data-elapsed-start": String(controller.startedAt) })) : null,
     controller.run ? runState(controller, actions) : null);
 }
@@ -35,7 +36,7 @@ export function renderOptimizationSetup(controller: OptimizationSetupController,
 function runState(controller: OptimizationSetupController, actions: Actions): HTMLElement {
   const run = controller.run!, phase = controller.runPhase;
   const labels = { checking_inputs: "Checking inputs", preparing_data: "Preparing data", starting: "Starting", training: "Training", saving_candidate: "Saving candidate", evaluating: "Evaluating", complete: "Done" } as const;
-  const result = run.state === "candidate_accepted" ? "Candidate passed" : run.state === "candidate_rejected" ? "Candidate did not pass" : run.state === "baseline_retained" ? "No improvement" : undefined;
+  const result = run.state === "candidate_accepted" ? "Candidate passed" : run.state === "candidate_rejected" ? "Candidate did not pass" : run.state === "baseline_retained" ? "No improvement" : run.state === "cancelled" ? "Cancelled" : undefined;
   const phases = ["checking_inputs", "preparing_data", "starting", "training", "saving_candidate", "evaluating"] as const;
   const active = phase === "complete" ? phases.length : Math.max(0, phases.indexOf(phase ?? "checking_inputs"));
   const activity = controller.activity, progress = activity?.progress;

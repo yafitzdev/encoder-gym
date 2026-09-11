@@ -8,6 +8,7 @@ export class InputRunsController {
   activities = new Map<string, InputRunActivity>();
   loading = false;
   runningId?: string;
+  cancellingId?: string;
   error?: unknown;
   private epoch = 0;
   constructor(readonly projectId: string, private bridge: EncoderGymBridge, private render: () => void, private updated?: (workspace: ManagedWorkspace) => void) {}
@@ -51,6 +52,17 @@ export class InputRunsController {
       settled = true; if (timer) clearTimeout(timer);
       if (epoch === this.epoch) { this.runningId = undefined; this.render(); }
     }
+  }
+  async cancel(run: InputOptimizationRun): Promise<void> {
+    if (this.cancellingId || run.projectId !== this.projectId) return;
+    this.cancellingId = run.id; this.error = undefined; this.render();
+    try {
+      this.replace(await this.bridge.cancelInputOptimization(this.projectId, run.id));
+      this.render();
+      const activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30), run.id);
+      if (activity) this.activities.set(run.id, activity);
+    } catch (error) { this.error = error; }
+    finally { this.cancellingId = undefined; this.render(); }
   }
   private replace(run: InputOptimizationRun): void {
     const values = this.runs ?? [];

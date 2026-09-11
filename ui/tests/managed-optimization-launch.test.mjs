@@ -23,7 +23,10 @@ function fixture() {
   return { ...base, setupId, scope, preview, authorization, run };
 }
 function ports(f, command, exclusive = async (_id, work) => work()) {
-  return { open: async id => { assert.equal(id, f.projectId); return f.workspace; }, command, exclusive };
+  return {
+    open: async id => { assert.equal(id, f.projectId); return f.workspace; }, command, exclusive,
+    exclusiveRun: async (_id, _runId, work) => work(new AbortController().signal), abortRun: () => {},
+  };
 }
 
 test("optimization launch preview and history are exact project-owned reads", async () => {
@@ -101,6 +104,20 @@ test("a development result that retains the baseline skips sealed evaluation", a
   const backend = new ManagedOptimizationLaunch({ ...ports(f, async args => { commands.push(args[2]); return args[2] === "show" ? wire : {}; }), environment: () => ({}) });
   assert.equal((await backend.drive(f.projectId, wire.run.id)).state, "baseline_retained");
   assert.ok(!commands.includes("finalize"));
+});
+
+test("cancellation is recorded before the active worker is aborted", async () => {
+  const f = fixture(), active = f.run("optimizing"), cancelled = { ...active, state: "cancelled", failureCode: "user_requested", lastSequence: 3 };
+  const order = [];
+  const backend = new ManagedOptimizationLaunch({
+    ...ports(f, async args => {
+      assert.deepEqual(args, ["optimization-run", "owned-project", "cancel", active.run.id]);
+      order.push("recorded"); return { actionId: randomUUID(), run: cancelled };
+    }),
+    abortRun: (_projectId, runId) => { assert.equal(runId, active.run.id); order.push("aborted"); },
+  });
+  assert.equal((await backend.cancel(f.projectId, active.run.id)).state, "cancelled");
+  assert.deepEqual(order, ["recorded", "aborted"]);
 });
 
 test("project optimization history is a typed project-owned read", async () => {

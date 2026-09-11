@@ -875,6 +875,89 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
         serde_json::to_value(final_result).unwrap()
     );
     assert!(!finalized.to_string().contains("SETUP_ROW_CANARY"));
+    let cancel_request = json!({"id":Uuid::new_v4(),"scope":launch["scope"]});
+    fs::write(
+        root.join("cancel-launch.json"),
+        serde_json::to_vec(&cancel_request).unwrap(),
+    )
+    .unwrap();
+    let cancel_authorized = run(
+        root,
+        &[
+            "optimization-launch",
+            "project",
+            "authorize",
+            "--file",
+            "cancel-launch.json",
+        ],
+    );
+    let cancel_started = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "start",
+            "--file",
+            "cancel-launch.json",
+        ],
+    );
+    let cancel_id: Uuid = cancel_started["run"]["run"]["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let in_flight = optimization_runs::begin_preparation(&folder, cancel_id)
+        .await
+        .unwrap();
+    let cancelled = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "cancel",
+            &cancel_id.to_string(),
+        ],
+    );
+    assert_eq!(cancelled["run"]["state"], "cancelled");
+    assert_eq!(cancelled["run"]["failureCode"], "user_requested");
+    assert_eq!(cancelled["run"]["lastSequence"], 3);
+    assert!(
+        optimization_runs::fail_preparation(
+            &folder,
+            cancel_id,
+            &in_flight.head_fingerprint,
+            "input_verification_failed",
+        )
+        .await
+        .is_err(),
+        "a stale stage result cannot overwrite cancellation"
+    );
+    assert_eq!(
+        run(
+            root,
+            &[
+                "optimization-run",
+                "project",
+                "cancel",
+                &cancel_id.to_string(),
+            ],
+        )["run"],
+        cancelled["run"],
+        "cancellation is idempotent"
+    );
+    assert_eq!(
+        run(
+            root,
+            &[
+                "optimization-run",
+                "project",
+                "show",
+                &cancel_id.to_string(),
+            ],
+        ),
+        cancelled["run"],
+        "cancelled state survives a separate process read"
+    );
     let orphan_request = json!({"id":Uuid::new_v4(),"scope":launch["scope"]});
     fs::write(
         root.join("orphan-launch.json"),
@@ -948,11 +1031,15 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     let history = run(root, &["optimization-launch", "project", "list"]);
     assert_eq!(
         history,
-        json!([authorized["authorization"], orphan["authorization"]])
+        json!([
+            authorized["authorization"],
+            cancel_authorized["authorization"],
+            orphan["authorization"]
+        ])
     );
     assert_eq!(
         run(root, &["optimization-run", "project", "list"]),
-        json!([finalized["run"]])
+        json!([finalized["run"], cancelled["run"]])
     );
     let activity = run(root, &["activity", "project", "list"]);
     let text = activity.to_string();
@@ -964,6 +1051,7 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     assert!(text.contains("optimization.execute"));
     assert!(text.contains("optimization.register_candidate"));
     assert!(text.contains("optimization.final_evaluation"));
+    assert!(text.contains("optimization.cancel"));
     assert!(text.contains(started["run"]["run"]["id"].as_str().unwrap()));
     assert!(!text.contains("SETUP_ROW_CANARY"));
     assert!(!text.contains("apiKey"));

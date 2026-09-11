@@ -598,7 +598,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     if (projectId !== setupProjectId || selectedRun !== queued.run.id) return driveInputRun(projectId, selectedRun, progress);
     progress?.("training", { phase: "training", completed: 40, total: 100 });
     await inputRunPending;
-    return { ...queued.run, state: "baseline_retained", outcome: { kind: "baseline_retained" }, lastSequence: 8, updatedAt: new Date().toISOString() };
+    return harness.backend.optimizationLaunch.show(projectId, selectedRun);
   };
   await nav("runs"); await until("document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "]')");
   await check("project optimization survives as a resumable top-level run", "document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "]').textContent.includes('Checking inputs') && document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "] button').textContent === 'Continue'");
@@ -607,8 +607,12 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await until("document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "]')?.textContent.includes('Training candidate')");
   await check("project run shows its persisted native stage and counter", "(()=>{const row=document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "]');const bar=row.querySelector('progress');return row.textContent.includes('Training candidate') && bar.value===40 && bar.max===100})()");
   await screenshot("managed-project-run-live");
+  await evaluate("document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "] .project-run-action button').click()");
+  await until("document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "]')?.textContent.includes('Cancelled')");
   finishInputRun();
-  await until("document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "]')?.textContent.includes('No improvement')");
+  await until("!document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "]')?.textContent.includes('Running')");
+  await check("Stop persists cancellation and removes every continuation action", "(()=>{const row=document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "]');return row.textContent.includes('Cancelled') && ![...row.querySelectorAll('button')].some(button=>['Continue','Retry','Stop'].includes(button.textContent))})()");
+  await screenshot("managed-project-run-cancelled");
   harness.backend.optimizationLaunch.drive = driveInputRun;
   if (!scientificBefore.equals(readFileSync(join(benchmarkFixture.folder, "runs/scientific.sqlite")))) throw new Error("Benchmark inspection/adoption changed scientific evidence");
   console.log("Managed-workspace Electron acceptance passed.");

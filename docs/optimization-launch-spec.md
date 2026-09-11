@@ -227,12 +227,17 @@ it must not silently run a different recipe or dataset in response to a setup.
 - Native phase names and bounded counters come from the run's persisted project
   activity action. The Optimize and Runs pages show the same durable progress;
   neither parses subprocess prose or invents a percentage.
+- Stop first appends a terminal `cancelled` event to the project run, then
+  interrupts the exact active worker and its native process tree. An older
+  stage head cannot publish completion or failure after cancellation wins.
+  Cancellation is idempotent, survives restart and remains linked to its
+  action UUID in project Activity.
 - The model viewer resolves a registered accepted candidate back through its
   exact scientific child and parent optimization UUID. `Make baseline` appends
   the normal baseline revision; rejected and previous models remain immutable.
-- UI typecheck, 92 unit tests and the full two-process Electron acceptance pass.
+- UI typecheck, 96 unit tests and the full Electron acceptance pass.
   The Rust workspace gates and deterministic optimization recovery suite pass.
   No real Nomos training, provider call, final evaluation or baseline change was
   performed by this implementation work.
-- Bounded advisor/data-generation iterations, initial benchmark onboarding and
-  explicit cancellation of the project-run root remain open product work.
+- Bounded advisor/data-generation iterations and initial benchmark onboarding
+  remain open product work.

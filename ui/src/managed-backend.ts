@@ -89,7 +89,7 @@ export function redactBackendError(value: string): string {
 }
 
 export type CommandEnvironment = Readonly<Record<string, string>>;
-export type CommandExecutor = (executable: string, args: string[], environment?: CommandEnvironment, progress?: (value: NativeProgress) => void) => Promise<string>;
+export type CommandExecutor = (executable: string, args: string[], environment?: CommandEnvironment, progress?: (value: NativeProgress) => void, signal?: AbortSignal) => Promise<string>;
 export interface ManagedBackendOptions {
   /** Main-process-only resolver. Returned values are placed only in a child process environment. */
   resolveCredential?: (id: string, environmentFallback?: string) => string | undefined;
@@ -99,13 +99,13 @@ interface PreparedOptimizationWire {
   authority: ManagedOptimizationAuthority; createdTrainingSnapshot: boolean; externalCalls: number;
 }
 type ManagedReadinessWire = Omit<ManagedReadiness, "preparedOptimization"> & { preparedOptimization?: PreparedOptimizationWire };
-const executeCommand: CommandExecutor = (executable, args, environment, progress) => new Promise((resolve, reject) => {
+const executeCommand: CommandExecutor = (executable, args, environment, progress, signal) => new Promise((resolve, reject) => {
   if (progress) {
-    void executeObservedCommand(executable, args, environment, progress).then(resolve, error => reject(new Error(redactBackendError(String(error.message)))));
+    void executeObservedCommand(executable, args, environment, progress, signal).then(resolve, error => reject(new Error(redactBackendError(String(error.message)))));
     return;
   }
   const statusRead = args[3] === "optimize" && args[5] === "status";
-  execFile(executable, args, { windowsHide: true, shell: false, maxBuffer: 16 * 1024 * 1024, ...(statusRead ? { timeout: 15000 } : {}), ...(environment ? { env: { ...process.env, ...environment } } : {}) }, (error, stdout, stderr) => {
+  execFile(executable, args, { windowsHide: true, shell: false, maxBuffer: 16 * 1024 * 1024, ...(statusRead ? { timeout: 15000 } : {}), ...(environment ? { env: { ...process.env, ...environment } } : {}), ...(signal ? { signal } : {}) }, (error, stdout, stderr) => {
     if (error) {
       const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
       reject(new Error(missing ? "The local workspace backend is missing. Run npm run build:backend in ui, then retry." : statusRead && error.killed ? "Status check timed out. Retrying…" : redactBackendError(stderr) || redactBackendError(error.message)));
@@ -126,6 +126,7 @@ export class ManagedBackend {
   private histories = new Map<string, { projectId: string; path: string }>();
   private bindingPreviews = new Map<string, { projectId: string; runtime: string; python: string; history?: string; ready: boolean }>();
   private activeProjects = new Set<string>();
+  private activeOptimizationRuns = new Map<string, { runId: string; controller: AbortController }>();
   private runActivity = new Map<string, { runId: string; activity: RunActivity }>();
   private activityInitializers = new Map<string, Promise<void>>();
   private busy = false;
@@ -139,13 +140,15 @@ export class ManagedBackend {
     this.optimizationSetup = new ManagedOptimizationSetup({ open: id => this.openRegistered(id), command: args => this.command(args), exclusive: (id, run) => this.exclusiveProject(id, run) });
     this.optimizationLaunch = new ManagedOptimizationLaunch({
       open: id => this.openRegistered(id),
-      command: (args, environment, progress) => this.command(args, environment, progress),
+      command: (args, environment, progress, signal) => this.command(args, environment, progress, signal),
       environment: (id, workspace) => this.providerEnvironment(id, workspace),
       exclusive: (id, run) => this.exclusiveProject(id, run),
+      exclusiveRun: (id, runId, run) => this.exclusiveOptimizationRun(id, runId, run),
+      abortRun: (id, runId) => this.abortOptimizationRun(id, runId),
     });
   }
-  private async command<T>(args: string[], environment?: CommandEnvironment, progress?: (value: NativeProgress) => void): Promise<T> {
-    const stdout = await this.executor(this.executable, ["--output", "json", "workspace", ...args], environment, progress);
+  private async command<T>(args: string[], environment?: CommandEnvironment, progress?: (value: NativeProgress) => void, signal?: AbortSignal): Promise<T> {
+    const stdout = await this.executor(this.executable, ["--output", "json", "workspace", ...args], environment, progress, signal);
     try { return JSON.parse(stdout) as T; } catch { throw new Error("The workspace backend returned an unreadable response."); }
   }
   private activityFolder(projectId: string): string {
@@ -239,6 +242,17 @@ export class ManagedBackend {
     if (this.activeProjects.has(projectId)) throw new Error("An operation for this project is already running. Wait for its durable result.");
     this.activeProjects.add(projectId);
     try { return await operation(); } finally { this.activeProjects.delete(projectId); }
+  }
+  private async exclusiveOptimizationRun<T>(projectId: string, runId: string, operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    if (this.activeOptimizationRuns.has(projectId)) throw new Error("An optimization run for this project is already active.");
+    const controller = new AbortController();
+    this.activeOptimizationRuns.set(projectId, { runId, controller });
+    try { return await this.exclusiveProject(projectId, () => operation(controller.signal)); }
+    finally { this.activeOptimizationRuns.delete(projectId); }
+  }
+  private abortOptimizationRun(projectId: string, runId: string): void {
+    const active = this.activeOptimizationRuns.get(projectId);
+    if (active?.runId === runId) active.controller.abort();
   }
   private retainPrepared(projectId: string, workspace: ManagedWorkspace, prepared: PreparedOptimizationWire): PreparedOptimizationChoice {
     const scientificProjectId = workspace.scientificBinding?.runtime.projectSnapshot.id;

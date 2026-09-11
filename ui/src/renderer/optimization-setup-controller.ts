@@ -14,6 +14,7 @@ export class OptimizationSetupController {
   loading = false;
   saving = false;
   running = false;
+  cancelling = false;
   run?: InputOptimizationRun;
   activity?: InputRunActivity;
   phase?: string;
@@ -36,6 +37,7 @@ export class OptimizationSetupController {
   get saved(): boolean { return !!this.selected && sameInputs(this.selected, this.latest?.inputs); }
   get canSave(): boolean { return !!this.selected && !this.saved && !this.saving && !this.loading && !this.running; }
   get canOptimize(): boolean { return !!this.selected && !this.loading && !this.saving && !this.running; }
+  get canCancel(): boolean { return this.running && !!this.run && !inputOptimizationTerminal(this.run.state) && !this.cancelling; }
   get runPhase(): InputOptimizationPhase | undefined { return this.run ? inputOptimizationPhase(this.run.state) : undefined; }
   sync(workspace: ManagedWorkspace): void {
     if (workspace !== this.workspace) { this.workspace = workspace; this.invalidate(); }
@@ -134,6 +136,16 @@ export class OptimizationSetupController {
     } finally {
       if (epoch === this.epoch) { this.running = false; this.startedAt = undefined; this.render(); }
     }
+  }
+  async cancel(): Promise<void> {
+    if (!this.canCancel || !this.run) return;
+    const run = this.run; this.cancelling = true; this.error = undefined; this.render();
+    try {
+      this.run = await this.bridge.cancelInputOptimization(this.projectId, run.id);
+      this.render();
+      this.activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30), run.id) ?? this.activity;
+    } catch (error) { this.error = error; }
+    finally { this.cancelling = false; this.render(); }
   }
 }
 function sameInputs(a: OptimizationInputs, b?: OptimizationInputs): boolean {

@@ -50,3 +50,10 @@ test("real child progress reaches the observer before exit, without polluting th
   assert.deepEqual(received, [{ phase: "training", completed: 1, total: 5 }]);
   await assert.rejects(() => executeObservedCommand(process.execPath, ["-e", `process.stderr.write(${JSON.stringify(wire({ phase: "training" }) + "checkpoint failed")});process.exitCode=1`], undefined, () => {}), error => error.message === "checkpoint failed");
 });
+
+test("cancelling an observed worker interrupts it instead of waiting for natural exit", { timeout: 5000 }, async () => {
+  const controller = new AbortController();
+  const script = `process.stderr.write(${JSON.stringify(wire({ phase: "training", completed: 1, total: 100 }))});setInterval(() => {}, 1000);`;
+  const running = executeObservedCommand(process.execPath, ["-e", script], undefined, () => controller.abort(), controller.signal);
+  await assert.rejects(running, error => error.message === "Run cancelled.");
+});

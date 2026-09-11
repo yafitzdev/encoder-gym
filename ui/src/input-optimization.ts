@@ -4,7 +4,7 @@ export type InputOptimizationState =
   | "attaching_experiment" | "ready_to_run" | "experiment_attachment_failed"
   | "optimizing" | "ready_for_final_evaluation" | "baseline_retained"
   | "execution_failed" | "evaluating_final" | "candidate_accepted"
-  | "candidate_rejected" | "final_evaluation_failed";
+  | "candidate_rejected" | "final_evaluation_failed" | "cancelled";
 
 export type InputOptimizationPhase = "checking_inputs" | "preparing_data" | "starting" | "training" | "saving_candidate" | "evaluating" | "complete";
 
@@ -31,6 +31,7 @@ const states = new Set<InputOptimizationState>([
   "queued", "preparing", "ready", "preparation_failed", "materializing", "materialized", "materialization_failed",
   "attaching_experiment", "ready_to_run", "experiment_attachment_failed", "optimizing", "ready_for_final_evaluation",
   "baseline_retained", "execution_failed", "evaluating_final", "candidate_accepted", "candidate_rejected", "final_evaluation_failed",
+  "cancelled",
 ]);
 const runKeys = ["run", "state", "attempt", "preparation", "materializationAttempt", "materialization", "experimentAttempt", "experiment", "executionAttempt", "outcome", "finalAttempt", "finalResult", "failureCode", "lastSequence", "headFingerprint", "updatedAt"];
 
@@ -105,6 +106,7 @@ export function parseInputOptimizationRuns(value: unknown, projectId: string): I
 }
 
 export function inputOptimizationPhase(state: InputOptimizationState): InputOptimizationPhase {
+  if (state === "cancelled") return "complete";
   if (["queued", "preparing", "preparation_failed"].includes(state)) return "checking_inputs";
   if (["ready", "materializing", "materialized", "materialization_failed"].includes(state)) return "preparing_data";
   if (["attaching_experiment", "ready_to_run", "experiment_attachment_failed"].includes(state)) return "starting";
@@ -115,5 +117,5 @@ export function inputOptimizationPhase(state: InputOptimizationState): InputOpti
 }
 
 export function inputOptimizationTerminal(state: InputOptimizationState): boolean {
-  return state === "baseline_retained" || state === "candidate_accepted" || state === "candidate_rejected";
+  return state === "baseline_retained" || state === "candidate_accepted" || state === "candidate_rejected" || state === "cancelled";
 }

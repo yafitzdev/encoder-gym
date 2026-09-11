@@ -125,6 +125,51 @@ pub async fn show(folder: &Path, run_id: Uuid) -> Result<ProjectOptimizationRunV
         .context("Project optimization run was not found.")
 }
 
+/// Permanently stop a project optimization root. The append is atomic with
+/// respect to every stage completion, so an in-flight worker holding an older
+/// journal head cannot publish a result after cancellation wins the race.
+pub async fn cancel(folder: &Path, run_id: Uuid) -> Result<ProjectOptimizationRunView> {
+    let workspace = open_workspace(folder, true).await?;
+    let mut database = connect(Path::new(&workspace.folder), false, false).await?;
+    sqlx::migrate!("./migrations").run(&mut database).await?;
+    let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
+    let setups = optimization_setup::load(&mut transaction, &workspace).await?;
+    let providers = load_provider_catalog_history(&mut transaction, &workspace.manifest).await?;
+    let launches =
+        optimization_launch::load(&mut transaction, &workspace, &setups, &providers).await?;
+    let view = load(&mut transaction, workspace.manifest.id, &launches, &setups)
+        .await?
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .context("Project optimization run was not found.")?;
+    if view.state == ProjectOptimizationRunState::Cancelled {
+        transaction.commit().await?;
+        database.close().await?;
+        return Ok(view);
+    }
+    ensure!(
+        !view.state.is_terminal(),
+        "A completed optimization run cannot be cancelled."
+    );
+    let previous = last_event(&mut transaction, run_id).await?;
+    let event = ProjectOptimizationEvent::cancelled(
+        Uuid::new_v4(),
+        &view.run,
+        &previous,
+        "user_requested",
+        Utc::now(),
+    )?;
+    insert_event(&mut transaction, &event).await?;
+    let result = load(&mut transaction, workspace.manifest.id, &launches, &setups)
+        .await?
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .expect("inserted cancellation belongs to loaded run");
+    transaction.commit().await?;
+    database.close().await?;
+    Ok(result)
+}
+
 /// Start or recover the no-provider preparation attempt. Duplicate verification
 /// is harmless; completion still uses the exact returned journal head.
 pub async fn begin_preparation(folder: &Path, run_id: Uuid) -> Result<ProjectOptimizationRunView> {

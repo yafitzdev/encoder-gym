@@ -53,6 +53,8 @@ pub enum WorkspaceOptimizationRunCommand {
     List,
     /// Show one verified project run and its journal head.
     Show { run_id: Uuid },
+    /// Permanently cancel unfinished work for this project run.
+    Cancel { run_id: Uuid },
     /// Verify selected inputs and native runtime without executing work.
     Prepare { run_id: Uuid },
     /// Render the selected dataset into the task adapter's immutable format.

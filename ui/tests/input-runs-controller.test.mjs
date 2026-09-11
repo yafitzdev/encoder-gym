@@ -15,6 +15,7 @@ test("run history loads newest first and completes the exact selected run", asyn
     projectActivity: async () => ({ project_id: projectId, actions: [] }),
     driveInputOptimization: async (_, id) => ({ ...(id === second.id ? second : first), state: "baseline_retained", outcome: { kind: "baseline_retained" } }),
     inputOptimizationRun: async (_, id) => id === second.id ? second : first,
+    cancelInputOptimization: async (_, id) => ({ ...(id === second.id ? second : first), state: "cancelled", failureCode: "user_requested" }),
     selectProject: async () => ({ content: { state: "ready", workspace: { managed: { manifest: { id: projectId } } } } }),
   };
   const controller = new InputRunsController(projectId, bridge, () => {}, workspace => updates.push(workspace));
@@ -31,6 +32,7 @@ test("failed continuation remains retryable and refresh never interrupts active 
     projectActivity: async () => ({ project_id: projectId, actions: [] }),
     driveInputOptimization: async () => { attempts++; if (attempts === 1) throw new Error("Stopped"); await pending; return { ...value, state: "baseline_retained", outcome: { kind: "baseline_retained" } }; },
     inputOptimizationRun: async () => stopped,
+    cancelInputOptimization: async () => ({ ...value, state: "cancelled", failureCode: "user_requested" }),
     selectProject: async () => ({ content: { state: "ready", workspace: {} } }),
   };
   const controller = new InputRunsController(projectId, bridge, () => {}); await controller.ensure();
@@ -38,4 +40,15 @@ test("failed continuation remains retryable and refresh never interrupts active 
   const retry = controller.resume(controller.runs[0]); await new Promise(resolve => setImmediate(resolve));
   controller.refresh(); assert.ok(controller.runs); assert.equal(controller.runningId, value.id);
   release(); await retry; assert.equal(controller.runs[0].state, "baseline_retained"); assert.equal(attempts, 2);
+});
+
+test("a run can be durably cancelled without starting or resuming it", async () => {
+  const projectId = randomUUID(), value = run(projectId, "queued"); let cancelled = 0;
+  const bridge = {
+    inputOptimizationRuns: async () => [value], projectActivity: async () => ({ project_id: projectId, actions: [] }),
+    cancelInputOptimization: async (_, id) => { cancelled++; assert.equal(id, value.id); return { ...value, state: "cancelled", failureCode: "user_requested" }; },
+  };
+  const controller = new InputRunsController(projectId, bridge, () => {}); await controller.ensure();
+  await controller.cancel(value);
+  assert.equal(cancelled, 1); assert.equal(controller.runs[0].state, "cancelled"); assert.equal(controller.cancellingId, undefined);
 });

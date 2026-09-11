@@ -231,6 +231,8 @@ ipcMain.handle("encoder-gym:drive-input-optimization", (_event, value: unknown, 
       ...activityReference("run", result.id), ...activityReference("model", result.finalResult?.modelId ?? result.outcome?.selectedModelId),
     ]);
 });
+ipcMain.handle("encoder-gym:cancel-input-optimization", (_event, value: unknown, run: unknown) =>
+  backend.optimizationLaunch.cancel(projectId(value), run));
 ipcMain.handle("encoder-gym:preview-benchmark", (_event, value: unknown, run: unknown) => backend.benchmarks.preview(projectId(value), run));
 ipcMain.handle("encoder-gym:adopt-benchmark", (_event, value: unknown, request: unknown) => backend.benchmarks.adopt(projectId(value), request));
 ipcMain.handle("encoder-gym:mutate-dataset", (_event, value: unknown, request: unknown) => backend.datasetVersions.mutate(projectId(value), request));

@@ -13,9 +13,11 @@ import type { NativeProgress } from "./managed-control.js";
 
 interface Ports {
   open(projectId: string): Promise<ManagedWorkspace>;
-  command<T>(args: string[], environment?: Readonly<Record<string, string>>, progress?: (value: NativeProgress) => void): Promise<T>;
+  command<T>(args: string[], environment?: Readonly<Record<string, string>>, progress?: (value: NativeProgress) => void, signal?: AbortSignal): Promise<T>;
   environment?(projectId: string, workspace: ManagedWorkspace): Readonly<Record<string, string>>;
   exclusive<T>(projectId: string, run: () => Promise<T>): Promise<T>;
+  exclusiveRun<T>(projectId: string, runId: string, run: (signal: AbortSignal) => Promise<T>): Promise<T>;
+  abortRun(projectId: string, runId: string): void;
 }
 function record(value: unknown, label: string, keys: string[]): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => !keys.includes(key))) throw new Error(`Invalid ${label}.`);
@@ -154,27 +156,43 @@ export class ManagedOptimizationLaunch {
     return parseInputOptimizationRuns(await this.ports.command<unknown>(["optimization-run", workspace.folder, "list"]), projectId);
   }
 
+  async cancel(projectId: string, runIdValue: unknown): Promise<InputOptimizationRun> {
+    const runId = uuid(runIdValue), workspace = await this.ports.open(projectId);
+    const cancelled = parseInputOptimizationStarted(
+      await this.ports.command<unknown>(["optimization-run", workspace.folder, "cancel", runId]),
+      projectId,
+    ).run;
+    this.ports.abortRun(projectId, runId);
+    return cancelled;
+  }
+
   async drive(projectId: string, runIdValue: unknown, progress?: (phase: InputOptimizationPhase, native?: NativeProgress) => void): Promise<InputOptimizationRun> {
     const runId = uuid(runIdValue);
-    return this.ports.exclusive(projectId, async () => {
+    return this.ports.exclusiveRun(projectId, runId, async signal => {
       const workspace = await this.ports.open(projectId);
       const stage = async (phase: InputOptimizationPhase, command: string, native = false): Promise<void> => {
         progress?.(phase);
         await this.ports.command<unknown>(["optimization-run", workspace.folder, command, runId], native ? this.ports.environment?.(projectId, workspace) : undefined,
-          native ? value => progress?.(phase, value) : undefined);
+          native ? value => progress?.(phase, value) : undefined, signal);
       };
-      await stage("checking_inputs", "prepare");
-      await stage("preparing_data", "materialize");
-      await stage("starting", "attach");
-      await stage("training", "execute", true);
-      await stage("saving_candidate", "register");
-      let current = parseInputOptimizationRun(await this.ports.command<unknown>(["optimization-run", workspace.folder, "show", runId]), projectId);
-      if (current.state !== "baseline_retained") {
-        await stage("evaluating", "finalize", true);
-        current = parseInputOptimizationRun(await this.ports.command<unknown>(["optimization-run", workspace.folder, "show", runId]), projectId);
+      try {
+        await stage("checking_inputs", "prepare");
+        await stage("preparing_data", "materialize");
+        await stage("starting", "attach");
+        await stage("training", "execute", true);
+        await stage("saving_candidate", "register");
+        let current = parseInputOptimizationRun(await this.ports.command<unknown>(["optimization-run", workspace.folder, "show", runId]), projectId);
+        if (current.state !== "baseline_retained") {
+          await stage("evaluating", "finalize", true);
+          current = parseInputOptimizationRun(await this.ports.command<unknown>(["optimization-run", workspace.folder, "show", runId]), projectId);
+        }
+        progress?.("complete");
+        return current;
+      } catch (error) {
+        const current = parseInputOptimizationRun(await this.ports.command<unknown>(["optimization-run", workspace.folder, "show", runId]), projectId);
+        if (current.state === "cancelled") return current;
+        throw error;
       }
-      progress?.("complete");
-      return current;
     });
   }
 }

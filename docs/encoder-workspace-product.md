@@ -472,6 +472,21 @@ and keep outstanding requirements visible.
   agent/generation contracts. Managed integration, benchmark onboarding,
   promotion/restoration controls and the complete Optimize journey remain open.
 
+### Project-run cancellation — 11 September 2026
+
+- Runs and Optimize expose Stop only while a project optimization is unfinished.
+  The command atomically appends one terminal cancellation event before the
+  desktop interrupts the exact active CLI/native process tree.
+- Cancellation is idempotent and recoverable by run UUID. Stage completion or
+  failure holding the older journal head is rejected, so stale workers cannot
+  overwrite the terminal state. Existing immutable child evidence is retained.
+- Durable terminal state outranks transient progress in the renderer: a
+  cancelled run immediately loses its progress bar and Continue/Retry/Stop
+  actions and links to Activity instead.
+- Pure replay, actual CLI persistence/race, renderer controller, observed child
+  interruption and rendered Electron Stop journeys pass without provider,
+  Nomos, training or protected-evaluation work.
+
 ### Model baseline controls — 11 September 2026
 
 - The model viewer now owns baseline changes. A candidate that passed the

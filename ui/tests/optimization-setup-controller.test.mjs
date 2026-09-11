@@ -12,6 +12,7 @@ function fixture(overrides = {}) {
     saveOptimizationSetup: async (_, request) => { writes.push(structuredClone(request)); const result = f.saved(request); history.push(result.setup); return result; },
     startInputOptimization: async () => { const value = run(); runs.push(value); return { actionId: randomUUID(), run: value }; },
     driveInputOptimization: async (_, id) => ({ ...runs.find(value => value.id === id), state: "baseline_retained", outcome: { kind: "baseline_retained" } }),
+    cancelInputOptimization: async (_, id) => ({ ...runs.find(value => value.id === id), state: "cancelled", failureCode: "user_requested" }),
     inputOptimizationRun: async (_, id) => runs.find(value => value.id === id),
     projectActivity: async () => ({ project_id: f.projectId, actions: [] }),
     selectProject: async () => ({ project: { id: f.projectId }, content: { state: "ready", workspace: { managed: f.workspace } } }), ...overrides };
@@ -107,4 +108,15 @@ test("a failed execution retries the same durable run instead of reserving anoth
   const first = f.controller.run.id; assert.ok(f.controller.error); assert.equal(f.runs.length, 1);
   await f.controller.optimize();
   assert.equal(f.controller.run.id, first); assert.equal(f.runs.length, 1); assert.equal(f.controller.run.state, "baseline_retained");
+});
+
+test("Stop cancels the active optimization and leaves Optimize ready for a new run", async () => {
+  const active = deferred();
+  const f = fixture({ driveInputOptimization: async () => active.promise });
+  await f.controller.ensure(); const optimizing = f.controller.optimize();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.controller.canCancel, true);
+  await f.controller.cancel();
+  active.resolve(f.controller.run); await optimizing;
+  assert.equal(f.controller.run.state, "cancelled"); assert.equal(f.controller.running, false); assert.equal(f.controller.canOptimize, true);
 });
