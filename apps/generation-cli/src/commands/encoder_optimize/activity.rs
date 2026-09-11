@@ -3,7 +3,7 @@ use super::*;
 use encoder_experiment_nomos::{NativeProgress, ProgressObserver};
 
 #[derive(Debug)]
-pub(super) struct ProgressOutput;
+pub(crate) struct ProgressOutput;
 impl ProgressObserver for ProgressOutput {
     fn observe(&self, progress: NativeProgress) {
         // This closed schema carries no native output, model text, paths, or scores.

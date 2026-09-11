@@ -131,6 +131,17 @@ source project/protocol into the selected scientific store, creates referenced
 baseline evidence, and records a row-free child receipt. It performs no training,
 candidate evaluation, provider request or final evaluation.
 
+`workspace optimization-run <PROJECT> execute <RUN_ID>` trains that candidate
+and compares it across every development suite in the shared benchmark. The
+project run says `optimizing` only after it has appended an execution-started
+event. Native phases and bounded counters are emitted through the existing
+closed progress schema, while the scientific experiment journal records each
+training and evaluation transition. An interrupted or failed attempt can resume
+the same child identities and immutable outputs. The resulting project state is
+either `ready_for_final_evaluation` with the exact selected model identity, or
+`baseline_retained` when no candidate passes the shared benchmark. It never
+uses the final holdout or makes a provider request.
+
 The Electron main-process bridge now exposes those three fixed project-scoped
 operations. It validates every response, rejects renderer-supplied paths,
 credentials, commands or execution fields, writes authorization requests only
@@ -156,9 +167,10 @@ The main process writes only a strict temporary request and removes it on both
 success and failure. Each explicit save retains the ordinary CLI action UUID.
 
 Saving inputs, one-click authorization and the project-owned materialized-run
-root are available now. The first finite experiment can be attached, but its
-development executor is not connected to the project run yet and the
-desktop must not imply work is running or fall back to a previously prepared recipe.
+root are available now. The first finite experiment can be attached and its
+candidate can be trained and compared through a recoverable project transition.
+The desktop does not invoke the new pipeline yet and must not fall back to a
+previously prepared recipe.
 Existing runs are opened from Runs and retain their current supervision,
 recovery and approval controls.
 

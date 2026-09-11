@@ -272,6 +272,97 @@ pub struct ProjectOptimizationExperiment {
     pub fingerprint: String,
 }
 
+/// Row-free outcome of training the attached candidate and comparing it on
+/// the shared development benchmark. Final holdout evidence remains a
+/// separate, explicitly governed transition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectOptimizationOutcomeKind {
+    CandidateReady,
+    BaselineRetained,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectOptimizationOutcome {
+    pub run: BoundIdentity,
+    pub experiment_fingerprint: String,
+    pub experiment_run: BoundIdentity,
+    pub kind: ProjectOptimizationOutcomeKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_model: Option<BoundIdentity>,
+    pub created_at: DateTime<Utc>,
+    pub fingerprint: String,
+}
+
+impl ProjectOptimizationOutcome {
+    #[allow(clippy::too_many_arguments)]
+    pub fn create(
+        run: &ProjectOptimizationRun,
+        launch: &OptimizationLaunchAuthorization,
+        preparation: &ProjectOptimizationPreparation,
+        materialization: &ProjectOptimizationMaterialization,
+        experiment: &ProjectOptimizationExperiment,
+        experiment_run: BoundIdentity,
+        kind: ProjectOptimizationOutcomeKind,
+        selected_model: Option<BoundIdentity>,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        experiment.validate_for(run, launch, preparation, materialization)?;
+        let mut value = Self {
+            run: run.identity(),
+            experiment_fingerprint: experiment.fingerprint.clone(),
+            experiment_run,
+            kind,
+            selected_model,
+            created_at,
+            fingerprint: String::new(),
+        };
+        value.fingerprint = value.reproduce()?;
+        value.validate_for(run, launch, preparation, materialization, experiment)?;
+        Ok(value)
+    }
+
+    pub fn reproduce(&self) -> Result<String, Invalid> {
+        artifact_core::fingerprint(&serde_json::json!({
+            "run":self.run,"experimentFingerprint":self.experiment_fingerprint,
+            "experimentRun":self.experiment_run,"kind":self.kind,
+            "selectedModel":self.selected_model,"createdAt":self.created_at,
+        }))
+        .map_err(|error| Invalid(error.to_string()))
+    }
+
+    pub fn validate_for(
+        &self,
+        run: &ProjectOptimizationRun,
+        launch: &OptimizationLaunchAuthorization,
+        preparation: &ProjectOptimizationPreparation,
+        materialization: &ProjectOptimizationMaterialization,
+        experiment: &ProjectOptimizationExperiment,
+    ) -> Result<(), Invalid> {
+        experiment.validate_for(run, launch, preparation, materialization)?;
+        self.run.validate("Optimization run")?;
+        self.experiment_run.validate("Experiment run")?;
+        if let Some(model) = &self.selected_model {
+            model.validate("Selected model")?;
+        }
+        let outcome_is_consistent = match self.kind {
+            ProjectOptimizationOutcomeKind::CandidateReady => self.selected_model.is_some(),
+            ProjectOptimizationOutcomeKind::BaselineRetained => self.selected_model.is_none(),
+        };
+        require(
+            self.run == run.identity()
+                && self.experiment_fingerprint == experiment.fingerprint
+                && self.experiment_run.id == experiment.experiment_run.id
+                && self.experiment_run.fingerprint != experiment.experiment_run.fingerprint
+                && outcome_is_consistent
+                && self.created_at >= experiment.created_at
+                && self.reproduce()? == self.fingerprint,
+            "Optimization outcome changed or does not match its attached experiment.",
+        )
+    }
+}
+
 impl ProjectOptimizationExperiment {
     #[allow(clippy::too_many_arguments)]
     pub fn create(
@@ -431,6 +522,9 @@ pub enum ProjectOptimizationEventKind {
     ExperimentAttachmentStarted,
     ExperimentAttached,
     ExperimentAttachmentFailed,
+    ExecutionStarted,
+    ExecutionCompleted,
+    ExecutionFailed,
 }
 
 impl ProjectOptimizationEventKind {
@@ -446,6 +540,9 @@ impl ProjectOptimizationEventKind {
             Self::ExperimentAttachmentStarted => "experiment_attachment_started",
             Self::ExperimentAttached => "experiment_attached",
             Self::ExperimentAttachmentFailed => "experiment_attachment_failed",
+            Self::ExecutionStarted => "execution_started",
+            Self::ExecutionCompleted => "execution_completed",
+            Self::ExecutionFailed => "execution_failed",
         }
     }
 }
@@ -467,6 +564,8 @@ pub struct ProjectOptimizationEvent {
     pub materialization: Option<ProjectOptimizationMaterialization>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub experiment: Option<ProjectOptimizationExperiment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<ProjectOptimizationOutcome>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_code: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -490,6 +589,7 @@ impl ProjectOptimizationEvent {
             preparation: None,
             materialization: None,
             experiment: None,
+            outcome: None,
             failure_code: None,
             created_at,
             fingerprint: String::new(),
@@ -516,6 +616,7 @@ impl ProjectOptimizationEvent {
             None,
             None,
             None,
+            None,
             created_at,
         )
     }
@@ -535,6 +636,7 @@ impl ProjectOptimizationEvent {
             ProjectOptimizationEventKind::PreparationCompleted,
             attempt,
             Some(preparation),
+            None,
             None,
             None,
             None,
@@ -560,6 +662,7 @@ impl ProjectOptimizationEvent {
             None,
             None,
             Some(failure_code.into()),
+            None,
             created_at,
         )
     }
@@ -577,6 +680,7 @@ impl ProjectOptimizationEvent {
             previous,
             ProjectOptimizationEventKind::MaterializationStarted,
             attempt,
+            None,
             None,
             None,
             None,
@@ -603,6 +707,7 @@ impl ProjectOptimizationEvent {
             Some(materialization),
             None,
             None,
+            None,
             created_at,
         )
     }
@@ -625,6 +730,7 @@ impl ProjectOptimizationEvent {
             None,
             None,
             Some(failure_code.into()),
+            None,
             created_at,
         )
     }
@@ -642,6 +748,7 @@ impl ProjectOptimizationEvent {
             previous,
             ProjectOptimizationEventKind::ExperimentAttachmentStarted,
             attempt,
+            None,
             None,
             None,
             None,
@@ -668,6 +775,7 @@ impl ProjectOptimizationEvent {
             None,
             Some(experiment),
             None,
+            None,
             created_at,
         )
     }
@@ -690,6 +798,75 @@ impl ProjectOptimizationEvent {
             None,
             None,
             Some(failure_code.into()),
+            None,
+            created_at,
+        )
+    }
+
+    pub fn execution_started(
+        id: Uuid,
+        run: &ProjectOptimizationRun,
+        previous: &Self,
+        attempt: u32,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        Self::next(
+            id,
+            run,
+            previous,
+            ProjectOptimizationEventKind::ExecutionStarted,
+            attempt,
+            None,
+            None,
+            None,
+            None,
+            None,
+            created_at,
+        )
+    }
+
+    pub fn execution_completed(
+        id: Uuid,
+        run: &ProjectOptimizationRun,
+        previous: &Self,
+        attempt: u32,
+        outcome: ProjectOptimizationOutcome,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        Self::next(
+            id,
+            run,
+            previous,
+            ProjectOptimizationEventKind::ExecutionCompleted,
+            attempt,
+            None,
+            None,
+            None,
+            None,
+            Some(outcome),
+            created_at,
+        )
+    }
+
+    pub fn execution_failed(
+        id: Uuid,
+        run: &ProjectOptimizationRun,
+        previous: &Self,
+        attempt: u32,
+        failure_code: impl Into<String>,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        Self::next(
+            id,
+            run,
+            previous,
+            ProjectOptimizationEventKind::ExecutionFailed,
+            attempt,
+            None,
+            None,
+            None,
+            Some(failure_code.into()),
+            None,
             created_at,
         )
     }
@@ -705,6 +882,7 @@ impl ProjectOptimizationEvent {
         materialization: Option<ProjectOptimizationMaterialization>,
         experiment: Option<ProjectOptimizationExperiment>,
         failure_code: Option<String>,
+        outcome: Option<ProjectOptimizationOutcome>,
         created_at: DateTime<Utc>,
     ) -> Result<Self, Invalid> {
         let mut value = Self {
@@ -721,6 +899,7 @@ impl ProjectOptimizationEvent {
             preparation,
             materialization,
             experiment,
+            outcome,
             failure_code,
             created_at,
             fingerprint: String::new(),
@@ -766,7 +945,13 @@ impl ProjectOptimizationEvent {
                 "preparation":self.preparation,"materialization":self.materialization,
                 "failureCode":self.failure_code,"createdAt":self.created_at,
             })
-        } else {
+        } else if matches!(
+            self.kind,
+            ProjectOptimizationEventKind::ExperimentAttachmentStarted
+                | ProjectOptimizationEventKind::ExperimentAttached
+                | ProjectOptimizationEventKind::ExperimentAttachmentFailed
+        ) {
+            // Preserve fingerprints from the shipped experiment-attachment schema.
             serde_json::json!({
                 "id":self.id,"runId":self.run_id,"sequence":self.sequence,
                 "previousEventFingerprint":self.previous_event_fingerprint,
@@ -774,6 +959,15 @@ impl ProjectOptimizationEvent {
                 "preparation":self.preparation,"materialization":self.materialization,
                 "experiment":self.experiment,"failureCode":self.failure_code,
                 "createdAt":self.created_at,
+            })
+        } else {
+            serde_json::json!({
+                "id":self.id,"runId":self.run_id,"sequence":self.sequence,
+                "previousEventFingerprint":self.previous_event_fingerprint,
+                "kind":self.kind,"launch":self.launch,"attempt":self.attempt,
+                "preparation":self.preparation,"materialization":self.materialization,
+                "experiment":self.experiment,"outcome":self.outcome,
+                "failureCode":self.failure_code,"createdAt":self.created_at,
             })
         };
         artifact_core::fingerprint(&value).map_err(|error| Invalid(error.to_string()))
@@ -800,6 +994,7 @@ impl ProjectOptimizationEvent {
                 && self.preparation.is_none()
                 && self.materialization.is_none()
                 && self.experiment.is_none()
+                && self.outcome.is_none()
                 && self.failure_code.is_none()
                 && self.created_at == run.created_at,
             "Project optimization reservation event changed or is invalid.",
@@ -827,6 +1022,7 @@ impl ProjectOptimizationEvent {
                 self.preparation.is_none()
                     && self.materialization.is_none()
                     && self.experiment.is_none()
+                    && self.outcome.is_none()
                     && self.failure_code.is_none(),
                 "Preparation start cannot contain a result or failure.",
             ),
@@ -834,6 +1030,7 @@ impl ProjectOptimizationEvent {
                 self.preparation.is_some()
                     && self.materialization.is_none()
                     && self.experiment.is_none()
+                    && self.outcome.is_none()
                     && self.failure_code.is_none(),
                 "Preparation completion requires exactly one verified receipt.",
             ),
@@ -843,6 +1040,7 @@ impl ProjectOptimizationEvent {
                     self.preparation.is_none()
                         && self.materialization.is_none()
                         && self.experiment.is_none()
+                        && self.outcome.is_none()
                         && !code.is_empty()
                         && code.len() <= 80
                         && code.bytes().all(|byte| {
@@ -857,6 +1055,7 @@ impl ProjectOptimizationEvent {
                 self.preparation.is_none()
                     && self.materialization.is_none()
                     && self.experiment.is_none()
+                    && self.outcome.is_none()
                     && self.failure_code.is_none(),
                 "Materialization start cannot contain a result or failure.",
             ),
@@ -864,6 +1063,7 @@ impl ProjectOptimizationEvent {
                 self.preparation.is_none()
                     && self.materialization.is_some()
                     && self.experiment.is_none()
+                    && self.outcome.is_none()
                     && self.failure_code.is_none(),
                 "Materialization completion requires exactly one verified receipt.",
             ),
@@ -873,6 +1073,7 @@ impl ProjectOptimizationEvent {
                     self.preparation.is_none()
                         && self.materialization.is_none()
                         && self.experiment.is_none()
+                        && self.outcome.is_none()
                         && !code.is_empty()
                         && code.len() <= 80
                         && code.bytes().all(|byte| {
@@ -887,6 +1088,7 @@ impl ProjectOptimizationEvent {
                 self.preparation.is_none()
                     && self.materialization.is_none()
                     && self.experiment.is_none()
+                    && self.outcome.is_none()
                     && self.failure_code.is_none(),
                 "Experiment attachment start cannot contain a result or failure.",
             ),
@@ -894,6 +1096,7 @@ impl ProjectOptimizationEvent {
                 self.preparation.is_none()
                     && self.materialization.is_none()
                     && self.experiment.is_some()
+                    && self.outcome.is_none()
                     && self.failure_code.is_none(),
                 "Experiment attachment requires exactly one child receipt.",
             ),
@@ -903,6 +1106,7 @@ impl ProjectOptimizationEvent {
                     self.preparation.is_none()
                         && self.materialization.is_none()
                         && self.experiment.is_none()
+                        && self.outcome.is_none()
                         && !code.is_empty()
                         && code.len() <= 80
                         && code.bytes().all(|byte| {
@@ -911,6 +1115,39 @@ impl ProjectOptimizationEvent {
                                 || matches!(byte, b'_' | b'-' | b'.')
                         }),
                     "Experiment attachment failure requires a safe stable code.",
+                )
+            }
+            ProjectOptimizationEventKind::ExecutionStarted => require(
+                self.preparation.is_none()
+                    && self.materialization.is_none()
+                    && self.experiment.is_none()
+                    && self.outcome.is_none()
+                    && self.failure_code.is_none(),
+                "Optimization execution start cannot contain a result or failure.",
+            ),
+            ProjectOptimizationEventKind::ExecutionCompleted => require(
+                self.preparation.is_none()
+                    && self.materialization.is_none()
+                    && self.experiment.is_none()
+                    && self.outcome.is_some()
+                    && self.failure_code.is_none(),
+                "Optimization execution completion requires exactly one outcome.",
+            ),
+            ProjectOptimizationEventKind::ExecutionFailed => {
+                let code = self.failure_code.as_deref().unwrap_or_default();
+                require(
+                    self.preparation.is_none()
+                        && self.materialization.is_none()
+                        && self.experiment.is_none()
+                        && self.outcome.is_none()
+                        && !code.is_empty()
+                        && code.len() <= 80
+                        && code.bytes().all(|byte| {
+                            byte.is_ascii_lowercase()
+                                || byte.is_ascii_digit()
+                                || matches!(byte, b'_' | b'-' | b'.')
+                        }),
+                    "Optimization execution failure requires a safe stable code.",
                 )
             }
         }
@@ -930,6 +1167,10 @@ pub enum ProjectOptimizationRunState {
     AttachingExperiment,
     ReadyToRun,
     ExperimentAttachmentFailed,
+    Optimizing,
+    ReadyForFinalEvaluation,
+    BaselineRetained,
+    ExecutionFailed,
 }
 
 impl ProjectOptimizationRunState {
@@ -943,6 +1184,10 @@ impl ProjectOptimizationRunState {
                 | Self::AttachingExperiment
                 | Self::ReadyToRun
                 | Self::ExperimentAttachmentFailed
+                | Self::Optimizing
+                | Self::ReadyForFinalEvaluation
+                | Self::BaselineRetained
+                | Self::ExecutionFailed
         )
     }
 
@@ -953,11 +1198,26 @@ impl ProjectOptimizationRunState {
                 | Self::AttachingExperiment
                 | Self::ReadyToRun
                 | Self::ExperimentAttachmentFailed
+                | Self::Optimizing
+                | Self::ReadyForFinalEvaluation
+                | Self::BaselineRetained
+                | Self::ExecutionFailed
         )
     }
 
     pub const fn has_experiment(self) -> bool {
-        matches!(self, Self::ReadyToRun)
+        matches!(
+            self,
+            Self::ReadyToRun
+                | Self::Optimizing
+                | Self::ReadyForFinalEvaluation
+                | Self::BaselineRetained
+                | Self::ExecutionFailed
+        )
+    }
+
+    pub const fn has_outcome(self) -> bool {
+        matches!(self, Self::ReadyForFinalEvaluation | Self::BaselineRetained)
     }
 }
 
@@ -975,6 +1235,9 @@ pub struct ProjectOptimizationRunView {
     pub experiment_attempt: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub experiment: Option<ProjectOptimizationExperiment>,
+    pub execution_attempt: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<ProjectOptimizationOutcome>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_code: Option<String>,
     pub last_sequence: u64,
@@ -999,6 +1262,8 @@ pub fn replay_project_optimization(
     let mut materialization = None;
     let mut experiment_attempt = 0;
     let mut experiment = None;
+    let mut execution_attempt = 0;
+    let mut outcome = None;
     let mut failure_code = None;
     let mut previous = first;
     for event in &events[1..] {
@@ -1121,6 +1386,54 @@ pub fn replay_project_optimization(
                 state = ProjectOptimizationRunState::ExperimentAttachmentFailed;
                 failure_code.clone_from(&event.failure_code);
             }
+            ProjectOptimizationEventKind::ExecutionStarted => {
+                require(
+                    matches!(
+                        state,
+                        ProjectOptimizationRunState::ReadyToRun
+                            | ProjectOptimizationRunState::ExecutionFailed
+                    ) && event_attempt == execution_attempt + 1,
+                    "Optimization execution cannot start from this state.",
+                )?;
+                state = ProjectOptimizationRunState::Optimizing;
+                execution_attempt = event_attempt;
+                failure_code = None;
+            }
+            ProjectOptimizationEventKind::ExecutionCompleted => {
+                require(
+                    state == ProjectOptimizationRunState::Optimizing
+                        && event_attempt == execution_attempt,
+                    "Optimization execution completion has no matching active attempt.",
+                )?;
+                let receipt = event.outcome.clone().expect("validated outcome");
+                receipt.validate_for(
+                    run,
+                    launch,
+                    preparation.as_ref().expect("prepared run has preparation"),
+                    materialization
+                        .as_ref()
+                        .expect("materialized run has materialization"),
+                    experiment.as_ref().expect("attached run has experiment"),
+                )?;
+                state = match receipt.kind {
+                    ProjectOptimizationOutcomeKind::CandidateReady => {
+                        ProjectOptimizationRunState::ReadyForFinalEvaluation
+                    }
+                    ProjectOptimizationOutcomeKind::BaselineRetained => {
+                        ProjectOptimizationRunState::BaselineRetained
+                    }
+                };
+                outcome = Some(receipt);
+            }
+            ProjectOptimizationEventKind::ExecutionFailed => {
+                require(
+                    state == ProjectOptimizationRunState::Optimizing
+                        && event_attempt == execution_attempt,
+                    "Optimization execution failure has no matching active attempt.",
+                )?;
+                state = ProjectOptimizationRunState::ExecutionFailed;
+                failure_code.clone_from(&event.failure_code);
+            }
         }
         previous = event;
     }
@@ -1133,6 +1446,8 @@ pub fn replay_project_optimization(
         materialization,
         experiment_attempt,
         experiment,
+        execution_attempt,
+        outcome,
         failure_code,
         last_sequence: previous.sequence,
         head_fingerprint: previous.fingerprint.clone(),
@@ -1373,7 +1688,7 @@ mod tests {
     }
 
     #[test]
-    fn materialized_run_attaches_one_stable_finite_experiment() {
+    fn materialized_run_attaches_and_executes_one_stable_finite_experiment() {
         let (setup, launch) = fixture();
         let now = Utc::now();
         let run = ProjectOptimizationRun::reserve(Uuid::new_v4(), &launch, now).unwrap();
@@ -1474,6 +1789,73 @@ mod tests {
             &run,
             &launch,
             &[
+                reserved.clone(),
+                preparing.clone(),
+                ready.clone(),
+                materializing.clone(),
+                materialized.clone(),
+                attaching.clone(),
+                attached.clone(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(view.state, ProjectOptimizationRunState::ReadyToRun);
+        assert_eq!(view.experiment_attempt, 1);
+        assert_eq!(view.experiment, Some(experiment.clone()));
+
+        let optimizing = ProjectOptimizationEvent::execution_started(
+            Uuid::new_v4(),
+            &run,
+            &attached,
+            1,
+            Utc::now(),
+        )
+        .unwrap();
+        let failed = ProjectOptimizationEvent::execution_failed(
+            Uuid::new_v4(),
+            &run,
+            &optimizing,
+            1,
+            "trainer_interrupted",
+            Utc::now(),
+        )
+        .unwrap();
+        let retried = ProjectOptimizationEvent::execution_started(
+            Uuid::new_v4(),
+            &run,
+            &failed,
+            2,
+            Utc::now(),
+        )
+        .unwrap();
+        let outcome = ProjectOptimizationOutcome::create(
+            &run,
+            &launch,
+            &preparation,
+            &materialization,
+            &experiment,
+            BoundIdentity {
+                id: experiment.experiment_run.id.clone(),
+                fingerprint: digest('e'),
+            },
+            ProjectOptimizationOutcomeKind::CandidateReady,
+            Some(reference('f')),
+            Utc::now(),
+        )
+        .unwrap();
+        let completed = ProjectOptimizationEvent::execution_completed(
+            Uuid::new_v4(),
+            &run,
+            &retried,
+            2,
+            outcome.clone(),
+            Utc::now(),
+        )
+        .unwrap();
+        let view = replay_project_optimization(
+            &run,
+            &launch,
+            &[
                 reserved,
                 preparing,
                 ready,
@@ -1481,12 +1863,19 @@ mod tests {
                 materialized,
                 attaching,
                 attached,
+                optimizing,
+                failed,
+                retried,
+                completed,
             ],
         )
         .unwrap();
-        assert_eq!(view.state, ProjectOptimizationRunState::ReadyToRun);
-        assert_eq!(view.experiment_attempt, 1);
-        assert_eq!(view.experiment, Some(experiment));
+        assert_eq!(
+            view.state,
+            ProjectOptimizationRunState::ReadyForFinalEvaluation
+        );
+        assert_eq!(view.execution_attempt, 2);
+        assert_eq!(view.outcome, Some(outcome));
     }
 
     #[test]

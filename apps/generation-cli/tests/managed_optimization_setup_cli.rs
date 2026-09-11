@@ -11,9 +11,9 @@ use encoder_experiment_nomos::NomosBackend;
 use encoder_experiment_sqlite::SqliteExperimentStore;
 use project_workspace_core::{
     BaselineRevision, BoundIdentity, OptimizationLaunchAuthorization, OptimizationSetup,
-    ProjectOptimizationExperiment, ProjectOptimizationMaterialization,
-    ProjectOptimizationPreparation, ProviderAuthentication, ProviderCatalog, ProviderConfiguration,
-    ProviderKind, ProviderLimits, ProviderRole,
+    ProjectOptimizationExperiment, ProjectOptimizationMaterialization, ProjectOptimizationOutcome,
+    ProjectOptimizationOutcomeKind, ProjectOptimizationPreparation, ProviderAuthentication,
+    ProviderCatalog, ProviderConfiguration, ProviderKind, ProviderLimits, ProviderRole,
 };
 use project_workspace_local::{
     dataset_versions, import_dataset, inspect_dataset, open_workspace, optimization_runs,
@@ -662,7 +662,7 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
         &folder,
         attaching.run.id,
         &attaching.head_fingerprint,
-        attached_receipt,
+        attached_receipt.clone(),
     )
     .await
     .unwrap();
@@ -682,6 +682,92 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     assert_eq!(attached["run"]["state"], "ready_to_run");
     assert_eq!(attached["run"]["experimentAttempt"], 2);
     assert!(!attached.to_string().contains("SETUP_ROW_CANARY"));
+
+    // Execution is also an honest, recoverable stage. This fixture has no
+    // scientific child matching the injected attachment, so the real command
+    // fails before native work. A typed outcome completes the recovered root,
+    // and an exact CLI retry is then a read-only replay.
+    let failed_execution = invoke(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "execute",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert!(!failed_execution.status.success());
+    let failed_execution_view = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "show",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(failed_execution_view["state"], "execution_failed");
+    assert_eq!(failed_execution_view["executionAttempt"], 1);
+    assert_eq!(
+        failed_execution_view["failureCode"],
+        "candidate_execution_failed"
+    );
+    let executing = optimization_runs::begin_execution(
+        &folder,
+        started["run"]["run"]["id"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    let outcome = ProjectOptimizationOutcome::create(
+        &executing.run,
+        &typed_launch,
+        executing.preparation.as_ref().unwrap(),
+        executing.materialization.as_ref().unwrap(),
+        executing.experiment.as_ref().unwrap(),
+        BoundIdentity {
+            id: attached_receipt.experiment_run.id,
+            fingerprint: format!("sha256:{}", "e".repeat(64)),
+        },
+        ProjectOptimizationOutcomeKind::CandidateReady,
+        Some(BoundIdentity {
+            id: Uuid::new_v4().to_string(),
+            fingerprint: format!("sha256:{}", "f".repeat(64)),
+        }),
+        Utc::now(),
+    )
+    .unwrap();
+    let completed = optimization_runs::finish_execution(
+        &folder,
+        executing.run.id,
+        &executing.head_fingerprint,
+        outcome.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        completed.state,
+        project_workspace_core::ProjectOptimizationRunState::ReadyForFinalEvaluation
+    );
+    let completed = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "execute",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(completed["run"]["state"], "ready_for_final_evaluation");
+    assert_eq!(completed["run"]["executionAttempt"], 2);
+    assert_eq!(
+        completed["run"]["outcome"],
+        serde_json::to_value(outcome).unwrap()
+    );
+    assert!(!completed.to_string().contains("SETUP_ROW_CANARY"));
     let orphan_request = json!({"id":Uuid::new_v4(),"scope":launch["scope"]});
     fs::write(
         root.join("orphan-launch.json"),
@@ -713,7 +799,7 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
                 "launch.json",
             ],
         )["run"],
-        attached["run"],
+        completed["run"],
         "an exact retry returns its already-reserved run after later settings change"
     );
     assert!(
@@ -759,7 +845,7 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     );
     assert_eq!(
         run(root, &["optimization-run", "project", "list"]),
-        json!([attached["run"]])
+        json!([completed["run"]])
     );
     let activity = run(root, &["activity", "project", "list"]);
     let text = activity.to_string();
@@ -768,6 +854,7 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     assert!(text.contains("optimization.prepare"));
     assert!(text.contains("optimization.materialize"));
     assert!(text.contains("optimization.attach_experiment"));
+    assert!(text.contains("optimization.execute"));
     assert!(text.contains(started["run"]["run"]["id"].as_str().unwrap()));
     assert!(!text.contains("SETUP_ROW_CANARY"));
     assert!(!text.contains("apiKey"));

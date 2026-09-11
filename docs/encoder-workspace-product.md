@@ -599,3 +599,21 @@ and keep outstanding requirements visible.
   runtime records an honest failed attempt before typed recovery.
 - Candidate development execution and progress projection remain the next
   boundary; `ready_to_run` does not claim that training has started.
+
+### First input-first candidate execution — 11 September 2026
+
+- `workspace optimization-run execute` advances an attached run through
+  `optimizing` to either `ready_for_final_evaluation` or `baseline_retained`.
+  The state changes only through the project run's immutable event chain.
+- The command reopens the exact materialized dataset, scientific project,
+  candidate and protocol, acquires single-process execution ownership, and
+  resumes the existing scientific child journal after interruption.
+- The Nomos adapter emits only closed phase names and bounded counters for live
+  feedback. Detailed training and evaluation transitions remain in the
+  scientific experiment journal; the project outcome stores only child/model
+  identities and no scores, rows, secrets or native output.
+- This stage trains one candidate and compares it on the shared development
+  benchmark. It makes no provider request and cannot open the final holdout.
+- The desktop one-click composition, candidate registration, final evaluation,
+  deterministic promotion decision and further bounded iterations remain
+  outstanding. This backend stage does not execute the real Nomos project.

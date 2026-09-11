@@ -59,6 +59,8 @@ pub enum WorkspaceOptimizationRunCommand {
     Materialize { run_id: Uuid },
     /// Attach the first finite candidate experiment without executing it.
     Attach { run_id: Uuid },
+    /// Train one candidate and compare it on the shared benchmark.
+    Execute { run_id: Uuid },
 }
 
 #[derive(Debug, Subcommand)]

@@ -1,4 +1,4 @@
-mod activity;
+pub(crate) mod activity;
 mod continuation;
 mod report;
 
@@ -114,7 +114,7 @@ impl OptimizationExecutionLease {
         }
     }
 
-    fn acquire(database_url: &str, run_id: Uuid) -> anyhow::Result<Self> {
+    pub(crate) fn acquire(database_url: &str, run_id: Uuid) -> anyhow::Result<Self> {
         let database = database_file_path(database_url)?;
         let parent = database
             .parent()

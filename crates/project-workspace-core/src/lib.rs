@@ -24,8 +24,9 @@ pub use optimization_launch::{
 };
 pub use optimization_run::{
     ProjectOptimizationEvent, ProjectOptimizationEventKind, ProjectOptimizationExperiment,
-    ProjectOptimizationMaterialization, ProjectOptimizationPreparation, ProjectOptimizationRun,
-    ProjectOptimizationRunState, ProjectOptimizationRunView, replay_project_optimization,
+    ProjectOptimizationMaterialization, ProjectOptimizationOutcome, ProjectOptimizationOutcomeKind,
+    ProjectOptimizationPreparation, ProjectOptimizationRun, ProjectOptimizationRunState,
+    ProjectOptimizationRunView, replay_project_optimization,
 };
 pub use optimization_setup::{OptimizationInputs, OptimizationSetup};
 pub use training_data::{ModelDatasetLink, ModelTrainingEvidence, TrainingDatasetInput};
