@@ -4,8 +4,13 @@ mod benchmark_support;
 use benchmark_support::{complete_rejected_candidate, fixture, register_fixture_model};
 use chrono::Utc;
 use encoder_experiment_sqlite::SqliteExperimentStore;
-use project_workspace_core::BaselineRevision;
-use project_workspace_local::{dataset_versions, import_dataset, inspect_dataset, open_workspace};
+use project_workspace_core::{
+    BaselineRevision, ProviderAuthentication, ProviderCatalog, ProviderConfiguration, ProviderKind,
+    ProviderLimits, ProviderRole,
+};
+use project_workspace_local::{
+    dataset_versions, import_dataset, inspect_dataset, open_workspace, record_provider_catalog,
+};
 use serde_json::{Value, json};
 use sqlx::{Connection, SqliteConnection};
 use std::{
@@ -127,6 +132,198 @@ fn save(root: &Path) -> Value {
             "setup.json",
         ],
     )
+}
+
+async fn configure_fake_providers(
+    folder: &Path,
+    previous: Option<&ProviderCatalog>,
+) -> ProviderCatalog {
+    let workspace = open_workspace(folder, false).await.unwrap();
+    let provider = |role, maximum_requests| ProviderConfiguration {
+        role,
+        kind: ProviderKind::Fake,
+        endpoint: None,
+        model: format!("fixture-{}", role.key()),
+        authentication: ProviderAuthentication::None,
+        secret: None,
+        limits: ProviderLimits {
+            maximum_requests,
+            maximum_input_tokens: 10_000,
+            maximum_output_tokens: 2_000,
+            maximum_cost_microusd: 0,
+        },
+    };
+    let catalog = ProviderCatalog::create(
+        Uuid::new_v4(),
+        workspace.manifest.id,
+        previous.map_or(1, |catalog| catalog.sequence + 1),
+        previous.map(|catalog| catalog.id),
+        vec![
+            provider(ProviderRole::Generation, 11),
+            provider(ProviderRole::Advisor, 7),
+        ],
+        "operator",
+        "configure fixture providers",
+        Utc::now(),
+    )
+    .unwrap();
+    record_provider_catalog(
+        Path::new(&workspace.folder),
+        catalog.clone(),
+        previous.map(|value| value.id),
+    )
+    .await
+    .unwrap();
+    catalog
+}
+
+#[tokio::test]
+async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_secret_or_row_data() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let (folder, model, data, benchmark) = prepared(root).await;
+    let providers = configure_fake_providers(&folder, None).await;
+    let choice = preview(root, &model, &data, &benchmark);
+    request(root, &choice, Uuid::new_v4());
+    let setup = save(root)["setup"].clone();
+
+    // Reproduce a version-9 project. Both launch reads must remain byte-for-byte read-only.
+    let mut database = SqliteConnection::connect(&format!(
+        "sqlite://{}",
+        folder.join("project.sqlite").display()
+    ))
+    .await
+    .unwrap();
+    sqlx::query("DROP TABLE optimization_launch_authorizations")
+        .execute(&mut database)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version=10")
+        .execute(&mut database)
+        .await
+        .unwrap();
+    database.close().await.unwrap();
+    let before = fs::read(folder.join("project.sqlite")).unwrap();
+    assert_eq!(
+        run(root, &["optimization-launch", "project", "list"]),
+        json!([])
+    );
+    assert_eq!(before, fs::read(folder.join("project.sqlite")).unwrap());
+    let launch = run(
+        root,
+        &[
+            "optimization-launch",
+            "project",
+            "preview",
+            "--setup",
+            setup["id"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(before, fs::read(folder.join("project.sqlite")).unwrap());
+    assert_eq!(launch["modelName"], "Offline benchmark fixture baseline");
+    assert_eq!(launch["datasetRows"], 1);
+    assert_eq!(launch["benchmarkNumber"], 1);
+    assert_eq!(launch["scope"]["setup"]["id"], setup["id"]);
+    assert_eq!(
+        launch["scope"]["providerCatalog"]["id"],
+        providers.id.to_string()
+    );
+    assert_eq!(launch["scope"]["limits"]["maximumIterations"], 3);
+    assert_eq!(launch["scope"]["limits"]["maximumModels"], 3);
+    assert_eq!(launch["scope"]["limits"]["maximumFinalEvaluations"], 1);
+    assert_eq!(launch["scope"]["generation"]["maximumRequests"], 11);
+    assert_eq!(launch["scope"]["advisor"]["maximumRequests"], 7);
+    assert_eq!(
+        launch["scope"]["finalEvaluation"],
+        "selected_candidate_once"
+    );
+    assert!(!launch.to_string().contains("SETUP_ROW_CANARY"));
+    assert!(!launch.to_string().contains("apiKey"));
+
+    let request = json!({"id":Uuid::new_v4(),"scope":launch["scope"]});
+    fs::write(
+        root.join("launch.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+    let authorized = run(
+        root,
+        &[
+            "optimization-launch",
+            "project",
+            "authorize",
+            "--file",
+            "launch.json",
+        ],
+    );
+    let retried = run(
+        root,
+        &[
+            "optimization-launch",
+            "project",
+            "authorize",
+            "--file",
+            "launch.json",
+        ],
+    );
+    assert_eq!(authorized["authorization"], retried["authorization"]);
+    assert_eq!(
+        run(root, &["optimization-launch", "project", "list"]),
+        json!([authorized["authorization"]])
+    );
+
+    // A provider revision made after preview invalidates a new authorization.
+    let updated = configure_fake_providers(&folder, Some(&providers)).await;
+    assert_ne!(updated.fingerprint, providers.fingerprint);
+    let mut stale = request;
+    stale["id"] = Uuid::new_v4().to_string().into();
+    fs::write(
+        root.join("launch.json"),
+        serde_json::to_vec(&stale).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        !invoke(
+            root,
+            &[
+                "optimization-launch",
+                "project",
+                "authorize",
+                "--file",
+                "launch.json"
+            ]
+        )
+        .status
+        .success()
+    );
+    let history = run(root, &["optimization-launch", "project", "list"]);
+    assert_eq!(history, json!([authorized["authorization"]]));
+    let activity = run(root, &["activity", "project", "list"]);
+    let text = activity.to_string();
+    assert!(text.contains("optimization.launch"));
+    assert!(!text.contains("SETUP_ROW_CANARY"));
+    assert!(!text.contains("apiKey"));
+    assert!(!text.contains("fixture-generation"));
+
+    let mut database = SqliteConnection::connect(&format!(
+        "sqlite://{}",
+        folder.join("project.sqlite").display()
+    ))
+    .await
+    .unwrap();
+    assert!(
+        sqlx::query("UPDATE optimization_launch_authorizations SET scope_fingerprint='changed'")
+            .execute(&mut database)
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query("DELETE FROM optimization_launch_authorizations")
+            .execute(&mut database)
+            .await
+            .is_err()
+    );
+    database.close().await.unwrap();
 }
 
 #[tokio::test]

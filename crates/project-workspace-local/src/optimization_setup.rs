@@ -79,7 +79,7 @@ pub async fn list(folder: &Path) -> Result<Vec<OptimizationSetup>> {
     Ok(setups)
 }
 
-async fn load(
+pub(crate) async fn load(
     database: &mut SqliteConnection,
     workspace: &ManagedWorkspace,
 ) -> Result<Vec<OptimizationSetup>> {

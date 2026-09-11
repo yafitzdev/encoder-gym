@@ -795,7 +795,12 @@ The project-owned optimization setup separately pins the active baseline
 revision/model, a dataset-core version reference and a shared benchmark version.
 The local adapter stores compare-and-append setup history; the CLI previews and
 saves only verified project references. No rows, secrets, scientific workflow
-journal or execution permission enter this record. Automatic execution must
-consume the exact setup and resolve its own bounded authorization and existing
-admission contracts; the post-review compatibility workflow must not ignore
-the user's selection. See `optimization-launch-spec.md`.
+journal or execution permission enter this record. A separate immutable launch
+authority pins that setup and the current non-secret provider-catalog identity,
+copies separate generation/advisor ceilings, and supplies core-owned finite
+defaults plus one selected-candidate final evaluation. The local adapter stores
+append-only launch history and the CLI audits the explicit mutation; neither
+surface stores credentials or executes work. Automatic execution must consume
+that exact authority and existing admission contracts; the post-review
+compatibility workflow must not ignore the user's selection. See
+`optimization-launch-spec.md`.

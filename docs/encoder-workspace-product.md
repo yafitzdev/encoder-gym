@@ -84,10 +84,13 @@ decision. No unbounded work or inferred spending.
    and guarded adoption from recorded authority. Initial test-data onboarding
    and pinning the selected version to automatic Optimize remain pending.
 4. Automatic bounded optimization — the input-selection domain, persistence,
-   CLI and desktop selection are implemented. Automatic continuation of an exact
-   existing run is implemented in the core and CLI. Input-first launch scope,
-   agent/generation integration, managed automatic execution, output registration
-   and complete-journey recovery remain pending.
+   CLI and desktop selection are implemented. The input-first launch scope now
+   pins exact setup/provider revisions, separate provider ceilings, fixed finite
+   defaults and one final evaluation behind a UUID authorization; its actual CLI
+   persistence and redaction checks pass. Automatic continuation of an exact
+   existing run is implemented in the core and CLI. Agent/generation integration,
+   managed automatic execution, output registration and complete-journey
+   recovery remain pending.
    Verify real CLI composition using deterministic offline fakes.
 5. Complete journey — pending. Renderer interactions for setup, Optimize,
    results, artifact inspection, and promotion; read-only Nomos verification.

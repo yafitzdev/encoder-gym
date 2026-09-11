@@ -23,6 +23,24 @@ pub enum WorkspaceOptimizationSetupCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum WorkspaceOptimizationLaunchCommand {
+    /// Read-only preview of the exact one-click optimization authority.
+    Preview {
+        #[arg(long)]
+        setup: Uuid,
+    },
+    /// Authorize the exact previewed inputs and finite execution envelope.
+    Authorize {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long, default_value = "local-operator")]
+        authorized_by: String,
+    },
+    /// Read immutable one-click authorization history.
+    List,
+}
+
+#[derive(Debug, Subcommand)]
 pub enum WorkspaceBenchmarkCommand {
     /// List immutable versions of the project's shared evaluation benchmark.
     List,
@@ -212,6 +230,12 @@ pub enum WorkspaceCommand {
         folder: PathBuf,
         #[command(subcommand)]
         command: WorkspaceOptimizationSetupCommand,
+    },
+    /// Preview and authorize one exact input-first Optimize action.
+    OptimizationLaunch {
+        folder: PathBuf,
+        #[command(subcommand)]
+        command: WorkspaceOptimizationLaunchCommand,
     },
     /// Manage native training datasets, variants, immutable versions, and diffs.
     Dataset {

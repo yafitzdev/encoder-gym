@@ -7,6 +7,7 @@ mod files;
 mod model;
 pub mod model_datasets;
 mod model_registration;
+pub mod optimization_launch;
 pub mod optimization_setup;
 
 use std::{fs, path::Path};
@@ -965,6 +966,15 @@ async fn load_provider_catalog(
     database: &mut SqliteConnection,
     manifest: &ProjectManifest,
 ) -> Result<Option<ProviderCatalog>> {
+    Ok(load_provider_catalog_history(database, manifest)
+        .await?
+        .pop())
+}
+
+pub(crate) async fn load_provider_catalog_history(
+    database: &mut SqliteConnection,
+    manifest: &ProjectManifest,
+) -> Result<Vec<ProviderCatalog>> {
     let exists = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='provider_catalog_state'",
     )
@@ -972,7 +982,7 @@ async fn load_provider_catalog(
     .await?
         == 1;
     if !exists {
-        return Ok(None);
+        return Ok(vec![]);
     }
     let Some(state) = sqlx::query(
         "SELECT project_id, active_revision_id FROM provider_catalog_state WHERE singleton=1",
@@ -980,7 +990,7 @@ async fn load_provider_catalog(
     .fetch_optional(&mut *database)
     .await?
     else {
-        return Ok(None);
+        return Ok(vec![]);
     };
     ensure!(
         state.get::<String, _>("project_id") == manifest.id.to_string(),
@@ -994,7 +1004,7 @@ async fn load_provider_catalog(
     .fetch_all(&mut *database)
     .await?;
     let mut previous = None;
-    let mut active = None;
+    let mut history = Vec::new();
     for (index, row) in rows.into_iter().enumerate() {
         let catalog: ProviderCatalog = serde_json::from_str(&row.get::<String, _>("catalog_json"))?;
         catalog.validate()?;
@@ -1014,15 +1024,13 @@ async fn load_provider_catalog(
             "Provider settings history or normalized projection is invalid."
         );
         previous = Some(catalog.id);
-        if catalog.id == active_id {
-            active = Some(catalog);
-        }
+        history.push(catalog);
     }
     ensure!(
-        previous == Some(active_id) && active.is_some(),
+        previous == Some(active_id) && history.last().is_some_and(|value| value.id == active_id),
         "Active provider settings must be the latest append-only revision."
     );
-    Ok(active)
+    Ok(history)
 }
 
 fn model_origin(origin: ModelOrigin) -> &'static str {

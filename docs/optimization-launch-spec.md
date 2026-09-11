@@ -36,7 +36,37 @@ synth workspace optimization-setup <PROJECT> list
 The save request contains `id` (a stable retry UUID), `expectedParent` (the
 previous setup UUID or null), and the exact `inputs` returned by preview.
 
-## Execution integration
+## One-click launch authority
+
+`project-workspace-core` also owns the immutable authority created by one
+Optimize click. It pins the exact current setup, the exact current provider
+catalog revision, separate generation and advisor ceilings, and a finite
+execution envelope. The fixed envelope permits at most three iterations, three
+models, 5,000 dataset-row changes, six hours of training, one development
+evaluation per model and development suite, and one final evaluation of the
+development-selected candidate. It is deliberately not another user form.
+
+The authority contains provider-catalog identity and non-secret ceilings only.
+It contains no credential, environment value, model bytes, dataset row, or
+evaluation payload. A new authority is rejected if the baseline, selected setup,
+provider revision, dataset, or benchmark changed after preview. Exact retry
+reuses its authorization; every deliberate later Optimize click may use a new
+UUID. Immutable history remains verifiable after provider settings change.
+
+The local adapter keeps preview and history read-only, upgrades only during the
+explicit authorization mutation, and records a safe `optimization.launch`
+activity action. The CLI contract is:
+
+```text
+synth workspace optimization-launch <PROJECT> preview --setup <SETUP_ID>
+synth workspace optimization-launch <PROJECT> authorize --file <REVIEWED_REQUEST_JSON>
+synth workspace optimization-launch <PROJECT> list
+```
+
+The request contains a stable retry `id` and the exact `scope` returned by
+preview. Users do not author the scope or its limits.
+
+## Desktop and execution integration
 
 The project-header Optimize action opens the desktop input selector. It shows
 the active baseline and named dataset/benchmark versions, with links to their
@@ -53,10 +83,11 @@ The renderer supplies no paths, credentials, native rows or execution settings.
 The main process writes only a strict temporary request and removes it on both
 success and failure. Each explicit save retains the ordinary CLI action UUID.
 
-Saving inputs is available now; automatic execution is not connected yet and
-the desktop states that limitation. It must not imply a run has started or
-fall back to a previously prepared recipe. Existing runs are opened from Runs
-and retain their current supervision, recovery and approval controls.
+Saving inputs and the one-click authorization boundary are available now;
+input-first execution is not connected yet and the desktop must not imply a run
+has started or fall back to a previously prepared recipe. Existing runs are
+opened from Runs and retain their current supervision, recovery and approval
+controls.
 
 Optimize must consume this exact saved setup, resolve finite training/iteration
 and separate provider budgets, and persist explicit execution authorization.
@@ -79,5 +110,9 @@ it must not silently run a different recipe or dataset in response to a setup.
   foreign artifacts, altered source bytes and request tampering.
 - Setup persistence after folder movement; unchanged model, dataset, benchmark
   and scientific records; UUID activity without row content.
-- Follow-on desktop selection and automatic bounded execution must be tested
-  end to end; a working setup catalog alone does not complete the goal.
+- Actual CLI launch preview/authorization/retry, version-9 read-only behavior,
+  stale provider revision, immutable storage, historical verification, exact
+  limits, and activity redaction.
+- Follow-on desktop one-click composition and automatic bounded execution must
+  be tested end to end; setup and authorization catalogs alone do not complete
+  the goal.

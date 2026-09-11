@@ -228,7 +228,11 @@ diagnosable:
   benchmark-version selection through actual CLI processes. It checks read-only
   preview, version-8 migration, exact retry history, stale baseline/parent,
   foreign or altered input, test-data exclusion, folder movement and activity
-  redaction. Saving setup does not start training or grant provider/holdout use.
+  redaction. It also covers the one-click authority's version-9 read-only
+  preview/list, exact retry, separate provider limits, stale-provider rejection,
+  immutable history and credential/row-free activity. Saving setup does not
+  start training; launch authorization still performs no provider, training or
+  evaluation work.
 
 The desktop setup acceptance in `ui/src/managed-smoke-checks.ts` uses actual
 CLI-created dataset/benchmark custody and production selection IPC. It tests
