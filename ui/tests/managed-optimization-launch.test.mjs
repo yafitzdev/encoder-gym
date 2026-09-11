@@ -102,3 +102,12 @@ test("a development result that retains the baseline skips sealed evaluation", a
   assert.equal((await backend.drive(f.projectId, wire.run.id)).state, "baseline_retained");
   assert.ok(!commands.includes("finalize"));
 });
+
+test("project optimization history is a typed project-owned read", async () => {
+  const f = fixture(), older = f.run("baseline_retained", { outcome: { run: { id: randomUUID(), fingerprint }, experimentFingerprint: fingerprint, experimentRun: { id: randomUUID(), fingerprint }, kind: "baseline_retained", createdAt: new Date().toISOString(), fingerprint } }), newer = f.run();
+  const backend = new ManagedOptimizationLaunch(ports(f, async args => { assert.deepEqual(args, ["optimization-run", "owned-project", "list"]); return [older, newer]; }));
+  const runs = await backend.runs(f.projectId);
+  assert.deepEqual(runs.map(run => run.id), [older.run.id, newer.run.id]);
+  const foreign = structuredClone(newer); foreign.run.projectId = randomUUID();
+  await assert.rejects(() => new ManagedOptimizationLaunch(ports(f, async () => [foreign])).runs(f.projectId));
+});

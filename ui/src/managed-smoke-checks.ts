@@ -584,6 +584,16 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await check("input selection fits the page at " + width, "document.getElementById('page').scrollWidth <= document.getElementById('page').clientWidth + 1 && document.documentElement.scrollWidth <= innerWidth");
   }
   window.setContentSize(1440, 960);
+  const fakeLimits = { maximumRequests: 10, maximumInputTokens: 10_000, maximumOutputTokens: 2_000, maximumCostMicrousd: 0 };
+  await harness.backend.configureProviders(setupProjectId, {
+    version: 1,
+    generation: { kind: "fake", model: "fixture-generation", authentication: "none", limits: fakeLimits },
+    advisor: { kind: "fake", model: "fixture-advisor", authentication: "none", limits: fakeLimits },
+  });
+  const queued = await harness.backend.optimizationLaunch.start(setupProjectId, setupHistory[1]!.id);
+  await nav("runs"); await until("document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "]')");
+  await check("project optimization survives as a resumable top-level run", "document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "]').textContent.includes('Checking inputs') && document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "] button').textContent === 'Continue'");
+  await check("Runs does not expose repair recipes as the product workflow", "!document.querySelector('.project-run-section').textContent.toLowerCase().includes('repair')");
   if (!scientificBefore.equals(readFileSync(join(benchmarkFixture.folder, "runs/scientific.sqlite")))) throw new Error("Benchmark inspection/adoption changed scientific evidence");
   console.log("Managed-workspace Electron acceptance passed.");
 }

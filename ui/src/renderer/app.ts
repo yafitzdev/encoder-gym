@@ -26,9 +26,10 @@ import { updateRunClocks } from "./run-progress.js";
 import { providerDialog } from "./provider-dialog.js";
 import { scientificRuntimeDialog } from "./scientific-runtime-dialog.js";
 import { renderActivity, type ActivityPageActions, type ActivityPageState } from "./activity-page.js";
+import { InputRunsController } from "./input-runs-controller.js";
 
 const element = (id: string): HTMLElement => { const found = document.getElementById(id); if (!found) throw new Error("Missing #" + id); return found; };
-interface ProjectView { history: NavigationHistory; models: ModelPageState; details: Map<string, DetailState>; optimization: OptimizationPageState; providers: ProviderPageState; activity: ActivityPageState; baselineBusy: boolean; datasets?: DatasetController; benchmarks?: BenchmarkController; setup?: OptimizationSetupController }
+interface ProjectView { history: NavigationHistory; models: ModelPageState; details: Map<string, DetailState>; optimization: OptimizationPageState; providers: ProviderPageState; activity: ActivityPageState; baselineBusy: boolean; datasets?: DatasetController; benchmarks?: BenchmarkController; setup?: OptimizationSetupController; inputRuns?: InputRunsController }
 const newView = (): ProjectView => ({ history: new NavigationHistory(), models: { filter: initialFilter(), selected: new Set(), suiteIndex: 0 }, details: new Map(), optimization: { loading: false }, providers: { loading: false }, activity: { loading: false }, baselineBusy: false });
 
 export function mount(): void {
@@ -456,7 +457,7 @@ export function mount(): void {
   const actions: Actions = {
     navigate, render, help, notify, connect: projects.addFolder,
     backTo: page => { if (view.history.returnTo(page, main.scrollTop)) { render(); restorePlace(); } else navigate({ page }); },
-    refresh: () => { view.datasets?.refresh(); view.benchmarks?.refresh(); view.setup?.refresh(); if (selection.selectedId) void selectProject(selection.selectedId); else void refreshCollection(); },
+    refresh: () => { view.datasets?.refresh(); view.benchmarks?.refresh(); view.setup?.refresh(); view.inputRuns?.refresh(); if (selection.selectedId) void selectProject(selection.selectedId); else void refreshCollection(); },
     copy: value => { void bridge.copyText(value).then(() => notify("Copied to clipboard"), error => notify("Copy failed: " + message(error))); },
     compare: rows => {
       if (!rows.length || rows.length > 3 || rows.some(row => setupId(row.run) !== setupId(rows[0]!.run))) { notify("Select 1–3 candidates from the same evaluation setup."); return; }
@@ -486,13 +487,19 @@ export function mount(): void {
         dialog: () => element("project-dialog") as HTMLDialogElement,
       });
       view.benchmarks.sync(data.managed);
+      view.inputRuns ??= new InputRunsController(id, bridge, () => { if (selection.selectedId === id) render(); }, managed => {
+        if (selection.selectedId === id && opened?.content.state === "ready") opened = { ...opened, content: { state: "ready", workspace: { ...opened.content.workspace, managed } } };
+      });
       view.setup ??= new OptimizationSetupController(id, data.managed, bridge, () => { if (selection.selectedId === id) render(); }, managed => {
         if (selection.selectedId === id && opened?.content.state === "ready") opened = { ...opened, content: { state: "ready", workspace: { ...opened.content.workspace, managed } } };
+        view.inputRuns?.refresh();
       });
       view.setup.sync(data.managed);
     }
+    const projectRunIds = new Set(view.inputRuns?.runs?.map(run => run.id) ?? []);
     const linkedOptimizationIds = new Set(data?.runs.flatMap(run => run.optimizationId ? [run.optimizationId] : []) ?? []);
-    const runCount = (data?.runs.filter(run => !run.optimizationId).length ?? 0) + linkedOptimizationIds.size + (view.optimization.run && !linkedOptimizationIds.has(view.optimization.run.run_id) ? 1 : 0);
+    const runCount = projectRunIds.size + (data?.runs.filter(run => !run.optimizationId || !projectRunIds.has(run.optimizationId)).length ?? 0)
+      + (view.optimization.run && !linkedOptimizationIds.has(view.optimization.run.run_id) && !projectRunIds.has(view.optimization.run.run_id) ? 1 : 0);
     const activePage = ["model", "candidate", "baseline", "compare"].includes(current.page) ? "models" : ["run", "optimization"].includes(current.page) ? "runs" : current.page === "dataset" ? "datasets" : current.page;
     const focus = document.activeElement, focusId = focus?.id;
     const caret = focus instanceof HTMLInputElement && ["text", "search"].includes(focus.type) ? [focus.selectionStart, focus.selectionEnd] : undefined;
@@ -542,7 +549,7 @@ export function mount(): void {
       else if (current.page === "optimization" && data.managed) content = renderOptimization(data.managed, view.optimization, optimizationActions);
       else if (current.page === "model" || current.page === "candidate") content = renderModel(data, current.id ?? "", current.tab ?? "overview", detail, actions, current.runId);
       else if (current.page === "run") content = renderRun(data, current.id ?? "", current.tab ?? "overview", actions);
-      else if (current.page === "runs") content = renderRuns(data, actions, view.optimization.run);
+      else if (current.page === "runs") content = renderRuns(data, actions, view.optimization.run, data.managed ? view.inputRuns : undefined);
       else if (current.page === "benchmarks") content = data.managed && view.benchmarks ? renderBenchmarkPage(data, current, view.benchmarks, actions) : renderBenchmarks(data, actions);
       else if (current.page === "baseline") content = renderModel(data, data.baseline.id, current.tab ?? "overview", detail, actions);
       else content = renderCompare(data, candidateRows(data).filter(r => current.candidateIds?.includes(r.candidate.id)), actions);
@@ -570,6 +577,10 @@ export function mount(): void {
     if (data?.managed && view.setup && current.page === "optimization" && current.tab === "setup" && !loading && !collectionBusy) {
       const controller = view.setup;
       queueMicrotask(() => { if (view.setup === controller && !loading && !collectionBusy && workspace()?.managed) void controller.ensure(); });
+    }
+    if (data?.managed && view.inputRuns && current.page === "runs" && !loading && !collectionBusy) {
+      const controller = view.inputRuns;
+      queueMicrotask(() => { if (view.inputRuns === controller && !loading && !collectionBusy && workspace()?.managed) void controller.ensure(); });
     }
   }
   for (const [id, offset] of [["navigate-back", -1], ["navigate-forward", 1]] as const) element(id).addEventListener("click", () => { const entry = view.history.move(offset, main.scrollTop); if (entry) { render(); restorePlace(); } });

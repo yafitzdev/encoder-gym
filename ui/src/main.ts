@@ -220,6 +220,7 @@ ipcMain.handle("encoder-gym:start-input-optimization", (_event, value: unknown, 
   ]);
 });
 ipcMain.handle("encoder-gym:input-optimization-run", (_event, value: unknown, run: unknown) => backend.optimizationLaunch.show(projectId(value), run));
+ipcMain.handle("encoder-gym:input-optimization-runs", (_event, value: unknown) => backend.optimizationLaunch.runs(projectId(value)));
 ipcMain.handle("encoder-gym:drive-input-optimization", (_event, value: unknown, run: unknown) => {
   const id = projectId(value), phases: Record<InputOptimizationPhase, NativeProgress["phase"]> = {
     checking_inputs: "checking_files", preparing_data: "checking_training_data", starting: "loading_model", training: "training",

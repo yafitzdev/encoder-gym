@@ -8,7 +8,7 @@ import type {
   OptimizationLaunchRequest, OptimizationLaunchSaved, OptimizationLaunchScope,
   OptimizationProviderLimits,
 } from "./optimization-launch.js";
-import { parseInputOptimizationRun, parseInputOptimizationStarted, type InputOptimizationPhase, type InputOptimizationRun, type InputOptimizationStarted } from "./input-optimization.js";
+import { parseInputOptimizationRun, parseInputOptimizationRuns, parseInputOptimizationStarted, type InputOptimizationPhase, type InputOptimizationRun, type InputOptimizationStarted } from "./input-optimization.js";
 import type { NativeProgress } from "./managed-control.js";
 
 interface Ports {
@@ -147,6 +147,11 @@ export class ManagedOptimizationLaunch {
   async show(projectId: string, runIdValue: unknown): Promise<InputOptimizationRun> {
     const runId = uuid(runIdValue), workspace = await this.ports.open(projectId);
     return parseInputOptimizationRun(await this.ports.command<unknown>(["optimization-run", workspace.folder, "show", runId]), projectId);
+  }
+
+  async runs(projectId: string): Promise<InputOptimizationRun[]> {
+    const workspace = await this.ports.open(projectId);
+    return parseInputOptimizationRuns(await this.ports.command<unknown>(["optimization-run", workspace.folder, "list"]), projectId);
   }
 
   async drive(projectId: string, runIdValue: unknown, progress?: (phase: InputOptimizationPhase, native?: NativeProgress) => void): Promise<InputOptimizationRun> {

@@ -19,6 +19,7 @@ export interface EncoderGymBridge {
   startInputOptimization(id: string, setupId: string): Promise<InputOptimizationStarted>;
   driveInputOptimization(id: string, runId: string): Promise<InputOptimizationRun>;
   inputOptimizationRun(id: string, runId: string): Promise<InputOptimizationRun>;
+  inputOptimizationRuns(id: string): Promise<InputOptimizationRun[]>;
   queryBenchmarks(id: string, request: BenchmarkQuery): Promise<BenchmarkQueryResult>;
   previewBenchmark(id: string, runId: string): Promise<BenchmarkPreview>;
   adoptBenchmark(id: string, request: BenchmarkAdoption): Promise<BenchmarkAdoptionResult>;
@@ -73,6 +74,7 @@ const bridge: EncoderGymBridge = {
   startInputOptimization: (id, setupId) => ipcRenderer.invoke("encoder-gym:start-input-optimization", id, setupId),
   driveInputOptimization: (id, runId) => ipcRenderer.invoke("encoder-gym:drive-input-optimization", id, runId),
   inputOptimizationRun: (id, runId) => ipcRenderer.invoke("encoder-gym:input-optimization-run", id, runId),
+  inputOptimizationRuns: id => ipcRenderer.invoke("encoder-gym:input-optimization-runs", id),
   queryBenchmarks: (id, request) => ipcRenderer.invoke("encoder-gym:query-benchmarks", id, request),
   previewBenchmark: (id, runId) => ipcRenderer.invoke("encoder-gym:preview-benchmark", id, runId),
   adoptBenchmark: (id, request) => ipcRenderer.invoke("encoder-gym:adopt-benchmark", id, request),
