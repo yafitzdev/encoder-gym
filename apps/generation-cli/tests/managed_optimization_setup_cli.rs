@@ -771,6 +771,30 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     );
     assert!(!completed.to_string().contains("SETUP_ROW_CANARY"));
 
+    // Candidate custody is a separate retryable operation. This injected
+    // root has no corresponding scientific child or checkpoint, so it must
+    // fail without inventing a Models entry or dataset link.
+    let before_registration = open_workspace(&folder, false).await.unwrap();
+    let failed_registration = invoke(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "register",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert!(!failed_registration.status.success());
+    let after_registration = open_workspace(&folder, false).await.unwrap();
+    assert_eq!(
+        before_registration.model_catalog,
+        after_registration.model_catalog
+    );
+    assert_eq!(
+        before_registration.model_dataset_links,
+        after_registration.model_dataset_links
+    );
+
     let failed_final = invoke(
         root,
         &[
@@ -938,6 +962,7 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     assert!(text.contains("optimization.materialize"));
     assert!(text.contains("optimization.attach_experiment"));
     assert!(text.contains("optimization.execute"));
+    assert!(text.contains("optimization.register_candidate"));
     assert!(text.contains("optimization.final_evaluation"));
     assert!(text.contains(started["run"]["run"]["id"].as_str().unwrap()));
     assert!(!text.contains("SETUP_ROW_CANARY"));

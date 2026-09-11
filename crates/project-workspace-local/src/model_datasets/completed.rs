@@ -33,6 +33,10 @@ pub struct RecordedTrainingInput {
 #[derive(Debug, Clone)]
 pub struct CompletedTrainingData {
     pub model_id: Uuid,
+    /// Exact managed dataset version selected when this training run began.
+    /// Legacy registrations may omit it and fall back to the parent model's
+    /// recorded training version.
+    pub parent_version_id: Option<Uuid>,
     pub snapshot: BoundIdentity,
     pub run: BoundIdentity,
     pub manifest: FileIdentity,
@@ -190,7 +194,11 @@ pub async fn adopt_completed(
         dataset_versions::rows::verify_members(&workspace, &version.members)?;
         return Ok(existing.clone());
     }
-    let original = dataset_versions::inspect(folder, parent.version.id).await?;
+    let original = dataset_versions::inspect(
+        folder,
+        request.parent_version_id.unwrap_or(parent.version.id),
+    )
+    .await?;
     let mut versions = vec![original.clone()];
     // Reuse any already-recorded exact population, even with a different native
     // input order. Models trained with different settings can share a version.

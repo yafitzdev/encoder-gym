@@ -61,6 +61,8 @@ pub enum WorkspaceOptimizationRunCommand {
     Attach { run_id: Uuid },
     /// Train one candidate and compare it on the shared benchmark.
     Execute { run_id: Uuid },
+    /// Add the trained candidate and its exact dataset to project custody.
+    Register { run_id: Uuid },
     /// Run the one authorized final evaluation for the selected candidate.
     Finalize { run_id: Uuid },
 }

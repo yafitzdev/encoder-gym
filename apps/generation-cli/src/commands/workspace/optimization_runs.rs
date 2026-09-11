@@ -31,6 +31,7 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunComm
         Materialize { run_id } => materialize(folder, run_id).await,
         Attach { run_id } => attach(folder, run_id).await,
         Execute { run_id } => execute_candidate(folder, run_id).await,
+        Register { run_id } => super::completed_models::register_project(folder, run_id).await,
         Finalize { run_id } => finalize_candidate(folder, run_id).await,
         Start {
             file,

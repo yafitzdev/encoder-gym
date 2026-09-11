@@ -174,10 +174,12 @@ The main process writes only a strict temporary request and removes it on both
 success and failure. Each explicit save retains the ordinary CLI action UUID.
 
 Saving inputs, one-click authorization and the project-owned materialized-run
-root are available now. The first finite experiment can be attached and its
-candidate can be trained and compared through a recoverable project transition.
-The desktop does not invoke the new pipeline yet and must not fall back to a
-previously prepared recipe.
+root are available now. The first finite experiment can be attached, trained,
+compared and finalized through recoverable project transitions. Its completed
+checkpoint and exact training dataset can be registered into the ordinary
+Models and Data inventories whether accepted or rejected. The desktop does not
+invoke the new pipeline yet and must not fall back to a previously prepared
+recipe.
 Existing runs are opened from Runs and retain their current supervision,
 recovery and approval controls.
 
@@ -208,6 +210,9 @@ it must not silently run a different recipe or dataset in response to a setup.
 - Follow-on desktop one-click composition and automatic bounded execution must
   be tested end to end; setup and authorization catalogs alone do not complete
   the goal.
+- Candidate custody must use the exact managed dataset version selected by the
+  launch as its ancestry root; the parent model's older training version cannot
+  silently replace that selection.
 - The project-run root passes all four repository Rust gates. Its actual CLI
   coverage verifies atomic reservation, exact retry, stale unreserved
   authorization, immutable custody, read-only inspection and safe activity.

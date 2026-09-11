@@ -636,3 +636,25 @@ and keep outstanding requirements visible.
   rejected final decisions.
 - Candidate registration, desktop one-click composition and later bounded
   agent/data iterations remain outstanding. No real Nomos evaluation ran.
+
+### Automatic candidate custody — 11 September 2026
+
+- `workspace optimization-run register` resolves the exact scientific child
+  attached to an input-first project run. It verifies the project, candidate,
+  training-completion event, native checkpoint tree and native training receipt
+  before copying anything into project custody.
+- Every completed checkpoint enters Models regardless of whether development or
+  final evaluation accepted it. Registration never promotes it or changes the
+  baseline. Repeating the command returns the same managed model and dataset
+  identities.
+- The model links to the exact dataset version selected when Optimize began.
+  When native training added or removed rows, Data records a named derived
+  dataset whose origin is that selected version and whose row changes remain
+  inspectable. Adapter paths and source files stay provenance details.
+- The registration action and its model/dataset references enter the project
+  UUID activity journal. A missing or altered scientific output records failure
+  without fabricating either inventory object.
+- Custody and actual-CLI failure tests cover idempotency, selected-version
+  ancestry and no-partial-output behavior. Desktop one-click composition and
+  later bounded agent/data iterations remain outstanding. No real Nomos work
+  ran.

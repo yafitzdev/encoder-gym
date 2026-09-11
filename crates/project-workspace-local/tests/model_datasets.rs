@@ -297,6 +297,7 @@ async fn completed_request(
         .id;
     model_datasets::CompletedTrainingData {
         model_id,
+        parent_version_id: None,
         snapshot,
         run,
         manifest: model
@@ -365,6 +366,45 @@ async fn completed_candidate_keeps_native_order_and_inspectable_base_plus_delta_
             .model_dataset_links[1],
         link
     );
+}
+
+#[tokio::test]
+async fn completed_candidate_branches_from_the_dataset_selected_for_its_run() {
+    let temp = TempDir::new().unwrap();
+    let folder = fixture(temp.path()).await;
+    let base = model_datasets::adopt_baseline(&folder).await.unwrap();
+    let selected = dataset_versions::fork(
+        &folder,
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        "Selected training data",
+        base.version.id,
+    )
+    .await
+    .unwrap();
+    let mut request = completed_request(temp.path(), &folder, true).await;
+    request.parent_version_id = Some(selected.id);
+
+    let link = model_datasets::adopt_completed(&folder, request)
+        .await
+        .unwrap();
+    let entries = dataset_versions::list(&folder).await.unwrap();
+    let candidate = entries
+        .iter()
+        .find(|entry| {
+            entry
+                .versions
+                .iter()
+                .any(|version| version.version == link.version)
+        })
+        .unwrap();
+
+    assert_eq!(
+        candidate.dataset.origin.as_ref(),
+        Some(&selected.reference())
+    );
+    assert_eq!(candidate.versions.len(), 2);
+    assert_eq!(candidate.versions[0].added, 1);
 }
 
 #[tokio::test]
