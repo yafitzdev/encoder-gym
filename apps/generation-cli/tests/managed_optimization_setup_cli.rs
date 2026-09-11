@@ -187,18 +187,26 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     request(root, &choice, Uuid::new_v4());
     let setup = save(root)["setup"].clone();
 
-    // Reproduce a version-9 project. Both launch reads must remain byte-for-byte read-only.
+    // Reproduce a project before launch/run tables. Reads stay byte-for-byte read-only.
     let mut database = SqliteConnection::connect(&format!(
         "sqlite://{}",
         folder.join("project.sqlite").display()
     ))
     .await
     .unwrap();
+    sqlx::query("DROP TABLE project_optimization_events")
+        .execute(&mut database)
+        .await
+        .unwrap();
+    sqlx::query("DROP TABLE project_optimization_runs")
+        .execute(&mut database)
+        .await
+        .unwrap();
     sqlx::query("DROP TABLE optimization_launch_authorizations")
         .execute(&mut database)
         .await
         .unwrap();
-    sqlx::query("DELETE FROM _sqlx_migrations WHERE version=10")
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version IN (10,12)")
         .execute(&mut database)
         .await
         .unwrap();
@@ -206,6 +214,11 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     let before = fs::read(folder.join("project.sqlite")).unwrap();
     assert_eq!(
         run(root, &["optimization-launch", "project", "list"]),
+        json!([])
+    );
+    assert_eq!(before, fs::read(folder.join("project.sqlite")).unwrap());
+    assert_eq!(
+        run(root, &["optimization-run", "project", "list"]),
         json!([])
     );
     assert_eq!(before, fs::read(folder.join("project.sqlite")).unwrap());
@@ -271,10 +284,98 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
         run(root, &["optimization-launch", "project", "list"]),
         json!([authorized["authorization"]])
     );
+    let started = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "start",
+            "--file",
+            "launch.json",
+        ],
+    );
+    let retried_run = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "start",
+            "--file",
+            "launch.json",
+        ],
+    );
+    assert_eq!(started["run"], retried_run["run"]);
+    assert_eq!(started["run"]["state"], "queued");
+    assert_eq!(started["run"]["run"]["launch"]["id"], request["id"]);
+    assert_eq!(started["run"]["run"]["setup"]["id"], setup["id"]);
+    assert_eq!(started["run"]["lastSequence"], 1);
+    assert_eq!(
+        run(root, &["optimization-run", "project", "list"]),
+        json!([started["run"]])
+    );
+    assert_eq!(
+        run(
+            root,
+            &[
+                "optimization-run",
+                "project",
+                "show",
+                started["run"]["run"]["id"].as_str().unwrap(),
+            ],
+        ),
+        started["run"]
+    );
+    assert!(!started.to_string().contains("SETUP_ROW_CANARY"));
+    assert!(!started.to_string().contains("apiKey"));
+    let orphan_request = json!({"id":Uuid::new_v4(),"scope":launch["scope"]});
+    fs::write(
+        root.join("orphan-launch.json"),
+        serde_json::to_vec(&orphan_request).unwrap(),
+    )
+    .unwrap();
+    let orphan = run(
+        root,
+        &[
+            "optimization-launch",
+            "project",
+            "authorize",
+            "--file",
+            "orphan-launch.json",
+        ],
+    );
 
     // A provider revision made after preview invalidates a new authorization.
     let updated = configure_fake_providers(&folder, Some(&providers)).await;
     assert_ne!(updated.fingerprint, providers.fingerprint);
+    assert_eq!(
+        run(
+            root,
+            &[
+                "optimization-run",
+                "project",
+                "start",
+                "--file",
+                "launch.json",
+            ],
+        )["run"],
+        started["run"],
+        "an exact retry returns its already-reserved run after later settings change"
+    );
+    assert!(
+        !invoke(
+            root,
+            &[
+                "optimization-run",
+                "project",
+                "start",
+                "--file",
+                "orphan-launch.json",
+            ],
+        )
+        .status
+        .success(),
+        "an old authorization cannot become a new run after provider settings change"
+    );
     let mut stale = request;
     stale["id"] = Uuid::new_v4().to_string().into();
     fs::write(
@@ -297,10 +398,19 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
         .success()
     );
     let history = run(root, &["optimization-launch", "project", "list"]);
-    assert_eq!(history, json!([authorized["authorization"]]));
+    assert_eq!(
+        history,
+        json!([authorized["authorization"], orphan["authorization"]])
+    );
+    assert_eq!(
+        run(root, &["optimization-run", "project", "list"]),
+        json!([started["run"]])
+    );
     let activity = run(root, &["activity", "project", "list"]);
     let text = activity.to_string();
     assert!(text.contains("optimization.launch"));
+    assert!(text.contains("optimization.start"));
+    assert!(text.contains(started["run"]["run"]["id"].as_str().unwrap()));
     assert!(!text.contains("SETUP_ROW_CANARY"));
     assert!(!text.contains("apiKey"));
     assert!(!text.contains("fixture-generation"));
@@ -319,6 +429,18 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     );
     assert!(
         sqlx::query("DELETE FROM optimization_launch_authorizations")
+            .execute(&mut database)
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query("UPDATE project_optimization_runs SET launch_fingerprint='changed'")
+            .execute(&mut database)
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query("DELETE FROM project_optimization_events")
             .execute(&mut database)
             .await
             .is_err()

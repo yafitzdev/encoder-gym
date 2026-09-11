@@ -182,7 +182,7 @@ fn current_setup(setups: &[OptimizationSetup], setup_id: Uuid) -> Result<&Optimi
     Ok(setup)
 }
 
-async fn load(
+pub(crate) async fn load(
     database: &mut SqliteConnection,
     workspace: &ManagedWorkspace,
     setups: &[OptimizationSetup],

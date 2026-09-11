@@ -8,6 +8,7 @@ mod model;
 pub mod model_datasets;
 mod model_registration;
 pub mod optimization_launch;
+pub mod optimization_runs;
 pub mod optimization_setup;
 
 use std::{fs, path::Path};

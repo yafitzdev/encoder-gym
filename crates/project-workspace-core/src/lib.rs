@@ -11,6 +11,7 @@ mod benchmark;
 pub mod benchmark_results;
 mod models;
 mod optimization_launch;
+mod optimization_run;
 mod optimization_setup;
 mod providers;
 mod readiness;
@@ -20,6 +21,10 @@ pub use benchmark::{BenchmarkSource, ProjectBenchmarkVersion};
 pub use optimization_launch::{
     FinalEvaluationAuthorization, OptimizationExecutionLimits, OptimizationLaunchAuthorization,
     OptimizationLaunchScope,
+};
+pub use optimization_run::{
+    ProjectOptimizationEvent, ProjectOptimizationEventKind, ProjectOptimizationRun,
+    ProjectOptimizationRunState, ProjectOptimizationRunView, replay_project_optimization,
 };
 pub use optimization_setup::{OptimizationInputs, OptimizationSetup};
 pub use training_data::{ModelDatasetLink, ModelTrainingEvidence, TrainingDatasetInput};

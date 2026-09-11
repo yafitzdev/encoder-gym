@@ -7,7 +7,8 @@ mod workspace;
 pub use workspace::{
     ManagedOptimizeCommand, ManagedProviderCommand, WorkspaceActivityCommand,
     WorkspaceBenchmarkCommand, WorkspaceCommand, WorkspaceDatasetCommand,
-    WorkspaceOptimizationLaunchCommand, WorkspaceOptimizationSetupCommand,
+    WorkspaceOptimizationLaunchCommand, WorkspaceOptimizationRunCommand,
+    WorkspaceOptimizationSetupCommand,
 };
 
 #[derive(Debug, Parser)]

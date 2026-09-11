@@ -2,6 +2,7 @@ mod benchmarks;
 mod completed_models;
 mod dataset_versions;
 mod optimization_launch;
+mod optimization_runs;
 mod optimization_setup;
 
 use crate::{
@@ -269,6 +270,9 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
         }
         WorkspaceCommand::OptimizationLaunch { folder, command } => {
             optimization_launch::execute(&folder, command).await
+        }
+        WorkspaceCommand::OptimizationRun { folder, command } => {
+            optimization_runs::execute(&folder, command).await
         }
         WorkspaceCommand::Benchmark { folder, command } => {
             benchmarks::execute(&folder, command).await

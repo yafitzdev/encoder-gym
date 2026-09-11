@@ -66,6 +66,31 @@ synth workspace optimization-launch <PROJECT> list
 The request contains a stable retry `id` and the exact `scope` returned by
 preview. Users do not author the scope or its limits.
 
+## Project run root
+
+The executable product journey begins with a project-owned run, not a legacy
+repair manifest. One exact launch authorization can reserve exactly one run:
+
+```text
+synth workspace optimization-run <PROJECT> start --file <REVIEWED_REQUEST_JSON>
+synth workspace optimization-run <PROJECT> list
+synth workspace optimization-run <PROJECT> show <RUN_ID>
+```
+
+`start` uses the same stable launch request as authorization. Authorization and
+reservation are independently idempotent, so retrying after either committed
+write returns the same run. A launch authorized earlier but not yet reserved is
+rechecked against the current baseline, setup, provider revision, dataset and
+benchmark before it may become a run. An already-reserved run remains
+inspectable and exactly retryable after later project changes.
+
+The project run has its own UUID, immutable launch/setup bindings and an
+append-only hash-chained reservation event. It is the root under which later
+advisor, generation, training and evaluation child identities are attached;
+those artifacts remain owned by their normal slices. The current root is
+`queued`: it reserves no worker and performs no provider, training or evaluation
+work yet.
+
 The Electron main-process bridge now exposes those three fixed project-scoped
 operations. It validates every response, rejects renderer-supplied paths,
 credentials, commands or execution fields, writes authorization requests only
@@ -90,11 +115,11 @@ The renderer supplies no paths, credentials, native rows or execution settings.
 The main process writes only a strict temporary request and removes it on both
 success and failure. Each explicit save retains the ordinary CLI action UUID.
 
-Saving inputs and the one-click authorization boundary are available now;
-input-first execution is not connected yet and the desktop must not imply a run
-has started or fall back to a previously prepared recipe. Existing runs are
-opened from Runs and retain their current supervision, recovery and approval
-controls.
+Saving inputs, one-click authorization and the project-owned queued-run root are
+available now. The bounded child executor is not connected yet and the desktop
+must not imply work is running or fall back to a previously prepared recipe.
+Existing runs are opened from Runs and retain their current supervision,
+recovery and approval controls.
 
 Optimize must consume this exact saved setup, resolve finite training/iteration
 and separate provider budgets, and persist explicit execution authorization.
@@ -123,3 +148,6 @@ it must not silently run a different recipe or dataset in response to a setup.
 - Follow-on desktop one-click composition and automatic bounded execution must
   be tested end to end; setup and authorization catalogs alone do not complete
   the goal.
+- The project-run root passes all four repository Rust gates. Its actual CLI
+  coverage verifies atomic reservation, exact retry, stale unreserved
+  authorization, immutable custody, read-only inspection and safe activity.

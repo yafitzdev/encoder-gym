@@ -494,3 +494,22 @@ and keep outstanding requirements visible.
 - UI typecheck/build, all 83 unit tests and the full four-launch Electron
   acceptance suite pass, including the model-view restoration journey. No real
   project, provider, training process or protected evaluation was touched.
+
+### Project optimization run root — 11 September 2026
+
+- Input-first Optimize now has a project-owned run identity above slice-owned
+  advisor, generation, training and evaluation work. It binds one exact launch
+  and setup without translating them into a repair/interpolation recipe.
+- `workspace optimization-run start` authorizes and idempotently reserves one
+  queued run. Exact retries return the same run; an unreserved old authorization
+  is rejected after baseline, inputs or provider settings change.
+- The run definition and its first hash-chained event are immutable custody
+  records. `list` and `show` verify their columns, JSON identities, launch
+  binding and journal head without upgrading older project databases.
+- This is the durable root for execution, not the executor. It performs no
+  provider, training or evaluation work. The next stage must attach bounded
+  child operations and transition this journal before the desktop can honestly
+  make Optimize a one-click run action.
+- `cargo fmt-check`, `cargo check-all`, `cargo lint` and `cargo test-all` pass.
+  The actual CLI integration test covers reservation, exact retry, stale
+  authorization, read-only history, immutable storage and redacted activity.

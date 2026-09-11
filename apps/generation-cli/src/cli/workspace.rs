@@ -41,6 +41,21 @@ pub enum WorkspaceOptimizationLaunchCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum WorkspaceOptimizationRunCommand {
+    /// Authorize exact inputs and idempotently reserve their project run.
+    Start {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long, default_value = "local-operator")]
+        authorized_by: String,
+    },
+    /// List project-owned input-first optimization runs.
+    List,
+    /// Show one verified project run and its journal head.
+    Show { run_id: Uuid },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum WorkspaceBenchmarkCommand {
     /// List immutable versions of the project's shared evaluation benchmark.
     List,
@@ -236,6 +251,12 @@ pub enum WorkspaceCommand {
         folder: PathBuf,
         #[command(subcommand)]
         command: WorkspaceOptimizationLaunchCommand,
+    },
+    /// Start and inspect project-owned input-first optimization runs.
+    OptimizationRun {
+        folder: PathBuf,
+        #[command(subcommand)]
+        command: WorkspaceOptimizationRunCommand,
     },
     /// Manage native training datasets, variants, immutable versions, and diffs.
     Dataset {
