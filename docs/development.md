@@ -233,6 +233,10 @@ diagnosable:
   immutable history and credential/row-free activity. Saving setup does not
   start training; launch authorization still performs no provider, training or
   evaluation work.
+- `managed-optimization-launch.test.mjs` verifies the fixed Electron boundary:
+  exact project-owned preview/history, current provider identity, strict finite
+  defaults, retry identity, temporary-file cleanup, and rejection of paths,
+  credentials, injected execution fields and altered launch scope.
 
 The desktop setup acceptance in `ui/src/managed-smoke-checks.ts` uses actual
 CLI-created dataset/benchmark custody and production selection IPC. It tests

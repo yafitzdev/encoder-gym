@@ -13,6 +13,7 @@ import { executeObservedCommand, recordProgress } from "./run-activity.js";
 import { ManagedDatasets } from "./managed-datasets.js";
 import { ManagedBenchmarks } from "./managed-benchmarks.js";
 import { ManagedOptimizationSetup } from "./managed-optimization-setup.js";
+import { ManagedOptimizationLaunch } from "./managed-optimization-launch.js";
 import type { AppendProjectActivity, ProjectActivityEvent, ProjectActivityExport, ProjectActivityLog, ProjectActivityReference, ProjectActivitySource } from "./project-activity.js";
 
 const purposes = new Set<DatasetPurpose>(["unassigned", "training", "development", "sealed"]);
@@ -131,10 +132,12 @@ export class ManagedBackend {
   readonly datasetVersions: ManagedDatasets;
   readonly benchmarks: ManagedBenchmarks;
   readonly optimizationSetup: ManagedOptimizationSetup;
+  readonly optimizationLaunch: ManagedOptimizationLaunch;
   constructor(readonly executable: string, private registry: ProjectRegistry, private executor: CommandExecutor = executeCommand, private options: ManagedBackendOptions = {}) {
     this.datasetVersions = new ManagedDatasets({ open: id => this.openRegistered(id), command: args => this.command(args), exclusive: (id, run) => this.exclusiveProject(id, run) });
     this.benchmarks = new ManagedBenchmarks({ open: id => this.openRegistered(id), command: args => this.command(args), exclusive: (id, run) => this.exclusiveProject(id, run) });
     this.optimizationSetup = new ManagedOptimizationSetup({ open: id => this.openRegistered(id), command: args => this.command(args), exclusive: (id, run) => this.exclusiveProject(id, run) });
+    this.optimizationLaunch = new ManagedOptimizationLaunch({ open: id => this.openRegistered(id), command: args => this.command(args), exclusive: (id, run) => this.exclusiveProject(id, run) });
   }
   private async command<T>(args: string[], environment?: CommandEnvironment, progress?: (value: NativeProgress) => void): Promise<T> {
     const stdout = await this.executor(this.executable, ["--output", "json", "workspace", ...args], environment, progress);

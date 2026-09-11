@@ -87,10 +87,10 @@ decision. No unbounded work or inferred spending.
    CLI and desktop selection are implemented. The input-first launch scope now
    pins exact setup/provider revisions, separate provider ceilings, fixed finite
    defaults and one final evaluation behind a UUID authorization; its actual CLI
-   persistence and redaction checks pass. Automatic continuation of an exact
-   existing run is implemented in the core and CLI. Agent/generation integration,
-   managed automatic execution, output registration and complete-journey
-   recovery remain pending.
+   persistence, redaction checks, and typed project-scoped Electron bridge pass.
+   Automatic continuation of an exact existing run is implemented in the core
+   and CLI. Renderer composition, agent/generation integration, managed automatic
+   execution, output registration and complete-journey recovery remain pending.
    Verify real CLI composition using deterministic offline fakes.
 5. Complete journey — pending. Renderer interactions for setup, Optimize,
    results, artifact inspection, and promotion; read-only Nomos verification.

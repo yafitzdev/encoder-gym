@@ -209,6 +209,9 @@ ipcMain.handle("encoder-gym:query-benchmarks", (_event, value: unknown, request:
 ipcMain.handle("encoder-gym:optimization-setups", (_event, value: unknown) => backend.optimizationSetup.list(projectId(value)));
 ipcMain.handle("encoder-gym:preview-optimization-setup", (_event, value: unknown, request: unknown) => backend.optimizationSetup.preview(projectId(value), request));
 ipcMain.handle("encoder-gym:save-optimization-setup", (_event, value: unknown, request: unknown) => backend.optimizationSetup.save(projectId(value), request));
+ipcMain.handle("encoder-gym:optimization-launches", (_event, value: unknown) => backend.optimizationLaunch.list(projectId(value)));
+ipcMain.handle("encoder-gym:preview-optimization-launch", (_event, value: unknown, setup: unknown) => backend.optimizationLaunch.preview(projectId(value), setup));
+ipcMain.handle("encoder-gym:authorize-optimization-launch", (_event, value: unknown, request: unknown) => backend.optimizationLaunch.authorize(projectId(value), request));
 ipcMain.handle("encoder-gym:preview-benchmark", (_event, value: unknown, run: unknown) => backend.benchmarks.preview(projectId(value), run));
 ipcMain.handle("encoder-gym:adopt-benchmark", (_event, value: unknown, request: unknown) => backend.benchmarks.adopt(projectId(value), request));
 ipcMain.handle("encoder-gym:mutate-dataset", (_event, value: unknown, request: unknown) => backend.datasetVersions.mutate(projectId(value), request));

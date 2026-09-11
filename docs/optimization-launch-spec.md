@@ -66,6 +66,13 @@ synth workspace optimization-launch <PROJECT> list
 The request contains a stable retry `id` and the exact `scope` returned by
 preview. Users do not author the scope or its limits.
 
+The Electron main-process bridge now exposes those three fixed project-scoped
+operations. It validates every response, rejects renderer-supplied paths,
+credentials, commands or execution fields, writes authorization requests only
+to mode-restricted temporary files, and removes them after success or failure.
+The renderer does not invoke this boundary until the input-first executor can
+consume the result; an authorization-only button would be misleading.
+
 ## Desktop and execution integration
 
 The project-header Optimize action opens the desktop input selector. It shows

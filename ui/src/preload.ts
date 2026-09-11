@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { OptimizationSelection, OptimizationSetup, OptimizationSetupPreview, OptimizationSetupRequest, OptimizationSetupSaved } from "./optimization-setup.js";
+import type { OptimizationLaunchAuthorization, OptimizationLaunchPreview, OptimizationLaunchRequest, OptimizationLaunchSaved } from "./optimization-launch.js";
 import type { DatasetQuery, DatasetQueryResult, DatasetMutation, DatasetMutationResult } from "./dataset-workspace.js";
 import type { BenchmarkAdoption, BenchmarkAdoptionResult, BenchmarkPreview, BenchmarkQuery, BenchmarkQueryResult } from "./benchmark-workspace.js";
 import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedPromotionRequest, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, PreparedOptimizationChoice, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
@@ -11,6 +12,9 @@ export interface EncoderGymBridge {
   optimizationSetups(id: string): Promise<OptimizationSetup[]>;
   previewOptimizationSetup(id: string, request: OptimizationSelection): Promise<OptimizationSetupPreview>;
   saveOptimizationSetup(id: string, request: OptimizationSetupRequest): Promise<OptimizationSetupSaved>;
+  optimizationLaunches(id: string): Promise<OptimizationLaunchAuthorization[]>;
+  previewOptimizationLaunch(id: string, setupId: string): Promise<OptimizationLaunchPreview>;
+  authorizeOptimizationLaunch(id: string, request: OptimizationLaunchRequest): Promise<OptimizationLaunchSaved>;
   queryBenchmarks(id: string, request: BenchmarkQuery): Promise<BenchmarkQueryResult>;
   previewBenchmark(id: string, runId: string): Promise<BenchmarkPreview>;
   adoptBenchmark(id: string, request: BenchmarkAdoption): Promise<BenchmarkAdoptionResult>;
@@ -58,6 +62,9 @@ const bridge: EncoderGymBridge = {
   optimizationSetups: id => ipcRenderer.invoke("encoder-gym:optimization-setups", id),
   previewOptimizationSetup: (id, request) => ipcRenderer.invoke("encoder-gym:preview-optimization-setup", id, request),
   saveOptimizationSetup: (id, request) => ipcRenderer.invoke("encoder-gym:save-optimization-setup", id, request),
+  optimizationLaunches: id => ipcRenderer.invoke("encoder-gym:optimization-launches", id),
+  previewOptimizationLaunch: (id, setupId) => ipcRenderer.invoke("encoder-gym:preview-optimization-launch", id, setupId),
+  authorizeOptimizationLaunch: (id, request) => ipcRenderer.invoke("encoder-gym:authorize-optimization-launch", id, request),
   queryBenchmarks: (id, request) => ipcRenderer.invoke("encoder-gym:query-benchmarks", id, request),
   previewBenchmark: (id, runId) => ipcRenderer.invoke("encoder-gym:preview-benchmark", id, runId),
   adoptBenchmark: (id, request) => ipcRenderer.invoke("encoder-gym:adopt-benchmark", id, request),
