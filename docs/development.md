@@ -222,6 +222,15 @@ diagnosable:
   foreign or altered input, test-data exclusion, folder movement and activity
   redaction. Saving setup does not start training or grant provider/holdout use.
 
+The desktop setup acceptance in `ui/src/managed-smoke-checks.ts` uses actual
+CLI-created dataset/benchmark custody and production selection IPC. It tests
+artifact links, saved inputs, changed versions, a lost save response after
+commit, exact retry, and restoration in a second Electron process. Existing run
+supervision is tested through Runs; Optimize no longer opens the old recipe
+preparation screen. The read-only current-project check verifies Nomos without
+saving inputs or starting work. Run `npm run smoke` in `ui`; on Windows finish
+backend-building commands before running suites that hold `synth.exe` open.
+
 All ordinary acceptance tests use fake or loopback-only backends. An ignored
 OpenAI-compatible smoke boundary exists for deliberate provider verification:
 

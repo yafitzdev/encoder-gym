@@ -44,6 +44,9 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await until("document.querySelector('.benchmark-results')?.textContent.includes('0.600000')");
     await check("historical benchmark keeps its rejected candidate after restart", "document.querySelectorAll('[data-benchmark-model]').length === 3 && document.querySelectorAll('.benchmark-score').length === 3");
     await screenshot("managed-benchmark-restarted");
+    await click("#project-optimize"); await until("document.getElementById('optimization-save-inputs')?.textContent === 'Inputs saved'");
+    await check("optimization inputs survive an independent desktop process", "document.getElementById('optimization-dataset').selectedOptions[0].textContent.includes('Variant') && document.getElementById('optimization-benchmark').selectedOptions[0].textContent === 'Benchmark v1' && document.getElementById('optimization-save-inputs').disabled && !document.querySelector('.launch-definition')");
+    await screenshot("managed-optimization-inputs-restarted");
     const routing = harness.registry.read().projects.find(project => project.name === "Routing encoder")!;
     await click('[data-project-id="' + routing.id + '"]'); await loaded();
     await nav("project"); await until("document.querySelectorAll('.provider-summary').length === 2 && !document.querySelector('.provider-state .neutral')");
@@ -109,9 +112,9 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await nav("activity"); await until("document.querySelector('.activity-list')");
   await check("project activity exposes action UUIDs and complete event chains", "document.querySelector('.activity-action') && document.querySelector('.activity-action code').textContent.includes('…') && !document.getElementById('page').textContent.includes('smoke-secret')");
   await nav("models");
-  await click("#project-optimize"); await until("document.querySelector('.launch-summary') && document.querySelectorAll('.readiness-row').length > 0");
-  await check("readiness distinguishes ready foundations from missing scientific authority", "document.querySelector('.readiness-list').textContent.includes('Connect scientific runtime') && document.querySelector('.readiness-list > details').textContent.includes('foundations are ready') && document.querySelector('.readiness-list').textContent.includes('Prepare run') && !document.querySelector('.readiness-row > .readiness-copy > p')");
-  await check("readiness exposes no managed paths as editable command input", "!document.querySelector('.optimization-page input') && !document.querySelector('.optimization-page').textContent.includes('project.sqlite')");
+  await click("#project-optimize"); await until("document.querySelector('.optimization-inputs') && !document.querySelector('.workspace-progress')");
+  await check("Optimize starts from model, data and evaluation, not a prepared repair", "document.querySelectorAll('.optimization-input').length === 3 && document.getElementById('optimization-save-inputs').disabled && document.querySelector('.optimization-inputs').textContent.includes('Set up dataset') && document.querySelector('.optimization-inputs').textContent.includes('Set up evaluation') && !document.querySelector('.launch-definition')");
+  await check("optimization inputs expose no paths or credentials", "!document.querySelector('.optimization-inputs input') && !document.querySelector('.optimization-inputs').textContent.includes('project.sqlite')");
   await screenshot("managed-readiness");
   await nav("project"); await until("[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Configure providers' && !b.disabled)");
   await check("scientific runtime setup is a real project-settings action", "[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Connect scientific runtime') && !document.getElementById('page').textContent.includes('not implemented')");
@@ -216,39 +219,16 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
       return { ...managed, modelCatalog: { ...catalog, artifacts: [...catalog.artifacts, candidate], baselineRevisions: [...catalog.baselineRevisions, { id: revisionId, projectId: firstId, sequence: catalog.baselineRevisions.length + 1, modelArtifactId: candidate.id, previousRevisionId: catalog.activeBaselineRevisionId, change: { kind: "promotion" as const, decision_id: randomUUID(), decision_fingerprint: "sha256:" + "8".repeat(64) }, actor: "local-operator", reason: "Smoke accepted promotion", createdAt: new Date().toISOString(), fingerprint: "sha256:" + "9".repeat(64) }], activeBaselineRevisionId: revisionId } };
     };
 
-    const ordinaryChecks = readiness.report.checks;
-    readiness.report.checks = [
-      { key: "provider.generation", category: "providers", state: "action_required", required: true, summary: "Provider credential is unavailable", evidence: "The secret value was not read.", nextAction: { key: "configure-provider-secret", label: "Configure provider credential" } },
-      { key: "recovery.current-run", category: "recovery", state: "stale", required: true, summary: "Existing optimization journal cannot be recovered", evidence: "Inspect the persisted run records before continuing.", nextAction: { key: "inspect-scientific-history", label: "Inspect scientific history" } },
-    ];
-    readiness.optimizationAuthority = undefined;
-    await nav("models"); await click("#project-optimize"); await textButton("Refresh");
-    await until("[...document.querySelectorAll('.readiness-row button')].some(b=>b.textContent === 'Inspect scientific history')");
-    await check("credential and journal readiness actions have honest desktop destinations", "[...document.querySelectorAll('.readiness-row button')].some(b=>b.textContent === 'Open project settings') && [...document.querySelectorAll('.readiness-row button')].some(b=>b.textContent === 'Inspect scientific history')");
-    await textButton("Inspect scientific history"); await until("document.querySelector('.page-heading h1')?.textContent === 'Runs'");
-    await nav("models"); await click("#project-optimize"); await textButton("Open project settings"); await until("document.querySelector('.page-heading h1')?.textContent === 'Project settings'");
-    readiness.report.checks = ordinaryChecks;
-    readiness.optimizationAuthority = authority;
-
-    await nav("models"); await click("#project-optimize"); await textButton("Refresh");
-    await check("passive readiness refresh stays compact", "document.querySelector('.workspace-progress')?.textContent === 'Checking…'");
-    await until("document.querySelector('.launch-definition .section-heading h2')?.textContent === 'Run'");
-    await check("run preparation starts with useful limits only", "document.querySelector('.launch-definition').textContent.includes('Candidates') && document.querySelector('.launch-definition').textContent.includes('Added training data') && document.querySelector('.launch-definition').textContent.includes('API calls') && !document.querySelector('.launch-definition').textContent.includes('Repair the observed retrieval regression')");
-    await textButton("Review run");
-    await check("preparation has one compact progress state", "document.querySelector('.workspace-progress')?.textContent === 'Preparing…'");
-    await until("document.querySelector('.launch-definition details summary')?.textContent === 'Technical details'");
-    await check("technical disclosure retains exact execution facts", "document.querySelector('.launch-definition').textContent.includes('generic_holdout') && document.querySelector('.launch-definition').textContent.includes('nomos_sealed_acceptance') && document.querySelector('.launch-definition').textContent.includes('Learning rate')");
-    await check("prepared run exposes the useful summary without research prose", "document.querySelector('.launch-definition').textContent.includes('2m') && document.querySelector('.launch-definition').textContent.includes('API calls0') && document.querySelector('.launch-actions button').textContent === 'Start run' && !document.querySelector('.launch-definition').textContent.includes('Reviewed objective') && document.querySelector('.launch-definition details summary').textContent === 'Technical details'");
-    await screenshot("managed-optimization-prepared");
+    // Existing CLI-created runs remain supervised through Runs. Optimize no
+    // longer launches a pre-reviewed recipe unrelated to the selected inputs.
+    readiness.launchPreview = { ...preview, existingRun: { runId, state: "planned" } };
     await nav("datasets"); await until("document.querySelector('.empty-state h2')?.textContent === 'No datasets'");
     await check("Data contains dataset objects, not optimization authority or decorative counts", "document.querySelector('.page-heading h1').textContent === 'Data' && !document.querySelector('.page-heading p') && !document.querySelector('.scientific-data-card') && !document.querySelector('.page-heading .tag') && !document.getElementById('page').textContent.includes('repair rows')");
     await screenshot("managed-data-with-training-snapshot");
     await nav("benchmarks"); await until("document.querySelector('.empty-state h2')?.textContent === 'No benchmark'");
     await check("Evaluation does not substitute a prepared run for a project benchmark", "document.querySelector('.page-heading h1').textContent === 'Evaluation' && !document.querySelector('.page-heading p') && !document.querySelector('.evaluation-plan') && !document.querySelector('.benchmark-section')");
     await screenshot("managed-evaluation-empty");
-    await click("#project-optimize"); await until("document.querySelector('.launch-definition .section-heading h2')?.textContent === 'Run'");
-    await textButton("Start run");
-    await check("start visibly enters non-repeatable verification", "document.querySelector('.workspace-progress')?.textContent.includes('Starting…') && document.querySelector('.launch-actions button').disabled && document.querySelector('.launch-actions button').textContent === 'Starting…'");
+    await nav("runs"); await until("document.querySelector('.optimization-run-row')"); await textButton("Continue run");
     await until("document.querySelector('.run-control')?.textContent.includes('Build and evaluate the candidate')");
     await check("reservation exposes only the next durable stage", "document.querySelector('.launch-summary h2').textContent === 'Ready to continue' && [...document.querySelectorAll('.run-control button')].some(b=>b.textContent === 'Build and evaluate the candidate') && document.querySelector('#nav-runs .nav-count').textContent === '1'");
     await textButton("Build and evaluate the candidate"); await until("document.querySelector('.live-counter progress')?.value === 24");
@@ -266,7 +246,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     statusFails = false;
     await nav("models");
     currentRun.activity = { ...currentRun.activity!, phase: "evaluating_retrieval", completed: undefined, total: undefined };
-    await click("#project-optimize");
+    await nav("runs"); await textButton("Continue run");
     await until("document.querySelector('.live-run h3')?.textContent === 'Evaluating retrieval'");
     await check("returning to an executing run restores observation without stale training percentages", "!document.querySelector('.live-counter') && document.querySelector('.launch-summary h2').textContent === 'Running' && !document.querySelector('.run-connection-warning')");
     releaseTraining(); await until("[...document.querySelectorAll('.run-control button')].some(button=>button.textContent === 'Authorize one sealed evaluation' && !button.disabled)");
@@ -527,6 +507,56 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   for (const width of [760, 390]) {
     await screenshot("managed-benchmark-results-" + width, width, 800);
     await check("benchmark table scrolls locally without overflowing the page at " + width, "document.getElementById('page').scrollWidth <= document.getElementById('page').clientWidth + 1 && document.documentElement.scrollWidth <= innerWidth && document.querySelector('.benchmark-table-scroll').clientWidth > 100");
+  }
+  window.setContentSize(1440, 960);
+  // Actual CLI custody fixtures; all selection, save/retry and inspection below
+  // runs through the renderer and production IPC/CLI, with no optimizer stub.
+  const setupCommand = (args: string[]) => JSON.parse(execFileSync(harness.backend.executable, ["--output", "json", "workspace", ...args], { encoding: "utf8", windowsHide: true, maxBuffer: 16 * 1024 * 1024 }));
+  const setupSource = join(root, "optimization-training.jsonl");
+  writeFileSync(setupSource, JSON.stringify({ text: "OPTIMIZATION_TRAINING_ROW_CANARY", label: "training" }) + "\n");
+  const setupProjectId = harness.registry.read().selectedId!;
+  const importPreview = await harness.backend.chooseDataset(setupProjectId, setupSource, "training");
+  const imported = await harness.backend.importDataset(setupProjectId, importPreview.token, "Starting data");
+  const sourceId = imported.datasets.at(-1)!.id;
+  const baseId = randomUUID(), baseVersion = randomUUID(), variantId = randomUUID(), variantVersion = randomUUID();
+  setupCommand(["dataset", benchmarkFixture.folder, "create", "--name", "Base dataset", "--dataset-id", baseId, "--version-id", baseVersion, "--source", sourceId]);
+  setupCommand(["dataset", benchmarkFixture.folder, "fork", baseVersion, "--name", "Variant", "--dataset-id", variantId, "--version-id", variantVersion]);
+  await click("#reload-evidence"); await loaded(); await click("#project-optimize");
+  await until("document.getElementById('optimization-dataset') && document.getElementById('optimization-benchmark') && !document.querySelector('.workspace-progress')");
+  await check("multiple starting datasets require a choice instead of guessing", "document.getElementById('optimization-dataset').value === '' && document.getElementById('optimization-save-inputs').disabled");
+  const selectInput = async (id: string, value: string) => evaluate("(()=>{const input=document.getElementById(" + JSON.stringify(id) + ");input.value=" + JSON.stringify(value) + ";input.dispatchEvent(new Event('change',{bubbles:true}))})()");
+  await selectInput("optimization-dataset", baseVersion);
+  await check("Optimize contains only named input versions, not row payload or old recipes", "document.querySelector('.optimization-inputs').textContent.includes('Baseline') && document.querySelectorAll('.optimization-input').length === 3 && !document.getElementById('page').textContent.includes('OPTIMIZATION_TRAINING_ROW_CANARY') && !document.querySelector('.launch-definition') && !document.getElementById('optimization-save-inputs').disabled");
+  await textButton("Inspect model"); await until("document.querySelector('.model-view')"); await click("#navigate-back");
+  await textButton("Inspect dataset"); await until("document.querySelectorAll('.dataset-row-entry').length === 1"); await click("#navigate-back");
+  await textButton("Inspect benchmark"); await until("document.querySelector('.benchmark-protocol')"); await click("#navigate-back");
+  await check("artifact inspection returns to the same unsaved selections", "document.getElementById('optimization-dataset').value === " + JSON.stringify(baseVersion));
+  const saveInputs = harness.backend.optimizationSetup.save.bind(harness.backend.optimizationSetup);
+  const inputRequests: unknown[] = []; let loseInputReply = true;
+  try {
+    harness.backend.optimizationSetup.save = async (id, request) => {
+      inputRequests.push(structuredClone(request)); const result = await saveInputs(id, request);
+      if (loseInputReply) { loseInputReply = false; throw new Error("Input-save response lost after commit"); }
+      return result;
+    };
+    await click("#optimization-save-inputs"); await until("document.querySelector('.operation-failure') && !document.getElementById('optimization-save-inputs').disabled");
+    await check("failed save exits busy state and exposes retry", "document.getElementById('optimization-save-inputs').textContent === 'Retry save' && !document.querySelector('.workspace-progress')");
+    await click("#optimization-save-inputs"); await until("document.getElementById('optimization-save-inputs')?.textContent === 'Inputs saved'");
+    if (inputRequests.length !== 2 || JSON.stringify(inputRequests[0]) !== JSON.stringify(inputRequests[1])) throw new Error("Input-save retry changed the reviewed request");
+  } finally { harness.backend.optimizationSetup.save = saveInputs; }
+  let setupHistory = await harness.backend.optimizationSetup.list(setupProjectId);
+  if (setupHistory.length !== 1 || setupHistory[0]!.inputs.dataset.id !== baseVersion) throw new Error("Input-save retry duplicated or substituted setup");
+  await selectInput("optimization-dataset", variantVersion);
+  const oldBenchmark = await evaluate("document.getElementById('optimization-benchmark').options[1].value") as string;
+  await selectInput("optimization-benchmark", oldBenchmark);
+  await click("#optimization-save-inputs"); await until("document.getElementById('optimization-save-inputs')?.textContent === 'Inputs saved'");
+  setupHistory = await harness.backend.optimizationSetup.list(setupProjectId);
+  if (setupHistory.length !== 2 || setupHistory[1]!.inputs.dataset.id !== variantVersion || setupHistory[1]!.inputs.benchmark.id !== oldBenchmark || setupHistory[1]!.parent?.id !== setupHistory[0]!.id) throw new Error("Changed inputs did not preserve setup history");
+  await check("saved selection makes no false execution claim", "document.getElementById('page').textContent.includes('No run started') && document.getElementById('page').textContent.includes('Automatic execution not connected') && document.getElementById('optimization-save-inputs').disabled");
+  await screenshot("managed-optimization-inputs");
+  for (const width of [760, 390]) {
+    await screenshot("managed-optimization-inputs-" + width, width, 800);
+    await check("input selection fits the page at " + width, "document.getElementById('page').scrollWidth <= document.getElementById('page').clientWidth + 1 && document.documentElement.scrollWidth <= innerWidth");
   }
   window.setContentSize(1440, 960);
   if (!scientificBefore.equals(readFileSync(join(benchmarkFixture.folder, "runs/scientific.sqlite")))) throw new Error("Benchmark inspection/adoption changed scientific evidence");

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const root = new URL("../", import.meta.url);
 
-for (const module of ["projects", "project-registry", "managed-backend", "managed-datasets", "managed-benchmarks", "credential-store", "presentation-errors", "run-activity"]) await build({
+for (const module of ["projects", "project-registry", "managed-backend", "managed-datasets", "managed-benchmarks", "managed-optimization-setup", "credential-store", "presentation-errors", "run-activity"]) await build({
   entryPoints: [fileURLToPath(new URL(`../src/${module}.ts`, import.meta.url))],
   outfile: fileURLToPath(new URL(`../dist/evidence/${module}.js`, import.meta.url)),
   bundle: true, platform: "node", format: "esm", logLevel: "info",
@@ -15,7 +15,7 @@ await build({
   outfile: fileURLToPath(new URL("../dist/evidence/read-workspace.js", import.meta.url)),
   bundle: true, platform: "node", format: "esm", logLevel: "info",
 });
-for (const [source, name] of [["catalog", "catalog"], ["model-inventory", "model-inventory"], ["state", "navigation"], ["dataset-controller", "dataset-controller"], ["benchmark-controller", "benchmark-controller"]]) await build({
+for (const [source, name] of [["catalog", "catalog"], ["model-inventory", "model-inventory"], ["state", "navigation"], ["dataset-controller", "dataset-controller"], ["benchmark-controller", "benchmark-controller"], ["optimization-setup-controller", "optimization-setup-controller"]]) await build({
   entryPoints: [fileURLToPath(new URL(`../src/renderer/${source}.ts`, import.meta.url))],
   outfile: fileURLToPath(new URL(`../dist/evidence/${name}.js`, import.meta.url)),
   bundle: true, platform: "node", format: "esm", logLevel: "info",

@@ -206,6 +206,9 @@ ipcMain.handle("encoder-gym:choose-dataset", async (_event, value: unknown, purp
 });
 ipcMain.handle("encoder-gym:query-datasets", (_event, value: unknown, request: unknown) => backend.datasetVersions.query(projectId(value), request));
 ipcMain.handle("encoder-gym:query-benchmarks", (_event, value: unknown, request: unknown) => backend.benchmarks.query(projectId(value), request));
+ipcMain.handle("encoder-gym:optimization-setups", (_event, value: unknown) => backend.optimizationSetup.list(projectId(value)));
+ipcMain.handle("encoder-gym:preview-optimization-setup", (_event, value: unknown, request: unknown) => backend.optimizationSetup.preview(projectId(value), request));
+ipcMain.handle("encoder-gym:save-optimization-setup", (_event, value: unknown, request: unknown) => backend.optimizationSetup.save(projectId(value), request));
 ipcMain.handle("encoder-gym:preview-benchmark", (_event, value: unknown, run: unknown) => backend.benchmarks.preview(projectId(value), run));
 ipcMain.handle("encoder-gym:adopt-benchmark", (_event, value: unknown, request: unknown) => backend.benchmarks.adopt(projectId(value), request));
 ipcMain.handle("encoder-gym:mutate-dataset", (_event, value: unknown, request: unknown) => backend.datasetVersions.mutate(projectId(value), request));

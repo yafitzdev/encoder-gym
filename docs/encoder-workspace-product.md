@@ -83,8 +83,8 @@ decision. No unbounded work or inferred spending.
    offers one results matrix, version selection/history, protocol inspection,
    and guarded adoption from recorded authority. Initial test-data onboarding
    and pinning the selected version to automatic Optimize remain pending.
-4. Automatic bounded optimization — the input-selection domain, persistence and
-   CLI are implemented. Desktop selection, persisted launch scope, agent and
+4. Automatic bounded optimization — the input-selection domain, persistence,
+   CLI and desktop selection are implemented. Persisted launch scope, agent and
    generation integration, routine continuation, output registration and recovery
    remain pending.
    Verify real CLI composition using deterministic offline fakes.
@@ -384,3 +384,40 @@ and keep outstanding requirements visible.
   execution scope/budgets and the full bounded agent/optimization integration
   still have to consume this selection end to end. See
   `optimization-launch-spec.md` for the contract and remaining execution boundary.
+
+### Desktop optimization inputs — 11 September 2026
+
+- Project Optimize now opens three compact input rows: the current baseline,
+  a named dataset version, and a shared benchmark version. Each opens its
+  ordinary artifact viewer. Missing inputs link to Data or Evaluation; a saved
+  version does not silently follow later dataset or benchmark versions.
+- The fixed desktop bridge invokes the existing setup preview/save/list CLI.
+  It rejects paths, execution settings, secrets and foreign/substituted inputs.
+  Save retains the exact retry request after a lost save or reload response;
+  changed inputs and refresh abandon that retry. Reopening/moving a project
+  fences late responses, and retries reload current history without reactivating
+  an older setup. Full custody verification stays in the local Rust adapter.
+- Existing optimization supervision remains in Runs. The new entry screen no
+  longer starts a previously prepared recipe unrelated to the user's selection.
+  It explicitly says automatic execution is not connected and that saving
+  inputs does not start a run. No new execution authority is inferred.
+- All four Rust gates passed, as did UI typecheck/build, 80 unit tests and four
+  isolated Electron launches. The actual renderer/IPC/CLI journey tests missing
+  and multiple datasets, all three artifact links, save, a lost reply after
+  commit, exact retry, changed data/benchmark selection, immutable history,
+  narrow layouts and restoration in another Electron process. Scientific
+  database bytes remain unchanged. Screenshots were inspected at desktop and
+  narrow widths under `ui/qa/managed-optimization-inputs*`.
+- Read-only Nomos verification passed both model/dataset viewers, project pages,
+  benchmark preview and the new Optimize entry. Its baseline-linked dataset is
+  selected, while evaluation correctly requires a catalog version. The saved
+  library, manifest, custody database and verified workspace facts are unchanged.
+  No setup, provider call, training or protected evaluation ran on Nomos.
+- Local evidence: `target/optimization-inputs-rust-tests.log`,
+  `target/optimization-inputs-ui-tests.log`,
+  `target/optimization-inputs-electron-tests.log`, and
+  `target/optimization-inputs-current-ui.log`.
+- Remaining work is still the complete automatic bounded optimization journey:
+  launch scope/budgets, adapter-owned selected-data admission/materialization,
+  agent and generation integration, automatic continuation and recovery. Fresh
+  benchmark onboarding and model-level promotion/restoration are also pending.

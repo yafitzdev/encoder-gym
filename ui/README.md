@@ -123,9 +123,12 @@ authority. New projects without recorded authority still need test-data onboardi
 
 The input-first launch backend now has `workspace optimization-setup` preview,
 save and list commands. It pins the current baseline, training dataset version
-and shared benchmark version in immutable project history. This is not yet
-wired into the desktop launch page or an automatic executor; saving configuration
-does not run the older reviewed recipe or authorize spending. See
+and shared benchmark version in immutable project history. The project-header
+Optimize screen now selects those inputs and opens their common artifact viewers.
+It preserves exact versions across restart and exact request IDs across save
+retries. The automatic executor is not connected yet; saving configuration does
+not run the older reviewed recipe or authorize spending. Existing run controls
+remain accessible from Runs. See
 [optimization launch](../docs/optimization-launch-spec.md).
 
 Managed onboarding calls the project-owned `synth workspace` commands. It

@@ -38,6 +38,26 @@ previous setup UUID or null), and the exact `inputs` returned by preview.
 
 ## Execution integration
 
+The project-header Optimize action opens the desktop input selector. It shows
+the active baseline and named dataset/benchmark versions, with links to their
+ordinary viewers. First setup prefers the model's recorded training version;
+multiple unrelated datasets require a choice. Saved versions never follow a
+newer dataset or benchmark automatically. Reopening a project reloads persisted
+selection history and a changed baseline requires a new saved selection.
+
+Save uses the same preview/save CLI, checks the preview against the displayed
+identities and expected parent, and preserves its exact retry UUID after a lost
+save or reload response. Changing inputs or refreshing abandons that retry.
+Late responses from an old project location cannot replace current selection.
+The renderer supplies no paths, credentials, native rows or execution settings.
+The main process writes only a strict temporary request and removes it on both
+success and failure. Each explicit save retains the ordinary CLI action UUID.
+
+Saving inputs is available now; automatic execution is not connected yet and
+the desktop states that limitation. It must not imply a run has started or
+fall back to a previously prepared recipe. Existing runs are opened from Runs
+and retain their current supervision, recovery and approval controls.
+
 Optimize must consume this exact saved setup, resolve finite training/iteration
 and separate provider budgets, and persist explicit execution authorization.
 The bounded agent uses development evidence to choose generation/training work;

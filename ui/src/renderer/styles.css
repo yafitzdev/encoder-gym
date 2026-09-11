@@ -706,6 +706,19 @@ dialog::backdrop { background: #0008; }
   .empty-baseline { align-items: start; padding: 17px; gap: 12px; }
 }
 /* Shared artifact collection and viewer. */
+.optimization-inputs { max-width: 840px; border-top: 1px solid var(--line); }
+.optimization-input { display: grid; grid-template-columns: 160px minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 24px 0; border-bottom: 1px solid var(--line); }
+.optimization-input h2 { font-size: 16px; margin: 0; }
+.optimization-input .select-control { display: flex; flex-direction: column; align-items: stretch; min-width: 0; }
+.optimization-input .select-control > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.optimization-input select { width: 100%; min-width: 0; }
+.optimization-input-selection { grid-column: 2 / -1; justify-content: space-between; }
+.optimization-input-selection, .optimization-input-actions, .optimization-execution-state { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.optimization-input-selection strong { overflow-wrap: anywhere; }
+.optimization-input-actions { margin-top: 28px; }
+.optimization-execution-state { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line-soft); }
+@media(max-width:1000px) { .optimization-input { grid-template-columns: 1fr auto; } .optimization-input h2 { grid-column: 1 / -1; } .optimization-input-selection { grid-column: 1 / -1; } }
+@media(max-width:600px) { .optimization-input { grid-template-columns: 1fr; gap: 12px; padding: 20px 0; } .optimization-input > .button { justify-self: start; padding-left: 0; } .optimization-input-selection { gap: 8px; } }
 .collection-toolbar { display:flex; gap:16px; align-items:center; margin-bottom:20px; }
 .collection-toolbar .text-input { max-width:360px; }
 .artifact-list { border-top:1px solid var(--line); }

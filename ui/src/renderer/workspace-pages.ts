@@ -8,10 +8,10 @@ import { h } from "./dom.js";
 
 export function renderRuns(workspace: WorkspaceSnapshot, actions: Actions, optimization?: ManagedRunStatus): HTMLElement {
   const active = optimization && !["completed", "cancelled", "failed"].includes(optimization.state);
-  return workspacePage("Runs", workspace.managed ? button(optimization ? "Open optimization" : "Start optimization", actions.prepareOptimization, "primary", "runs") : tag(String(workspace.runs.length)),
+  return workspacePage("Runs", null,
     optimization ? h("section", { class: "optimization-run-row" },
       h("div", {}, h("div", { class: "eyebrow" }, active ? "Current optimization" : "Latest optimization"), h("h2", {}, optimization.stage.label), facts([["Optimization run", optimization.run_id], ["State", optimization.state.replaceAll("_", " ")], ["Durable transitions", String(optimization.last_sequence)], ...(optimization.decision ? [["Decision", optimization.decision.replaceAll("_", " ")] as [string, string]] : [])])),
-      button(active ? "Continue run" : "Inspect run", actions.prepareOptimization, "secondary", "arrow")) : null,
+      button(active ? "Continue run" : "Inspect run", () => actions.navigate({ page: "optimization" }), "secondary", "arrow")) : null,
     sectionHeader("Experiment runs", tag(String(workspace.runs.length))),
     workspace.runs.length ? h("div", { class: "run-list" }, ...workspace.runs.map(run => runListItem(run, workspace, actions))) : empty(optimization ? "No experiment record" : "No runs"));
 }

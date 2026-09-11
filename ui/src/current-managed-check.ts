@@ -75,7 +75,7 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
     await capture("managed-current-" + page);
   }
   await evaluate("document.getElementById('project-optimize').click()");
-  await until("document.querySelector('.optimization-page') && !document.querySelector('.workspace-progress') && !document.querySelector('.optimization-page [role=status]')");
+  await until("document.querySelector('.optimization-inputs') && !document.querySelector('.workspace-progress')");
   await capture("managed-current-readiness");
   const after = await backend.openRegistered(collection.selectedId, true);
   if (!before.equals(readFileSync(registry.file))) throw new Error("Verification changed the saved library.");
