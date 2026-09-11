@@ -309,6 +309,23 @@ pub enum WorkspaceCommand {
         #[arg(long, default_value = "Promote sealed-accepted optimization candidate")]
         reason: String,
     },
+    /// Reactivate a model from immutable baseline history.
+    RestoreBaseline {
+        folder: PathBuf,
+        /// Stable identity for retrying this exact baseline revision.
+        #[arg(long)]
+        revision_id: Uuid,
+        /// Earlier baseline revision whose model should become active again.
+        #[arg(long)]
+        target_revision_id: Uuid,
+        /// Active revision observed before the user confirmed restoration.
+        #[arg(long)]
+        expected_baseline_revision_id: Uuid,
+        #[arg(long, default_value = "local-operator")]
+        actor: String,
+        #[arg(long, default_value = "Restore previous baseline")]
+        reason: String,
+    },
     /// Configure separate project providers without storing secret values.
     Providers {
         folder: PathBuf,

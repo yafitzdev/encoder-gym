@@ -536,6 +536,61 @@ impl ModelCatalog {
         Ok(next)
     }
 
+    /// Make the model from an earlier baseline revision active again.
+    ///
+    /// Restoration appends history; it never rewrites or removes the current
+    /// baseline revision. Only a model that previously held baseline authority
+    /// can use this path. New candidates still require a scientific promotion
+    /// decision.
+    pub fn with_restoration(
+        &self,
+        revision_id: Uuid,
+        target_revision_id: Uuid,
+        actor: impl Into<String>,
+        reason: impl Into<String>,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        self.validate()?;
+        require(
+            !revision_id.is_nil()
+                && !target_revision_id.is_nil()
+                && self
+                    .baseline_revisions
+                    .iter()
+                    .all(|revision| revision.id != revision_id),
+            "A restoration requires a new revision identity and an earlier target.",
+        )?;
+        let target = self
+            .baseline_revisions
+            .iter()
+            .find(|revision| revision.id == target_revision_id)
+            .ok_or_else(|| Invalid("The requested previous baseline does not exist.".into()))?;
+        require(
+            target.id != self.active_baseline_revision_id
+                && target.model_artifact_id != self.active_model().id,
+            "Choose a previous baseline model that is not already active.",
+        )?;
+        let revision = BaselineRevision::restoration(
+            revision_id,
+            self.project_id,
+            u64::try_from(self.baseline_revisions.len())
+                .map_err(|_| Invalid("Baseline revision count overflowed.".into()))?
+                .checked_add(1)
+                .ok_or_else(|| Invalid("Baseline revision count overflowed.".into()))?,
+            target.model_artifact_id,
+            self.active_baseline_revision_id,
+            target_revision_id,
+            actor,
+            reason,
+            created_at,
+        )?;
+        let mut next = self.clone();
+        next.baseline_revisions.push(revision);
+        next.active_baseline_revision_id = revision_id;
+        next.validate()?;
+        Ok(next)
+    }
+
     /// Register an output independently of its evaluation or baseline status.
     pub fn with_artifact(&self, artifact: ModelArtifact) -> Result<Self, Invalid> {
         self.validate()?;
@@ -832,6 +887,104 @@ mod tests {
                     "Wrong parent",
                     at(),
                 )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn restoration_reactivates_an_earlier_model_without_rewriting_history() {
+        let project_id = Uuid::new_v4();
+        let baseline = ModelArtifact::imported_baseline(
+            project_id,
+            Uuid::new_v4(),
+            "Imported baseline",
+            &local_model(),
+            at(),
+        )
+        .unwrap();
+        let initial_revision_id = Uuid::new_v4();
+        let catalog = ModelCatalog::initialize(
+            project_id,
+            baseline.clone(),
+            initial_revision_id,
+            baseline.fingerprint.clone(),
+            at(),
+        )
+        .unwrap();
+        let candidate = ModelArtifact::trained(
+            project_id,
+            Uuid::new_v4(),
+            "Accepted candidate",
+            "models/candidates/accepted",
+            &local_model(),
+            baseline.id,
+            BoundIdentity {
+                id: Uuid::new_v4().to_string(),
+                fingerprint: digest('4'),
+            },
+            BoundIdentity {
+                id: Uuid::new_v4().to_string(),
+                fingerprint: digest('5'),
+            },
+            BoundIdentity {
+                id: Uuid::new_v4().to_string(),
+                fingerprint: digest('6'),
+            },
+            BoundIdentity {
+                id: "fixture:v1".into(),
+                fingerprint: digest('7'),
+            },
+            digest('8'),
+            "source-revision".into(),
+            at(),
+        )
+        .unwrap();
+        let promoted = catalog
+            .with_promotion(
+                candidate,
+                Uuid::new_v4(),
+                "decision".into(),
+                digest('9'),
+                "operator",
+                "accepted",
+                at(),
+            )
+            .unwrap();
+        let restoration_id = Uuid::new_v4();
+        let restored = promoted
+            .with_restoration(
+                restoration_id,
+                initial_revision_id,
+                "operator",
+                "restore previous baseline",
+                at(),
+            )
+            .unwrap();
+        assert_eq!(restored.active_model().id, baseline.id);
+        assert_eq!(restored.baseline_revisions.len(), 3);
+        assert_eq!(
+            restored.baseline_revisions[..2],
+            promoted.baseline_revisions
+        );
+        assert!(matches!(
+            restored.active_revision().change,
+            BaselineChange::Restoration { target_revision_id }
+                if target_revision_id == initial_revision_id
+        ));
+        assert!(
+            restored
+                .with_restoration(
+                    Uuid::new_v4(),
+                    restoration_id,
+                    "operator",
+                    "already active",
+                    at(),
+                )
+                .is_err()
+        );
+        assert!(
+            promoted
+                .with_restoration(Uuid::new_v4(), Uuid::new_v4(), "operator", "unknown", at(),)
                 .is_err()
         );
     }

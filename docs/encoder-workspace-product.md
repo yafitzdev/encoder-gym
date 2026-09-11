@@ -95,6 +95,24 @@ decision. No unbounded work or inferred spending.
 5. Complete journey — pending. Renderer interactions for setup, Optimize,
    results, artifact inspection, and promotion; read-only Nomos verification.
 
+### Baseline restoration contract — 11 September 2026
+
+- A model that previously held baseline authority can be made active again by
+  appending a restoration revision. The current revision and every model
+  artifact remain unchanged in history; restoration never copies, moves,
+  deletes, or rewrites a checkpoint.
+- `workspace restore-baseline` requires the exact active revision, an earlier
+  target revision, and a stable retry UUID. Stale requests and attempts to
+  restore the already-active model fail closed. The operation records a
+  payload-free `model.restore_baseline` activity chain.
+- Model artifacts and baseline revisions now have database-level immutable
+  update/delete guards. Core, local-adapter, and actual CLI process tests cover
+  replay, stale state, exact history, and storage tampering. All four Rust gates
+  pass.
+- The model viewer still needs the compact Promote/Make baseline controls and
+  the typed Electron restoration bridge. This backend stage does not change the
+  real Nomos baseline or claim that input-first optimization execution exists.
+
 No single stage establishes goal completion. Record validation as stages land
 and keep outstanding requirements visible.
 

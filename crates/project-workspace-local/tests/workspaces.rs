@@ -6,11 +6,12 @@ use project_workspace_core::{
     ScientificBinding, ScientificStoreBinding, SecretReference,
 };
 use project_workspace_local::{
-    AcceptedModelPromotion, AppendActivity, CompletedModelRegistration, append_activity,
-    backfill_nomos, create_workspace, export_activity, import_dataset, initialize_activity,
-    inspect_dataset, inspect_model, open_workspace, read_action, read_activity,
-    record_accepted_model_promotion, record_provider_catalog, record_scientific_binding,
-    register_completed_model, upgrade_workspace,
+    AcceptedModelPromotion, AppendActivity, BaselineRestorationRequest, CompletedModelRegistration,
+    append_activity, backfill_nomos, create_workspace, export_activity, import_dataset,
+    initialize_activity, inspect_dataset, inspect_model, open_workspace, read_action,
+    read_activity, record_accepted_model_promotion, record_baseline_restoration,
+    record_provider_catalog, record_scientific_binding, register_completed_model,
+    upgrade_workspace,
 };
 use serde_json::json;
 use std::fs;
@@ -532,6 +533,127 @@ async fn accepted_model_promotion_copies_once_and_advances_the_baseline_atomical
     )
     .unwrap();
     assert!(open_workspace(&destination, true).await.is_err());
+}
+
+#[tokio::test]
+async fn baseline_restoration_appends_once_and_preserves_every_artifact() {
+    use sqlx::{Connection, SqliteConnection};
+
+    let temp = TempDir::new().unwrap();
+    let source = model(temp.path());
+    let preview = inspect_model(&source).unwrap();
+    let destination = temp.path().join("restoration-project");
+    let created = create_workspace(
+        &destination,
+        "Restoration fixture",
+        &source,
+        &preview.fingerprint,
+        None,
+    )
+    .await
+    .unwrap();
+    let initial_revision = created
+        .model_catalog
+        .as_ref()
+        .unwrap()
+        .active_baseline_revision_id;
+    let initial_model = created.model_catalog.as_ref().unwrap().active_model().id;
+    let candidate = temp.path().join("restoration-candidate");
+    training_transformer::fixture::write_tiny_bert_bundle(&candidate).unwrap();
+    fs::write(candidate.join("candidate.json"), b"{\"accepted\":true}\n").unwrap();
+    let candidate_model = inspect_model(&candidate).unwrap();
+    let promoted = record_accepted_model_promotion(
+        &destination,
+        &candidate,
+        AcceptedModelPromotion {
+            expected_baseline_revision_id: initial_revision,
+            name: "Accepted candidate".into(),
+            source_model: BoundIdentity {
+                id: uuid::Uuid::new_v4().to_string(),
+                fingerprint: digest('d'),
+            },
+            source_model_format: candidate_model.format,
+            source_model_bytes: candidate_model.bytes,
+            producing_run: BoundIdentity {
+                id: uuid::Uuid::new_v4().to_string(),
+                fingerprint: digest('e'),
+            },
+            training_snapshot: BoundIdentity {
+                id: uuid::Uuid::new_v4().to_string(),
+                fingerprint: digest('f'),
+            },
+            trainer: BoundIdentity {
+                id: "fixture-trainer:v1".into(),
+                fingerprint: digest('1'),
+            },
+            effective_configuration_fingerprint: digest('2'),
+            source_revision: "fixture-source-revision".into(),
+            decision_id: "experiment-final:restoration:9".into(),
+            decision_fingerprint: digest('3'),
+            actor: "fixture-operator".into(),
+            reason: "Passed final evaluation".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let promoted_catalog = promoted.model_catalog.as_ref().unwrap();
+    let promoted_revision = promoted_catalog.active_baseline_revision_id;
+    let request = BaselineRestorationRequest {
+        revision_id: uuid::Uuid::new_v4(),
+        expected_baseline_revision_id: promoted_revision,
+        target_revision_id: initial_revision,
+        actor: "fixture-operator".into(),
+        reason: "Restore previous baseline".into(),
+    };
+    let restored = record_baseline_restoration(&destination, request.clone())
+        .await
+        .unwrap();
+    let catalog = restored.model_catalog.as_ref().unwrap();
+    assert_eq!(catalog.active_baseline_revision_id, request.revision_id);
+    assert_eq!(catalog.active_model().id, initial_model);
+    assert_eq!(catalog.artifacts, promoted_catalog.artifacts);
+    assert_eq!(catalog.baseline_revisions.len(), 3);
+    assert_eq!(
+        record_baseline_restoration(&destination, request)
+            .await
+            .unwrap()
+            .model_catalog
+            .unwrap(),
+        *catalog
+    );
+
+    let stale = BaselineRestorationRequest {
+        revision_id: uuid::Uuid::new_v4(),
+        expected_baseline_revision_id: promoted_revision,
+        target_revision_id: initial_revision,
+        actor: "fixture-operator".into(),
+        reason: "Stale request".into(),
+    };
+    assert!(
+        record_baseline_restoration(&destination, stale)
+            .await
+            .is_err()
+    );
+    let url = format!("sqlite://{}", destination.join("project.sqlite").display());
+    let mut database = SqliteConnection::connect(&url).await.unwrap();
+    assert!(
+        sqlx::query("UPDATE baseline_revisions SET change_kind='changed' WHERE id=?")
+            .bind(initial_revision.to_string())
+            .execute(&mut database)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("Baseline revisions are immutable")
+    );
+    assert!(
+        sqlx::query("DELETE FROM model_artifacts WHERE id=?")
+            .bind(initial_model.to_string())
+            .execute(&mut database)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("Model artifacts are immutable")
+    );
 }
 
 #[tokio::test]

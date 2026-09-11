@@ -50,6 +50,16 @@ pub struct AcceptedModelPromotion {
     pub reason: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct BaselineRestorationRequest {
+    /// Stable retry identity for the new append-only baseline revision.
+    pub revision_id: Uuid,
+    pub expected_baseline_revision_id: Uuid,
+    pub target_revision_id: Uuid,
+    pub actor: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ManagedWorkspace {
@@ -630,6 +640,101 @@ pub async fn record_accepted_model_promotion(
     ensure!(
         updated.rows_affected() == 1,
         "The active baseline changed while promotion was committing."
+    );
+    transaction.commit().await?;
+    database.close().await?;
+    open_workspace(root, true).await
+}
+
+/// Reactivate the model from an earlier baseline revision without moving or
+/// rewriting any model artifact. A restoration is itself a new immutable
+/// revision, so the baseline history remains complete and retryable.
+pub async fn record_baseline_restoration(
+    folder: &Path,
+    request: BaselineRestorationRequest,
+) -> Result<ManagedWorkspace> {
+    validate_name(&request.actor)?;
+    validate_name(&request.reason)?;
+    let workspace = open_workspace(folder, true).await?;
+    let catalog = workspace
+        .model_catalog
+        .as_ref()
+        .context("Upgrade this managed workspace before restoring a baseline.")?;
+    if let Some(existing) = catalog
+        .baseline_revisions
+        .iter()
+        .find(|revision| revision.id == request.revision_id)
+    {
+        ensure!(
+            existing.id == catalog.active_baseline_revision_id
+                && existing.previous_revision_id == Some(request.expected_baseline_revision_id)
+                && existing.actor == request.actor
+                && existing.reason == request.reason
+                && matches!(
+                    existing.change,
+                    BaselineChange::Restoration { target_revision_id }
+                        if target_revision_id == request.target_revision_id
+                ),
+            "Baseline restoration retry identity already contains another change."
+        );
+        return Ok(workspace);
+    }
+    ensure!(
+        catalog.active_baseline_revision_id == request.expected_baseline_revision_id,
+        "The active baseline changed. Reload Models before restoring it."
+    );
+    let next = catalog.with_restoration(
+        request.revision_id,
+        request.target_revision_id,
+        request.actor,
+        request.reason,
+        Utc::now(),
+    )?;
+    let revision = next
+        .baseline_revisions
+        .last()
+        .context("Baseline restoration did not append a revision.")?;
+    let root = Path::new(&workspace.folder);
+    let mut database = connect(root, false, false).await?;
+    let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
+    let current = Uuid::parse_str(
+        &sqlx::query_scalar::<_, String>(
+            "SELECT active_baseline_revision_id FROM model_catalog_state WHERE singleton=1",
+        )
+        .fetch_one(&mut *transaction)
+        .await?,
+    )?;
+    ensure!(
+        current == request.expected_baseline_revision_id,
+        "The active baseline changed while restoration was committing."
+    );
+    sqlx::query(
+        "INSERT INTO baseline_revisions \
+         (id, project_id, sequence, model_artifact_id, previous_revision_id, change_kind, fingerprint, metadata_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(revision.id.to_string())
+    .bind(revision.project_id.to_string())
+    .bind(i64::try_from(revision.sequence)?)
+    .bind(revision.model_artifact_id.to_string())
+    .bind(revision.previous_revision_id.map(|value| value.to_string()))
+    .bind(baseline_change(&revision.change))
+    .bind(&revision.fingerprint)
+    .bind(serde_json::to_string(revision)?)
+    .execute(&mut *transaction)
+    .await?;
+    let updated = sqlx::query(
+        "UPDATE model_catalog_state SET active_baseline_revision_id=? \
+         WHERE singleton=1 AND project_id=? AND active_baseline_revision_id=?",
+    )
+    .bind(revision.id.to_string())
+    .bind(workspace.manifest.id.to_string())
+    .bind(current.to_string())
+    .execute(&mut *transaction)
+    .await?;
+    ensure!(
+        updated.rows_affected() == 1,
+        "The active baseline changed while restoration was committing."
     );
     transaction.commit().await?;
     database.close().await?;

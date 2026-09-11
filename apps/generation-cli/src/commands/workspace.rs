@@ -24,16 +24,18 @@ use encoder_experiment_sqlite::{
     SCHEMA_ID, ScientificStoreInventory, SqliteExperimentStore, schema_fingerprint,
 };
 use project_workspace_core::{
-    AdapterBinding, BoundIdentity, ModelArtifact, ModelOrigin, ProviderAuthentication,
-    ProviderCatalog, ProviderConfiguration, ProviderKind, ProviderLimits, ProviderRole,
-    ReadinessAction, ReadinessCategory, ReadinessCheck, ReadinessReport, ReadinessState,
-    RuntimeBinding, RuntimeKind, ScientificBinding, ScientificStoreBinding, SecretReference,
+    ActivityReference, AdapterBinding, BoundIdentity, ModelArtifact, ModelOrigin,
+    ProviderAuthentication, ProviderCatalog, ProviderConfiguration, ProviderKind, ProviderLimits,
+    ProviderRole, ReadinessAction, ReadinessCategory, ReadinessCheck, ReadinessReport,
+    ReadinessState, RuntimeBinding, RuntimeKind, ScientificBinding, ScientificStoreBinding,
+    SecretReference,
 };
 use project_workspace_local::{
-    AcceptedModelPromotion, AppendActivity, append_activity, backfill_nomos, create_workspace,
-    export_activity, import_dataset, initialize_activity, inspect_dataset, inspect_model,
-    open_workspace, read_action, read_activity, record_accepted_model_promotion,
-    record_provider_catalog, record_scientific_binding, upgrade_workspace,
+    AcceptedModelPromotion, AppendActivity, BaselineRestorationRequest, append_activity,
+    backfill_nomos, create_workspace, export_activity, import_dataset, initialize_activity,
+    inspect_dataset, inspect_model, open_workspace, read_action, read_activity,
+    record_accepted_model_promotion, record_baseline_restoration, record_provider_catalog,
+    record_scientific_binding, upgrade_workspace,
 };
 use uuid::Uuid;
 
@@ -281,6 +283,24 @@ pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
             promote_accepted(
                 &folder,
                 run_id,
+                expected_baseline_revision_id,
+                actor,
+                reason,
+            )
+            .await
+        }
+        WorkspaceCommand::RestoreBaseline {
+            folder,
+            revision_id,
+            target_revision_id,
+            expected_baseline_revision_id,
+            actor,
+            reason,
+        } => {
+            restore_baseline(
+                &folder,
+                revision_id,
+                target_revision_id,
                 expected_baseline_revision_id,
                 actor,
                 reason,
@@ -663,6 +683,67 @@ async fn promote_accepted(
         "Copying the sealed-accepted checkpoint into managed custody and advancing the audited baseline pointer."
     );
     print(&record_accepted_model_promotion(folder, &source, request).await?)
+}
+
+async fn restore_baseline(
+    folder: &Path,
+    revision_id: Uuid,
+    target_revision_id: Uuid,
+    expected_baseline_revision_id: Uuid,
+    actor: String,
+    reason: String,
+) -> anyhow::Result<()> {
+    initialize_activity(folder).await?;
+    let action_id = Uuid::new_v4();
+    let references = vec![
+        ActivityReference::new("baseline_revision", revision_id.to_string())?,
+        ActivityReference::new(
+            "previous_baseline",
+            expected_baseline_revision_id.to_string(),
+        )?,
+        ActivityReference::new("restored_baseline", target_revision_id.to_string())?,
+    ];
+    let event = |state, failure| AppendActivity {
+        action_id,
+        operation: "model.restore_baseline".into(),
+        source: project_workspace_core::ActivitySource::Cli,
+        state,
+        stage: None,
+        completed: None,
+        total: None,
+        references: references.clone(),
+        failure,
+        created_at: Utc::now(),
+    };
+    append_activity(
+        folder,
+        event(project_workspace_core::ActivityEventState::Started, None),
+    )
+    .await?;
+    let result = record_baseline_restoration(
+        folder,
+        BaselineRestorationRequest {
+            revision_id,
+            expected_baseline_revision_id,
+            target_revision_id,
+            actor,
+            reason,
+        },
+    )
+    .await;
+    let terminal = if result.is_ok() {
+        event(project_workspace_core::ActivityEventState::Succeeded, None)
+    } else {
+        event(
+            project_workspace_core::ActivityEventState::Failed,
+            Some(project_workspace_core::ActivityFailure::new(
+                "baseline_restoration_failed",
+                "The baseline changed or the selected model is not restorable. Reload Models and try again.",
+            )?),
+        )
+    };
+    append_activity(folder, terminal).await?;
+    print(&result?)
 }
 
 fn managed_command(
