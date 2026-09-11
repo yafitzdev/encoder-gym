@@ -94,7 +94,7 @@ approval.
 
 Production encoder optimization follows the same pattern: task-neutral repair
 and experiment contracts, adapter-owned native artifacts, append-only SQLite
-authority, a thin CLI composition root, one-stage-at-a-time resume, explicit
+authority, a thin CLI composition root, manual or finitely authorized continuation, explicit
 sealed authorization, deterministic fake terminal paths, an opt-in real adapter
 test, Doctor/provenance replay, and a bounded real experiment. A new experiment
 must omit `[existing_experiment]`; that section is only for honestly adopting a
@@ -115,6 +115,14 @@ tests. SQLite triggers inject failures between durable child creation and parent
 journal linking; retries must preserve child identities and backend call counts.
 No Nomos checkout, Python, model download, GPU, provider key, or paid service is
 required for this acceptance path.
+
+The same process suite covers `encoder optimize drive`: automatic completion,
+separate final-evaluation approval, one authorization event, immutable child
+identities, failures between child persistence and parent linking, and recovery
+without repeated backend work. A test-only stdin handshake holds preparation
+while independent production CLI processes inspect the live worker, reject
+duplicate `drive`/`resume`, and cancel before the next stage. It never opens the
+real Nomos project or grants a provider budget.
 
 The same feature also builds `synth-benchmark-fixture`, a test-only constructor
 for shared-benchmark desktop acceptance. It requires a new fixture directory

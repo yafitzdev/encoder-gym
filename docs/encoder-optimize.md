@@ -33,12 +33,19 @@ isolated experiment database and checkout used for that proof.
 
 ## Operator flow
 
-Every mutating command stops at the next durable stage boundary:
+`start` reserves the run. `drive` then authorizes and advances its ordinary
+stages automatically until completion or a separate approval boundary:
 
 ```powershell
 synth encoder optimize preview --manifest optimize.toml --workspace <ISOLATED_PROJECT>
 synth encoder optimize start --manifest optimize.toml --workspace <ISOLATED_PROJECT>
 synth encoder optimize status <RUN_ID> --workspace <ISOLATED_PROJECT>
+synth encoder optimize drive <RUN_ID> --authorized-by <ACTOR> --workspace <ISOLATED_PROJECT>
+```
+
+For deliberate single-stage inspection, `resume` remains available:
+
+```powershell
 synth encoder optimize resume <RUN_ID> --workspace <ISOLATED_PROJECT>
 ```
 
@@ -51,13 +58,33 @@ If development selects a fully eligible candidate, status stops with
 
 ```powershell
 synth encoder optimize authorize-sealed <RUN_ID> --authorized-by <ACTOR> --workspace <ISOLATED_PROJECT>
-synth encoder optimize resume <RUN_ID> --workspace <ISOLATED_PROJECT>
+synth encoder optimize drive <RUN_ID> --authorized-by <ACTOR> --workspace <ISOLATED_PROJECT>
 ```
 
 Authorization binds the exact selected candidate and journal. It never obtains
 a replacement sealed cohort. When no candidate passes every development suite,
 the run retains the baseline and leaves the sealed generation active and
 unused.
+
+Automatic execution records one hash-chained authorization event for the exact
+reserved run before work begins. It does not change the recipe, approved data,
+spending limits, candidate identities or final-evaluation authority. The same
+authorizer can retry without another authorization event. Another authorizer
+cannot replace that record. Historical event bytes and fingerprints remain
+unchanged; only the new authorization event uses schema version 2.
+
+One process lease spans the whole drive, excluding concurrent drive/resume
+workers. Between stages it reloads persisted cancellation and requires a strictly
+decreasing finite lifecycle rank. Errors stop the invocation; explicit retries
+recover the exact reserved children through existing slice contracts rather
+than allocating new attempts or silently repeating uncertain external calls.
+Status exposes the authorizer and live worker separately. Standard output is one
+final status object; native progress remains on stderr and in durable journals.
+
+This is the post-review execution primitive, not the complete input-first
+Optimize product: selected dataset admission, bounded agent decisions and launch
+budgets still need integration. `drive` never substitutes an old recipe for the
+new desktop's saved inputs.
 
 The experiment runner reuses a persisted sealed authorization only for the
 same authorizer. If interrupted after saving the sealed report but before
@@ -86,7 +113,7 @@ actual results. Terminal `resume` also works without native adapter files.
 project, and `doctor` reconstructs the native evidence again.
 
 Cancellation is observed between synchronous local stages. V1 does not claim
-to preempt a Python trainer already running inside one `resume`; its exact
+to preempt a Python trainer already running inside `resume` or `drive`; its exact
 reserved attempt completes or fails before the next stage is allowed.
 
 ## Real Nomos outcome

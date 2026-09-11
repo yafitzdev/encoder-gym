@@ -1499,6 +1499,8 @@ pub enum EncoderOptimizeCommand {
     ReviewDelta(EncoderOptimizeRunArgs),
     /// Execute at most one reserved side-effecting stage and then stop.
     Resume(EncoderOptimizeRunArgs),
+    /// Authorize automatic routine progression until completion or a separate approval.
+    Drive(EncoderOptimizeAuthorizeArgs),
     /// Inspect or authorize a specifically reserved external call, if one exists.
     AuthorizeExternal(EncoderOptimizeAuthorizeArgs),
     /// Authorize exactly one selected candidate to use the sealed suite.

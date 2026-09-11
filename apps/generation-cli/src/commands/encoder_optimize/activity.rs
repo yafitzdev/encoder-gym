@@ -67,6 +67,16 @@ pub(super) async fn timeline(
     campaign: Option<&CampaignContext>,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
     let mut items = vec![serde_json::json!({"at":context.run.created_at,"label":"Run created"})];
+    for event in store.list_optimization_events(context.run.id).await? {
+        if matches!(
+            event.event,
+            OptimizationEventKind::AutomaticExecutionAuthorized { .. }
+        ) {
+            items.push(
+                serde_json::json!({"at":event.created_at,"label":"Automatic execution authorized"}),
+            );
+        }
+    }
     if campaign.and_then(|c| c.experiment.as_ref()).is_none() {
         return Ok(items);
     }
@@ -98,6 +108,11 @@ pub(super) async fn timeline(
         };
         items.push(serde_json::json!({"at":event.created_at,"label":label}));
     }
+    items.sort_by_cached_key(|item| {
+        item["at"]
+            .as_str()
+            .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+    });
     if items.len() > 20 {
         items.drain(..items.len() - 20);
     }

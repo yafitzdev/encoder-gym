@@ -84,9 +84,10 @@ decision. No unbounded work or inferred spending.
    and guarded adoption from recorded authority. Initial test-data onboarding
    and pinning the selected version to automatic Optimize remain pending.
 4. Automatic bounded optimization — the input-selection domain, persistence,
-   CLI and desktop selection are implemented. Persisted launch scope, agent and
-   generation integration, routine continuation, output registration and recovery
-   remain pending.
+   CLI and desktop selection are implemented. Automatic continuation of an exact
+   existing run is implemented in the core and CLI. Input-first launch scope,
+   agent/generation integration, managed automatic execution, output registration
+   and complete-journey recovery remain pending.
    Verify real CLI composition using deterministic offline fakes.
 5. Complete journey — pending. Renderer interactions for setup, Optimize,
    results, artifact inspection, and promotion; read-only Nomos verification.
@@ -421,3 +422,37 @@ and keep outstanding requirements visible.
   launch scope/budgets, adapter-owned selected-data admission/materialization,
   agent and generation integration, automatic continuation and recovery. Fresh
   benchmark onboarding and model-level promotion/restoration are also pending.
+
+### Automatic run continuation — 11 September 2026
+
+- `encoder optimize drive` records authorization for an exact reserved run and
+  executes ordinary stages through the existing handler until completion or a
+  separate protected-evaluation approval. Manual `resume` still steps once.
+  It does not select an old recipe in response to the new desktop inputs.
+- Core owns the authorization event and strictly decreasing continuation rank.
+  The new event uses schema version 2; historical event bytes stay unchanged.
+  Exact retries retain one authorization and the original reserved child IDs.
+  A second authorizer cannot replace an active run's authorization.
+- One worker lease spans the drive. Between stages, persisted cancellation is
+  reloaded. Errors stop the invocation; explicit recovery uses the existing
+  child contracts without resetting budgets or repeating completed work. Status
+  distinguishes a live worker from waiting, and activity records authorization.
+- Two pure tests and six new actual-CLI scenarios cover finite paths, malformed
+  or repeated authorization, final-evaluation approval, child-link interruptions,
+  completed protected-report recovery, training failure, cancellation during
+  preparation, duplicate workers and terminal replay. All 11 optimization CLI
+  scenarios pass with deterministic fixtures and zero provider/native calls.
+- Full-suite validation exposed a pre-existing WAL checkpoint race in a
+  read-only database fixture. Its writer now checkpoints before the before/after
+  comparison; the byte-equality requirement and read-only production code are
+  unchanged. Failure output no longer dumps the complete database byte arrays.
+- All four Rust gates passed after that fixture correction. UI typecheck/build,
+  80 unit tests and four isolated Electron regression launches also passed.
+  Evidence is recorded locally in `target/automatic-drive-rust-tests-final.log`,
+  `target/automatic-drive-ui-tests.log` and
+  `target/automatic-drive-electron-tests.log`. No real Nomos execution, provider
+  request, protected evaluation or app restart was performed.
+- This is an execution primitive, not goal completion. The input-first launch
+  must still admit the selected dataset, pin finite budgets and use the bounded
+  agent/generation contracts. Managed integration, benchmark onboarding,
+  promotion/restoration controls and the complete Optimize journey remain open.

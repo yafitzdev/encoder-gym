@@ -217,8 +217,11 @@ experiment-run identities before execution. `encoder-experiment-sqlite` stores
 that definition and lifecycle append-only. Routine status validates immutable
 storage envelopes; launch, native side effects, and Doctor retain the deeper
 dependency and checkout checks. `synth encoder optimize` is the CLI composition
-root. It advances only one reserved stage per invocation, treats sealed use as
-an explicit pause, and derives reports and row-free provenance from persisted
+root. `resume` advances one reserved stage; `drive` persists routine-execution
+authorization and repeats that same stage handler under one process lease. A
+core-owned decreasing lifecycle rank bounds continuation; persisted cancellation,
+explicit sealed approval and existing child recovery still own their boundaries.
+Neither command selects new inputs or expands budgets. It derives reports and row-free provenance from persisted
 facts. Existing production-repair, experiment, benchmark-generation, and
 production-campaign commands remain independently useful.
 

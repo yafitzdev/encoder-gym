@@ -568,6 +568,7 @@ impl EncoderOptimizeCommand {
         match self {
             Self::Start { .. }
             | Self::Resume { .. }
+            | Self::Drive { .. }
             | Self::AuthorizeSealed { .. }
             | Self::Cancel { .. } => DatabaseAccess::ReadWrite,
             Self::Preview { .. }

@@ -209,7 +209,8 @@ pilot is Nomos retrieval ranking. See
 The first post-review production cycle is now composed by a separate finite
 optimization parent. It binds one approved repair delta and logical training
 snapshot to one renewable benchmark generation, reserves every downstream
-identity before execution, advances one stage per operator command, and emits
+identity before execution, supports single-stage or explicitly authorized finite
+automatic continuation, and emits
 either `promote_candidate` or `retain_baseline`. The proven Nomos cycle retained
 the baseline without sealed exposure. See
 [Finite Encoder Optimization](encoder-optimize.md) and

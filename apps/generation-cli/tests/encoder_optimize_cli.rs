@@ -5,8 +5,10 @@ mod production_fixture;
 
 use serde_json::{Value, json};
 use std::{
+    io::Write,
     path::PathBuf,
-    process::{Command, Output},
+    process::{Child, Command, Output, Stdio},
+    time::{Duration, Instant},
 };
 use workflow_core::ports::BenchmarkGenerationStore;
 
@@ -59,26 +61,30 @@ impl Fixture {
         }
     }
 
-    fn run(&self, real: bool, args: &[&str]) -> Output {
-        Command::new(if real {
+    fn command(&self, real: bool, args: &[&str]) -> Command {
+        let mut command = Command::new(if real {
             env!("CARGO_BIN_EXE_synth")
         } else {
             env!("CARGO_BIN_EXE_synth-optimize-fixture")
-        })
-        .current_dir(self.directory.path())
-        .args([
-            "--database-url",
-            &self.database_url,
-            "--output",
-            "json",
-            "encoder",
-            "optimize",
-        ])
-        .args(args)
-        .arg("--workspace")
-        .arg(self.directory.path())
-        .output()
-        .unwrap()
+        });
+        command
+            .current_dir(self.directory.path())
+            .args([
+                "--database-url",
+                &self.database_url,
+                "--output",
+                "json",
+                "encoder",
+                "optimize",
+            ])
+            .args(args)
+            .arg("--workspace")
+            .arg(self.directory.path());
+        command
+    }
+
+    fn run(&self, real: bool, args: &[&str]) -> Output {
+        self.command(real, args).output().unwrap()
     }
 
     fn json(&self, real: bool, args: &[&str]) -> Value {
@@ -172,6 +178,257 @@ impl Fixture {
         );
         resumed
     }
+}
+
+// Owns only this test's child, so panic paths cannot leave a fixture blocked.
+struct RunningFixture(Option<Child>);
+impl Drop for RunningFixture {
+    fn drop(&mut self) {
+        if let Some(child) = self.0.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+#[test]
+fn automatic_drive_holds_one_worker_lease_and_observes_cancellation_between_stages() {
+    let fixture = Fixture::new("paused_preparation");
+    let start = fixture.start();
+    let id = start["run_id"].as_str().unwrap();
+    let mut process = RunningFixture(Some(
+        fixture
+            .command(false, &["drive", id])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    ));
+    let deadline = Instant::now() + Duration::from_secs(40);
+    while !fixture.directory.path().join("preparation-ready").exists() {
+        assert!(
+            process.0.as_mut().unwrap().try_wait().unwrap().is_none(),
+            "fixture stopped before its preparation barrier"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "fixture did not reach its preparation barrier"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let running = fixture.status(id);
+    assert_eq!(running["worker"]["state"], "running");
+    assert_eq!(running["stopped_reason"], "execution_running");
+    assert_eq!(
+        running["automatic_execution_authorized_by"],
+        "local-operator"
+    );
+    for command in ["drive", "resume"] {
+        let duplicate = fixture.run(true, &[command, id]);
+        assert!(!duplicate.status.success());
+        assert!(String::from_utf8_lossy(&duplicate.stderr).contains("already running"));
+    }
+    let cancelled = fixture.json(true, &["cancel", id, "--reason", "stop after preparation"]);
+    let mut input = process.0.as_mut().unwrap().stdin.take().unwrap();
+    writeln!(input, "continue").unwrap();
+    drop(input);
+    let output = process.0.take().unwrap().wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stopped: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(stopped["state"], "cancelled");
+    assert_eq!(stopped["head_fingerprint"], cancelled["head_fingerprint"]);
+    assert_eq!(stopped["artifacts"], start["artifacts"]);
+    assert_eq!(
+        fixture.calls().len(),
+        3,
+        "only the already-running protocol preparation may finish"
+    );
+    assert!(
+        fixture
+            .calls()
+            .iter()
+            .all(|call| call["operation"] == "evaluate" && call["baseline"] == true)
+    );
+    assert_eq!(fixture.status(id)["worker"]["state"], "idle");
+    assert_eq!(
+        fixture.json(true, &["drive", id])["head_fingerprint"],
+        stopped["head_fingerprint"]
+    );
+}
+
+#[test]
+fn automatic_drive_finishes_routine_work_and_preserves_terminal_identity() {
+    let fixture = Fixture::new("development_rejection");
+    let start = fixture.start();
+    let id = start["run_id"].as_str().unwrap();
+    let finished = fixture.json(false, &["drive", id, "--authorized-by", "operator"]);
+    assert_eq!(finished["state"], "completed");
+    assert_eq!(finished["decision"], "retain_baseline");
+    assert_eq!(finished["automatic_execution_authorized_by"], "operator");
+    assert_eq!(finished["artifacts"], start["artifacts"]);
+    assert_eq!(fixture.calls().len(), 6);
+    assert_eq!(fixture.selected_sealed_calls(), 0);
+    let calls = fixture.calls();
+    let repeated = fixture.json(true, &["drive", id, "--authorized-by", "operator"]);
+    assert_eq!(repeated["head_fingerprint"], finished["head_fingerprint"]);
+    assert_eq!(fixture.calls(), calls);
+}
+
+#[test]
+fn automatic_drive_stops_for_separate_holdout_approval() {
+    let fixture = Fixture::new("promote");
+    let start = fixture.start();
+    let id = start["run_id"].as_str().unwrap();
+    let paused = fixture.json(false, &["drive", id, "--authorized-by", "operator"]);
+    assert_eq!(paused["human_authorization_required"], true);
+    assert_eq!(paused["next_command"], "authorize-sealed");
+    assert_eq!(fixture.calls().len(), 6);
+    assert_eq!(fixture.selected_sealed_calls(), 0);
+    assert_eq!(
+        fixture.json(true, &["drive", id, "--authorized-by", "operator"])["head_fingerprint"],
+        paused["head_fingerprint"]
+    );
+    assert!(
+        !fixture
+            .run(
+                true,
+                &["drive", id, "--authorized-by", "different-operator"]
+            )
+            .status
+            .success()
+    );
+    fixture.json(
+        false,
+        &["authorize-sealed", id, "--authorized-by", "operator"],
+    );
+    let finished = fixture.json(false, &["drive", id, "--authorized-by", "operator"]);
+    assert_eq!(finished["state"], "completed");
+    assert_eq!(finished["decision"], "promote_candidate");
+    assert_eq!(fixture.selected_sealed_calls(), 1);
+    assert_eq!(fixture.calls().len(), 7);
+}
+
+#[test]
+fn automatic_drive_recovery_does_not_duplicate_completed_children() {
+    for (table, kind) in [
+        (
+            "encoder_production_optimization_events",
+            "campaign_attached",
+        ),
+        ("encoder_production_campaign_events", "iteration_prepared"),
+        ("encoder_production_campaign_events", "run_started"),
+        (
+            "encoder_production_campaign_events",
+            "development_completed",
+        ),
+        ("encoder_production_campaign_events", "iteration_finalized"),
+        ("encoder_production_optimization_events", "completed"),
+    ] {
+        let fixture = Fixture::new("development_rejection");
+        let start = fixture.start();
+        let id = start["run_id"].as_str().unwrap();
+        fixture.fault(table, Some(kind));
+        let interrupted = fixture.run(false, &["drive", id]);
+        assert!(
+            !interrupted.status.success(),
+            "fault was not exercised: {table}/{kind}"
+        );
+        assert!(
+            String::from_utf8_lossy(&interrupted.stderr)
+                .contains("injected child-to-parent interruption")
+        );
+        assert_eq!(
+            fixture.status(id)["automatic_execution_authorized_by"],
+            "local-operator"
+        );
+        let calls = fixture.calls();
+        assert!(!fixture.run(false, &["drive", id]).status.success());
+        assert_eq!(
+            fixture.calls(),
+            calls,
+            "an unresolved write failure must not repeat completed backend work"
+        );
+        fixture.clear_fault();
+        let completed = fixture.json(false, &["drive", id]);
+        assert_eq!(completed["state"], "completed");
+        assert_eq!(completed["artifacts"], start["artifacts"]);
+        assert_eq!(fixture.calls().len(), 6);
+        assert_eq!(fixture.selected_sealed_calls(), 0);
+        assert_eq!(
+            completed["last_sequence"], 4,
+            "creation, one authorization, campaign link, completion"
+        );
+    }
+}
+
+#[test]
+fn automatic_drive_rejects_bad_authority_and_replays_cancelled_runs_without_backend() {
+    let fixture = Fixture::new("promote");
+    let start = fixture.start();
+    let id = start["run_id"].as_str().unwrap();
+    for actor in ["", " operator", "a\nb", &"x".repeat(121)] {
+        assert!(
+            !fixture
+                .run(true, &["drive", id, "--authorized-by", actor])
+                .status
+                .success()
+        );
+        assert_eq!(
+            fixture.status(id)["head_fingerprint"],
+            start["head_fingerprint"]
+        );
+    }
+    fixture.fault(
+        "encoder_production_optimization_events",
+        Some("automatic_execution_authorized"),
+    );
+    assert!(!fixture.run(false, &["drive", id]).status.success());
+    assert_eq!(
+        fixture.status(id)["head_fingerprint"],
+        start["head_fingerprint"]
+    );
+    fixture.clear_fault();
+    let cancelled = fixture.json(true, &["cancel", id, "--reason", "stop before work"]);
+    let repeated = fixture.json(true, &["drive", id]);
+    assert_eq!(repeated["head_fingerprint"], cancelled["head_fingerprint"]);
+    assert_eq!(repeated["automatic_execution_authorized_by"], Value::Null);
+    assert!(fixture.calls().is_empty());
+}
+
+#[test]
+fn automatic_drive_recovers_sealed_result_and_finishes_training_failure() {
+    let fixture = Fixture::new("sealed_rejection");
+    let start = fixture.start();
+    let id = start["run_id"].as_str().unwrap();
+    fixture.json(false, &["drive", id]);
+    fixture.json(false, &["authorize-sealed", id]);
+    fixture.fault("encoder_experiment_events", Some("finalized"));
+    assert!(!fixture.run(false, &["drive", id]).status.success());
+    assert_eq!(fixture.status(id)["experiment_state"], "sealed_evaluated");
+    assert_eq!(fixture.selected_sealed_calls(), 1);
+    let calls = fixture.calls();
+    fixture.clear_fault();
+    let finished = fixture.json(false, &["drive", id]);
+    assert_eq!(finished["decision"], "retain_baseline");
+    assert_eq!(fixture.calls(), calls);
+
+    let fixture = Fixture::new("training_failure");
+    let start = fixture.start();
+    let id = start["run_id"].as_str().unwrap();
+    let finished = fixture.json(false, &["drive", id]);
+    assert_eq!(finished["state"], "completed");
+    assert_eq!(finished["decision"], "retain_baseline");
+    assert_eq!(fixture.calls().len(), 4);
+    assert_eq!(fixture.selected_sealed_calls(), 0);
+    assert_eq!(
+        fixture.report(id)["budget_and_recovery"]["observed_training_seconds"],
+        0
+    );
 }
 
 #[test]

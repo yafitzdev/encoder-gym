@@ -1,4 +1,5 @@
 mod activity;
+mod continuation;
 mod report;
 
 use std::{
@@ -92,18 +93,21 @@ struct ExecutionLeaseOwner {
 }
 
 #[derive(Debug)]
-struct OptimizationExecutionLease {
+pub(crate) struct OptimizationExecutionLease {
     directory: PathBuf,
     owner: ExecutionLeaseOwner,
 }
 
 impl OptimizationExecutionLease {
-    fn for_command(
+    pub(crate) fn for_command(
         command: &EncoderOptimizeCommand,
         database_url: &str,
     ) -> anyhow::Result<Option<Self>> {
         match command {
             EncoderOptimizeCommand::Resume(args) => {
+                Self::acquire(database_url, args.run_id).map(Some)
+            }
+            EncoderOptimizeCommand::Drive(args) => {
                 Self::acquire(database_url, args.run_id).map(Some)
             }
             _ => Ok(None),
@@ -1015,7 +1019,7 @@ pub async fn execute(command: EncoderOptimizeCommand, database_url: &str) -> any
         }
         command => {
             execute_lifecycle(command, &store, || {
-                NomosBackend::open(&workspace, python)
+                NomosBackend::open(&workspace, python.clone())
                     .map(|backend| {
                         backend
                             .with_progress_observer(std::sync::Arc::new(activity::ProgressOutput))
@@ -1050,7 +1054,7 @@ pub(crate) async fn execute_managed(
         }
         command => {
             execute_lifecycle(command, &store, || {
-                NomosBackend::open(&workspace, python)
+                NomosBackend::open(&workspace, python.clone())
                     .map(|backend| {
                         backend
                             .with_progress_observer(std::sync::Arc::new(activity::ProgressOutput))
@@ -1088,6 +1092,7 @@ async fn ensure_managed_command_scope(
             )
         }
         EncoderOptimizeCommand::AuthorizeExternal(args)
+        | EncoderOptimizeCommand::Drive(args)
         | EncoderOptimizeCommand::AuthorizeSealed(args) => {
             let context = load_launch(store, args.run_id).await?;
             (
@@ -1115,7 +1120,7 @@ async fn ensure_managed_command_scope(
 pub(crate) async fn execute_lifecycle<B: EncoderTaskBackend>(
     command: EncoderOptimizeCommand,
     store: &SqliteExperimentStore,
-    backend_factory: impl FnOnce() -> anyhow::Result<B>,
+    mut backend_factory: impl FnMut() -> anyhow::Result<B>,
 ) -> anyhow::Result<()> {
     match command {
         EncoderOptimizeCommand::Preview(args) => preview(store, args).await,
@@ -1125,6 +1130,9 @@ pub(crate) async fn execute_lifecycle<B: EncoderTaskBackend>(
         EncoderOptimizeCommand::ReviewRepair(args) => review_facts(store, args, false).await,
         EncoderOptimizeCommand::ReviewDelta(args) => review_facts(store, args, true).await,
         EncoderOptimizeCommand::Resume(args) => resume(store, backend_factory, args).await,
+        EncoderOptimizeCommand::Drive(args) => {
+            continuation::drive(store, backend_factory, args).await
+        }
         EncoderOptimizeCommand::AuthorizeExternal(args) => authorize_external(store, args).await,
         EncoderOptimizeCommand::AuthorizeSealed(args) => {
             let backend = backend_factory()?;
@@ -1277,22 +1285,26 @@ async fn resume<B: EncoderTaskBackend>(
     backend_factory: impl FnOnce() -> anyhow::Result<B>,
     args: EncoderOptimizeRunArgs,
 ) -> anyhow::Result<()> {
-    let context = load_launch(store, args.run_id).await?;
+    resume_stage(store, backend_factory, args.run_id).await?;
+    status(store, args).await
+}
+
+/// One ordinary stage, shared by manual stepping and bounded automatic driving.
+/// Presentation happens only after the caller reaches its requested boundary.
+async fn resume_stage<B: EncoderTaskBackend>(
+    store: &SqliteExperimentStore,
+    backend_factory: impl FnOnce() -> anyhow::Result<B>,
+    run_id: Uuid,
+) -> anyhow::Result<()> {
+    let context = load_launch(store, run_id).await?;
     if context.view.state != OptimizationRunState::Planned
         && context.view.state != OptimizationRunState::CampaignActive
     {
-        return print_current_status(store, &context, true).await;
+        return Ok(());
     }
     if context.view.state == OptimizationRunState::Planned {
         attach_campaign(store, &context).await?;
-        return status(
-            store,
-            EncoderOptimizeRunArgs {
-                run_id: args.run_id,
-                backend: args.backend,
-            },
-        )
-        .await;
+        return Ok(());
     }
 
     let campaign = load_optimization_campaign(store, context.run.reserved_campaign_id).await?;
@@ -1376,7 +1388,7 @@ async fn resume<B: EncoderTaskBackend>(
             finalize_campaign_iteration(store, &campaign, experiment).await?;
         }
         CampaignState::AwaitingSealedAuthorization => {
-            return print_current_status(store, &context, true).await;
+            return Ok(());
         }
         CampaignState::SealedAuthorized => {
             ensure_generation_current(store, &context.definition).await?;
@@ -1417,14 +1429,7 @@ async fn resume<B: EncoderTaskBackend>(
             store.append_optimization_event(event).await?;
         }
     }
-    status(
-        store,
-        EncoderOptimizeRunArgs {
-            run_id: args.run_id,
-            backend: args.backend,
-        },
-    )
-    .await
+    Ok(())
 }
 
 async fn authorize_sealed(
@@ -2346,14 +2351,17 @@ fn print_status(
     }
     let requires_human_authorization = campaign_view
         .is_some_and(|value| value.state == CampaignState::AwaitingSealedAuthorization);
+    let worker_running = worker["state"] == "running";
     let stopped_reason = match context.view.state {
         OptimizationRunState::Cancelled => "cancelled_by_operator",
         OptimizationRunState::Failed => "failed",
         OptimizationRunState::Completed => "finite_run_completed",
+        OptimizationRunState::Planned if worker_running => "execution_running",
         OptimizationRunState::Planned => "waiting_for_operator_resume",
         OptimizationRunState::CampaignActive if requires_human_authorization => {
             "explicit_sealed_use_authorization_required"
         }
+        OptimizationRunState::CampaignActive if worker_running => "execution_running",
         OptimizationRunState::CampaignActive => "stage_boundary_waiting_for_operator_resume",
     };
     let reserved = campaign_view.map(|value| value.reserved_usage);
@@ -2383,6 +2391,7 @@ fn print_status(
         "last_transition_at": last_transition_at,
         "state": context.view.state,
         "campaign_state": campaign_view.map(|value| value.state),
+        "automatic_execution_authorized_by": context.view.automatic_execution_authorized_by,
         "experiment_state": experiment.map(|value| value.state),
         "decision": context.view.decision,
         "selected_candidate_id": experiment.and_then(|value| value.selected_candidate_id),
@@ -2613,6 +2622,7 @@ pub(crate) fn backend_args(command: &EncoderOptimizeCommand) -> &NomosWorkspaceA
         | EncoderOptimizeCommand::Provenance(args)
         | EncoderOptimizeCommand::Report(args) => &args.backend,
         EncoderOptimizeCommand::AuthorizeSealed(args) => &args.backend,
+        EncoderOptimizeCommand::Drive(args) => &args.backend,
         EncoderOptimizeCommand::AuthorizeExternal(args) => &args.backend,
         EncoderOptimizeCommand::Cancel(args) => &args.backend,
     }

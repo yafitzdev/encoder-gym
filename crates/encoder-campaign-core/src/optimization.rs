@@ -4,6 +4,9 @@
 //! qualification, native training, evaluation, selection, benchmark consumption, and final
 //! decisions remain with their existing owners.
 
+mod continuation;
+pub use continuation::automatic_stage_rank;
+
 use std::{collections::BTreeSet, future::Future, pin::Pin};
 
 use chrono::{DateTime, Utc};
@@ -378,9 +381,12 @@ pub enum OptimizationRunState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OptimizationEventKind {
     Created,
+    AutomaticExecutionAuthorized {
+        authorized_by: String,
+    },
     CampaignAttached {
         campaign_fingerprint: String,
     },
@@ -394,6 +400,15 @@ pub enum OptimizationEventKind {
     Failed {
         reason: String,
     },
+}
+
+impl OptimizationEventKind {
+    fn schema_version(&self) -> u32 {
+        match self {
+            Self::AutomaticExecutionAuthorized { .. } => 2,
+            _ => OPTIMIZATION_EVENT_SCHEMA_VERSION,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -419,7 +434,7 @@ impl OptimizationEvent {
         created_at: DateTime<Utc>,
     ) -> Result<Self, OptimizationError> {
         let mut value = Self {
-            schema_version: OPTIMIZATION_EVENT_SCHEMA_VERSION,
+            schema_version: event.schema_version(),
             id: Uuid::new_v4(),
             run_id: run.id,
             run_fingerprint: run.fingerprint.clone(),
@@ -438,7 +453,10 @@ impl OptimizationEvent {
         &self,
         run: &ProductionOptimizationRun,
     ) -> Result<(), OptimizationError> {
-        if self.schema_version != OPTIMIZATION_EVENT_SCHEMA_VERSION
+        if let OptimizationEventKind::AutomaticExecutionAuthorized { authorized_by } = &self.event {
+            validate_authorizer(authorized_by)?;
+        }
+        if self.schema_version != self.event.schema_version()
             || self.id.is_nil()
             || self.run_id != run.id
             || self.run_fingerprint != run.fingerprint
@@ -475,18 +493,59 @@ pub struct OptimizationView {
     pub campaign_fingerprint: Option<String>,
     pub decision: Option<FinalDecision>,
     pub failure_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automatic_execution_authorized_by: Option<String>,
     pub last_sequence: u32,
     pub last_event_fingerprint: String,
     pub updated_at: DateTime<Utc>,
 }
 
 impl OptimizationView {
+    /// Authorizes routine continuation of this exact immutable run, not new
+    /// candidates, budgets, provider calls, or protected evaluation. A retry by
+    /// the same authorizer reuses its event instead of changing the journal.
+    pub fn authorize_automatic_execution(
+        &self,
+        run: &ProductionOptimizationRun,
+        authorized_by: &str,
+        created_at: DateTime<Utc>,
+    ) -> Result<Option<OptimizationEvent>, OptimizationError> {
+        if self.run_id != run.id {
+            return Err(OptimizationError::Integrity(
+                "optimization view is foreign".into(),
+            ));
+        }
+        validate_authorizer(authorized_by)?;
+        if let Some(previous) = &self.automatic_execution_authorized_by {
+            if previous != authorized_by {
+                return Err(OptimizationError::InvalidTransition(
+                    "automatic execution already belongs to another authorizer".into(),
+                ));
+            }
+            return Ok(None);
+        }
+        self.next_event(
+            run,
+            OptimizationEventKind::AutomaticExecutionAuthorized {
+                authorized_by: authorized_by.to_owned(),
+            },
+            created_at,
+        )
+        .map(Some)
+    }
+
     pub fn next_event(
         &self,
         run: &ProductionOptimizationRun,
         event: OptimizationEventKind,
         created_at: DateTime<Utc>,
     ) -> Result<OptimizationEvent, OptimizationError> {
+        if self.run_id != run.id {
+            return Err(OptimizationError::Integrity(
+                "optimization view is foreign".into(),
+            ));
+        }
+        self.validate_new_authorization(&event)?;
         validate_transition(self.state, &event)?;
         OptimizationEvent::create(
             run,
@@ -497,6 +556,22 @@ impl OptimizationView {
             event,
             created_at.max(self.updated_at),
         )
+    }
+
+    fn validate_new_authorization(
+        &self,
+        event: &OptimizationEventKind,
+    ) -> Result<(), OptimizationError> {
+        if matches!(
+            event,
+            OptimizationEventKind::AutomaticExecutionAuthorized { .. }
+        ) && self.automatic_execution_authorized_by.is_some()
+        {
+            return Err(OptimizationError::InvalidTransition(
+                "automatic execution is already authorized".into(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -525,6 +600,7 @@ pub fn replay_optimization(
         campaign_fingerprint: None,
         decision: None,
         failure_reason: None,
+        automatic_execution_authorized_by: None,
         last_sequence: 0,
         last_event_fingerprint: String::new(),
         updated_at: run.created_at,
@@ -541,10 +617,14 @@ pub fn replay_optimization(
             ));
         }
         if event.sequence > 1 {
+            view.validate_new_authorization(&event.event)?;
             validate_transition(view.state, &event.event)?;
         }
         match &event.event {
             OptimizationEventKind::Created => {}
+            OptimizationEventKind::AutomaticExecutionAuthorized { authorized_by } => {
+                view.automatic_execution_authorized_by = Some(authorized_by.clone());
+            }
             OptimizationEventKind::CampaignAttached {
                 campaign_fingerprint,
             } => {
@@ -591,6 +671,9 @@ fn validate_transition(
     let allowed = matches!(
         (state, event),
         (
+            OptimizationRunState::Planned | OptimizationRunState::CampaignActive,
+            OptimizationEventKind::AutomaticExecutionAuthorized { .. }
+        ) | (
             OptimizationRunState::Planned,
             OptimizationEventKind::CampaignAttached { .. }
         ) | (
@@ -617,6 +700,19 @@ fn validate_transition(
             "production optimization lifecycle transition is not allowed".into(),
         ))
     }
+}
+
+fn validate_authorizer(value: &str) -> Result<(), OptimizationError> {
+    if value.trim() != value
+        || value.is_empty()
+        || value.chars().count() > 120
+        || value.chars().any(char::is_control)
+    {
+        return Err(OptimizationError::InvalidTransition(
+            "automatic execution authorizer must be canonical and bounded".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn canonical_reason(value: &str) -> Result<String, OptimizationError> {

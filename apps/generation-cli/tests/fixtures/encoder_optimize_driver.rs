@@ -60,6 +60,10 @@ async fn run() -> anyhow::Result<()> {
         .workspace
         .clone();
     commands::experiment::ensure_database_belongs_to_workspace(&database_url, &workspace)?;
+    let _lease = commands::encoder_optimize::OptimizationExecutionLease::for_command(
+        &command,
+        &database_url,
+    )?;
     let store = command.database_access().production(&database_url).await?;
     commands::encoder_optimize::execute_lifecycle(*command, &store, || {
         FakeBackend::open(&workspace)
@@ -166,6 +170,9 @@ impl EncoderTaskBackend for FakeBackend {
     ) -> BoxFuture<'_, Result<EvaluationReport, EncoderTaskAdapterError>> {
         Box::pin(async move {
             let baseline = model == project.baseline_model;
+            // Test-only handshake: hold the first protocol-preparation operation
+            // while another real CLI process inspects, cancels, or retries.
+            let pause = self.configuration.outcome == "paused_preparation" && !self.calls.exists();
             let (role, fingerprint) = if suite_key == "sealed" {
                 (
                     EvidenceRole::SealedAcceptance,
@@ -188,6 +195,17 @@ impl EncoderTaskBackend for FakeBackend {
                 )
             };
             self.record(json!({"operation": "evaluate", "baseline": baseline, "role": role, "suite": suite_key}))?;
+            if pause {
+                std::fs::write(self.calls.with_file_name("preparation-ready"), b"ready")
+                    .map_err(adapter_error)?;
+                let mut release = String::new();
+                std::io::stdin()
+                    .read_line(&mut release)
+                    .map_err(adapter_error)?;
+                if release.trim() != "continue" {
+                    return Err(adapter_error("fixture preparation was not released"));
+                }
+            }
             let score = if baseline {
                 0.8
             } else if (self.configuration.outcome == "development_rejection"
