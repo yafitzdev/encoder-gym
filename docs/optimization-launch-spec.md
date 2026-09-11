@@ -91,6 +91,14 @@ those artifacts remain owned by their normal slices. The current root is
 `queued`: it reserves no worker and performs no provider, training or evaluation
 work yet.
 
+`workspace optimization-run <PROJECT> prepare <RUN_ID>` performs the first
+recoverable stage. It re-verifies every selected training row, the shared
+benchmark definition and its original protocol, the active baseline, and the
+current compiled runtime. Its row-free receipt pins those facts to the run and
+moves it to `ready`. Preparation attempts and failures are hash-chained; retry
+continues the same run. This stage reads no credential, executes no model and
+does not expose final-holdout content.
+
 The Electron main-process bridge now exposes those three fixed project-scoped
 operations. It validates every response, rejects renderer-supplied paths,
 credentials, commands or execution fields, writes authorization requests only
@@ -115,7 +123,7 @@ The renderer supplies no paths, credentials, native rows or execution settings.
 The main process writes only a strict temporary request and removes it on both
 success and failure. Each explicit save retains the ordinary CLI action UUID.
 
-Saving inputs, one-click authorization and the project-owned queued-run root are
+Saving inputs, one-click authorization and the project-owned prepared-run root are
 available now. The bounded child executor is not connected yet and the desktop
 must not imply work is running or fall back to a previously prepared recipe.
 Existing runs are opened from Runs and retain their current supervision,

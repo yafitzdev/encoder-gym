@@ -9,7 +9,8 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use project_workspace_core::{
-    OptimizationLaunchAuthorization, ProjectOptimizationEvent, ProjectOptimizationRun,
+    OptimizationLaunchAuthorization, OptimizationSetup, ProjectOptimizationEvent,
+    ProjectOptimizationPreparation, ProjectOptimizationRun, ProjectOptimizationRunState,
     ProjectOptimizationRunView, replay_project_optimization,
 };
 use sqlx::{Connection, Row, SqliteConnection};
@@ -40,7 +41,7 @@ pub async fn start(
         persisted == &authorization,
         "Optimization launch authorization changed."
     );
-    let existing = load(&mut transaction, verified.manifest.id, &launches).await?;
+    let existing = load(&mut transaction, verified.manifest.id, &launches, &setups).await?;
     if let Some(run) = existing
         .into_iter()
         .find(|run| run.run.launch.id == authorization.id.to_string())
@@ -107,8 +108,9 @@ pub async fn start(
 pub async fn list(folder: &Path) -> Result<Vec<ProjectOptimizationRunView>> {
     let workspace = open_workspace(folder, false).await?;
     let launches = optimization_launch::list(folder).await?;
+    let setups = optimization_setup::list(folder).await?;
     let mut database = connect(Path::new(&workspace.folder), true, false).await?;
-    let runs = load(&mut database, workspace.manifest.id, &launches).await?;
+    let runs = load(&mut database, workspace.manifest.id, &launches, &setups).await?;
     database.close().await?;
     Ok(runs)
 }
@@ -121,10 +123,216 @@ pub async fn show(folder: &Path, run_id: Uuid) -> Result<ProjectOptimizationRunV
         .context("Project optimization run was not found.")
 }
 
+/// Start or recover the no-provider preparation attempt. Duplicate verification
+/// is harmless; completion still uses the exact returned journal head.
+pub async fn begin_preparation(folder: &Path, run_id: Uuid) -> Result<ProjectOptimizationRunView> {
+    let workspace = open_workspace(folder, true).await?;
+    let mut database = connect(Path::new(&workspace.folder), false, false).await?;
+    sqlx::migrate!("./migrations").run(&mut database).await?;
+    let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
+    let setups = optimization_setup::load(&mut transaction, &workspace).await?;
+    let providers = load_provider_catalog_history(&mut transaction, &workspace.manifest).await?;
+    let launches =
+        optimization_launch::load(&mut transaction, &workspace, &setups, &providers).await?;
+    let views = load(&mut transaction, workspace.manifest.id, &launches, &setups).await?;
+    let view = views
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .context("Project optimization run was not found.")?;
+    if matches!(
+        view.state,
+        ProjectOptimizationRunState::Preparing | ProjectOptimizationRunState::Ready
+    ) {
+        transaction.commit().await?;
+        database.close().await?;
+        return Ok(view);
+    }
+    let previous = last_event(&mut transaction, run_id).await?;
+    let event = ProjectOptimizationEvent::preparation_started(
+        Uuid::new_v4(),
+        &view.run,
+        &previous,
+        view.attempt + 1,
+        Utc::now(),
+    )?;
+    insert_event(&mut transaction, &event).await?;
+    let result = load(&mut transaction, workspace.manifest.id, &launches, &setups)
+        .await?
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .expect("inserted preparation belongs to loaded run");
+    transaction.commit().await?;
+    database.close().await?;
+    Ok(result)
+}
+
+pub async fn finish_preparation(
+    folder: &Path,
+    run_id: Uuid,
+    expected_head: &str,
+    preparation: ProjectOptimizationPreparation,
+) -> Result<ProjectOptimizationRunView> {
+    record_preparation(folder, run_id, expected_head, Some(preparation), None).await
+}
+
+pub async fn fail_preparation(
+    folder: &Path,
+    run_id: Uuid,
+    expected_head: &str,
+    failure_code: &str,
+) -> Result<ProjectOptimizationRunView> {
+    record_preparation(folder, run_id, expected_head, None, Some(failure_code)).await
+}
+
+async fn record_preparation(
+    folder: &Path,
+    run_id: Uuid,
+    expected_head: &str,
+    preparation: Option<ProjectOptimizationPreparation>,
+    failure_code: Option<&str>,
+) -> Result<ProjectOptimizationRunView> {
+    let workspace = open_workspace(folder, true).await?;
+    let mut database = connect(Path::new(&workspace.folder), false, false).await?;
+    sqlx::migrate!("./migrations").run(&mut database).await?;
+    let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
+    let setups = optimization_setup::load(&mut transaction, &workspace).await?;
+    let providers = load_provider_catalog_history(&mut transaction, &workspace.manifest).await?;
+    let launches =
+        optimization_launch::load(&mut transaction, &workspace, &setups, &providers).await?;
+    let views = load(&mut transaction, workspace.manifest.id, &launches, &setups).await?;
+    let view = views
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .context("Project optimization run was not found.")?;
+    if view.state == ProjectOptimizationRunState::Ready {
+        ensure!(
+            preparation.as_ref() == view.preparation.as_ref(),
+            "Optimization preparation already completed with another receipt."
+        );
+        transaction.commit().await?;
+        database.close().await?;
+        return Ok(view);
+    }
+    if view.state == ProjectOptimizationRunState::PreparationFailed {
+        ensure!(
+            preparation.is_none() && failure_code == view.failure_code.as_deref(),
+            "Optimization preparation attempt already recorded another outcome."
+        );
+        transaction.commit().await?;
+        database.close().await?;
+        return Ok(view);
+    }
+    ensure!(
+        view.state == ProjectOptimizationRunState::Preparing
+            && view.head_fingerprint == expected_head,
+        "Optimization preparation journal changed; reload it before recording an outcome."
+    );
+    let launch = launches
+        .iter()
+        .find(|value| value.id.to_string() == view.run.launch.id)
+        .context("Optimization launch authorization is missing.")?;
+    let setup = setups
+        .iter()
+        .find(|value| value.id.to_string() == view.run.setup.id)
+        .context("Optimization setup is missing.")?;
+    if let Some(receipt) = &preparation {
+        receipt.validate_for(&view.run, launch, setup)?;
+        let catalog = workspace
+            .model_catalog
+            .as_ref()
+            .context("Model catalog is missing.")?;
+        let model = catalog.active_model();
+        let binding = workspace
+            .scientific_binding
+            .as_ref()
+            .context("Scientific runtime binding is missing.")?;
+        let dataset = crate::dataset_versions::load_reference(
+            &mut transaction,
+            workspace.manifest.id,
+            receipt.dataset.id,
+        )
+        .await?;
+        let benchmark = workspace
+            .benchmark_versions
+            .iter()
+            .find(|value| value.id.to_string() == receipt.benchmark.id)
+            .context("Shared benchmark version is missing.")?;
+        ensure!(
+            catalog.active_baseline_revision_id.to_string() == setup.inputs.baseline_revision.id
+                && model.id.to_string() == receipt.model.id
+                && model.fingerprint == receipt.model.fingerprint
+                && dataset == receipt.dataset
+                && benchmark.fingerprint == receipt.benchmark.fingerprint
+                && binding.id.to_string() == receipt.execution_binding.id
+                && binding.fingerprint == receipt.execution_binding.fingerprint
+                && binding.runtime.project_snapshot == receipt.runtime_project
+                && receipt.adapter.id
+                    == format!("{}:{}", binding.adapter.key, binding.adapter.protocol)
+                && receipt.adapter.fingerprint == binding.adapter.configuration_fingerprint,
+            "Project inputs or execution runtime changed before preparation completed."
+        );
+    }
+    let previous = last_event(&mut transaction, run_id).await?;
+    let event = match (preparation, failure_code) {
+        (Some(receipt), None) => ProjectOptimizationEvent::preparation_completed(
+            Uuid::new_v4(),
+            &view.run,
+            &previous,
+            view.attempt,
+            receipt,
+            Utc::now(),
+        )?,
+        (None, Some(code)) => ProjectOptimizationEvent::preparation_failed(
+            Uuid::new_v4(),
+            &view.run,
+            &previous,
+            view.attempt,
+            code,
+            Utc::now(),
+        )?,
+        _ => anyhow::bail!("Preparation must record exactly one outcome."),
+    };
+    insert_event(&mut transaction, &event).await?;
+    let result = load(&mut transaction, workspace.manifest.id, &launches, &setups)
+        .await?
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .expect("inserted outcome belongs to loaded run");
+    transaction.commit().await?;
+    database.close().await?;
+    Ok(result)
+}
+
+async fn last_event(
+    database: &mut SqliteConnection,
+    run_id: Uuid,
+) -> Result<ProjectOptimizationEvent> {
+    let json: String = sqlx::query_scalar(
+        "SELECT metadata_json FROM project_optimization_events WHERE run_id=? ORDER BY sequence DESC LIMIT 1",
+    )
+    .bind(run_id.to_string())
+    .fetch_one(database)
+    .await?;
+    Ok(serde_json::from_str(&json)?)
+}
+
+async fn insert_event(
+    database: &mut SqliteConnection,
+    event: &ProjectOptimizationEvent,
+) -> Result<()> {
+    sqlx::query("INSERT INTO project_optimization_events (id, run_id, sequence, previous_event_fingerprint, kind, fingerprint, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(event.id.to_string()).bind(event.run_id.to_string()).bind(i64::try_from(event.sequence)?)
+        .bind(&event.previous_event_fingerprint).bind(event.kind.storage_key()).bind(&event.fingerprint)
+        .bind(serde_json::to_string(event)?).bind(event.created_at.to_rfc3339())
+        .execute(database).await?;
+    Ok(())
+}
+
 async fn load(
     database: &mut SqliteConnection,
     project_id: Uuid,
     launches: &[OptimizationLaunchAuthorization],
+    setups: &[OptimizationSetup],
 ) -> Result<Vec<ProjectOptimizationRunView>> {
     if sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='project_optimization_runs'",
@@ -174,7 +382,7 @@ async fn load(
                     && u64::try_from(event_row.try_get::<i64, _>("sequence")?)? == event.sequence
                     && event_row.try_get::<Option<String>, _>("previous_event_fingerprint")?
                         == event.previous_event_fingerprint
-                    && event_row.try_get::<String, _>("kind")? == "reserved"
+                    && event_row.try_get::<String, _>("kind")? == event.kind.storage_key()
                     && event_row.try_get::<String, _>("fingerprint")? == event.fingerprint
                     && event_row.try_get::<String, _>("created_at")?
                         == event.created_at.to_rfc3339(),
@@ -182,7 +390,15 @@ async fn load(
             );
             events.push(event);
         }
-        result.push(replay_project_optimization(&run, launch, &events)?);
+        let view = replay_project_optimization(&run, launch, &events)?;
+        if let Some(preparation) = &view.preparation {
+            let setup = setups
+                .iter()
+                .find(|value| value.id.to_string() == run.setup.id)
+                .context("Optimization setup is missing.")?;
+            preparation.validate_for(&run, launch, setup)?;
+        }
+        result.push(view);
     }
     Ok(result)
 }

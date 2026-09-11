@@ -148,7 +148,7 @@ async fn preview(folder: &Path, run_id: Uuid) -> Result<BenchmarkPreview> {
     })
 }
 
-async fn inspect(folder: &Path, version_id: Uuid) -> Result<ProjectBenchmarkVersion> {
+pub(super) async fn inspect(folder: &Path, version_id: Uuid) -> Result<ProjectBenchmarkVersion> {
     let workspace = open_workspace(folder, false).await?;
     let (version, binding) = benchmarks::inspect(folder, version_id).await?;
     let store = super::open_bound_store(&workspace.folder, &binding).await?;

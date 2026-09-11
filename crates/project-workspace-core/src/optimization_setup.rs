@@ -145,12 +145,16 @@ impl OptimizationSetup {
         .map_err(|e| Invalid(e.to_string()))
     }
 
-    pub fn validate(&self, parent: Option<&Self>) -> Result<(), Invalid> {
+    pub fn validate_identity(&self) -> Result<(), Invalid> {
         self.inputs.validate()?;
         require(
             !self.id.is_nil() && self.number > 0 && self.reproduce()? == self.fingerprint,
             "Optimization setup identity changed.",
-        )?;
+        )
+    }
+
+    pub fn validate(&self, parent: Option<&Self>) -> Result<(), Invalid> {
+        self.validate_identity()?;
         match (parent, &self.parent) {
             (None, None) => require(self.number == 1, "Setup history must begin at revision 1."),
             (Some(previous), Some(reference)) => {

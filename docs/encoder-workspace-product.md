@@ -513,3 +513,28 @@ and keep outstanding requirements visible.
 - `cargo fmt-check`, `cargo check-all`, `cargo lint` and `cargo test-all` pass.
   The actual CLI integration test covers reservation, exact retry, stale
   authorization, read-only history, immutable storage and redacted activity.
+
+### Recoverable input verification — 11 September 2026
+
+- A project run now records retryable preparation attempts instead of remaining
+  silently queued. The states are `queued`, `preparing`, `ready`, and
+  `preparation_failed`; every transition is part of the run's immutable
+  hash-chained event journal.
+- The verified receipt pins the exact baseline model, dataset version, shared
+  benchmark, provider revision, scientific binding, runtime project and
+  compiled adapter. It contains row counts and suite keys, but no dataset row,
+  secret or final-holdout payload.
+- `workspace optimization-run prepare` deeply re-reads selected source rows,
+  reproduces the benchmark from its original protocol, checks that the current
+  runtime can execute the same benchmark, and verifies native files. It makes
+  no provider call and executes no training or evaluation.
+- Failed verification records a stable code and can retry the same run after a
+  runtime repair. Typed persistence rejects a forged runtime receipt even when
+  its own fingerprint is internally valid.
+- This closes input custody only. The next stage must materialize the selected
+  dataset through the adapter and attach the first bounded advisor/training
+  child before the desktop can start real improvement work.
+- `cargo fmt-check`, `cargo check-all`, `cargo lint` and `cargo test-all` pass.
+  The actual CLI integration tests cover retry after a missing runtime,
+  rejection of a forged receipt, idempotent preparation and compatibility with
+  the currently bound task adapter without executing sealed evaluation.

@@ -53,6 +53,8 @@ pub enum WorkspaceOptimizationRunCommand {
     List,
     /// Show one verified project run and its journal head.
     Show { run_id: Uuid },
+    /// Verify selected inputs and native runtime without executing work.
+    Prepare { run_id: Uuid },
 }
 
 #[derive(Debug, Subcommand)]

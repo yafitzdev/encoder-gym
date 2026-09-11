@@ -3,13 +3,17 @@
 mod benchmark_support;
 use benchmark_support::{complete_rejected_candidate, fixture, register_fixture_model};
 use chrono::Utc;
+use encoder_experiment_core::ports::ExperimentStore;
+use encoder_experiment_nomos::NomosBackend;
 use encoder_experiment_sqlite::SqliteExperimentStore;
 use project_workspace_core::{
-    BaselineRevision, ProviderAuthentication, ProviderCatalog, ProviderConfiguration, ProviderKind,
-    ProviderLimits, ProviderRole,
+    BaselineRevision, BoundIdentity, OptimizationLaunchAuthorization, OptimizationSetup,
+    ProjectOptimizationPreparation, ProviderAuthentication, ProviderCatalog, ProviderConfiguration,
+    ProviderKind, ProviderLimits, ProviderRole,
 };
 use project_workspace_local::{
-    dataset_versions, import_dataset, inspect_dataset, open_workspace, record_provider_catalog,
+    dataset_versions, import_dataset, inspect_dataset, open_workspace, optimization_runs,
+    record_provider_catalog,
 };
 use serde_json::{Value, json};
 use sqlx::{Connection, SqliteConnection};
@@ -19,6 +23,30 @@ use std::{
     process::{Command, Output},
 };
 use uuid::Uuid;
+
+#[tokio::test]
+async fn shared_benchmark_is_verified_against_the_current_adapter_without_sealed_execution() {
+    let temp = tempfile::tempdir().unwrap();
+    let (folder, project, first, _) = fixture(temp.path()).await;
+    let store = SqliteExperimentStore::connect(&format!(
+        "sqlite://{}",
+        folder.join("runs/scientific.sqlite").display()
+    ))
+    .await
+    .unwrap();
+    let protocol = store
+        .get_protocol(store.load_events(first).await.unwrap()[0].protocol_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let definition = NomosBackend::recorded_benchmark(&project, &protocol).unwrap();
+    NomosBackend::verify_benchmark_definition(&project, &definition).unwrap();
+    let mut changed = definition;
+    changed.backend.configuration_fingerprint = format!("sha256:{}", "f".repeat(64));
+    changed.fingerprint = changed.reproduce_fingerprint().unwrap();
+    assert!(NomosBackend::verify_benchmark_definition(&project, &changed).is_err());
+    store.pool().close().await;
+}
 
 fn invoke(root: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_synth"))
@@ -327,6 +355,143 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     );
     assert!(!started.to_string().contains("SETUP_ROW_CANARY"));
     assert!(!started.to_string().contains("apiKey"));
+
+    // Preparation records an honest failed attempt, then retries against the
+    // exact same inputs after the native runtime is repaired.
+    let failed_prepare = invoke(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "prepare",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert!(
+        !failed_prepare.status.success(),
+        "{}",
+        String::from_utf8_lossy(&failed_prepare.stderr)
+    );
+    let failed = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "show",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(
+        failed["state"],
+        "preparation_failed",
+        "{}",
+        String::from_utf8_lossy(&failed_prepare.stderr)
+    );
+    assert_eq!(failed["attempt"], 1);
+    assert_eq!(failed["failureCode"], "input_verification_failed");
+    // The fixture intentionally has no native runtime. Complete the second
+    // attempt through the persistence boundary with a typed verified receipt;
+    // the actual CLI must then replay it without trying to execute anything.
+    let retry = optimization_runs::begin_preparation(
+        &folder,
+        started["run"]["run"]["id"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    let typed_setup: OptimizationSetup = serde_json::from_value(setup.clone()).unwrap();
+    let typed_launch: OptimizationLaunchAuthorization =
+        serde_json::from_value(authorized["authorization"].clone()).unwrap();
+    let workspace = open_workspace(&folder, false).await.unwrap();
+    let binding = workspace.scientific_binding.unwrap();
+    let receipt = ProjectOptimizationPreparation::create(
+        &retry.run,
+        &typed_launch,
+        &typed_setup,
+        BoundIdentity {
+            id: binding.id.to_string(),
+            fingerprint: binding.fingerprint.clone(),
+        },
+        binding.runtime.project_snapshot,
+        BoundIdentity {
+            id: "nomos:nomos-ranking-v3".into(),
+            fingerprint: binding.adapter.configuration_fingerprint,
+        },
+        1,
+        vec!["development".into()],
+        "holdout".into(),
+        Utc::now(),
+    )
+    .unwrap();
+    let mut foreign_receipt = receipt.clone();
+    foreign_receipt.execution_binding = BoundIdentity {
+        id: Uuid::new_v4().to_string(),
+        fingerprint: format!("sha256:{}", "9".repeat(64)),
+    };
+    foreign_receipt.fingerprint = foreign_receipt.reproduce().unwrap();
+    assert!(
+        optimization_runs::finish_preparation(
+            &folder,
+            retry.run.id,
+            &retry.head_fingerprint,
+            foreign_receipt,
+        )
+        .await
+        .is_err()
+    );
+    let recorded = optimization_runs::finish_preparation(
+        &folder,
+        retry.run.id,
+        &retry.head_fingerprint,
+        receipt,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        recorded.state,
+        project_workspace_core::ProjectOptimizationRunState::Ready
+    );
+    let prepared = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "prepare",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(prepared["run"]["state"], "ready");
+    assert_eq!(prepared["run"]["attempt"], 2);
+    assert_eq!(prepared["run"]["preparation"]["datasetRows"], 1);
+    assert_eq!(
+        prepared["run"]["preparation"]["model"]["id"],
+        setup["inputs"]["model"]["id"]
+    );
+    assert_eq!(prepared["run"]["preparation"]["benchmark"]["id"], benchmark);
+    assert_eq!(
+        prepared["run"]["preparation"]["providerCatalog"]["id"],
+        providers.id.to_string()
+    );
+    assert_eq!(
+        prepared["run"]["preparation"]["developmentSuites"],
+        json!(["development"])
+    );
+    assert_eq!(prepared["run"]["preparation"]["finalSuite"], "holdout");
+    let prepared_retry = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "prepare",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(prepared_retry["run"], prepared["run"]);
+    assert!(!prepared.to_string().contains("SETUP_ROW_CANARY"));
+    assert!(!prepared.to_string().contains("apiKey"));
     let orphan_request = json!({"id":Uuid::new_v4(),"scope":launch["scope"]});
     fs::write(
         root.join("orphan-launch.json"),
@@ -358,7 +523,7 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
                 "launch.json",
             ],
         )["run"],
-        started["run"],
+        prepared["run"],
         "an exact retry returns its already-reserved run after later settings change"
     );
     assert!(
@@ -404,12 +569,13 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     );
     assert_eq!(
         run(root, &["optimization-run", "project", "list"]),
-        json!([started["run"]])
+        json!([prepared["run"]])
     );
     let activity = run(root, &["activity", "project", "list"]);
     let text = activity.to_string();
     assert!(text.contains("optimization.launch"));
     assert!(text.contains("optimization.start"));
+    assert!(text.contains("optimization.prepare"));
     assert!(text.contains(started["run"]["run"]["id"].as_str().unwrap()));
     assert!(!text.contains("SETUP_ROW_CANARY"));
     assert!(!text.contains("apiKey"));

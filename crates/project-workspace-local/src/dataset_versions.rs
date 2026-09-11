@@ -225,6 +225,15 @@ pub async fn inspect(folder: &Path, version_id: Uuid) -> Result<DatasetVersion> 
     inspect_workspace(&workspace, version_id).await
 }
 
+/// Deep preparation boundary: reproduce version history and re-read every
+/// selected source row without returning row payloads to the caller.
+pub async fn verify(folder: &Path, version_id: Uuid) -> Result<DatasetVersion> {
+    let workspace = open_workspace(folder, true).await?;
+    let version = inspect_workspace(&workspace, version_id).await?;
+    rows::verify_members(&workspace, &version.members)?;
+    Ok(version)
+}
+
 async fn inspect_workspace(
     workspace: &ManagedWorkspace,
     version_id: Uuid,
