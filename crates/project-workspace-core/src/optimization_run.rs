@@ -10,6 +10,7 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use dataset_core::versions::DatasetVersionRef;
+use encoder_experiment_core::domain::{EvidenceRole, ExternalArtifactIdentity};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use uuid::Uuid;
@@ -216,6 +217,91 @@ impl ProjectOptimizationPreparation {
     }
 }
 
+/// Row-free handoff proving that the selected managed version became one
+/// immutable task-native training artifact and scientific project snapshot.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectOptimizationMaterialization {
+    pub run: BoundIdentity,
+    pub preparation_fingerprint: String,
+    pub dataset: DatasetVersionRef,
+    pub native_materialization: BoundIdentity,
+    pub training_artifact: ExternalArtifactIdentity,
+    pub scientific_project: BoundIdentity,
+    pub adapter: BoundIdentity,
+    pub created_at: DateTime<Utc>,
+    pub fingerprint: String,
+}
+
+impl ProjectOptimizationMaterialization {
+    #[allow(clippy::too_many_arguments)]
+    pub fn create(
+        run: &ProjectOptimizationRun,
+        launch: &OptimizationLaunchAuthorization,
+        preparation: &ProjectOptimizationPreparation,
+        native_materialization: BoundIdentity,
+        training_artifact: ExternalArtifactIdentity,
+        scientific_project: BoundIdentity,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        let mut value = Self {
+            run: run.identity(),
+            preparation_fingerprint: preparation.fingerprint.clone(),
+            dataset: preparation.dataset.clone(),
+            native_materialization,
+            training_artifact,
+            scientific_project,
+            adapter: preparation.adapter.clone(),
+            created_at,
+            fingerprint: String::new(),
+        };
+        value.fingerprint = value.reproduce()?;
+        value.validate_for(run, launch, preparation)?;
+        Ok(value)
+    }
+
+    pub fn reproduce(&self) -> Result<String, Invalid> {
+        artifact_core::fingerprint(&serde_json::json!({
+            "run":self.run,"preparationFingerprint":self.preparation_fingerprint,
+            "dataset":self.dataset,"nativeMaterialization":self.native_materialization,
+            "trainingArtifact":self.training_artifact,
+            "scientificProject":self.scientific_project,"adapter":self.adapter,
+            "createdAt":self.created_at,
+        }))
+        .map_err(|error| Invalid(error.to_string()))
+    }
+
+    pub fn validate_for(
+        &self,
+        run: &ProjectOptimizationRun,
+        launch: &OptimizationLaunchAuthorization,
+        preparation: &ProjectOptimizationPreparation,
+    ) -> Result<(), Invalid> {
+        preparation.validate_identity(run, launch)?;
+        self.run.validate("Optimization run")?;
+        self.native_materialization
+            .validate("Native dataset materialization")?;
+        self.scientific_project.validate("Scientific project")?;
+        self.adapter.validate("Task adapter")?;
+        self.dataset
+            .validate()
+            .map_err(|error| Invalid(error.to_string()))?;
+        self.training_artifact
+            .validate()
+            .map_err(|error| Invalid(error.to_string()))?;
+        require(
+            self.run == run.identity()
+                && self.preparation_fingerprint == preparation.fingerprint
+                && self.dataset == preparation.dataset
+                && self.training_artifact.role == EvidenceRole::Training
+                && self.adapter == preparation.adapter
+                && self.created_at >= preparation.created_at
+                && self.reproduce()? == self.fingerprint,
+            "Optimization materialization changed or does not match its preparation.",
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectOptimizationEventKind {
@@ -223,6 +309,9 @@ pub enum ProjectOptimizationEventKind {
     PreparationStarted,
     PreparationCompleted,
     PreparationFailed,
+    MaterializationStarted,
+    MaterializationCompleted,
+    MaterializationFailed,
 }
 
 impl ProjectOptimizationEventKind {
@@ -232,6 +321,9 @@ impl ProjectOptimizationEventKind {
             Self::PreparationStarted => "preparation_started",
             Self::PreparationCompleted => "preparation_completed",
             Self::PreparationFailed => "preparation_failed",
+            Self::MaterializationStarted => "materialization_started",
+            Self::MaterializationCompleted => "materialization_completed",
+            Self::MaterializationFailed => "materialization_failed",
         }
     }
 }
@@ -249,6 +341,8 @@ pub struct ProjectOptimizationEvent {
     pub attempt: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preparation: Option<ProjectOptimizationPreparation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub materialization: Option<ProjectOptimizationMaterialization>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_code: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -270,6 +364,7 @@ impl ProjectOptimizationEvent {
             launch: run.launch.clone(),
             attempt: None,
             preparation: None,
+            materialization: None,
             failure_code: None,
             created_at,
             fingerprint: String::new(),
@@ -294,6 +389,7 @@ impl ProjectOptimizationEvent {
             attempt,
             None,
             None,
+            None,
             created_at,
         )
     }
@@ -314,6 +410,7 @@ impl ProjectOptimizationEvent {
             attempt,
             Some(preparation),
             None,
+            None,
             created_at,
         )
     }
@@ -333,6 +430,69 @@ impl ProjectOptimizationEvent {
             ProjectOptimizationEventKind::PreparationFailed,
             attempt,
             None,
+            None,
+            Some(failure_code.into()),
+            created_at,
+        )
+    }
+
+    pub fn materialization_started(
+        id: Uuid,
+        run: &ProjectOptimizationRun,
+        previous: &Self,
+        attempt: u32,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        Self::next(
+            id,
+            run,
+            previous,
+            ProjectOptimizationEventKind::MaterializationStarted,
+            attempt,
+            None,
+            None,
+            None,
+            created_at,
+        )
+    }
+
+    pub fn materialization_completed(
+        id: Uuid,
+        run: &ProjectOptimizationRun,
+        previous: &Self,
+        attempt: u32,
+        materialization: ProjectOptimizationMaterialization,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        Self::next(
+            id,
+            run,
+            previous,
+            ProjectOptimizationEventKind::MaterializationCompleted,
+            attempt,
+            None,
+            Some(materialization),
+            None,
+            created_at,
+        )
+    }
+
+    pub fn materialization_failed(
+        id: Uuid,
+        run: &ProjectOptimizationRun,
+        previous: &Self,
+        attempt: u32,
+        failure_code: impl Into<String>,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        Self::next(
+            id,
+            run,
+            previous,
+            ProjectOptimizationEventKind::MaterializationFailed,
+            attempt,
+            None,
+            None,
             Some(failure_code.into()),
             created_at,
         )
@@ -346,6 +506,7 @@ impl ProjectOptimizationEvent {
         kind: ProjectOptimizationEventKind,
         attempt: u32,
         preparation: Option<ProjectOptimizationPreparation>,
+        materialization: Option<ProjectOptimizationMaterialization>,
         failure_code: Option<String>,
         created_at: DateTime<Utc>,
     ) -> Result<Self, Invalid> {
@@ -361,6 +522,7 @@ impl ProjectOptimizationEvent {
             launch: run.launch.clone(),
             attempt: Some(attempt),
             preparation,
+            materialization,
             failure_code,
             created_at,
             fingerprint: String::new(),
@@ -378,13 +540,27 @@ impl ProjectOptimizationEvent {
                 "previousEventFingerprint":self.previous_event_fingerprint,
                 "kind":self.kind,"launch":self.launch,"createdAt":self.created_at,
             })
-        } else {
+        } else if matches!(
+            self.kind,
+            ProjectOptimizationEventKind::PreparationStarted
+                | ProjectOptimizationEventKind::PreparationCompleted
+                | ProjectOptimizationEventKind::PreparationFailed
+        ) {
+            // Preserve fingerprints from the shipped preparation schema.
             serde_json::json!({
                 "id":self.id,"runId":self.run_id,"sequence":self.sequence,
                 "previousEventFingerprint":self.previous_event_fingerprint,
                 "kind":self.kind,"launch":self.launch,"attempt":self.attempt,
                 "preparation":self.preparation,"failureCode":self.failure_code,
                 "createdAt":self.created_at,
+            })
+        } else {
+            serde_json::json!({
+                "id":self.id,"runId":self.run_id,"sequence":self.sequence,
+                "previousEventFingerprint":self.previous_event_fingerprint,
+                "kind":self.kind,"launch":self.launch,"attempt":self.attempt,
+                "preparation":self.preparation,"materialization":self.materialization,
+                "failureCode":self.failure_code,"createdAt":self.created_at,
             })
         };
         artifact_core::fingerprint(&value).map_err(|error| Invalid(error.to_string()))
@@ -409,6 +585,7 @@ impl ProjectOptimizationEvent {
                 && self.kind == ProjectOptimizationEventKind::Reserved
                 && self.attempt.is_none()
                 && self.preparation.is_none()
+                && self.materialization.is_none()
                 && self.failure_code.is_none()
                 && self.created_at == run.created_at,
             "Project optimization reservation event changed or is invalid.",
@@ -433,17 +610,22 @@ impl ProjectOptimizationEvent {
                 "A reservation can only be the first optimization event.".into(),
             )),
             ProjectOptimizationEventKind::PreparationStarted => require(
-                self.preparation.is_none() && self.failure_code.is_none(),
+                self.preparation.is_none()
+                    && self.materialization.is_none()
+                    && self.failure_code.is_none(),
                 "Preparation start cannot contain a result or failure.",
             ),
             ProjectOptimizationEventKind::PreparationCompleted => require(
-                self.preparation.is_some() && self.failure_code.is_none(),
+                self.preparation.is_some()
+                    && self.materialization.is_none()
+                    && self.failure_code.is_none(),
                 "Preparation completion requires exactly one verified receipt.",
             ),
             ProjectOptimizationEventKind::PreparationFailed => {
                 let code = self.failure_code.as_deref().unwrap_or_default();
                 require(
                     self.preparation.is_none()
+                        && self.materialization.is_none()
                         && !code.is_empty()
                         && code.len() <= 80
                         && code.bytes().all(|byte| {
@@ -452,6 +634,33 @@ impl ProjectOptimizationEvent {
                                 || matches!(byte, b'_' | b'-' | b'.')
                         }),
                     "Preparation failure requires a safe stable code.",
+                )
+            }
+            ProjectOptimizationEventKind::MaterializationStarted => require(
+                self.preparation.is_none()
+                    && self.materialization.is_none()
+                    && self.failure_code.is_none(),
+                "Materialization start cannot contain a result or failure.",
+            ),
+            ProjectOptimizationEventKind::MaterializationCompleted => require(
+                self.preparation.is_none()
+                    && self.materialization.is_some()
+                    && self.failure_code.is_none(),
+                "Materialization completion requires exactly one verified receipt.",
+            ),
+            ProjectOptimizationEventKind::MaterializationFailed => {
+                let code = self.failure_code.as_deref().unwrap_or_default();
+                require(
+                    self.preparation.is_none()
+                        && self.materialization.is_none()
+                        && !code.is_empty()
+                        && code.len() <= 80
+                        && code.bytes().all(|byte| {
+                            byte.is_ascii_lowercase()
+                                || byte.is_ascii_digit()
+                                || matches!(byte, b'_' | b'-' | b'.')
+                        }),
+                    "Materialization failure requires a safe stable code.",
                 )
             }
         }
@@ -465,6 +674,22 @@ pub enum ProjectOptimizationRunState {
     Preparing,
     Ready,
     PreparationFailed,
+    Materializing,
+    Materialized,
+    MaterializationFailed,
+}
+
+impl ProjectOptimizationRunState {
+    pub const fn has_preparation(self) -> bool {
+        matches!(
+            self,
+            Self::Ready | Self::Materializing | Self::Materialized | Self::MaterializationFailed
+        )
+    }
+
+    pub const fn has_materialization(self) -> bool {
+        matches!(self, Self::Materialized)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -475,6 +700,9 @@ pub struct ProjectOptimizationRunView {
     pub attempt: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preparation: Option<ProjectOptimizationPreparation>,
+    pub materialization_attempt: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub materialization: Option<ProjectOptimizationMaterialization>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_code: Option<String>,
     pub last_sequence: u64,
@@ -495,6 +723,8 @@ pub fn replay_project_optimization(
     let mut state = ProjectOptimizationRunState::Queued;
     let mut attempt = 0;
     let mut preparation = None;
+    let mut materialization_attempt = 0;
+    let mut materialization = None;
     let mut failure_code = None;
     let mut previous = first;
     for event in &events[1..] {
@@ -537,6 +767,46 @@ pub fn replay_project_optimization(
                 state = ProjectOptimizationRunState::PreparationFailed;
                 failure_code.clone_from(&event.failure_code);
             }
+            ProjectOptimizationEventKind::MaterializationStarted => {
+                require(
+                    matches!(
+                        state,
+                        ProjectOptimizationRunState::Ready
+                            | ProjectOptimizationRunState::MaterializationFailed
+                    ) && event_attempt == materialization_attempt + 1,
+                    "Optimization materialization cannot start from this state.",
+                )?;
+                state = ProjectOptimizationRunState::Materializing;
+                materialization_attempt = event_attempt;
+                failure_code = None;
+            }
+            ProjectOptimizationEventKind::MaterializationCompleted => {
+                require(
+                    state == ProjectOptimizationRunState::Materializing
+                        && event_attempt == materialization_attempt,
+                    "Optimization materialization completion has no matching active attempt.",
+                )?;
+                let receipt = event
+                    .materialization
+                    .clone()
+                    .expect("validated materialization");
+                receipt.validate_for(
+                    run,
+                    launch,
+                    preparation.as_ref().expect("ready state has preparation"),
+                )?;
+                state = ProjectOptimizationRunState::Materialized;
+                materialization = Some(receipt);
+            }
+            ProjectOptimizationEventKind::MaterializationFailed => {
+                require(
+                    state == ProjectOptimizationRunState::Materializing
+                        && event_attempt == materialization_attempt,
+                    "Optimization materialization failure has no matching active attempt.",
+                )?;
+                state = ProjectOptimizationRunState::MaterializationFailed;
+                failure_code.clone_from(&event.failure_code);
+            }
         }
         previous = event;
     }
@@ -545,6 +815,8 @@ pub fn replay_project_optimization(
         state,
         attempt,
         preparation,
+        materialization_attempt,
+        materialization,
         failure_code,
         last_sequence: previous.sequence,
         head_fingerprint: previous.fingerprint.clone(),
@@ -696,6 +968,92 @@ mod tests {
         assert_eq!(view.attempt, 2);
         assert_eq!(view.preparation, Some(receipt));
         assert_eq!(view.last_sequence, 5);
+    }
+
+    #[test]
+    fn prepared_data_materializes_once_and_retries_only_its_own_stage() {
+        let (setup, launch) = fixture();
+        let now = Utc::now();
+        let run = ProjectOptimizationRun::reserve(Uuid::new_v4(), &launch, now).unwrap();
+        let reserved = ProjectOptimizationEvent::reserved(Uuid::new_v4(), &run, now).unwrap();
+        let preparing =
+            ProjectOptimizationEvent::preparation_started(Uuid::new_v4(), &run, &reserved, 1, now)
+                .unwrap();
+        let preparation = preparation(&run, &launch, &setup);
+        let ready = ProjectOptimizationEvent::preparation_completed(
+            Uuid::new_v4(),
+            &run,
+            &preparing,
+            1,
+            preparation.clone(),
+            preparation.created_at,
+        )
+        .unwrap();
+        let started = ProjectOptimizationEvent::materialization_started(
+            Uuid::new_v4(),
+            &run,
+            &ready,
+            1,
+            Utc::now(),
+        )
+        .unwrap();
+        let failed = ProjectOptimizationEvent::materialization_failed(
+            Uuid::new_v4(),
+            &run,
+            &started,
+            1,
+            "native_row_invalid",
+            Utc::now(),
+        )
+        .unwrap();
+        let retried = ProjectOptimizationEvent::materialization_started(
+            Uuid::new_v4(),
+            &run,
+            &failed,
+            2,
+            Utc::now(),
+        )
+        .unwrap();
+        let artifact = ExternalArtifactIdentity::new(
+            "runs/project/training.jsonl",
+            EvidenceRole::Training,
+            42,
+            digest('7'),
+        )
+        .unwrap();
+        let materialization = ProjectOptimizationMaterialization::create(
+            &run,
+            &launch,
+            &preparation,
+            reference('8'),
+            artifact,
+            reference('9'),
+            Utc::now(),
+        )
+        .unwrap();
+        let completed = ProjectOptimizationEvent::materialization_completed(
+            Uuid::new_v4(),
+            &run,
+            &retried,
+            2,
+            materialization.clone(),
+            materialization.created_at,
+        )
+        .unwrap();
+        let view = replay_project_optimization(
+            &run,
+            &launch,
+            &[
+                reserved, preparing, ready, started, failed, retried, completed,
+            ],
+        )
+        .unwrap();
+        assert_eq!(view.state, ProjectOptimizationRunState::Materialized);
+        assert_eq!(view.attempt, 1);
+        assert_eq!(view.materialization_attempt, 2);
+        assert_eq!(view.preparation, Some(preparation));
+        assert_eq!(view.materialization, Some(materialization));
+        assert!(view.failure_code.is_none());
     }
 
     #[test]

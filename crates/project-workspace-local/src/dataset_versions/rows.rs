@@ -191,6 +191,34 @@ pub(super) fn inspect_members(
     workspace: &ManagedWorkspace,
     members: &[DatasetMember],
 ) -> Result<Vec<InspectedDatasetRow>> {
+    inspect_members_bounded(
+        workspace,
+        members,
+        16 * 1_048_576,
+        "Selected rows exceed 16 MiB. Request a smaller page.",
+    )
+}
+
+pub(super) fn inspect_materialization_members(
+    workspace: &ManagedWorkspace,
+    members: &[DatasetMember],
+) -> Result<Vec<InspectedDatasetRow>> {
+    // A task adapter consumes these values immediately. Keep one finite local
+    // ceiling while allowing ordinary training snapshots larger than a UI page.
+    inspect_members_bounded(
+        workspace,
+        members,
+        512 * 1_048_576,
+        "Selected training rows exceed the 512 MiB local materialization limit.",
+    )
+}
+
+fn inspect_members_bounded(
+    workspace: &ManagedWorkspace,
+    members: &[DatasetMember],
+    maximum_bytes: usize,
+    maximum_message: &str,
+) -> Result<Vec<InspectedDatasetRow>> {
     let mut requested: BTreeMap<Uuid, BTreeSet<u64>> = BTreeMap::new();
     for member in members {
         requested
@@ -222,10 +250,7 @@ pub(super) fn inspect_members(
             .context("Selected source row was not read.")?
             .clone();
         bytes += serde_json::to_vec(&value)?.len();
-        ensure!(
-            bytes <= 16 * 1_048_576,
-            "Selected rows exceed 16 MiB. Request a smaller page."
-        );
+        ensure!(bytes <= maximum_bytes, "{maximum_message}");
         rows.push(InspectedDatasetRow {
             member: member.clone(),
             value,

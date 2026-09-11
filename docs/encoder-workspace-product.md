@@ -538,3 +538,26 @@ and keep outstanding requirements visible.
   The actual CLI integration tests cover retry after a missing runtime,
   rejection of a forged receipt, idempotent preparation and compatibility with
   the currently bound task adapter without executing sealed evaluation.
+
+### Adapter-owned training data materialization — 11 September 2026
+
+- A prepared project run now advances through `materializing`, `materialized`
+  or `materialization_failed` in the same immutable hash-chained journal.
+  Preparation and materialization retain separate retry counters and receipts.
+- The project layer replays the exact selected dataset version but remains
+  schema-neutral. The Nomos adapter validates accepted train-partition decision
+  states, registry/label consistency, usable positive-negative examples,
+  duplicate identities and every managed content fingerprint.
+- Valid rows are canonically rendered below the owning run and dataset version.
+  A complete dataset and row-free receipt publish together by directory rename;
+  retries must reproduce the existing artifact exactly and never overwrite it.
+- The adapter returns a new scientific project snapshot whose sole training
+  input is that artifact. Its baseline remains the selected model and its
+  development/final suites remain the shared benchmark. Existing snapshots are
+  reused by stable source identity after an interrupted journal append.
+- The actual CLI test covers a failed native attempt, exact retry, typed
+  completion and idempotent replay; adapter tests cover row rejection and
+  byte-identical publication. No model, provider or evaluation is executed.
+- `cargo fmt-check`, `cargo check-all`, `cargo lint` and `cargo test-all` pass.
+- The remaining execution boundary is the first finite candidate/advisor child
+  attached to this exact materialized project.

@@ -55,6 +55,8 @@ pub enum WorkspaceOptimizationRunCommand {
     Show { run_id: Uuid },
     /// Verify selected inputs and native runtime without executing work.
     Prepare { run_id: Uuid },
+    /// Render the selected dataset into the task adapter's immutable format.
+    Materialize { run_id: Uuid },
 }
 
 #[derive(Debug, Subcommand)]

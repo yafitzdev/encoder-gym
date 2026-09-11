@@ -46,6 +46,7 @@ pub(super) mod tests {
             python: root.join("must-not-run-python"),
             manifest: crate::tests::manifest_with_named_suites(),
             baseline_override: None,
+            training_override: None,
             identity: identity.clone(),
             observer_identity: identity.clone(),
             repair_delta_identity: identity.clone(),

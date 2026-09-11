@@ -1,9 +1,11 @@
 //! Compiled adapter for the isolated Nomos retrieval-ranking production pilot.
 
 mod benchmark;
+mod managed_training;
 mod progress;
 mod repair_delta;
 mod training_data;
+pub use managed_training::{NomosTrainingDataset, NomosTrainingDatasetWriter};
 pub use progress::{NativePhase, NativeProgress, ProgressObserver};
 pub use training_data::{VerifiedTrainingData, VerifiedTrainingInput};
 
@@ -91,6 +93,7 @@ pub struct NomosBackend {
     python: PathBuf,
     manifest: NomosExperimentManifest,
     baseline_override: Option<ModelArtifactIdentity>,
+    training_override: Option<NomosTrainingDataset>,
     identity: BackendIdentity,
     observer_identity: BackendIdentity,
     repair_delta_identity: BackendIdentity,
@@ -183,6 +186,7 @@ impl NomosBackend {
             python: python.into(),
             manifest,
             baseline_override: None,
+            training_override: None,
             identity,
             observer_identity,
             repair_delta_identity,
@@ -211,6 +215,17 @@ impl NomosBackend {
         Ok(self)
     }
 
+    /// Bind execution to a project-owned dataset already admitted and
+    /// materialized by this adapter. The checked-in experiment stays intact.
+    pub fn with_training_dataset(
+        mut self,
+        dataset: NomosTrainingDataset,
+    ) -> Result<Self, EncoderTaskAdapterError> {
+        dataset.verify_in(&self.root)?;
+        self.training_override = Some(dataset);
+        Ok(self)
+    }
+
     pub fn project_snapshot(&self) -> Result<ExternalProjectSnapshot, EncoderTaskAdapterError> {
         self.verify_no_remote()?;
         self.verify_clean_worktree()?;
@@ -225,6 +240,9 @@ impl NomosBackend {
 
         let mut inputs = Vec::with_capacity(self.manifest.datasets.len());
         for dataset in &self.manifest.datasets {
+            if self.training_override.is_some() && dataset.role == NativeEvidenceRole::Training {
+                continue;
+            }
             let path = self.resolve_existing(&dataset.path)?;
             verify_file(&path, dataset.bytes, &dataset.sha256)?;
             inputs.push(
@@ -236,6 +254,9 @@ impl NomosBackend {
                 )
                 .map_err(adapter_error)?,
             );
+        }
+        if let Some(dataset) = &self.training_override {
+            inputs.push(dataset.artifact.clone());
         }
         let baseline_path = self.resolve_existing(&self.manifest.baseline.pytorch_path)?;
         let (baseline_bytes, baseline_digest) = tree_identity(&baseline_path)?;
@@ -268,8 +289,11 @@ impl NomosBackend {
         if self.baseline_override.is_some() {
             self.model_path(&baseline_model)?;
         }
-        let source_fingerprint =
-            bound_source_fingerprint(runtime_source_fingerprint, self.baseline_override.as_ref())?;
+        let source_fingerprint = bound_source_fingerprint(
+            runtime_source_fingerprint,
+            self.baseline_override.as_ref(),
+            self.training_override.as_ref(),
+        )?;
         let mut reference_models = BTreeMap::new();
         for reference in &self.manifest.reference_models {
             let (bytes, digest) = self.verify_tree_artifact(
@@ -299,13 +323,17 @@ impl NomosBackend {
             let path = self.resolve_existing(&authority.path)?;
             verify_file(&path, authority.bytes, &authority.sha256)?;
         }
-        let training_inputs = self
-            .manifest
-            .datasets
-            .iter()
-            .filter(|value| value.role == NativeEvidenceRole::Training)
-            .map(|value| value.path.clone())
-            .collect::<Vec<_>>();
+        let training_inputs = self.training_override.as_ref().map_or_else(
+            || {
+                self.manifest
+                    .datasets
+                    .iter()
+                    .filter(|value| value.role == NativeEvidenceRole::Training)
+                    .map(|value| value.path.clone())
+                    .collect::<Vec<_>>()
+            },
+            |dataset| vec![dataset.artifact.key.clone()],
+        );
         let mut suites = serde_json::Map::new();
         for suite in self.manifest.evaluation_suites()? {
             let retrieval_fingerprint = artifact_core::fingerprint(&json!({
@@ -394,6 +422,12 @@ impl NomosBackend {
                         "fingerprint": prefixed(&authority.sha256),
                     }),
                 );
+        }
+        if let Some(dataset) = &self.training_override {
+            task_configuration
+                .as_object_mut()
+                .expect("task configuration is an object")
+                .insert("managed_training_dataset".into(), json!(dataset));
         }
         ExternalProjectSnapshot::create(
             self.manifest.experiment.clone(),
@@ -808,6 +842,23 @@ impl NomosBackend {
                     .strip_prefix("sha256:")
                     .ok_or_else(|| adapter_error("Nomos input fingerprint is malformed"))?,
             )?;
+        }
+        let project_training = project
+            .inputs
+            .iter()
+            .filter(|artifact| artifact.role == EvidenceRole::Training)
+            .collect::<Vec<_>>();
+        if configuration
+            .managed_training_dataset
+            .as_ref()
+            .is_some_and(|dataset| {
+                project_training.as_slice() != [&dataset.artifact]
+                    || self.training_override.as_ref() != Some(dataset)
+            })
+        {
+            return Err(adapter_error(
+                "Nomos managed training data does not match the bound project",
+            ));
         }
         let baseline = self.resolve_existing(&project.baseline_model.key)?;
         let (bytes, digest) = tree_identity(&baseline)?;
@@ -1248,15 +1299,26 @@ fn same_model_content(left: &ModelArtifactIdentity, right: &ModelArtifactIdentit
 fn bound_source_fingerprint(
     runtime_source_fingerprint: String,
     baseline_override: Option<&ModelArtifactIdentity>,
+    training_override: Option<&NomosTrainingDataset>,
 ) -> Result<String, EncoderTaskAdapterError> {
-    match baseline_override {
-        Some(active_baseline) => artifact_core::fingerprint(&json!({
-            "runtime_source_fingerprint": runtime_source_fingerprint,
-            "active_baseline": active_baseline,
-        }))
-        .map_err(adapter_error),
-        None => Ok(runtime_source_fingerprint),
+    match (baseline_override, training_override) {
+        (None, None) => return Ok(runtime_source_fingerprint),
+        (Some(active_baseline), None) => {
+            // Preserve the already shipped promoted-baseline identity.
+            return artifact_core::fingerprint(&json!({
+                "runtime_source_fingerprint": runtime_source_fingerprint,
+                "active_baseline": active_baseline,
+            }))
+            .map_err(adapter_error);
+        }
+        _ => {}
     }
+    artifact_core::fingerprint(&json!({
+        "runtime_source_fingerprint": runtime_source_fingerprint,
+        "active_baseline": baseline_override,
+        "managed_training_dataset": training_override,
+    }))
+    .map_err(adapter_error)
 }
 
 impl EncoderTaskBackend for NomosBackend {
@@ -2211,6 +2273,8 @@ struct TaskConfiguration {
     source_reference: Value,
     baseline_evidence: Value,
     training_inputs: Vec<String>,
+    #[serde(default)]
+    managed_training_dataset: Option<NomosTrainingDataset>,
     reference_models: BTreeMap<String, PinnedTreeConfiguration>,
     agent_evaluation: AgentEvaluationConfiguration,
     suites: BTreeMap<String, SuiteConfiguration>,
@@ -2286,6 +2350,14 @@ impl TaskConfiguration {
         }
         for input in &self.training_inputs {
             validate_relative(input)?;
+        }
+        if let Some(dataset) = &self.managed_training_dataset {
+            dataset.validate()?;
+            if self.training_inputs.as_slice() != [dataset.artifact.key.as_str()] {
+                return Err(adapter_error(
+                    "Nomos managed dataset does not match its native training input",
+                ));
+            }
         }
         for (key, reference) in &self.reference_models {
             validate_canonical_key(key, "reference model key")?;
@@ -3862,6 +3934,7 @@ mod tests {
             source_reference: json!({}),
             baseline_evidence: json!({}),
             training_inputs: vec!["base-a.jsonl".into(), "base-b.jsonl".into()],
+            managed_training_dataset: None,
             reference_models: BTreeMap::new(),
             agent_evaluation: AgentEvaluationConfiguration {
                 backend: "onnx".into(),
@@ -4016,12 +4089,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            bound_source_fingerprint(runtime.clone(), None).unwrap(),
+            bound_source_fingerprint(runtime.clone(), None, None).unwrap(),
             runtime
         );
-        let first = bound_source_fingerprint(runtime.clone(), Some(&promoted)).unwrap();
-        let second = bound_source_fingerprint(runtime, Some(&promoted)).unwrap();
+        let first = bound_source_fingerprint(runtime.clone(), Some(&promoted), None).unwrap();
+        let legacy = artifact_core::fingerprint(&json!({
+            "runtime_source_fingerprint":runtime.clone(),
+            "active_baseline":promoted.clone(),
+        }))
+        .unwrap();
+        let second = bound_source_fingerprint(runtime, Some(&promoted), None).unwrap();
         assert_eq!(first, second);
+        assert_eq!(first, legacy);
         assert_ne!(first, promoted.fingerprint);
     }
 

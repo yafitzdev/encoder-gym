@@ -3,13 +3,16 @@
 mod benchmark_support;
 use benchmark_support::{complete_rejected_candidate, fixture, register_fixture_model};
 use chrono::Utc;
-use encoder_experiment_core::ports::ExperimentStore;
+use encoder_experiment_core::{
+    domain::{EvidenceRole, ExternalArtifactIdentity},
+    ports::ExperimentStore,
+};
 use encoder_experiment_nomos::NomosBackend;
 use encoder_experiment_sqlite::SqliteExperimentStore;
 use project_workspace_core::{
     BaselineRevision, BoundIdentity, OptimizationLaunchAuthorization, OptimizationSetup,
-    ProjectOptimizationPreparation, ProviderAuthentication, ProviderCatalog, ProviderConfiguration,
-    ProviderKind, ProviderLimits, ProviderRole,
+    ProjectOptimizationMaterialization, ProjectOptimizationPreparation, ProviderAuthentication,
+    ProviderCatalog, ProviderConfiguration, ProviderKind, ProviderLimits, ProviderRole,
 };
 use project_workspace_local::{
     dataset_versions, import_dataset, inspect_dataset, open_workspace, optimization_runs,
@@ -492,6 +495,99 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     assert_eq!(prepared_retry["run"], prepared["run"]);
     assert!(!prepared.to_string().contains("SETUP_ROW_CANARY"));
     assert!(!prepared.to_string().contains("apiKey"));
+
+    // Materialization is its own retryable stage. The intentionally absent
+    // fixture runtime fails honestly; a typed receipt completes the recovered
+    // attempt, and the real CLI then replays it without touching native work.
+    let failed_materialization = invoke(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "materialize",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert!(!failed_materialization.status.success());
+    let failed_materialization_view = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "show",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(
+        failed_materialization_view["state"],
+        "materialization_failed"
+    );
+    assert_eq!(failed_materialization_view["materializationAttempt"], 1);
+    assert_eq!(
+        failed_materialization_view["failureCode"],
+        "dataset_materialization_failed"
+    );
+    let materializing = optimization_runs::begin_materialization(
+        &folder,
+        started["run"]["run"]["id"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    let preparation = materializing.preparation.as_ref().unwrap();
+    let materialization = ProjectOptimizationMaterialization::create(
+        &materializing.run,
+        &typed_launch,
+        preparation,
+        BoundIdentity {
+            id: format!("{}:{}", materializing.run.id, data),
+            fingerprint: format!("sha256:{}", "7".repeat(64)),
+        },
+        ExternalArtifactIdentity::new(
+            format!("runs/project/{data}/dataset.jsonl"),
+            EvidenceRole::Training,
+            42,
+            format!("sha256:{}", "8".repeat(64)),
+        )
+        .unwrap(),
+        BoundIdentity {
+            id: Uuid::new_v4().to_string(),
+            fingerprint: format!("sha256:{}", "9".repeat(64)),
+        },
+        Utc::now(),
+    )
+    .unwrap();
+    let materialized = optimization_runs::finish_materialization(
+        &folder,
+        materializing.run.id,
+        &materializing.head_fingerprint,
+        materialization,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        materialized.state,
+        project_workspace_core::ProjectOptimizationRunState::Materialized
+    );
+    let materialized = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "materialize",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(materialized["run"]["state"], "materialized");
+    assert_eq!(materialized["run"]["materializationAttempt"], 2);
+    assert_eq!(
+        materialized["run"]["preparation"],
+        prepared["run"]["preparation"]
+    );
+    assert!(!materialized.to_string().contains("SETUP_ROW_CANARY"));
     let orphan_request = json!({"id":Uuid::new_v4(),"scope":launch["scope"]});
     fs::write(
         root.join("orphan-launch.json"),
@@ -523,7 +619,7 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
                 "launch.json",
             ],
         )["run"],
-        prepared["run"],
+        materialized["run"],
         "an exact retry returns its already-reserved run after later settings change"
     );
     assert!(
@@ -569,13 +665,14 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     );
     assert_eq!(
         run(root, &["optimization-run", "project", "list"]),
-        json!([prepared["run"]])
+        json!([materialized["run"]])
     );
     let activity = run(root, &["activity", "project", "list"]);
     let text = activity.to_string();
     assert!(text.contains("optimization.launch"));
     assert!(text.contains("optimization.start"));
     assert!(text.contains("optimization.prepare"));
+    assert!(text.contains("optimization.materialize"));
     assert!(text.contains(started["run"]["run"]["id"].as_str().unwrap()));
     assert!(!text.contains("SETUP_ROW_CANARY"));
     assert!(!text.contains("apiKey"));

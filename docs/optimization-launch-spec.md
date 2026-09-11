@@ -99,6 +99,17 @@ moves it to `ready`. Preparation attempts and failures are hash-chained; retry
 continues the same run. This stage reads no credential, executes no model and
 does not expose final-holdout content.
 
+`workspace optimization-run <PROJECT> materialize <RUN_ID>` performs the next
+recoverable stage. The project adapter re-reads the exact selected version and
+passes its schema-neutral values to the compiled task adapter. The task adapter
+alone validates native row semantics and publishes a content-checked immutable
+training artifact below the run. It then creates or reuses the matching
+scientific project snapshot with the selected baseline and unchanged shared
+benchmark. Its row-free receipt records the native materialization, training
+artifact and scientific project identities. A failed or interrupted attempt
+retries the same stage without replacing published content. It performs no
+training, provider request, development evaluation or final evaluation.
+
 The Electron main-process bridge now exposes those three fixed project-scoped
 operations. It validates every response, rejects renderer-supplied paths,
 credentials, commands or execution fields, writes authorization requests only
@@ -123,9 +134,9 @@ The renderer supplies no paths, credentials, native rows or execution settings.
 The main process writes only a strict temporary request and removes it on both
 success and failure. Each explicit save retains the ordinary CLI action UUID.
 
-Saving inputs, one-click authorization and the project-owned prepared-run root are
-available now. The bounded child executor is not connected yet and the desktop
-must not imply work is running or fall back to a previously prepared recipe.
+Saving inputs, one-click authorization and the project-owned materialized-run
+root are available now. The bounded child executor is not connected yet and the
+desktop must not imply work is running or fall back to a previously prepared recipe.
 Existing runs are opened from Runs and retain their current supervision,
 recovery and approval controls.
 

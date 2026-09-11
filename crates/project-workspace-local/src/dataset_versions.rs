@@ -234,6 +234,17 @@ pub async fn verify(folder: &Path, version_id: Uuid) -> Result<DatasetVersion> {
     Ok(version)
 }
 
+/// Internal execution handoff. Values remain schema-neutral here and are
+/// admitted by the selected task adapter before any native artifact exists.
+pub async fn materialization_rows(
+    folder: &Path,
+    version_id: Uuid,
+) -> Result<Vec<InspectedDatasetRow>> {
+    let workspace = open_workspace(folder, true).await?;
+    let version = inspect_workspace(&workspace, version_id).await?;
+    rows::inspect_materialization_members(&workspace, &version.members)
+}
+
 async fn inspect_workspace(
     workspace: &ManagedWorkspace,
     version_id: Uuid,

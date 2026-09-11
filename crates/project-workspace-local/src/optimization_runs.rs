@@ -10,8 +10,8 @@ use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use project_workspace_core::{
     OptimizationLaunchAuthorization, OptimizationSetup, ProjectOptimizationEvent,
-    ProjectOptimizationPreparation, ProjectOptimizationRun, ProjectOptimizationRunState,
-    ProjectOptimizationRunView, replay_project_optimization,
+    ProjectOptimizationMaterialization, ProjectOptimizationPreparation, ProjectOptimizationRun,
+    ProjectOptimizationRunState, ProjectOptimizationRunView, replay_project_optimization,
 };
 use sqlx::{Connection, Row, SqliteConnection};
 use std::path::Path;
@@ -139,10 +139,7 @@ pub async fn begin_preparation(folder: &Path, run_id: Uuid) -> Result<ProjectOpt
         .into_iter()
         .find(|value| value.run.id == run_id)
         .context("Project optimization run was not found.")?;
-    if matches!(
-        view.state,
-        ProjectOptimizationRunState::Preparing | ProjectOptimizationRunState::Ready
-    ) {
+    if view.state == ProjectOptimizationRunState::Preparing || view.state.has_preparation() {
         transaction.commit().await?;
         database.close().await?;
         return Ok(view);
@@ -204,7 +201,7 @@ async fn record_preparation(
         .into_iter()
         .find(|value| value.run.id == run_id)
         .context("Project optimization run was not found.")?;
-    if view.state == ProjectOptimizationRunState::Ready {
+    if view.state.has_preparation() {
         ensure!(
             preparation.as_ref() == view.preparation.as_ref(),
             "Optimization preparation already completed with another receipt."
@@ -298,6 +295,178 @@ async fn record_preparation(
         .into_iter()
         .find(|value| value.run.id == run_id)
         .expect("inserted outcome belongs to loaded run");
+    transaction.commit().await?;
+    database.close().await?;
+    Ok(result)
+}
+
+/// Start or recover adapter-owned rendering of the already verified dataset.
+pub async fn begin_materialization(
+    folder: &Path,
+    run_id: Uuid,
+) -> Result<ProjectOptimizationRunView> {
+    let workspace = open_workspace(folder, true).await?;
+    let mut database = connect(Path::new(&workspace.folder), false, false).await?;
+    sqlx::migrate!("./migrations").run(&mut database).await?;
+    let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
+    let setups = optimization_setup::load(&mut transaction, &workspace).await?;
+    let providers = load_provider_catalog_history(&mut transaction, &workspace.manifest).await?;
+    let launches =
+        optimization_launch::load(&mut transaction, &workspace, &setups, &providers).await?;
+    let view = load(&mut transaction, workspace.manifest.id, &launches, &setups)
+        .await?
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .context("Project optimization run was not found.")?;
+    if view.state == ProjectOptimizationRunState::Materializing || view.state.has_materialization()
+    {
+        transaction.commit().await?;
+        database.close().await?;
+        return Ok(view);
+    }
+    ensure!(
+        matches!(
+            view.state,
+            ProjectOptimizationRunState::Ready | ProjectOptimizationRunState::MaterializationFailed
+        ),
+        "Verify optimization inputs before materializing training data."
+    );
+    let previous = last_event(&mut transaction, run_id).await?;
+    let event = ProjectOptimizationEvent::materialization_started(
+        Uuid::new_v4(),
+        &view.run,
+        &previous,
+        view.materialization_attempt + 1,
+        Utc::now(),
+    )?;
+    insert_event(&mut transaction, &event).await?;
+    let result = load(&mut transaction, workspace.manifest.id, &launches, &setups)
+        .await?
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .expect("inserted materialization belongs to loaded run");
+    transaction.commit().await?;
+    database.close().await?;
+    Ok(result)
+}
+
+pub async fn finish_materialization(
+    folder: &Path,
+    run_id: Uuid,
+    expected_head: &str,
+    materialization: ProjectOptimizationMaterialization,
+) -> Result<ProjectOptimizationRunView> {
+    record_materialization(folder, run_id, expected_head, Some(materialization), None).await
+}
+
+pub async fn fail_materialization(
+    folder: &Path,
+    run_id: Uuid,
+    expected_head: &str,
+    failure_code: &str,
+) -> Result<ProjectOptimizationRunView> {
+    record_materialization(folder, run_id, expected_head, None, Some(failure_code)).await
+}
+
+async fn record_materialization(
+    folder: &Path,
+    run_id: Uuid,
+    expected_head: &str,
+    materialization: Option<ProjectOptimizationMaterialization>,
+    failure_code: Option<&str>,
+) -> Result<ProjectOptimizationRunView> {
+    let workspace = open_workspace(folder, true).await?;
+    let mut database = connect(Path::new(&workspace.folder), false, false).await?;
+    sqlx::migrate!("./migrations").run(&mut database).await?;
+    let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
+    let setups = optimization_setup::load(&mut transaction, &workspace).await?;
+    let providers = load_provider_catalog_history(&mut transaction, &workspace.manifest).await?;
+    let launches =
+        optimization_launch::load(&mut transaction, &workspace, &setups, &providers).await?;
+    let view = load(&mut transaction, workspace.manifest.id, &launches, &setups)
+        .await?
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .context("Project optimization run was not found.")?;
+    if view.state.has_materialization() {
+        ensure!(
+            materialization.as_ref() == view.materialization.as_ref(),
+            "Optimization training data already materialized with another receipt."
+        );
+        transaction.commit().await?;
+        database.close().await?;
+        return Ok(view);
+    }
+    if view.state == ProjectOptimizationRunState::MaterializationFailed {
+        ensure!(
+            materialization.is_none() && failure_code == view.failure_code.as_deref(),
+            "Optimization materialization attempt already recorded another outcome."
+        );
+        transaction.commit().await?;
+        database.close().await?;
+        return Ok(view);
+    }
+    ensure!(
+        view.state == ProjectOptimizationRunState::Materializing
+            && view.head_fingerprint == expected_head,
+        "Optimization materialization journal changed; reload it before recording an outcome."
+    );
+    let launch = launches
+        .iter()
+        .find(|value| value.id.to_string() == view.run.launch.id)
+        .context("Optimization launch authorization is missing.")?;
+    let preparation = view
+        .preparation
+        .as_ref()
+        .context("Optimization preparation is missing.")?;
+    if let Some(receipt) = &materialization {
+        receipt.validate_for(&view.run, launch, preparation)?;
+        let dataset = crate::dataset_versions::load_reference(
+            &mut transaction,
+            workspace.manifest.id,
+            receipt.dataset.id,
+        )
+        .await?;
+        let binding = workspace
+            .scientific_binding
+            .as_ref()
+            .context("Scientific runtime binding is missing.")?;
+        ensure!(
+            dataset == receipt.dataset
+                && binding.id.to_string() == preparation.execution_binding.id
+                && binding.fingerprint == preparation.execution_binding.fingerprint
+                && receipt.adapter.id
+                    == format!("{}:{}", binding.adapter.key, binding.adapter.protocol)
+                && receipt.adapter.fingerprint == binding.adapter.configuration_fingerprint,
+            "Dataset or execution runtime changed before materialization completed."
+        );
+    }
+    let previous = last_event(&mut transaction, run_id).await?;
+    let event = match (materialization, failure_code) {
+        (Some(receipt), None) => ProjectOptimizationEvent::materialization_completed(
+            Uuid::new_v4(),
+            &view.run,
+            &previous,
+            view.materialization_attempt,
+            receipt,
+            Utc::now(),
+        )?,
+        (None, Some(code)) => ProjectOptimizationEvent::materialization_failed(
+            Uuid::new_v4(),
+            &view.run,
+            &previous,
+            view.materialization_attempt,
+            code,
+            Utc::now(),
+        )?,
+        _ => anyhow::bail!("Materialization must record exactly one outcome."),
+    };
+    insert_event(&mut transaction, &event).await?;
+    let result = load(&mut transaction, workspace.manifest.id, &launches, &setups)
+        .await?
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .expect("inserted materialization outcome belongs to loaded run");
     transaction.commit().await?;
     database.close().await?;
     Ok(result)
@@ -397,6 +566,9 @@ async fn load(
                 .find(|value| value.id.to_string() == run.setup.id)
                 .context("Optimization setup is missing.")?;
             preparation.validate_for(&run, launch, setup)?;
+            if let Some(materialization) = &view.materialization {
+                materialization.validate_for(&run, launch, preparation)?;
+            }
         }
         result.push(view);
     }

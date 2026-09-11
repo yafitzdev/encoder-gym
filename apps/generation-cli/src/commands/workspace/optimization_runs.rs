@@ -1,11 +1,15 @@
 use crate::cli::WorkspaceOptimizationRunCommand;
 use anyhow::{Context, Result, ensure};
 use chrono::Utc;
-use encoder_experiment_core::{domain::EvidenceRole, ports::EncoderTaskBackend};
+use encoder_experiment_core::{
+    domain::EvidenceRole,
+    ports::{EncoderTaskBackend, ExperimentStore},
+};
 use encoder_experiment_nomos::NomosBackend;
 use project_workspace_core::{
     ActivityEventState, ActivityFailure, ActivityReference, ActivitySource, BoundIdentity,
-    ProjectOptimizationPreparation, ProjectOptimizationRunState,
+    ProjectOptimizationMaterialization, ProjectOptimizationPreparation,
+    ProjectOptimizationRunState,
 };
 use project_workspace_local::{
     AppendActivity, append_activity, dataset_versions, initialize_activity, open_workspace,
@@ -20,6 +24,7 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunComm
         List => super::print(&optimization_runs::list(folder).await?),
         Show { run_id } => super::print(&optimization_runs::show(folder, run_id).await?),
         Prepare { run_id } => prepare(folder, run_id).await,
+        Materialize { run_id } => materialize(folder, run_id).await,
         Start {
             file,
             authorized_by,
@@ -99,7 +104,7 @@ async fn prepare(folder: &Path, run_id: Uuid) -> Result<()> {
     append_activity(folder, activity(ActivityEventState::Started, None)).await?;
     let outcome: Result<_> = async {
         let started = optimization_runs::begin_preparation(folder, run_id).await?;
-        if started.state == ProjectOptimizationRunState::Ready {
+        if started.state.has_preparation() {
             return Ok(started);
         }
         ensure!(
@@ -143,6 +148,158 @@ async fn prepare(folder: &Path, run_id: Uuid) -> Result<()> {
     };
     append_activity(folder, terminal).await?;
     super::print(&serde_json::json!({"actionId":action_id,"run":outcome?}))
+}
+
+async fn materialize(folder: &Path, run_id: Uuid) -> Result<()> {
+    initialize_activity(folder).await?;
+    let action_id = Uuid::new_v4();
+    let references = vec![ActivityReference::new("run", run_id.to_string())?];
+    let activity = |state, failure| AppendActivity {
+        action_id,
+        operation: "optimization.materialize".into(),
+        source: ActivitySource::Cli,
+        state,
+        stage: None,
+        completed: None,
+        total: None,
+        references: references.clone(),
+        failure,
+        created_at: Utc::now(),
+    };
+    append_activity(folder, activity(ActivityEventState::Started, None)).await?;
+    let outcome: Result<_> = async {
+        let started = optimization_runs::begin_materialization(folder, run_id).await?;
+        if started.state.has_materialization() {
+            return Ok(started);
+        }
+        ensure!(
+            started.state == ProjectOptimizationRunState::Materializing,
+            "Optimization run could not enter dataset materialization."
+        );
+        match materialize_training_project(folder, &started).await {
+            Ok(receipt) => {
+                optimization_runs::finish_materialization(
+                    folder,
+                    run_id,
+                    &started.head_fingerprint,
+                    receipt,
+                )
+                .await
+            }
+            Err(error) => {
+                optimization_runs::fail_materialization(
+                    folder,
+                    run_id,
+                    &started.head_fingerprint,
+                    "dataset_materialization_failed",
+                )
+                .await
+                .context("Dataset materialization failed and its outcome could not be recorded.")?;
+                Err(error)
+            }
+        }
+    }
+    .await;
+    let terminal = if outcome.is_ok() {
+        activity(ActivityEventState::Succeeded, None)
+    } else {
+        activity(
+            ActivityEventState::Failed,
+            Some(ActivityFailure::new(
+                "dataset_materialization_failed",
+                "The selected rows do not form a valid native training dataset. No model was trained.",
+            )?),
+        )
+    };
+    append_activity(folder, terminal).await?;
+    super::print(&serde_json::json!({"actionId":action_id,"run":outcome?}))
+}
+
+async fn materialize_training_project(
+    folder: &Path,
+    view: &project_workspace_core::ProjectOptimizationRunView,
+) -> Result<ProjectOptimizationMaterialization> {
+    let workspace = open_workspace(folder, true).await?;
+    let preparation = view
+        .preparation
+        .as_ref()
+        .context("Verify optimization inputs before materializing data.")?;
+    let launch = optimization_launch::list(folder)
+        .await?
+        .into_iter()
+        .find(|value| value.id.to_string() == view.run.launch.id)
+        .context("Optimization launch authorization is missing.")?;
+    let binding = workspace
+        .scientific_binding
+        .as_ref()
+        .context("Connect the native evaluation and training runtime.")?;
+    ensure!(
+        binding.id.to_string() == preparation.execution_binding.id
+            && binding.fingerprint == preparation.execution_binding.fingerprint,
+        "Native runtime changed after input verification."
+    );
+    let dataset = dataset_versions::verify(folder, preparation.dataset.id).await?;
+    ensure!(
+        dataset.reference() == preparation.dataset
+            && dataset.members.len() as u64 == preparation.dataset_rows,
+        "Selected training dataset changed."
+    );
+    let rows = dataset_versions::materialization_rows(folder, dataset.id).await?;
+    ensure!(
+        rows.len() == dataset.members.len(),
+        "Selected training rows are incomplete."
+    );
+
+    let store = super::open_bound_store(&workspace.folder, binding).await?;
+    let source_project = super::load_bound_project(&store, binding).await?;
+    let backend = super::open_nomos_binding(binding, &source_project)?;
+    let mut writer = backend.materialize_training_dataset(
+        view.run.id,
+        dataset.id,
+        dataset.fingerprint.clone(),
+        preparation.dataset_rows,
+    )?;
+    for row in rows {
+        writer.append(&row.member.id, &row.member.content_fingerprint, &row.value)?;
+    }
+    let native = writer.finish()?;
+    let backend = backend.with_training_dataset(native.clone())?;
+    let fresh_project = backend.project_snapshot()?;
+    ensure!(
+        fresh_project.baseline_model.fingerprint == preparation.model.fingerprint,
+        "Materialized project uses another baseline model."
+    );
+    let benchmark_id: Uuid = preparation.benchmark.id.parse()?;
+    let benchmark = super::benchmarks::inspect(folder, benchmark_id).await?;
+    NomosBackend::verify_benchmark_definition(&fresh_project, &benchmark.definition)?;
+    backend.inspect(fresh_project.clone()).await?;
+    let project = if let Some(existing) = store
+        .find_project_by_source_fingerprint(fresh_project.source_fingerprint.clone())
+        .await?
+    {
+        backend.verify_current_snapshot(existing.clone()).await?;
+        existing
+    } else {
+        store.create_project(fresh_project.clone()).await?;
+        fresh_project
+    };
+    store.pool().close().await;
+    ProjectOptimizationMaterialization::create(
+        &view.run,
+        &launch,
+        preparation,
+        BoundIdentity {
+            id: format!("{}:{}", native.run_id, native.dataset_version_id),
+            fingerprint: native.fingerprint,
+        },
+        native.artifact,
+        BoundIdentity {
+            id: project.id.to_string(),
+            fingerprint: project.fingerprint,
+        },
+        Utc::now(),
+    )
+    .map_err(Into::into)
 }
 
 async fn verify_preparation(
