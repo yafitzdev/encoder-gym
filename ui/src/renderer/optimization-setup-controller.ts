@@ -114,8 +114,12 @@ export class OptimizationSetupController {
     try {
       if (!this.run || inputOptimizationTerminal(this.run.state)) {
         this.activity = undefined;
+        this.run = undefined;
+        this.phase = "Starting run";
+        this.render();
         this.run = (await this.bridge.startInputOptimization(this.projectId, this.latest.id)).run;
         if (epoch !== this.epoch) return;
+        this.phase = undefined;
         this.render();
       }
       let settled = false;
@@ -154,7 +158,7 @@ export class OptimizationSetupController {
         }
       }
     } finally {
-      if (epoch === this.epoch) { this.running = false; this.startedAt = undefined; this.render(); }
+      if (epoch === this.epoch) { this.running = false; this.phase = undefined; this.startedAt = undefined; this.render(); }
     }
   }
   async initializeEvaluation(): Promise<void> {

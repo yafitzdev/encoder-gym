@@ -22,10 +22,19 @@ export interface InputRunProgressOptions {
   context: InputRunStageContext;
 }
 
+export function pendingInputRunProgress(): HTMLElement {
+  return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": "true" },
+    h("div", { class: "optimization-progress-state" },
+      h("div", { class: "optimization-progress-title" }, spinner(), h("strong", {}, "Starting run"))),
+    h("p", { class: "optimization-progress-detail" }, "Creating the run record"),
+    progressSteps(0, false));
+}
+
 /** The single live-status presentation shared by Optimize and Runs. */
 export function inputRunProgress(options: InputRunProgressOptions): HTMLElement {
   const { run, running, startedAt, activity, context } = options;
   const phase = inputOptimizationPhase(run.state);
+  const failed = run.state.endsWith("_failed");
   const result = run.state === "candidate_accepted" ? "Candidate passed"
     : run.state === "candidate_rejected" ? "Candidate did not pass"
     : run.state === "baseline_retained" ? "No improvement"
@@ -33,7 +42,8 @@ export function inputRunProgress(options: InputRunProgressOptions): HTMLElement 
   const active = phase === "complete" ? phases.length : Math.max(0, phases.indexOf(phase));
   const progress = activity?.progress;
   const activeProgress: NativeProgress = progress ?? { phase: fallback[phase] };
-  const current = result ?? inputRunStageLabel(activeProgress.phase);
+  const stage = inputRunStageLabel(activeProgress.phase);
+  const current = result ?? (failed ? `Failed while ${stage.toLocaleLowerCase()}` : stage);
   const detail = result ? "" : inputRunStageDetail(activeProgress, context);
   return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": String(running) },
     h("div", { class: "optimization-progress-state" },
@@ -43,6 +53,10 @@ export function inputRunProgress(options: InputRunProgressOptions): HTMLElement 
     progress?.completed !== undefined && progress.total !== undefined ? h("div", { class: "optimization-live-progress" },
       h("progress", { value: progress.completed, max: progress.total }),
       h("span", {}, `${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()}`)) : null,
-    h("ol", { class: "optimization-progress-steps" },
-      ...phases.map((item, index) => h("li", { class: index < active ? "complete" : index === active ? "active" : "" }, labels[item]))));
+    progressSteps(active, failed));
+}
+
+function progressSteps(active: number, failed: boolean): HTMLElement {
+  return h("ol", { class: "optimization-progress-steps" },
+    ...phases.map((item, index) => h("li", { class: index < active ? "complete" : index === active ? failed ? "failed" : "active" : "" }, labels[item])));
 }

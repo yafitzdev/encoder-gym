@@ -13,12 +13,14 @@ test("optimization activity resolves the exact run and latest durable counter", 
       event("progress", "loading_model", undefined, undefined, "2026-01-01T00:00:01Z"),
       event("progress", "training", 20, 100, "2026-01-01T00:00:02Z"),
       event("progress", "training", 40, 100, "2026-01-01T00:00:03Z"),
+      { state: "failed", created_at: "2026-01-01T00:00:04Z", failure: { code: "training_failed", message: "Checkpoint was not written." } },
     ] },
   ] };
   const activity = inputRunActivity(log, runId);
   assert.equal(activity.actionId, actionId);
   assert.deepEqual(activity.progress, { phase: "training", completed: 40, total: 100 });
   assert.deepEqual(activity.stages, ["loading_model", "training"]);
+  assert.deepEqual(activity.failure, { code: "training_failed", message: "Checkpoint was not written." });
   assert.equal(inputRunStageLabel(activity.progress.phase), "Training candidate");
   assert.equal(inputRunStageDetail(activity.progress, {
     model: "Nomos baseline", dataset: "Candidate dataset · v2", datasetRows: 6992,

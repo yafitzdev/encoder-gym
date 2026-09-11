@@ -53,10 +53,10 @@ export function trainingDetails(candidate: CandidateAttempt, run: RunRecord, act
   );
 }
 
-export function runListItem(run: RunRecord, workspace: WorkspaceSnapshot, actions: Actions, open?: () => void): HTMLElement {
+export function runListItem(run: RunRecord, workspace: WorkspaceSnapshot, actions: Actions, open?: () => void, label = runLabel(run, workspace)): HTMLElement {
   const failed = run.candidates.filter(c => c.failure).length;
   const row = h("button", { type: "button", id: "run-" + run.id, class: "run-list-item", onClick: () => actions.navigate({ page: "run", id: run.id }) },
-    h("span", { class: "run-number" }, runLabel(run, workspace)), h("span", { class: "run-list-name" }, h("strong", {}, runName(run)), h("small", {}, `${run.candidates.length} ${run.candidates.length === 1 ? "candidate" : "candidates"} · ${setupName(run)}`)),
+    h("span", { class: "run-number" }, label), h("span", { class: "run-list-name" }, h("strong", {}, runName(run)), h("small", {}, `${run.candidates.length} ${run.candidates.length === 1 ? "candidate" : "candidates"} · ${setupName(run)}`)),
     h("span", {}, status(failed ? "Execution errors" : run.decision === "retain_baseline" ? "Baseline kept" : run.decision === "promote_candidate" ? "Candidate accepted" : "No final decision", failed ? "danger" : "neutral")),
     h("time", {}, dateLabel(run.createdAt)),
   );
@@ -75,6 +75,15 @@ function runRecord(run: RunRecord, actions: Actions): HTMLElement {
     h("section", {}, sectionHeader("Frozen run identities"), facts([["Run", copyField(run.id, actions.copy)], ["Protocol", copyField(run.protocolId, actions.copy)], ["Project revision", copyField(run.revision, actions.copy)], ["Journal head", copyField(run.journalHead, actions.copy)], ...(run.optimizationId ? [["Optimization run", copyField(run.optimizationId, actions.copy)] as [string, Child]] : [])])),
   ));
 }
+function recordedRunProgress(run: RunRecord): HTMLElement {
+  const trained = run.candidates.some(candidate => candidate.model || candidate.failure);
+  const evaluated = run.candidates.some(candidate => candidate.development.length);
+  const decided = !!run.decision;
+  const complete = [true, trained, evaluated, decided];
+  const active = complete.findIndex(done => !done);
+  return h("ol", { class: "optimization-progress-steps recorded-run-steps", "aria-label": "Run progress" },
+    ...["Created", "Training", "Evaluation", "Decision"].map((label, index) => h("li", { class: complete[index] ? "complete" : index === active ? "active" : "" }, label)));
+}
 export function renderRun(workspace: WorkspaceSnapshot, id: string, tab: string, actions: Actions): HTMLElement {
   const run = workspace.runs.find(r => r.id === id);
   if (!run) return empty("Run not found", button("All runs", () => actions.navigate({ page: "runs" })));
@@ -89,6 +98,7 @@ export function renderRun(workspace: WorkspaceSnapshot, id: string, tab: string,
         h("div", { class: "run-summary" }, h("div", {}, h("div", { class: "eyebrow" }, "Outcome"), h("h2", {}, run.decision === "retain_baseline" ? "Baseline kept" : run.decision === "promote_candidate" ? "Candidate accepted" : "No final decision"),
           failures.length ? status("Execution errors", "danger") : status(usedSealed ? `Final acceptance ${run.acceptance.state}` : run.selectedCandidateId ? "Awaiting final acceptance" : "Development complete", "neutral")),
           h("div", { class: "run-summary-facts" }, h("strong", {}, String(run.candidates.length)), h("span", {}, "candidates"), h("strong", {}, String(run.baselines.length)), h("span", {}, "development suites"))),
+        recordedRunProgress(run),
         sectionHeader("Candidates in this run"),
         ...run.candidates.map(c => {
           const row = { candidate: c, run, attempts: [run] };

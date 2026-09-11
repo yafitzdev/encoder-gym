@@ -10,7 +10,7 @@ import { renderModels, type ModelPageState } from "./models-page.js";
 import { renderModel } from "./model-view.js";
 import { findModel, modelInventory } from "./model-inventory.js";
 import { NavigationHistory } from "./state.js";
-import { renderBenchmarks, renderRuns } from "./workspace-pages.js";
+import { inputRunById, inputRunName, renderBenchmarks, renderInputRun, renderRuns } from "./workspace-pages.js";
 import { renderProjectSettings, renderProjectState, renderWelcome } from "./project-pages.js";
 import { previewBridge } from "./preview-bridge.js";
 import { newProjectDialog } from "./onboarding.js";
@@ -520,8 +520,9 @@ export function mount(): void {
     }));
     const candidate = data ? candidateRows(data).find(r => r.candidate.id === current.id)?.candidate : undefined;
     const run = data?.runs.find(r => r.id === current.id);
+    const projectRun = inputRunById(view.inputRuns, view.setup, current.id);
     const title = !project ? "Projects" : current.page === "model" ? (data ? findModel(data, current.id ?? "")?.name : undefined) ?? "Model" : current.page === "candidate" ? candidate ? candidateName(candidate) : "Candidate not found" :
-      current.page === "run" ? run ? runName(run) : "Run not found" : current.page === "dataset" ? view.datasets?.find(current.id)?.entry.dataset.name ?? "Dataset" :
+      current.page === "run" ? projectRun && data ? inputRunName(data, projectRun, view.inputRuns, view.setup) : run ? runName(run) : "Run not found" : current.page === "dataset" ? view.datasets?.find(current.id)?.entry.dataset.name ?? "Dataset" :
       pages.find(p => p[0] === current.page)?.[1] ?? (current.page === "baseline" ? "Baseline" : current.page === "optimization" ? current.tab === "setup" ? "Optimize" : view.optimization.run ? "Run" : "New run" : "Compare models");
     element("breadcrumb").textContent = project ? project.name + " / " + title : "Encoder Gym";
     document.title = title + " · Encoder Gym";
@@ -545,7 +546,7 @@ export function mount(): void {
       else if (current.page === "optimization" && current.tab === "setup" && view.setup) content = renderOptimizationSetup(view.setup, actions);
       else if (current.page === "optimization" && data.managed) content = renderOptimization(data.managed, view.optimization, optimizationActions);
       else if (current.page === "model" || current.page === "candidate") content = renderModel(data, current.id ?? "", current.tab ?? "overview", detail, actions, current.runId);
-      else if (current.page === "run") content = renderRun(data, current.id ?? "", current.tab ?? "overview", actions);
+      else if (current.page === "run") content = projectRun && data.managed && view.inputRuns ? renderInputRun(data, projectRun, inputRunName(data, projectRun, view.inputRuns, view.setup), actions, view.inputRuns, view.setup) : renderRun(data, current.id ?? "", current.tab ?? "overview", actions);
       else if (current.page === "runs") content = renderRuns(data, actions, view.optimization.run, data.managed ? view.inputRuns : undefined, data.managed ? view.setup : undefined);
       else if (current.page === "benchmarks") content = data.managed && view.benchmarks ? renderBenchmarkPage(data, current, view.benchmarks, actions) : renderBenchmarks(data, actions);
       else if (current.page === "baseline") content = renderModel(data, data.baseline.id, current.tab ?? "overview", detail, actions);
@@ -571,11 +572,11 @@ export function mount(): void {
       const controller = view.benchmarks;
       queueMicrotask(() => { if (view.benchmarks === controller && !loading && !collectionBusy && workspace()?.managed) void controller.ensure(current); });
     }
-    if (data?.managed && view.setup && ((current.page === "optimization" && current.tab === "setup") || current.page === "runs") && !loading && !collectionBusy) {
+    if (data?.managed && view.setup && ((current.page === "optimization" && current.tab === "setup") || current.page === "runs" || current.page === "run") && !loading && !collectionBusy) {
       const controller = view.setup;
       queueMicrotask(() => { if (view.setup === controller && !loading && !collectionBusy && workspace()?.managed) void controller.ensure(); });
     }
-    if (data?.managed && view.inputRuns && current.page === "runs" && !loading && !collectionBusy) {
+    if (data?.managed && view.inputRuns && (current.page === "runs" || current.page === "run") && !loading && !collectionBusy) {
       const controller = view.inputRuns;
       queueMicrotask(() => { if (view.inputRuns === controller && !loading && !collectionBusy && workspace()?.managed) void controller.ensure(); });
     }

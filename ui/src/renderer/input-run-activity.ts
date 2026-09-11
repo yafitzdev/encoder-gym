@@ -1,5 +1,5 @@
 import type { NativeProgress } from "../managed-control.js";
-import type { ProjectActivityAction, ProjectActivityLog } from "../project-activity.js";
+import type { ProjectActivityAction, ProjectActivityFailure, ProjectActivityLog } from "../project-activity.js";
 
 export interface InputRunActivity {
   actionId: string;
@@ -7,6 +7,7 @@ export interface InputRunActivity {
   startedAt: string;
   updatedAt: string;
   progress?: NativeProgress;
+  failure?: ProjectActivityFailure;
   stages: string[];
 }
 
@@ -17,12 +18,14 @@ export function inputRunActivity(log: ProjectActivityLog, runId: string): InputR
   if (!action) return undefined;
   const progressEvents = action.events.filter(event => event.state === "progress" && event.stage);
   const latest = progressEvents.at(-1);
+  const failure = action.events.findLast(event => event.state === "failed")?.failure;
   return {
     actionId: action.action_id,
     state: action.state,
     startedAt: action.started_at,
     updatedAt: action.events.at(-1)?.created_at ?? action.started_at,
     ...(latest ? { progress: { phase: latest.stage as NativeProgress["phase"], ...(latest.completed !== undefined && latest.total !== undefined ? { completed: latest.completed, total: latest.total } : {}) } } : {}),
+    ...(failure ? { failure } : {}),
     stages: [...new Set(progressEvents.map(event => event.stage!))],
   };
 }

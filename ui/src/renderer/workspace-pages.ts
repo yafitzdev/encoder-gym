@@ -1,15 +1,15 @@
 import type { WorkspaceSnapshot } from "../workspace.js";
 import type { ManagedReadiness, ManagedRunStatus } from "../managed-control.js";
 import type { Actions } from "./actions.js";
-import { bytesLabel, comparisonGroups, dateLabel, evaluationGroups, initialFilter, metricInfo, primaryMetric, score, setupName, suiteName, summaryMetrics } from "./catalog.js";
-import { button, copyField, details, empty, facts, pageHeader, sectionHeader, tag, workspacePage } from "./components.js";
+import { bytesLabel, comparisonGroups, dateLabel, evaluationGroups, initialFilter, metricInfo, primaryMetric, score, setupName, suiteName, summaryMetrics, timeLabel } from "./catalog.js";
+import { button, copyField, details, empty, facts, failureNotice, pageHeader, sectionHeader, status, tag, workspacePage } from "./components.js";
 import { runListItem } from "./detail-pages.js";
 import { h } from "./dom.js";
 import type { InputRunsController } from "./input-runs-controller.js";
 import type { OptimizationSetupController } from "./optimization-setup-controller.js";
 import { inputOptimizationPhase, inputOptimizationTerminal, type InputOptimizationPhase, type InputOptimizationRun } from "../input-optimization.js";
 import { inputRunStageLabel, type InputRunStageContext } from "./input-run-activity.js";
-import { inputRunProgress } from "./input-run-progress.js";
+import { inputRunProgress, pendingInputRunProgress } from "./input-run-progress.js";
 
 export function renderRuns(workspace: WorkspaceSnapshot, actions: Actions, optimization?: ManagedRunStatus, projectRuns?: InputRunsController, setup?: OptimizationSetupController): HTMLElement {
   const knownProjectRuns = projectRuns?.runs ?? [];
@@ -17,22 +17,33 @@ export function renderRuns(workspace: WorkspaceSnapshot, actions: Actions, optim
   const projectRunIds = new Set(projectRunValues.map(run => run.id));
   const experimentRuns = workspace.runs.filter(run => !run.optimizationId || !projectRunIds.has(run.optimizationId));
   const optimizationIsListed = !!optimization && (projectRunIds.has(optimization.run_id) || experimentRuns.some(run => run.optimizationId === optimization.run_id));
-  const entries: { createdAt: string; node: HTMLElement }[] = [
-    ...projectRunValues.map(run => ({ createdAt: run.createdAt, node: projectRun(run, workspace, actions, projectRuns!, setup) })),
-    ...experimentRuns.map(run => ({ createdAt: run.createdAt, node: runListItem(run, workspace, actions, run.optimizationId === optimization?.run_id ? () => actions.navigate({ page: "optimization" }) : undefined) })),
-    ...(optimization && !optimizationIsListed ? [{ createdAt: optimization.created_at, node: managedRun(optimization, actions) }] : []),
-  ].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const records: Array<{ kind: "project"; createdAt: string; run: InputOptimizationRun } | { kind: "experiment"; createdAt: string; run: WorkspaceSnapshot["runs"][number] } | { kind: "managed"; createdAt: string; run: ManagedRunStatus }> = [
+    ...projectRunValues.map(run => ({ kind: "project" as const, createdAt: run.createdAt, run })),
+    ...experimentRuns.map(run => ({ kind: "experiment" as const, createdAt: run.createdAt, run })),
+    ...(optimization && !optimizationIsListed ? [{ kind: "managed" as const, createdAt: optimization.created_at, run: optimization }] : []),
+  ].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const entries = records.map((record, index) => {
+    const label = `Run ${String(index + 1).padStart(2, "0")}`;
+    if (record.kind === "project") return projectRun(record.run, label, workspace, actions, projectRuns!, setup);
+    if (record.kind === "managed") return managedRun(record.run, label, actions);
+    return runListItem(record.run, workspace, actions, record.run.optimizationId === optimization?.run_id ? () => actions.navigate({ page: "optimization" }) : undefined, label);
+  }).reverse();
+  const pending = !!setup?.running && !setup.run;
   return workspacePage("Runs", null,
     projectRuns?.error ? h("section", { class: "operation-failure", role: "alert" }, "Could not load runs. ", button("Retry", () => projectRuns.refresh(), "secondary")) : null,
     projectRuns?.loading ? h("div", { class: "workspace-progress", role: "status" }, "Loading runs…") : null,
-    entries.length ? h("div", { class: "unified-run-list", "aria-label": "Optimization runs" }, ...entries.map(entry => entry.node)) : empty("No runs"));
+    pending || entries.length ? h("div", { class: "unified-run-list", "aria-label": "Optimization runs" },
+      pending ? h("article", { class: "unified-run-entry is-running pending-run" },
+        h("div", { class: "project-run-item" }, h("span", { class: "run-number" }, "New run"), h("span", { class: "run-list-name" }, h("strong", {}, "Optimization"), h("small", {}, "Creating run record")), status("Starting", "neutral")),
+        pendingInputRunProgress()) : null,
+      ...entries) : empty("No runs"));
 }
 
 const phaseLabels: Record<InputOptimizationPhase, string> = {
   checking_inputs: "Checking inputs", preparing_data: "Preparing data", starting: "Starting", training: "Training",
   saving_candidate: "Saving candidate", evaluating: "Evaluating", complete: "Complete",
 };
-function projectRun(run: InputOptimizationRun, workspace: WorkspaceSnapshot, actions: Actions, controller: InputRunsController, setup?: OptimizationSetupController): HTMLElement {
+function projectRun(run: InputOptimizationRun, label: string, workspace: WorkspaceSnapshot, actions: Actions, controller: InputRunsController, setup?: OptimizationSetupController): HTMLElement {
   const outcome = run.state === "candidate_accepted" ? "Candidate passed" : run.state === "candidate_rejected" ? "Candidate did not pass" : run.state === "baseline_retained" ? "No improvement" : run.state === "cancelled" ? "Cancelled" : undefined;
   const failed = run.state.endsWith("_failed"), terminal = inputOptimizationTerminal(run.state);
   const setupBusy = !!setup?.running && setup.run?.id === run.id;
@@ -40,20 +51,53 @@ function projectRun(run: InputOptimizationRun, workspace: WorkspaceSnapshot, act
   const setupCancelling = !!setup?.cancelling && setup.run?.id === run.id;
   const cancelling = setupCancelling || controller.cancellingId === run.id;
   const activity = setupBusy ? setup?.activity : controller.activities.get(run.id);
-  const selected = run.finalResult?.modelId ?? run.outcome?.selectedModelId;
-  const model = selected ? workspace.managed?.modelCatalog?.artifacts.find(artifact => artifact.sourceModel?.id === selected) : undefined;
-  const current = outcome ?? (busy && activity?.progress ? inputRunStageLabel(activity.progress.phase) : phaseLabels[inputOptimizationPhase(run.state)]);
+  const phase = phaseLabels[inputOptimizationPhase(run.state)];
+  const current = outcome ?? (busy && activity?.progress ? inputRunStageLabel(activity.progress.phase) : failed ? `${phase} failed` : phase);
   return h("article", { class: "unified-run-entry" + (busy ? " is-running" : ""), "data-project-run-id": run.id },
     h("div", { class: "project-run-item" },
-      h("div", { class: "project-run-main" }, h("strong", {}, current), h("time", {}, dateLabel(run.createdAt))),
-      h("code", {}, run.id.slice(0, 8)),
-      h("div", { class: "project-run-state" }, cancelling && !terminal ? tag("Stopping", "warning") : busy && !terminal ? tag("Running", "accent") : tag(outcome ?? (failed ? "Needs attention" : phaseLabels[inputOptimizationPhase(run.state)]), failed ? "danger" : "neutral")),
+      h("span", { class: "run-number" }, label),
+      h("span", { class: "run-list-name" }, h("strong", {}, "Optimization"), h("small", {}, current)),
+      h("div", { class: "project-run-state" }, cancelling && !terminal ? status("Stopping", "neutral") : busy && !terminal ? status("Running", "neutral") : status(failed ? "Failed" : terminal ? "Complete" : "Paused", failed ? "danger" : "neutral")),
+      h("time", {}, dateLabel(run.createdAt)),
       h("div", { class: "project-run-action" },
-        !terminal && !cancelling && !busy ? button(failed ? "Retry" : "Continue", () => { void controller.resume(run); }, "secondary", "arrow") : null,
+        button("Open", () => actions.navigate({ page: "run", id: run.id }), "secondary", "arrow"),
         !terminal && busy ? button(cancelling ? "Stopping…" : "Stop", () => { void (setupBusy ? setup!.cancel() : controller.cancel(run)); }, "ghost danger")
-          : terminal && model ? button("Candidate", () => actions.navigate({ page: "model", id: model.id }), "ghost", "arrow")
-          : terminal ? button("Activity", () => actions.navigate({ page: "activity" }), "ghost", "arrow") : null)),
+          : null)),
     busy && !terminal ? inputRunProgress({ run, running: true, startedAt: setupBusy ? setup?.startedAt : activity ? Date.parse(activity.startedAt) : undefined, activity, context: runContext(run, workspace, setup) }) : null);
+}
+
+export function inputRunById(controller: InputRunsController | undefined, setup: OptimizationSetupController | undefined, id: string | undefined): InputOptimizationRun | undefined {
+  if (!id) return undefined;
+  return setup?.run?.id === id ? setup.run : controller?.runs?.find(run => run.id === id);
+}
+
+export function inputRunName(workspace: WorkspaceSnapshot, run: InputOptimizationRun, controller?: InputRunsController, setup?: OptimizationSetupController): string {
+  const projectRuns = [...(controller?.runs ?? [])];
+  if (setup?.run && !projectRuns.some(item => item.id === setup.run!.id)) projectRuns.push(setup.run);
+  const ids = new Set(projectRuns.map(item => item.id));
+  const dates = [...workspace.runs.filter(item => !item.optimizationId || !ids.has(item.optimizationId)).map(item => item.createdAt), ...projectRuns.map(item => item.createdAt)].sort();
+  return `Run ${String(Math.max(0, dates.findIndex(createdAt => createdAt === run.createdAt)) + 1).padStart(2, "0")}`;
+}
+
+export function renderInputRun(workspace: WorkspaceSnapshot, run: InputOptimizationRun, label: string, actions: Actions, controller: InputRunsController, setup?: OptimizationSetupController): HTMLElement {
+  const terminal = inputOptimizationTerminal(run.state), failed = run.state.endsWith("_failed");
+  const setupRun = setup?.run?.id === run.id, setupBusy = !!setup?.running && setupRun;
+  const busy = setupBusy || controller.runningId === run.id;
+  const cancelling = (!!setup?.cancelling && setupRun) || controller.cancellingId === run.id;
+  const activity = setupBusy ? setup?.activity ?? controller.activities.get(run.id) : controller.activities.get(run.id);
+  const selected = run.finalResult?.modelId ?? run.outcome?.selectedModelId;
+  const model = selected ? workspace.managed?.modelCatalog?.artifacts.find(artifact => artifact.sourceModel?.id === selected || artifact.id === selected) : undefined;
+  return h("div", { class: "page-content detail-page input-run-view" },
+    button("All runs", () => actions.backTo("runs"), "back-link", "back"),
+    pageHeader(label, h("div", { class: "inline-group" }, tag(dateLabel(run.createdAt)), tag(timeLabel(run.createdAt)))),
+    activity?.failure ? h("section", { class: "operation-failure", role: "alert" }, failureNotice(activity.failure.message)) : null,
+    inputRunProgress({ run, running: busy, startedAt: setupBusy ? setup?.startedAt : activity ? Date.parse(activity.startedAt) : undefined, activity, context: runContext(run, workspace, setup) }),
+    h("div", { class: "input-run-actions" },
+      !terminal && busy ? button(cancelling ? "Stopping…" : "Stop", () => { void (setupBusy ? setup!.cancel() : controller.cancel(run)); }, "secondary danger") : null,
+      !terminal && !busy ? button(failed ? "Retry" : "Continue", () => { void controller.resume(run); }, "primary") : null,
+      terminal && model ? button("Inspect candidate", () => actions.navigate({ page: "model", id: model.id }), "secondary", "arrow") : null,
+      button("Activity", () => actions.navigate({ page: "activity" }), "ghost", "arrow")),
+    details("Run identity", facts([["Run", copyField(run.id, actions.copy)], ["Setup", copyField(run.setupId, actions.copy)]])));
 }
 
 function runContext(run: InputOptimizationRun, workspace: WorkspaceSnapshot, controller?: OptimizationSetupController): InputRunStageContext {
@@ -75,13 +119,14 @@ function runContext(run: InputOptimizationRun, workspace: WorkspaceSnapshot, con
   };
 }
 
-function managedRun(run: ManagedRunStatus, actions: Actions): HTMLElement {
+function managedRun(run: ManagedRunStatus, label: string, actions: Actions): HTMLElement {
   const active = !["completed", "cancelled", "failed"].includes(run.state);
   return h("article", { class: "unified-run-entry", "data-managed-run-id": run.run_id },
     h("div", { class: "project-run-item" },
-      h("div", { class: "project-run-main" }, h("strong", {}, run.stage.label), h("time", {}, dateLabel(run.created_at))),
-      h("code", {}, run.run_id.slice(0, 8)),
-      h("div", { class: "project-run-state" }, tag(run.decision?.replaceAll("_", " ") ?? run.state.replaceAll("_", " "), "neutral")),
+      h("span", { class: "run-number" }, label),
+      h("span", { class: "run-list-name" }, h("strong", {}, "Optimization"), h("small", {}, run.stage.label)),
+      h("div", { class: "project-run-state" }, status(run.decision?.replaceAll("_", " ") ?? run.state.replaceAll("_", " "), "neutral")),
+      h("time", {}, dateLabel(run.created_at)),
       h("div", { class: "project-run-action" }, button(active ? "Continue" : "Open", () => actions.navigate({ page: "optimization" }), "secondary", "arrow"))));
 }
 export function renderBenchmarks(workspace: WorkspaceSnapshot, actions: Actions, readiness?: ManagedReadiness): HTMLElement {

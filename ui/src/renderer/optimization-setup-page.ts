@@ -2,7 +2,7 @@ import type { Actions } from "./actions.js";
 import type { OptimizationSetupController } from "./optimization-setup-controller.js";
 import { button, failureNotice, selectControl, workspacePage } from "./components.js";
 import { h } from "./dom.js";
-import { inputRunProgress } from "./input-run-progress.js";
+import { inputRunProgress, pendingInputRunProgress } from "./input-run-progress.js";
 
 export function renderOptimizationSetup(controller: OptimizationSetupController, actions: Actions): HTMLElement {
   const model = controller.model, selectedDataset = controller.dataset, busy = controller.loading || controller.saving || controller.running || controller.cancelling || controller.initializingEvaluation;
@@ -29,7 +29,7 @@ export function renderOptimizationSetup(controller: OptimizationSetupController,
     h("div", { class: "optimization-input-actions" }, optimize,
       controller.canCancel || controller.cancelling ? button(controller.cancelling ? "Stopping…" : "Stop", () => { void controller.cancel(); }, "secondary danger") : null),
     controller.saving || controller.initializingEvaluation ? h("div", { role: "status", class: "workspace-progress" }, controller.phase ?? "Saving…", " ", h("span", { "data-elapsed-start": String(controller.startedAt) })) : null,
-    controller.run ? runState(controller, actions) : null);
+    controller.run ? runState(controller, actions) : controller.running ? pendingInputRunProgress() : null);
 }
 
 function runState(controller: OptimizationSetupController, actions: Actions): HTMLElement {

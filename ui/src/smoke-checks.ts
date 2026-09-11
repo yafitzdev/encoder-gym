@@ -81,7 +81,9 @@ export async function runSmokeChecks(window: BrowserWindow, output: string, harn
   await nav("runs");
   await check("nine original run records remain available", "document.querySelectorAll('.run-list-item').length === 9");
   await screenshot("runs-dark");
-  await click(".run-list-item"); await click("#tab-activity");
+  await click(".run-list-item");
+  await check("recorded run overview shows its persisted progress milestones", "document.querySelectorAll('.recorded-run-steps li').length === 4 && [...document.querySelectorAll('.recorded-run-steps li')].every(item=>item.classList.contains('complete'))");
+  await click("#tab-activity");
   await check("run activity comes from journal events", "document.querySelectorAll('.activity-list li').length > 4");
   await click("#tab-record");
   await check("immutable optimization identity remains inspectable", "document.getElementById('detail-panel').textContent.includes('2317e08b-5848-4773-9a9e-42499ee09815')");
