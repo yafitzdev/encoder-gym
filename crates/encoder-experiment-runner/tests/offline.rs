@@ -8,6 +8,7 @@ use std::{
 
 use chrono::Utc;
 use encoder_experiment_core::{
+    benchmark::BenchmarkDefinition,
     domain::{
         BackendIdentity, EncoderTaskKind, EvidenceRole, ExternalArtifactIdentity,
         ExternalProjectSnapshot, ModelArtifactIdentity, OptimizationBudget, ParameterValue,
@@ -154,6 +155,7 @@ fn digest(character: char) -> String {
 #[derive(Clone)]
 struct FakeRankingBackend {
     identity: BackendIdentity,
+    evaluation_calls: Arc<AtomicUsize>,
     selected_candidate_sealed_calls: Arc<AtomicUsize>,
 }
 
@@ -161,6 +163,7 @@ impl FakeRankingBackend {
     fn new() -> Self {
         Self {
             identity: BackendIdentity::new("fake-ranking", "v1", digest('b')).unwrap(),
+            evaluation_calls: Arc::new(AtomicUsize::new(0)),
             selected_candidate_sealed_calls: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -216,8 +219,10 @@ impl EncoderTaskBackend for FakeRankingBackend {
         suite_key: String,
         _maximum_seconds: u64,
     ) -> BoxFuture<'_, Result<EvaluationReport, EncoderTaskAdapterError>> {
+        let evaluation_calls = self.evaluation_calls.clone();
         let sealed_calls = self.selected_candidate_sealed_calls.clone();
         Box::pin(async move {
+            evaluation_calls.fetch_add(1, Ordering::SeqCst);
             let role = if suite_key.starts_with("development") {
                 EvidenceRole::Development
             } else {
@@ -528,4 +533,130 @@ async fn reserved_protocol_and_run_identities_are_recovered_idempotently() {
         .unwrap();
     assert_eq!(first, recovered);
     assert_eq!(first.run_id, run_id);
+}
+
+#[tokio::test]
+async fn shared_benchmark_protocol_reuses_baseline_reports_without_evaluation() {
+    let store = SqliteExperimentStore::connect("sqlite::memory:")
+        .await
+        .unwrap();
+    let backend = FakeRankingBackend::new();
+    let runner = ExperimentRunner::new(&store, &backend);
+    let source = runner.register_project(project(&backend)).await.unwrap();
+    let source_candidate = TrainingCandidate::create(
+        &source,
+        1,
+        60,
+        BTreeMap::from([("learning_rate".into(), ParameterValue::Number(0.000_003))]),
+    )
+    .unwrap();
+    let source_protocol = runner
+        .prepare_multi_protocol(
+            source.id,
+            contract(),
+            OptimizationBudget {
+                maximum_candidates: 1,
+                maximum_training_seconds: 60,
+                maximum_development_evaluations: 2,
+                maximum_sealed_evaluations: 1,
+            },
+            60,
+            vec!["development_b".into(), "development_a".into()],
+            "sealed",
+            vec![source_candidate],
+        )
+        .await
+        .unwrap();
+    let benchmark =
+        BenchmarkDefinition::from_protocol(&source, &source_protocol, digest('9')).unwrap();
+    let target = ExternalProjectSnapshot::create(
+        "production pilot with selected training data",
+        source.task,
+        source.source_revision.clone(),
+        digest('8'),
+        source.backend.clone(),
+        source
+            .inputs
+            .iter()
+            .cloned()
+            .map(|mut input| {
+                if input.role == EvidenceRole::Training {
+                    input.fingerprint = digest('7');
+                }
+                input
+            })
+            .collect(),
+        source.baseline_model.clone(),
+        json!({"suites":["development_a","development_b","sealed"],"training":"selected"}),
+        Utc::now(),
+    )
+    .unwrap();
+    let target = runner.register_project(target).await.unwrap();
+    let candidate = TrainingCandidate::create(
+        &target,
+        1,
+        60,
+        BTreeMap::from([("learning_rate".into(), ParameterValue::Number(0.000_003))]),
+    )
+    .unwrap();
+    let protocol_id = uuid::Uuid::new_v4();
+    let evaluations_before = backend.evaluation_calls.load(Ordering::SeqCst);
+    let prepared = runner
+        .prepare_multi_protocol_from_benchmark_identified(
+            protocol_id,
+            target.id,
+            source_protocol.id,
+            benchmark.clone(),
+            OptimizationBudget {
+                maximum_candidates: 1,
+                maximum_training_seconds: 60,
+                maximum_development_evaluations: 2,
+                maximum_sealed_evaluations: 1,
+            },
+            60,
+            vec![candidate],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        backend.evaluation_calls.load(Ordering::SeqCst),
+        evaluations_before
+    );
+    assert!(
+        prepared
+            .baseline_development_reports()
+            .iter()
+            .all(|report| report.reference.is_some())
+    );
+    assert!(prepared.baseline_sealed_report.reference.is_some());
+
+    let recovered = runner
+        .prepare_multi_protocol_from_benchmark_identified(
+            protocol_id,
+            target.id,
+            source_protocol.id,
+            benchmark,
+            prepared.budget.clone(),
+            60,
+            prepared.candidates.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(prepared, recovered);
+    assert_eq!(
+        backend.evaluation_calls.load(Ordering::SeqCst),
+        evaluations_before
+    );
+
+    let run = runner.create_run(prepared.id).await.unwrap();
+    let completed = runner.run_development(run.run_id).await.unwrap();
+    assert_eq!(completed.state, ExperimentRunState::Completed);
+    assert_eq!(
+        completed.final_decision,
+        Some(FinalDecision::RetainBaseline)
+    );
+    assert_eq!(
+        backend.evaluation_calls.load(Ordering::SeqCst),
+        evaluations_before + 2
+    );
 }

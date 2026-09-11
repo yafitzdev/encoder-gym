@@ -3,6 +3,7 @@
 use chrono::Utc;
 use encoder_experiment_core::{
     EncoderExperimentError,
+    benchmark::BenchmarkDefinition,
     domain::{ExternalProjectSnapshot, OptimizationBudget, TrainingCandidate},
     journal::{
         CandidateExecutionState, CandidatePhase, ExperimentEvent, ExperimentEventKind,
@@ -229,6 +230,113 @@ where
             candidates,
             DevelopmentSelectionRule::MaximizeWorstSuiteThenMean,
             Utc::now(),
+        )?;
+        self.store.create_protocol(protocol.clone()).await?;
+        Ok(protocol)
+    }
+
+    /// Prepare a new candidate protocol from an already-recorded shared benchmark.
+    /// Baseline reports retain exact source provenance and are not evaluated again.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn prepare_multi_protocol_from_benchmark_identified(
+        &self,
+        protocol_id: Uuid,
+        project_id: Uuid,
+        source_protocol_id: Uuid,
+        benchmark: BenchmarkDefinition,
+        budget: OptimizationBudget,
+        maximum_evaluation_seconds: u64,
+        candidates: Vec<TrainingCandidate>,
+    ) -> Result<ExperimentProtocol, ExperimentRunnerError> {
+        let project = self.project(project_id).await?;
+        self.backend.inspect(project.clone()).await?;
+        let source_protocol = self.protocol(source_protocol_id).await?;
+        let source_project = self.project(source_protocol.project_snapshot_id).await?;
+        source_protocol.validate_integrity(&source_project)?;
+        benchmark.validate_integrity()?;
+        if BenchmarkDefinition::from_protocol(
+            &source_project,
+            &source_protocol,
+            benchmark.evaluation_configuration_fingerprint.clone(),
+        )? != benchmark
+        {
+            return Err(EncoderExperimentError::Integrity(
+                "shared benchmark differs from its source protocol".into(),
+            )
+            .into());
+        }
+
+        if let Some(existing) = self.store.get_protocol(protocol_id).await? {
+            existing.validate_integrity(&project)?;
+            let source_development = source_protocol.baseline_development_reports();
+            let referenced_development = existing.baseline_development_reports();
+            if existing.project_snapshot_id != project_id
+                || existing.metric_contract != benchmark.metric_contract
+                || existing.budget != budget
+                || existing.maximum_evaluation_seconds != maximum_evaluation_seconds
+                || existing.development_suite_keys() != source_protocol.development_suite_keys()
+                || existing.sealed_suite_key != source_protocol.sealed_suite_key
+                || existing.candidates != candidates
+                || existing.development_selection_rule
+                    != Some(DevelopmentSelectionRule::MaximizeWorstSuiteThenMean)
+                || source_development.len() != referenced_development.len()
+            {
+                return Err(EncoderExperimentError::Integrity(
+                    "reserved shared-benchmark protocol belongs to a different request".into(),
+                )
+                .into());
+            }
+            for (source, referenced) in source_development.into_iter().zip(referenced_development) {
+                benchmark.validate_baseline_reference(
+                    &source_project,
+                    &source_protocol,
+                    &project,
+                    source,
+                    referenced,
+                )?;
+            }
+            benchmark.validate_baseline_reference(
+                &source_project,
+                &source_protocol,
+                &project,
+                &source_protocol.baseline_sealed_report,
+                &existing.baseline_sealed_report,
+            )?;
+            return Ok(existing);
+        }
+
+        let now = Utc::now();
+        let mut baseline_development_reports = Vec::new();
+        for source in source_protocol.baseline_development_reports() {
+            baseline_development_reports.push(benchmark.reference_baseline_report(
+                Uuid::new_v4(),
+                &source_project,
+                &source_protocol,
+                &project,
+                source,
+                now,
+            )?);
+        }
+        let baseline_sealed_report = benchmark.reference_baseline_report(
+            Uuid::new_v4(),
+            &source_project,
+            &source_protocol,
+            &project,
+            &source_protocol.baseline_sealed_report,
+            now,
+        )?;
+        let protocol = ExperimentProtocol::create_multi_identified(
+            protocol_id,
+            &project,
+            benchmark.metric_contract,
+            baseline_development_reports,
+            baseline_sealed_report,
+            budget,
+            maximum_evaluation_seconds,
+            source_protocol.sealed_suite_key,
+            candidates,
+            DevelopmentSelectionRule::MaximizeWorstSuiteThenMean,
+            now,
         )?;
         self.store.create_protocol(protocol.clone()).await?;
         Ok(protocol)

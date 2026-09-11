@@ -561,3 +561,20 @@ and keep outstanding requirements visible.
 - `cargo fmt-check`, `cargo check-all`, `cargo lint` and `cargo test-all` pass.
 - The remaining execution boundary is the first finite candidate/advisor child
   attached to this exact materialized project.
+
+### Shared baseline evidence references — 11 September 2026
+
+- A materialized input-first project can now prepare its candidate protocol
+  from the selected shared benchmark without evaluating the unchanged baseline
+  again. Development and final baseline reports become explicit references,
+  never unlabelled copies.
+- Every reference binds the source scientific project, source protocol and
+  source report UUID/fingerprint. The referenced report is bound to the new
+  project and must retain the exact model, role, suite, metrics and support.
+- The runner deeply verifies the benchmark against its source protocol and
+  recovers an already-created referenced protocol idempotently. Tests prove
+  protocol preparation performs zero evaluator calls and that ordinary
+  candidate comparison still works against the referenced development facts.
+- This removes redundant baseline work only. It does not authorize candidate
+  training, provider calls or final evaluation. The next boundary remains the
+  finite execution child attached to the project run.

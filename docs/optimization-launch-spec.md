@@ -110,6 +110,16 @@ artifact and scientific project identities. A failed or interrupted attempt
 retries the same stage without replacing published content. It performs no
 training, provider request, development evaluation or final evaluation.
 
+The shared benchmark's existing baseline reports are reused when the
+materialized project changes only non-evaluation inputs. Reuse creates new
+project-bound report references that copy the immutable metric facts and record
+the exact source project, protocol and report identities. The source protocol
+and benchmark are deeply reverified, and the task adapter must verify the target
+project against the same benchmark definition first. Referenced evidence cannot
+silently change a score, suite, model, support count or source fingerprint. This
+prepares candidate comparison without rerunning the baseline or claiming that a
+new baseline evaluation occurred.
+
 The Electron main-process bridge now exposes those three fixed project-scoped
 operations. It validates every response, rejects renderer-supplied paths,
 credentials, commands or execution fields, writes authorization requests only

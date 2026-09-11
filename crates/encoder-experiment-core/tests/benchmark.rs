@@ -101,6 +101,31 @@ fn protocol(project: &ExternalProjectSnapshot, sequence: u32) -> ExperimentProto
     .unwrap()
 }
 
+fn project_with_changed_training(source: &ExternalProjectSnapshot) -> ExternalProjectSnapshot {
+    ExternalProjectSnapshot::create(
+        "Fixture with selected training data",
+        source.task,
+        source.source_revision.clone(),
+        fp('9'),
+        source.backend.clone(),
+        source
+            .inputs
+            .iter()
+            .cloned()
+            .map(|mut input| {
+                if input.role == EvidenceRole::Training {
+                    input.fingerprint = fp('8');
+                }
+                input
+            })
+            .collect(),
+        source.baseline_model.clone(),
+        json!({"training":"selected immutable version"}),
+        Utc::now(),
+    )
+    .unwrap()
+}
+
 #[test]
 fn models_training_settings_and_run_identity_do_not_define_the_benchmark() {
     let first = project('a');
@@ -207,4 +232,68 @@ fn sealed_reports_and_invalid_or_tampered_definitions_never_enter_comparison() {
             .validate_development_report(&project, &fp('6'), &protocol.baseline_development_report)
             .is_err()
     );
+}
+
+#[test]
+fn unchanged_shared_baseline_evidence_is_referenced_with_exact_provenance() {
+    let source = project('a');
+    let source_protocol = protocol(&source, 1);
+    let target = project_with_changed_training(&source);
+    let benchmark = BenchmarkDefinition::from_protocol(&source, &source_protocol, fp('5')).unwrap();
+    let referenced = benchmark
+        .reference_baseline_report(
+            uuid::Uuid::new_v4(),
+            &source,
+            &source_protocol,
+            &target,
+            &source_protocol.baseline_development_report,
+            Utc::now(),
+        )
+        .unwrap();
+
+    benchmark
+        .validate_baseline_reference(
+            &source,
+            &source_protocol,
+            &target,
+            &source_protocol.baseline_development_report,
+            &referenced,
+        )
+        .unwrap();
+    assert_eq!(referenced.project_snapshot_id, target.id);
+    assert_eq!(
+        referenced.metrics,
+        source_protocol.baseline_development_report.metrics
+    );
+    assert_eq!(
+        referenced.reference.as_ref().unwrap().source_report_id,
+        source_protocol.baseline_development_report.id
+    );
+    assert!(
+        serde_json::to_string(&referenced)
+            .unwrap()
+            .contains("source_report_id")
+    );
+
+    let mut changed = referenced.clone();
+    changed.metrics.insert("mrr".into(), 0.99);
+    changed.fingerprint = changed.reproduce_fingerprint().unwrap();
+    assert!(
+        benchmark
+            .validate_baseline_reference(
+                &source,
+                &source_protocol,
+                &target,
+                &source_protocol.baseline_development_report,
+                &changed,
+            )
+            .is_err()
+    );
+
+    let old_json = serde_json::to_string(&source_protocol.baseline_development_report).unwrap();
+    assert!(!old_json.contains("reference"));
+    source_protocol
+        .baseline_development_report
+        .validate_integrity(&source, &source_protocol.metric_contract)
+        .unwrap();
 }

@@ -9,6 +9,7 @@ use crate::{EncoderExperimentError, canonical_sha256, fingerprint, required};
 
 pub const METRIC_CONTRACT_SCHEMA_VERSION: u32 = 1;
 pub const EVALUATION_REPORT_SCHEMA_VERSION: u32 = 1;
+pub const REFERENCED_EVALUATION_REPORT_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -236,6 +237,52 @@ impl MetricContract {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct EvaluationReportReference {
+    pub source_project_snapshot_id: Uuid,
+    pub source_project_snapshot_fingerprint: String,
+    pub source_protocol_id: Uuid,
+    pub source_protocol_fingerprint: String,
+    pub source_report_id: Uuid,
+    pub source_report_fingerprint: String,
+}
+
+impl EvaluationReportReference {
+    pub(crate) fn create(
+        source_project: &ExternalProjectSnapshot,
+        source_protocol_id: Uuid,
+        source_protocol_fingerprint: String,
+        source_report: &EvaluationReport,
+    ) -> Result<Self, EncoderExperimentError> {
+        let value = Self {
+            source_project_snapshot_id: source_project.id,
+            source_project_snapshot_fingerprint: source_project.fingerprint.clone(),
+            source_protocol_id,
+            source_protocol_fingerprint,
+            source_report_id: source_report.id,
+            source_report_fingerprint: source_report.fingerprint.clone(),
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
+    fn validate(&self) -> Result<(), EncoderExperimentError> {
+        if self.source_project_snapshot_id.is_nil()
+            || !canonical_sha256(&self.source_project_snapshot_fingerprint)
+            || self.source_protocol_id.is_nil()
+            || !canonical_sha256(&self.source_protocol_fingerprint)
+            || self.source_report_id.is_nil()
+            || !canonical_sha256(&self.source_report_fingerprint)
+        {
+            return Err(EncoderExperimentError::Validation(
+                "referenced evaluation provenance is incomplete".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvaluationReport {
     pub schema_version: u32,
     pub id: Uuid,
@@ -249,6 +296,8 @@ pub struct EvaluationReport {
     pub metrics: BTreeMap<String, f64>,
     pub support: u64,
     pub created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<EvaluationReportReference>,
     pub fingerprint: String,
 }
 
@@ -288,6 +337,40 @@ impl EvaluationReport {
             metrics,
             support,
             created_at,
+            reference: None,
+            fingerprint: String::new(),
+        };
+        value.validate_fields(contract)?;
+        value.fingerprint = value.reproduce_fingerprint()?;
+        Ok(value)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn create_referenced(
+        id: Uuid,
+        target_project: &ExternalProjectSnapshot,
+        source_report: &Self,
+        reference: EvaluationReportReference,
+        contract: &MetricContract,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, EncoderExperimentError> {
+        target_project.validate_integrity()?;
+        source_report.validate_fields(contract)?;
+        reference.validate()?;
+        let mut value = Self {
+            schema_version: REFERENCED_EVALUATION_REPORT_SCHEMA_VERSION,
+            id,
+            project_snapshot_id: target_project.id,
+            project_snapshot_fingerprint: target_project.fingerprint.clone(),
+            model: source_report.model.clone(),
+            evidence_role: source_report.evidence_role,
+            suite_key: source_report.suite_key.clone(),
+            suite_fingerprint: source_report.suite_fingerprint.clone(),
+            metric_contract_fingerprint: source_report.metric_contract_fingerprint.clone(),
+            metrics: source_report.metrics.clone(),
+            support: source_report.support,
+            created_at,
+            reference: Some(reference),
             fingerprint: String::new(),
         };
         value.validate_fields(contract)?;
@@ -317,6 +400,22 @@ impl EvaluationReport {
     }
 
     pub fn reproduce_fingerprint(&self) -> Result<String, EncoderExperimentError> {
+        if self.schema_version == EVALUATION_REPORT_SCHEMA_VERSION {
+            return fingerprint(&serde_json::json!({
+                "schema_version": self.schema_version,
+                "id": self.id,
+                "project_snapshot_id": self.project_snapshot_id,
+                "project_snapshot_fingerprint": self.project_snapshot_fingerprint,
+                "model": self.model,
+                "evidence_role": self.evidence_role,
+                "suite_key": self.suite_key,
+                "suite_fingerprint": self.suite_fingerprint,
+                "metric_contract_fingerprint": self.metric_contract_fingerprint,
+                "metrics": self.metrics,
+                "support": self.support,
+                "created_at": self.created_at,
+            }));
+        }
         fingerprint(&serde_json::json!({
             "schema_version": self.schema_version,
             "id": self.id,
@@ -330,13 +429,20 @@ impl EvaluationReport {
             "metrics": self.metrics,
             "support": self.support,
             "created_at": self.created_at,
+            "reference": self.reference,
         }))
     }
 
     fn validate_fields(&self, contract: &MetricContract) -> Result<(), EncoderExperimentError> {
         contract.validate_integrity()?;
         self.model.validate()?;
-        if self.schema_version != EVALUATION_REPORT_SCHEMA_VERSION
+        if !matches!(
+            self.schema_version,
+            EVALUATION_REPORT_SCHEMA_VERSION | REFERENCED_EVALUATION_REPORT_SCHEMA_VERSION
+        ) || self.id.is_nil()
+            || self.schema_version == EVALUATION_REPORT_SCHEMA_VERSION && self.reference.is_some()
+            || self.schema_version == REFERENCED_EVALUATION_REPORT_SCHEMA_VERSION
+                && self.reference.is_none()
             || !matches!(
                 self.evidence_role,
                 EvidenceRole::Development | EvidenceRole::SealedAcceptance
@@ -357,6 +463,9 @@ impl EvaluationReport {
             return Err(EncoderExperimentError::Validation(
                 "evaluation report is not canonical or complete".into(),
             ));
+        }
+        if let Some(reference) = &self.reference {
+            reference.validate()?;
         }
         Ok(())
     }

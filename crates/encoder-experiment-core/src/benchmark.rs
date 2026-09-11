@@ -2,12 +2,13 @@
 //! This is not qualification, exposure, or permission to execute a test.
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{
     EncoderExperimentError, canonical_sha256,
     domain::{BackendIdentity, EncoderTaskKind, EvidenceRole, ExternalProjectSnapshot},
     fingerprint,
-    metrics::{EvaluationReport, MetricContract},
+    metrics::{EvaluationReport, EvaluationReportReference, MetricContract},
     protocol::ExperimentProtocol,
 };
 
@@ -148,6 +149,140 @@ impl BenchmarkDefinition {
         evaluation_configuration_fingerprint: &str,
         report: &EvaluationReport,
     ) -> Result<(), EncoderExperimentError> {
+        self.validate_report(project, evaluation_configuration_fingerprint, report)?;
+        if report.evidence_role != EvidenceRole::Development {
+            return Err(EncoderExperimentError::Validation(
+                "Report is not development evidence.".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Reuse an immutable baseline result when only non-evaluation project inputs changed.
+    /// The caller remains responsible for asking its task adapter to verify that the target
+    /// project resolves this exact benchmark definition.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reference_baseline_report(
+        &self,
+        id: Uuid,
+        source_project: &ExternalProjectSnapshot,
+        source_protocol: &ExperimentProtocol,
+        target_project: &ExternalProjectSnapshot,
+        source_report: &EvaluationReport,
+        created_at: DateTime<Utc>,
+    ) -> Result<EvaluationReport, EncoderExperimentError> {
+        self.validate_reference_context(
+            source_project,
+            source_protocol,
+            target_project,
+            source_report,
+        )?;
+        let reference = EvaluationReportReference::create(
+            source_project,
+            source_protocol.id,
+            source_protocol.fingerprint.clone(),
+            source_report,
+        )?;
+        let report = EvaluationReport::create_referenced(
+            id,
+            target_project,
+            source_report,
+            reference,
+            &self.metric_contract,
+            created_at,
+        )?;
+        self.validate_baseline_reference(
+            source_project,
+            source_protocol,
+            target_project,
+            source_report,
+            &report,
+        )?;
+        Ok(report)
+    }
+
+    pub fn validate_baseline_reference(
+        &self,
+        source_project: &ExternalProjectSnapshot,
+        source_protocol: &ExperimentProtocol,
+        target_project: &ExternalProjectSnapshot,
+        source_report: &EvaluationReport,
+        referenced_report: &EvaluationReport,
+    ) -> Result<(), EncoderExperimentError> {
+        self.validate_reference_context(
+            source_project,
+            source_protocol,
+            target_project,
+            source_report,
+        )?;
+        referenced_report.validate_integrity(target_project, &self.metric_contract)?;
+        let reference = referenced_report.reference.as_ref().ok_or_else(|| {
+            EncoderExperimentError::Validation(
+                "shared baseline evidence must retain its source report".into(),
+            )
+        })?;
+        if reference.source_project_snapshot_id != source_project.id
+            || reference.source_project_snapshot_fingerprint != source_project.fingerprint
+            || reference.source_protocol_id != source_protocol.id
+            || reference.source_protocol_fingerprint != source_protocol.fingerprint
+            || reference.source_report_id != source_report.id
+            || reference.source_report_fingerprint != source_report.fingerprint
+            || referenced_report.model != source_report.model
+            || referenced_report.evidence_role != source_report.evidence_role
+            || referenced_report.suite_key != source_report.suite_key
+            || referenced_report.suite_fingerprint != source_report.suite_fingerprint
+            || referenced_report.metric_contract_fingerprint
+                != source_report.metric_contract_fingerprint
+            || referenced_report.metrics != source_report.metrics
+            || referenced_report.support != source_report.support
+        {
+            return Err(EncoderExperimentError::Integrity(
+                "referenced baseline report differs from its immutable source".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_reference_context(
+        &self,
+        source_project: &ExternalProjectSnapshot,
+        source_protocol: &ExperimentProtocol,
+        target_project: &ExternalProjectSnapshot,
+        source_report: &EvaluationReport,
+    ) -> Result<(), EncoderExperimentError> {
+        self.validate_integrity()?;
+        source_protocol.validate_integrity(source_project)?;
+        target_project.validate_integrity()?;
+        self.validate_report(
+            source_project,
+            &self.evaluation_configuration_fingerprint,
+            source_report,
+        )?;
+        if source_project.id == target_project.id
+            || source_protocol.project_snapshot_id != source_project.id
+            || target_project.task != self.task
+            || target_project.backend != self.backend
+            || target_project.source_revision != self.source_revision
+            || target_project.baseline_model != source_report.model
+            || !source_protocol
+                .baseline_development_reports()
+                .into_iter()
+                .chain(std::iter::once(&source_protocol.baseline_sealed_report))
+                .any(|report| report == source_report)
+        {
+            return Err(EncoderExperimentError::Validation(
+                "baseline evidence cannot be reused by this project and benchmark".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_report(
+        &self,
+        project: &ExternalProjectSnapshot,
+        evaluation_configuration_fingerprint: &str,
+        report: &EvaluationReport,
+    ) -> Result<(), EncoderExperimentError> {
         self.validate_integrity()?;
         project.validate_integrity()?;
         report.validate_integrity(project, &self.metric_contract)?;
@@ -155,16 +290,15 @@ impl BenchmarkDefinition {
             || project.backend != self.backend
             || project.source_revision != self.source_revision
             || evaluation_configuration_fingerprint != self.evaluation_configuration_fingerprint
-            || report.evidence_role != EvidenceRole::Development
-            || !self.suites.iter().any(|s| {
-                s.role == EvidenceRole::Development
-                    && s.key == report.suite_key
-                    && s.fingerprint == report.suite_fingerprint
-                    && s.support == report.support
+            || !self.suites.iter().any(|suite| {
+                suite.role == report.evidence_role
+                    && suite.key == report.suite_key
+                    && suite.fingerprint == report.suite_fingerprint
+                    && suite.support == report.support
             })
         {
             return Err(EncoderExperimentError::Validation(
-                "Report does not match this development benchmark.".into(),
+                "Report does not match this evaluation benchmark.".into(),
             ));
         }
         Ok(())
