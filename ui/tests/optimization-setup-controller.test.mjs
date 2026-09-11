@@ -6,13 +6,14 @@ import { setupFixture } from "./optimization-setup-fixture.mjs";
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 function fixture(overrides = {}) {
   const f = setupFixture(), history = [], writes = [], runs = [];
-  const run = (state = "queued") => ({ id: randomUUID(), projectId: f.projectId, state, attempt: 0, materializationAttempt: 0, experimentAttempt: 0, executionAttempt: 0, finalAttempt: 0, lastSequence: 1, updatedAt: new Date().toISOString() });
+  const run = (state = "queued") => ({ id: randomUUID(), projectId: f.projectId, createdAt: new Date().toISOString(), state, attempt: 0, materializationAttempt: 0, experimentAttempt: 0, executionAttempt: 0, finalAttempt: 0, lastSequence: 1, updatedAt: new Date().toISOString() });
   const bridge = { queryDatasets: async () => ({ kind: "list", entries: f.datasets }), queryBenchmarks: async () => ({ kind: "list", versions: f.workspace.benchmarkVersions }),
     optimizationSetups: async () => [...history], previewOptimizationSetup: async () => f.preview,
     saveOptimizationSetup: async (_, request) => { writes.push(structuredClone(request)); const result = f.saved(request); history.push(result.setup); return result; },
     startInputOptimization: async () => { const value = run(); runs.push(value); return { actionId: randomUUID(), run: value }; },
     driveInputOptimization: async (_, id) => ({ ...runs.find(value => value.id === id), state: "baseline_retained", outcome: { kind: "baseline_retained" } }),
     inputOptimizationRun: async (_, id) => runs.find(value => value.id === id),
+    projectActivity: async () => ({ project_id: f.projectId, actions: [] }),
     selectProject: async () => ({ project: { id: f.projectId }, content: { state: "ready", workspace: { managed: f.workspace } } }), ...overrides };
   const controller = new OptimizationSetupController(f.projectId, f.workspace, bridge, () => {});
   return { ...f, controller, bridge, history, writes, runs, run };

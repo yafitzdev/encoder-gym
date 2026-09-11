@@ -1,9 +1,11 @@
 import type { EncoderGymBridge } from "../preload.js";
 import type { InputOptimizationRun } from "../input-optimization.js";
 import type { ManagedWorkspace } from "../managed-workspace.js";
+import { inputRunActivity, type InputRunActivity } from "./input-run-activity.js";
 
 export class InputRunsController {
   runs?: InputOptimizationRun[];
+  activities = new Map<string, InputRunActivity>();
   loading = false;
   runningId?: string;
   error?: unknown;
@@ -14,8 +16,11 @@ export class InputRunsController {
   private async load(): Promise<void> {
     const epoch = this.epoch; this.loading = true; this.error = undefined; this.render();
     try {
-      const runs = await this.bridge.inputOptimizationRuns(this.projectId);
-      if (epoch === this.epoch) this.runs = runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const [runs, log] = await Promise.all([this.bridge.inputOptimizationRuns(this.projectId), this.bridge.projectActivity(this.projectId, 100)]);
+      if (epoch === this.epoch) {
+        this.runs = runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        this.activities = new Map(runs.flatMap(run => { const activity = inputRunActivity(log, run.id); return activity ? [[run.id, activity] as const] : []; }));
+      }
     } catch (error) { if (epoch === this.epoch) this.error = error; }
     finally { if (epoch === this.epoch) { this.loading = false; this.render(); } }
   }
@@ -26,16 +31,22 @@ export class InputRunsController {
     const poll = (): void => {
       timer = setTimeout(() => {
         if (settled || epoch !== this.epoch) return;
-        void this.bridge.inputOptimizationRun(this.projectId, run.id).then(value => { if (!settled && epoch === this.epoch) { this.replace(value); this.render(); poll(); } }, () => { if (!settled && epoch === this.epoch) poll(); });
-      }, 750);
+        void Promise.all([this.bridge.inputOptimizationRun(this.projectId, run.id), this.bridge.projectActivity(this.projectId, 30)]).then(([value, log]) => {
+          if (!settled && epoch === this.epoch) { this.replace(value); const activity = inputRunActivity(log, run.id); if (activity) this.activities.set(run.id, activity); this.render(); poll(); }
+        }, () => { if (!settled && epoch === this.epoch) poll(); });
+      }, 1250);
     };
     try {
       poll(); this.replace(await this.bridge.driveInputOptimization(this.projectId, run.id)); settled = true;
       const opened = await this.bridge.selectProject(this.projectId);
       if (epoch === this.epoch && opened.content.state === "ready" && opened.content.workspace.managed) this.updated?.(opened.content.workspace.managed);
+      const activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30), run.id); if (activity) this.activities.set(run.id, activity);
     } catch (error) {
       settled = true;
-      if (epoch === this.epoch) { this.error = error; this.replace(await this.bridge.inputOptimizationRun(this.projectId, run.id).catch(() => run)); }
+      if (epoch === this.epoch) {
+        this.error = error; this.replace(await this.bridge.inputOptimizationRun(this.projectId, run.id).catch(() => run));
+        const activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30).catch(() => ({ project_id: this.projectId, actions: [] })), run.id); if (activity) this.activities.set(run.id, activity);
+      }
     } finally {
       settled = true; if (timer) clearTimeout(timer);
       if (epoch === this.epoch) { this.runningId = undefined; this.render(); }

@@ -2,6 +2,7 @@ import type { Actions } from "./actions.js";
 import type { OptimizationSetupController } from "./optimization-setup-controller.js";
 import { button, failureNotice, selectControl, workspacePage } from "./components.js";
 import { h } from "./dom.js";
+import { inputRunStageLabel } from "./input-run-activity.js";
 
 export function renderOptimizationSetup(controller: OptimizationSetupController, actions: Actions): HTMLElement {
   const model = controller.model, selectedDataset = controller.dataset, busy = controller.loading || controller.saving || controller.running;
@@ -37,9 +38,14 @@ function runState(controller: OptimizationSetupController, actions: Actions): HT
   const result = run.state === "candidate_accepted" ? "Candidate passed" : run.state === "candidate_rejected" ? "Candidate did not pass" : run.state === "baseline_retained" ? "No improvement" : undefined;
   const phases = ["checking_inputs", "preparing_data", "starting", "training", "saving_candidate", "evaluating"] as const;
   const active = phase === "complete" ? phases.length : Math.max(0, phases.indexOf(phase ?? "checking_inputs"));
+  const activity = controller.activity, progress = activity?.progress;
+  const current = result ?? (controller.running && progress ? inputRunStageLabel(progress.phase) : labels[phase ?? "checking_inputs"]);
   return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": String(controller.running) },
-    h("div", { class: "optimization-progress-state" }, h("strong", {}, result ?? labels[phase ?? "checking_inputs"]),
+    h("div", { class: "optimization-progress-state" }, h("strong", {}, current),
       controller.running && controller.startedAt ? h("span", { "data-elapsed-start": String(controller.startedAt) }) : null),
+    progress?.completed !== undefined && progress.total !== undefined ? h("div", { class: "optimization-live-progress" },
+      h("progress", { value: progress.completed, max: progress.total }), h("span", {}, `${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()}`)) : null,
     h("ol", { class: "optimization-progress-steps" }, ...phases.map((item, index) => h("li", { class: index < active ? "complete" : index === active ? "active" : "" }, labels[item]))),
+    activity?.stages.length ? h("ol", { class: "optimization-live-stages" }, ...activity.stages.slice(-4).map(stage => h("li", {}, inputRunStageLabel(stage)))) : null,
     !controller.running ? button("Runs", () => actions.navigate({ page: "runs" }), "ghost", "arrow") : null);
 }

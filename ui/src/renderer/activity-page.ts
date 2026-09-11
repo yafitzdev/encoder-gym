@@ -26,6 +26,8 @@ const operationLabels: Record<string, string> = {
   "project.upgrade": "Project upgraded",
   "dataset.import": "Dataset imported",
   "optimization.prepare": "Optimization prepared",
+  "optimization.start": "Optimization started",
+  "optimization.run": "Optimization run",
   "optimization.reserve": "Run reserved",
   "optimization.resume": "Run continued",
   "models.register_run": "Models registered",

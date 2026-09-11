@@ -12,6 +12,7 @@ test("run history loads newest first and completes the exact selected run", asyn
   const projectId = randomUUID(), first = run(projectId, "queued", "2026-01-01T00:00:00Z"), second = run(projectId, "execution_failed", "2026-01-02T00:00:00Z"), updates = [];
   const bridge = {
     inputOptimizationRuns: async () => [first, second],
+    projectActivity: async () => ({ project_id: projectId, actions: [] }),
     driveInputOptimization: async (_, id) => ({ ...(id === second.id ? second : first), state: "baseline_retained", outcome: { kind: "baseline_retained" } }),
     inputOptimizationRun: async (_, id) => id === second.id ? second : first,
     selectProject: async () => ({ content: { state: "ready", workspace: { managed: { manifest: { id: projectId } } } } }),
@@ -27,6 +28,7 @@ test("failed continuation remains retryable and refresh never interrupts active 
   const pending = new Promise(resolve => { release = resolve; });
   const bridge = {
     inputOptimizationRuns: async () => [value],
+    projectActivity: async () => ({ project_id: projectId, actions: [] }),
     driveInputOptimization: async () => { attempts++; if (attempts === 1) throw new Error("Stopped"); await pending; return { ...value, state: "baseline_retained", outcome: { kind: "baseline_retained" } }; },
     inputOptimizationRun: async () => stopped,
     selectProject: async () => ({ content: { state: "ready", workspace: {} } }),

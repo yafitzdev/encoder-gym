@@ -274,12 +274,13 @@ input::placeholder { color: var(--subtle); opacity: 1; }
 .run-list { border-top: 1px solid var(--line); }
 .project-run-section { margin-bottom: 34px; }
 .project-run-list { border-top: 1px solid var(--line); }
-.project-run-item { display: grid; grid-template-columns: minmax(180px, 1fr) 90px auto; align-items: center; gap: 18px; min-height: 70px; border-bottom: 1px solid var(--line-soft); }
+.project-run-item { display: grid; grid-template-columns: minmax(180px, 1fr) 90px minmax(80px, 180px) auto; align-items: center; gap: 18px; min-height: 70px; border-bottom: 1px solid var(--line-soft); }
 .project-run-main { display: grid; gap: 5px; }
 .project-run-main strong { font-size: 14px; }
 .project-run-main time, .project-run-item > code { color: var(--muted); font-size: 11px; }
 .project-run-item > code { background: transparent; }
 .project-run-action { justify-self: end; }
+.project-run-progress { width: 100%; height: 5px; accent-color: var(--accent); }
 .run-list-item { display: grid; grid-template-columns: 62px minmax(190px, 1fr) 145px 90px; gap: 18px; align-items: center; padding: 21px 10px; width: 100%; background: transparent; border-bottom: 1px solid var(--line-soft); text-align: left; }
 .run-list-item:hover { background: var(--surface); }
 .run-number { font: 11px var(--mono); color: var(--subtle); }
@@ -728,6 +729,10 @@ dialog::backdrop { background: #0008; }
 .optimization-progress-state { display: flex; justify-content: space-between; align-items: baseline; gap: 18px; }
 .optimization-progress-state strong { font-size: 18px; }
 .optimization-progress-state span { color: var(--muted); font: 11px var(--mono); }
+.optimization-live-progress { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; margin-top: 18px; color: var(--muted); font: 11px var(--mono); }
+.optimization-live-progress progress { width: 100%; height: 7px; accent-color: var(--accent); }
+.optimization-live-stages { display: flex; gap: 8px 20px; flex-wrap: wrap; list-style: none; padding: 16px 0 0; margin: 16px 0 0; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 11px; }
+.optimization-live-stages li::before { content: "✓"; margin-right: 7px; color: var(--success); }
 .optimization-progress-steps { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; list-style: none; padding: 0; margin: 18px 0 4px; }
 .optimization-progress-steps li { padding-top: 9px; border-top: 2px solid var(--line); color: var(--subtle); font-size: 10px; white-space: nowrap; }
 .optimization-progress-steps li.complete { border-color: var(--success); color: var(--muted); }

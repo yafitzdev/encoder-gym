@@ -591,9 +591,25 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     advisor: { kind: "fake", model: "fixture-advisor", authentication: "none", limits: fakeLimits },
   });
   const queued = await harness.backend.optimizationLaunch.start(setupProjectId, setupHistory[1]!.id);
+  const driveInputRun = harness.backend.optimizationLaunch.drive.bind(harness.backend.optimizationLaunch);
+  let finishInputRun!: () => void;
+  const inputRunPending = new Promise<void>(resolve => { finishInputRun = resolve; });
+  harness.backend.optimizationLaunch.drive = async (projectId, selectedRun, progress) => {
+    if (projectId !== setupProjectId || selectedRun !== queued.run.id) return driveInputRun(projectId, selectedRun, progress);
+    progress?.("training", { phase: "training", completed: 40, total: 100 });
+    await inputRunPending;
+    return { ...queued.run, state: "baseline_retained", outcome: { kind: "baseline_retained" }, lastSequence: 8, updatedAt: new Date().toISOString() };
+  };
   await nav("runs"); await until("document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "]')");
   await check("project optimization survives as a resumable top-level run", "document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "]').textContent.includes('Checking inputs') && document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "] button').textContent === 'Continue'");
   await check("Runs does not expose repair recipes as the product workflow", "!document.querySelector('.project-run-section').textContent.toLowerCase().includes('repair')");
+  await textButton("Continue");
+  await until("document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "]')?.textContent.includes('Training candidate')");
+  await check("project run shows its persisted native stage and counter", "(()=>{const row=document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "]');const bar=row.querySelector('progress');return row.textContent.includes('Training candidate') && bar.value===40 && bar.max===100})()");
+  await screenshot("managed-project-run-live");
+  finishInputRun();
+  await until("document.querySelector('[data-project-run-id=" + JSON.stringify(queued.run.id) + "]')?.textContent.includes('No improvement')");
+  harness.backend.optimizationLaunch.drive = driveInputRun;
   if (!scientificBefore.equals(readFileSync(join(benchmarkFixture.folder, "runs/scientific.sqlite")))) throw new Error("Benchmark inspection/adoption changed scientific evidence");
   console.log("Managed-workspace Electron acceptance passed.");
 }

@@ -4,6 +4,7 @@ import type { ProjectBenchmarkVersion } from "../benchmark-workspace.js";
 import type { ManagedWorkspace } from "../managed-workspace.js";
 import type { OptimizationInputs, OptimizationSetup, OptimizationSetupRequest } from "../optimization-setup.js";
 import { inputOptimizationPhase, inputOptimizationTerminal, type InputOptimizationPhase, type InputOptimizationRun } from "../input-optimization.js";
+import { inputRunActivity, type InputRunActivity } from "./input-run-activity.js";
 
 /** Per-project input selection. Running experiments have a separate controller. */
 export class OptimizationSetupController {
@@ -14,6 +15,7 @@ export class OptimizationSetupController {
   saving = false;
   running = false;
   run?: InputOptimizationRun;
+  activity?: InputRunActivity;
   phase?: string;
   startedAt?: number;
   error?: unknown;
@@ -103,15 +105,16 @@ export class OptimizationSetupController {
       const poll = (): void => {
         timer = setTimeout(() => {
           if (settled || epoch !== this.epoch || !this.run) return;
-          void this.bridge.inputOptimizationRun(this.projectId, this.run.id).then(run => {
-            if (!settled && epoch === this.epoch) { this.run = run; this.render(); poll(); }
+          void Promise.all([this.bridge.inputOptimizationRun(this.projectId, this.run.id), this.bridge.projectActivity(this.projectId, 30)]).then(([run, log]) => {
+            if (!settled && epoch === this.epoch) { this.run = run; this.activity = inputRunActivity(log, run.id); this.render(); poll(); }
           }, () => { if (!settled && epoch === this.epoch) poll(); });
-        }, 750);
+        }, 1250);
       };
       poll();
       try { this.run = await this.bridge.driveInputOptimization(this.projectId, this.run.id); }
       finally { settled = true; if (timer) clearTimeout(timer); }
       if (epoch !== this.epoch) return;
+      this.activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30), this.run.id);
       const opened = await this.bridge.selectProject(this.projectId);
       if (epoch !== this.epoch) return;
       if (opened.content.state === "ready" && opened.content.workspace.managed) {
@@ -122,7 +125,11 @@ export class OptimizationSetupController {
       if (timer) clearTimeout(timer);
       if (epoch === this.epoch) {
         this.error = error;
-        if (this.run) this.run = await this.bridge.inputOptimizationRun(this.projectId, this.run.id).catch(() => this.run);
+        if (this.run) {
+          const existing = this.run;
+          this.run = await this.bridge.inputOptimizationRun(this.projectId, existing.id).catch(() => existing);
+          this.activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30).catch(() => ({ project_id: this.projectId, actions: [] })), existing.id) ?? this.activity;
+        }
       }
     } finally {
       if (epoch === this.epoch) { this.running = false; this.startedAt = undefined; this.render(); }

@@ -149,12 +149,12 @@ and projects a row-free `candidate_accepted` or `candidate_rejected` result to
 the project run. The project event never contains scores or holdout payloads.
 The command does not promote the model or change the baseline.
 
-The Electron main-process bridge now exposes those three fixed project-scoped
+The Electron main-process bridge exposes the fixed project-scoped
 operations. It validates every response, rejects renderer-supplied paths,
 credentials, commands or execution fields, writes authorization requests only
 to mode-restricted temporary files, and removes them after success or failure.
-The renderer does not invoke this boundary until the input-first executor can
-consume the result; an authorization-only button would be misleading.
+The renderer invokes these operations only after it has saved the exact visible
+inputs and reserved the project run.
 
 ## Desktop and execution integration
 
@@ -174,12 +174,11 @@ The main process writes only a strict temporary request and removes it on both
 success and failure. Each explicit save retains the ordinary CLI action UUID.
 
 Saving inputs, one-click authorization and the project-owned materialized-run
-root are available now. The first finite experiment can be attached, trained,
-compared and finalized through recoverable project transitions. Its completed
-checkpoint and exact training dataset can be registered into the ordinary
-Models and Data inventories whether accepted or rejected. The desktop does not
-invoke the new pipeline yet and must not fall back to a previously prepared
-recipe.
+root are connected in the desktop. The first finite experiment is attached,
+trained, compared and finalized through recoverable project transitions. Its
+completed checkpoint and exact training dataset are registered into the
+ordinary Models and Data inventories whether accepted or rejected. The desktop
+never falls back to a previously prepared recipe.
 Existing runs are opened from Runs and retain their current supervision,
 recovery and approval controls.
 
@@ -216,3 +215,24 @@ it must not silently run a different recipe or dataset in response to a setup.
 - The project-run root passes all four repository Rust gates. Its actual CLI
   coverage verifies atomic reservation, exact retry, stale unreserved
   authorization, immutable custody, read-only inspection and safe activity.
+
+### Desktop run recovery and progress — 11 September 2026
+
+- Optimize saves the selected Baseline, Training Data and Evaluation version,
+  reserves one project run and drives its recoverable stages without another
+  setup or bookkeeping action.
+- Runs lists project optimization roots above scientific child experiments.
+  Unfinished and failed roots continue the same UUID after navigation or app
+  restart; completed candidates link into the ordinary Models inventory.
+- Native phase names and bounded counters come from the run's persisted project
+  activity action. The Optimize and Runs pages show the same durable progress;
+  neither parses subprocess prose or invents a percentage.
+- The model viewer resolves a registered accepted candidate back through its
+  exact scientific child and parent optimization UUID. `Make baseline` appends
+  the normal baseline revision; rejected and previous models remain immutable.
+- UI typecheck, 92 unit tests and the full two-process Electron acceptance pass.
+  The Rust workspace gates and deterministic optimization recovery suite pass.
+  No real Nomos training, provider call, final evaluation or baseline change was
+  performed by this implementation work.
+- Bounded advisor/data-generation iterations, initial benchmark onboarding and
+  explicit cancellation of the project-run root remain open product work.

@@ -70,30 +70,24 @@ decision. No unbounded work or inferred spending.
 ## Stages and acceptance evidence
 
 1. Model inventory and navigation — implemented and verified on real Nomos.
-   Unified viewers, rejected project outputs, project Optimize,
-   and neutral run/model names are present. Verified dataset deep links are present;
-   model-level baseline promotion/restoration controls remain outstanding.
+   Unified viewers, rejected project outputs, project Optimize, neutral names,
+   verified dataset deep links, and model-level promotion/restoration are present.
 2. Dataset versions and changes — backend, CLI, desktop collection and version
    viewer implemented. Immutable model links and imported-baseline dataset
    adoption and completed-candidate dataset adoption are implemented;
    new manually created versions are not historical training evidence.
 3. Shared benchmark — model-independent definition, immutable project versions,
-   and preview/adoption/inspection CLI implemented. Comparable results across
-   owned bindings and typed desktop integration are implemented. Evaluation now
-   offers one results matrix, version selection/history, protocol inspection,
-   and guarded adoption from recorded authority. Initial test-data onboarding
-   and pinning the selected version to automatic Optimize remain pending.
-4. Automatic bounded optimization — the input-selection domain, persistence,
-   CLI and desktop selection are implemented. The input-first launch scope now
-   pins exact setup/provider revisions, separate provider ceilings, fixed finite
-   defaults and one final evaluation behind a UUID authorization; its actual CLI
-   persistence, redaction checks, and typed project-scoped Electron bridge pass.
-   Automatic continuation of an exact existing run is implemented in the core
-   and CLI. Renderer composition, agent/generation integration, managed automatic
-   execution, output registration and complete-journey recovery remain pending.
-   Verify real CLI composition using deterministic offline fakes.
-5. Complete journey — pending. Renderer interactions for setup, Optimize,
-   results, artifact inspection, and promotion; read-only Nomos verification.
+   preview/adoption/inspection, comparable results, version history and protocol
+   inspection are implemented. The exact selected version is pinned by Optimize.
+   Initial benchmark data onboarding remains pending.
+4. Automatic bounded optimization — exact input/provider authority, finite
+   limits, recoverable project-run roots, selected-data materialization, first
+   candidate execution, registration, final evaluation and desktop one-click
+   composition are implemented. Runs survive restart and expose persisted native
+   progress. Later bounded advisor/generation iterations remain pending.
+5. Complete journey — the first exact candidate journey is implemented and
+   covered by deterministic CLI and Electron interaction tests. A real Nomos
+   run and multi-iteration advisor/data-generation journey remain pending.
 
 ### Baseline restoration contract — 11 September 2026
 
