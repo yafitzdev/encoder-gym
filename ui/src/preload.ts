@@ -7,6 +7,7 @@ import type { ManagedBaselineRestorationRequest, ManagedOptimizationRequest, Man
 import type { OpenedProject, ProjectCollection } from "./projects.js";
 import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, ModelChoice } from "./managed-workspace.js";
 import type { ProjectActivityExport, ProjectActivityLog } from "./project-activity.js";
+import type { InputOptimizationRun, InputOptimizationStarted } from "./input-optimization.js";
 
 export interface EncoderGymBridge {
   optimizationSetups(id: string): Promise<OptimizationSetup[]>;
@@ -15,6 +16,9 @@ export interface EncoderGymBridge {
   optimizationLaunches(id: string): Promise<OptimizationLaunchAuthorization[]>;
   previewOptimizationLaunch(id: string, setupId: string): Promise<OptimizationLaunchPreview>;
   authorizeOptimizationLaunch(id: string, request: OptimizationLaunchRequest): Promise<OptimizationLaunchSaved>;
+  startInputOptimization(id: string, setupId: string): Promise<InputOptimizationStarted>;
+  driveInputOptimization(id: string, runId: string): Promise<InputOptimizationRun>;
+  inputOptimizationRun(id: string, runId: string): Promise<InputOptimizationRun>;
   queryBenchmarks(id: string, request: BenchmarkQuery): Promise<BenchmarkQueryResult>;
   previewBenchmark(id: string, runId: string): Promise<BenchmarkPreview>;
   adoptBenchmark(id: string, request: BenchmarkAdoption): Promise<BenchmarkAdoptionResult>;
@@ -66,6 +70,9 @@ const bridge: EncoderGymBridge = {
   optimizationLaunches: id => ipcRenderer.invoke("encoder-gym:optimization-launches", id),
   previewOptimizationLaunch: (id, setupId) => ipcRenderer.invoke("encoder-gym:preview-optimization-launch", id, setupId),
   authorizeOptimizationLaunch: (id, request) => ipcRenderer.invoke("encoder-gym:authorize-optimization-launch", id, request),
+  startInputOptimization: (id, setupId) => ipcRenderer.invoke("encoder-gym:start-input-optimization", id, setupId),
+  driveInputOptimization: (id, runId) => ipcRenderer.invoke("encoder-gym:drive-input-optimization", id, runId),
+  inputOptimizationRun: (id, runId) => ipcRenderer.invoke("encoder-gym:input-optimization-run", id, runId),
   queryBenchmarks: (id, request) => ipcRenderer.invoke("encoder-gym:query-benchmarks", id, request),
   previewBenchmark: (id, runId) => ipcRenderer.invoke("encoder-gym:preview-benchmark", id, runId),
   adoptBenchmark: (id, request) => ipcRenderer.invoke("encoder-gym:adopt-benchmark", id, request),

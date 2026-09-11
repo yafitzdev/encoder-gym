@@ -44,8 +44,8 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await until("document.querySelector('.benchmark-results')?.textContent.includes('0.600000')");
     await check("historical benchmark keeps its rejected candidate after restart", "document.querySelectorAll('[data-benchmark-model]').length === 3 && document.querySelectorAll('.benchmark-score').length === 3");
     await screenshot("managed-benchmark-restarted");
-    await click("#project-optimize"); await until("document.getElementById('optimization-save-inputs')?.textContent === 'Inputs saved'");
-    await check("optimization inputs survive an independent desktop process", "document.getElementById('optimization-dataset').selectedOptions[0].textContent.includes('Variant') && document.getElementById('optimization-benchmark').selectedOptions[0].textContent === 'Benchmark v1' && document.getElementById('optimization-save-inputs').disabled && !document.querySelector('.launch-definition')");
+    await click("#project-optimize"); await until("document.getElementById('optimization-start') && !document.querySelector('.workspace-progress')");
+    await check("optimization inputs survive an independent desktop process", "document.getElementById('optimization-dataset').selectedOptions[0].textContent.includes('Variant') && document.getElementById('optimization-benchmark').selectedOptions[0].textContent === 'Benchmark v1' && !document.getElementById('optimization-start').disabled && !document.querySelector('.launch-definition')");
     await screenshot("managed-optimization-inputs-restarted");
     const routing = harness.registry.read().projects.find(project => project.name === "Routing encoder")!;
     await click('[data-project-id="' + routing.id + '"]'); await loaded();
@@ -113,7 +113,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await check("project activity exposes action UUIDs and complete event chains", "document.querySelector('.activity-action') && document.querySelector('.activity-action code').textContent.includes('…') && !document.getElementById('page').textContent.includes('smoke-secret')");
   await nav("models");
   await click("#project-optimize"); await until("document.querySelector('.optimization-inputs') && !document.querySelector('.workspace-progress')");
-  await check("Optimize starts from model, data and evaluation, not a prepared repair", "document.querySelectorAll('.optimization-input').length === 3 && document.getElementById('optimization-save-inputs').disabled && document.querySelector('.optimization-inputs').textContent.includes('Set up dataset') && document.querySelector('.optimization-inputs').textContent.includes('Set up evaluation') && !document.querySelector('.launch-definition')");
+  await check("Optimize starts from model, data and evaluation, not a prepared repair", "document.querySelectorAll('.optimization-input').length === 3 && document.getElementById('optimization-start').disabled && document.querySelector('.optimization-inputs').textContent.includes('Set up dataset') && document.querySelector('.optimization-inputs').textContent.includes('Set up evaluation') && !document.querySelector('.launch-definition')");
   await check("optimization inputs expose no paths or credentials", "!document.querySelector('.optimization-inputs input') && !document.querySelector('.optimization-inputs').textContent.includes('project.sqlite')");
   await screenshot("managed-readiness");
   await nav("project"); await until("[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Configure providers' && !b.disabled)");
@@ -544,25 +544,27 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   setupCommand(["dataset", benchmarkFixture.folder, "fork", baseVersion, "--name", "Variant", "--dataset-id", variantId, "--version-id", variantVersion]);
   await click("#reload-evidence"); await loaded(); await click("#project-optimize");
   await until("document.getElementById('optimization-dataset') && document.getElementById('optimization-benchmark') && !document.querySelector('.workspace-progress')");
-  await check("multiple starting datasets require a choice instead of guessing", "document.getElementById('optimization-dataset').value === '' && document.getElementById('optimization-save-inputs').disabled");
+  await check("multiple starting datasets require a choice instead of guessing", "document.getElementById('optimization-dataset').value === '' && document.getElementById('optimization-start').disabled");
   const selectInput = async (id: string, value: string) => evaluate("(()=>{const input=document.getElementById(" + JSON.stringify(id) + ");input.value=" + JSON.stringify(value) + ";input.dispatchEvent(new Event('change',{bubbles:true}))})()");
   await selectInput("optimization-dataset", baseVersion);
-  await check("Optimize contains only named input versions, not row payload or old recipes", "document.querySelector('.optimization-inputs').textContent.includes('Baseline') && document.querySelectorAll('.optimization-input').length === 3 && !document.getElementById('page').textContent.includes('OPTIMIZATION_TRAINING_ROW_CANARY') && !document.querySelector('.launch-definition') && !document.getElementById('optimization-save-inputs').disabled");
+  await check("Optimize contains only named input versions, not row payload or old recipes", "document.querySelector('.optimization-inputs').textContent.includes('Baseline') && document.querySelectorAll('.optimization-input').length === 3 && !document.getElementById('page').textContent.includes('OPTIMIZATION_TRAINING_ROW_CANARY') && !document.querySelector('.launch-definition') && !document.getElementById('optimization-start').disabled");
   await textButton("Inspect model"); await until("document.querySelector('.model-view')"); await click("#navigate-back");
   await textButton("Inspect dataset"); await until("document.querySelectorAll('.dataset-row-entry').length === 1"); await click("#navigate-back");
   await textButton("Inspect benchmark"); await until("document.querySelector('.benchmark-protocol')"); await click("#navigate-back");
   await check("artifact inspection returns to the same unsaved selections", "document.getElementById('optimization-dataset').value === " + JSON.stringify(baseVersion));
+  const setupCatalog = imported.modelCatalog!, baseline = setupCatalog.baselineRevisions.find(value => value.id === setupCatalog.activeBaselineRevisionId)!;
   const saveInputs = harness.backend.optimizationSetup.save.bind(harness.backend.optimizationSetup);
   const inputRequests: unknown[] = []; let loseInputReply = true;
+  const basePreview = await harness.backend.optimizationSetup.preview(setupProjectId, { modelId: baseline.modelArtifactId, datasetVersionId: baseVersion, benchmarkVersionId: await evaluate("document.getElementById('optimization-benchmark').value") as string });
+  const baseRequest = { id: randomUUID(), expectedParent: basePreview.expectedParent, inputs: basePreview.inputs };
   try {
     harness.backend.optimizationSetup.save = async (id, request) => {
       inputRequests.push(structuredClone(request)); const result = await saveInputs(id, request);
       if (loseInputReply) { loseInputReply = false; throw new Error("Input-save response lost after commit"); }
       return result;
     };
-    await click("#optimization-save-inputs"); await until("document.querySelector('.operation-failure') && !document.getElementById('optimization-save-inputs').disabled");
-    await check("failed save exits busy state and exposes retry", "document.getElementById('optimization-save-inputs').textContent === 'Retry save' && !document.querySelector('.workspace-progress')");
-    await click("#optimization-save-inputs"); await until("document.getElementById('optimization-save-inputs')?.textContent === 'Inputs saved'");
+    await harness.backend.optimizationSetup.save(setupProjectId, baseRequest).catch(() => undefined);
+    await harness.backend.optimizationSetup.save(setupProjectId, baseRequest);
     if (inputRequests.length !== 2 || JSON.stringify(inputRequests[0]) !== JSON.stringify(inputRequests[1])) throw new Error("Input-save retry changed the reviewed request");
   } finally { harness.backend.optimizationSetup.save = saveInputs; }
   let setupHistory = await harness.backend.optimizationSetup.list(setupProjectId);
@@ -570,10 +572,12 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await selectInput("optimization-dataset", variantVersion);
   const oldBenchmark = await evaluate("document.getElementById('optimization-benchmark').options[1].value") as string;
   await selectInput("optimization-benchmark", oldBenchmark);
-  await click("#optimization-save-inputs"); await until("document.getElementById('optimization-save-inputs')?.textContent === 'Inputs saved'");
+  const variantPreview = await harness.backend.optimizationSetup.preview(setupProjectId, { modelId: baseline.modelArtifactId, datasetVersionId: variantVersion, benchmarkVersionId: oldBenchmark });
+  await harness.backend.optimizationSetup.save(setupProjectId, { id: randomUUID(), expectedParent: variantPreview.expectedParent, inputs: variantPreview.inputs });
   setupHistory = await harness.backend.optimizationSetup.list(setupProjectId);
   if (setupHistory.length !== 2 || setupHistory[1]!.inputs.dataset.id !== variantVersion || setupHistory[1]!.inputs.benchmark.id !== oldBenchmark || setupHistory[1]!.parent?.id !== setupHistory[0]!.id) throw new Error("Changed inputs did not preserve setup history");
-  await check("saved selection makes no false execution claim", "document.getElementById('page').textContent.includes('No run started') && document.getElementById('page').textContent.includes('Automatic execution not connected') && document.getElementById('optimization-save-inputs').disabled");
+  await click("#reload-evidence"); await loaded(); await until("document.getElementById('optimization-dataset')?.value === " + JSON.stringify(variantVersion));
+  await check("saved selection remains one actionable Optimize screen", "document.getElementById('optimization-start').textContent === 'Optimize' && !document.getElementById('optimization-start').disabled && !document.getElementById('page').textContent.includes('No run started') && !document.getElementById('page').textContent.includes('Automatic execution')");
   await screenshot("managed-optimization-inputs");
   for (const width of [760, 390]) {
     await screenshot("managed-optimization-inputs-" + width, width, 800);

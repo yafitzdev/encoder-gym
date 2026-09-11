@@ -137,7 +137,12 @@ export class ManagedBackend {
     this.datasetVersions = new ManagedDatasets({ open: id => this.openRegistered(id), command: args => this.command(args), exclusive: (id, run) => this.exclusiveProject(id, run) });
     this.benchmarks = new ManagedBenchmarks({ open: id => this.openRegistered(id), command: args => this.command(args), exclusive: (id, run) => this.exclusiveProject(id, run) });
     this.optimizationSetup = new ManagedOptimizationSetup({ open: id => this.openRegistered(id), command: args => this.command(args), exclusive: (id, run) => this.exclusiveProject(id, run) });
-    this.optimizationLaunch = new ManagedOptimizationLaunch({ open: id => this.openRegistered(id), command: args => this.command(args), exclusive: (id, run) => this.exclusiveProject(id, run) });
+    this.optimizationLaunch = new ManagedOptimizationLaunch({
+      open: id => this.openRegistered(id),
+      command: (args, environment, progress) => this.command(args, environment, progress),
+      environment: (id, workspace) => this.providerEnvironment(id, workspace),
+      exclusive: (id, run) => this.exclusiveProject(id, run),
+    });
   }
   private async command<T>(args: string[], environment?: CommandEnvironment, progress?: (value: NativeProgress) => void): Promise<T> {
     const stdout = await this.executor(this.executable, ["--output", "json", "workspace", ...args], environment, progress);

@@ -1,4 +1,5 @@
 import { mkdtemp, rmdir, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ManagedWorkspace } from "./managed-workspace.js";
@@ -7,10 +8,13 @@ import type {
   OptimizationLaunchRequest, OptimizationLaunchSaved, OptimizationLaunchScope,
   OptimizationProviderLimits,
 } from "./optimization-launch.js";
+import { parseInputOptimizationRun, parseInputOptimizationStarted, type InputOptimizationPhase, type InputOptimizationRun, type InputOptimizationStarted } from "./input-optimization.js";
+import type { NativeProgress } from "./managed-control.js";
 
 interface Ports {
   open(projectId: string): Promise<ManagedWorkspace>;
-  command<T>(args: string[]): Promise<T>;
+  command<T>(args: string[], environment?: Readonly<Record<string, string>>, progress?: (value: NativeProgress) => void): Promise<T>;
+  environment?(projectId: string, workspace: ManagedWorkspace): Readonly<Record<string, string>>;
   exclusive<T>(projectId: string, run: () => Promise<T>): Promise<T>;
 }
 function record(value: unknown, label: string, keys: string[]): Record<string, unknown> {
@@ -117,6 +121,55 @@ export class ManagedOptimizationLaunch {
         await unlink(file).catch(error => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; });
         await rmdir(directory);
       }
+    });
+  }
+
+  async start(projectId: string, setupIdValue: unknown): Promise<InputOptimizationStarted> {
+    const setupId = uuid(setupIdValue);
+    return this.ports.exclusive(projectId, async () => {
+      const workspace = await this.ports.open(projectId);
+      const received = await this.ports.command<unknown>(["optimization-launch", workspace.folder, "preview", "--setup", setupId]);
+      const item = record(received, "optimization launch preview", ["scope", "modelName", "datasetRows", "benchmarkNumber"]);
+      const resolved = scope(item.scope, workspace.manifest.id), current = workspace.providerCatalog;
+      if (resolved.setup.id !== setupId || !current || resolved.providerCatalog.id !== current.id || resolved.providerCatalog.fingerprint !== current.fingerprint) throw new Error("Optimization inputs or providers changed. Refresh the project.");
+      const request: OptimizationLaunchRequest = { id: randomUUID(), scope: resolved };
+      const directory = await mkdtemp(join(tmpdir(), "encoder-gym-optimization-run-")), file = join(directory, "launch.json");
+      try {
+        await writeFile(file, JSON.stringify(request), { flag: "wx", mode: 0o600 });
+        return parseInputOptimizationStarted(await this.ports.command<unknown>(["optimization-run", workspace.folder, "start", "--file", file]), projectId);
+      } finally {
+        await unlink(file).catch(error => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; });
+        await rmdir(directory);
+      }
+    });
+  }
+
+  async show(projectId: string, runIdValue: unknown): Promise<InputOptimizationRun> {
+    const runId = uuid(runIdValue), workspace = await this.ports.open(projectId);
+    return parseInputOptimizationRun(await this.ports.command<unknown>(["optimization-run", workspace.folder, "show", runId]), projectId);
+  }
+
+  async drive(projectId: string, runIdValue: unknown, progress?: (phase: InputOptimizationPhase, native?: NativeProgress) => void): Promise<InputOptimizationRun> {
+    const runId = uuid(runIdValue);
+    return this.ports.exclusive(projectId, async () => {
+      const workspace = await this.ports.open(projectId);
+      const stage = async (phase: InputOptimizationPhase, command: string, native = false): Promise<void> => {
+        progress?.(phase);
+        await this.ports.command<unknown>(["optimization-run", workspace.folder, command, runId], native ? this.ports.environment?.(projectId, workspace) : undefined,
+          native ? value => progress?.(phase, value) : undefined);
+      };
+      await stage("checking_inputs", "prepare");
+      await stage("preparing_data", "materialize");
+      await stage("starting", "attach");
+      await stage("training", "execute", true);
+      await stage("saving_candidate", "register");
+      let current = parseInputOptimizationRun(await this.ports.command<unknown>(["optimization-run", workspace.folder, "show", runId]), projectId);
+      if (current.state !== "baseline_retained") {
+        await stage("evaluating", "finalize", true);
+        current = parseInputOptimizationRun(await this.ports.command<unknown>(["optimization-run", workspace.folder, "show", runId]), projectId);
+      }
+      progress?.("complete");
+      return current;
     });
   }
 }

@@ -5,12 +5,17 @@ import { OptimizationSetupController } from "../dist/evidence/optimization-setup
 import { setupFixture } from "./optimization-setup-fixture.mjs";
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 function fixture(overrides = {}) {
-  const f = setupFixture(), history = [], writes = [];
+  const f = setupFixture(), history = [], writes = [], runs = [];
+  const run = (state = "queued") => ({ id: randomUUID(), projectId: f.projectId, state, attempt: 0, materializationAttempt: 0, experimentAttempt: 0, executionAttempt: 0, finalAttempt: 0, lastSequence: 1, updatedAt: new Date().toISOString() });
   const bridge = { queryDatasets: async () => ({ kind: "list", entries: f.datasets }), queryBenchmarks: async () => ({ kind: "list", versions: f.workspace.benchmarkVersions }),
     optimizationSetups: async () => [...history], previewOptimizationSetup: async () => f.preview,
-    saveOptimizationSetup: async (_, request) => { writes.push(structuredClone(request)); const result = f.saved(request); history.push(result.setup); return result; }, ...overrides };
+    saveOptimizationSetup: async (_, request) => { writes.push(structuredClone(request)); const result = f.saved(request); history.push(result.setup); return result; },
+    startInputOptimization: async () => { const value = run(); runs.push(value); return { actionId: randomUUID(), run: value }; },
+    driveInputOptimization: async (_, id) => ({ ...runs.find(value => value.id === id), state: "baseline_retained", outcome: { kind: "baseline_retained" } }),
+    inputOptimizationRun: async (_, id) => runs.find(value => value.id === id),
+    selectProject: async () => ({ project: { id: f.projectId }, content: { state: "ready", workspace: { managed: f.workspace } } }), ...overrides };
   const controller = new OptimizationSetupController(f.projectId, f.workspace, bridge, () => {});
-  return { ...f, controller, bridge, history, writes };
+  return { ...f, controller, bridge, history, writes, runs, run };
 }
 test("first setup uses model provenance; saved versions never follow latest dataset or benchmark", async () => {
   const f = fixture(); await f.controller.ensure(); assert.equal(f.controller.datasetId, f.version.id); assert.ok(f.controller.canSave);
@@ -77,4 +82,28 @@ test("a baseline revision change requires a new saved selection even for the sam
   const workspace = { ...f.workspace, modelCatalog: { ...f.workspace.modelCatalog, baselineRevisions: [f.baseline, revision], activeBaselineRevisionId: revision.id } };
   f.controller.sync(workspace); await f.controller.ensure();
   assert.equal(f.controller.saved, false); assert.equal(f.controller.selected.model.id, f.model.id); assert.equal(f.controller.selected.baselineRevision.id, revision.id);
+});
+
+test("Optimize saves changed inputs and completes one project run without a separate launch step", async () => {
+  const f = fixture(); await f.controller.ensure();
+  await f.controller.optimize();
+  assert.equal(f.writes.length, 1); assert.equal(f.runs.length, 1);
+  assert.equal(f.controller.run.state, "baseline_retained"); assert.equal(f.controller.runPhase, "complete");
+  assert.equal(f.controller.running, false); assert.equal(f.controller.error, undefined);
+});
+
+test("a failed execution retries the same durable run instead of reserving another", async () => {
+  let attempts = 0;
+  const f = fixture({
+    driveInputOptimization: async (_, id) => {
+      attempts++;
+      if (attempts === 1) throw new Error("Training stopped");
+      return { ...f.runs.find(value => value.id === id), state: "baseline_retained", outcome: { kind: "baseline_retained" } };
+    },
+    inputOptimizationRun: async (_, id) => ({ ...f.runs.find(value => value.id === id), state: "execution_failed", failureCode: "candidate_execution_failed" }),
+  });
+  await f.controller.ensure(); await f.controller.optimize();
+  const first = f.controller.run.id; assert.ok(f.controller.error); assert.equal(f.runs.length, 1);
+  await f.controller.optimize();
+  assert.equal(f.controller.run.id, first); assert.equal(f.runs.length, 1); assert.equal(f.controller.run.state, "baseline_retained");
 });

@@ -713,12 +713,20 @@ dialog::backdrop { background: #0008; }
 .optimization-input .select-control > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .optimization-input select { width: 100%; min-width: 0; }
 .optimization-input-selection { grid-column: 2 / -1; justify-content: space-between; }
-.optimization-input-selection, .optimization-input-actions, .optimization-execution-state { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.optimization-input-selection, .optimization-input-actions { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
 .optimization-input-selection strong { overflow-wrap: anywhere; }
 .optimization-input-actions { margin-top: 28px; }
+.optimization-progress { max-width: 840px; margin-top: 28px; padding: 20px 22px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+.optimization-progress-state { display: flex; justify-content: space-between; align-items: baseline; gap: 18px; }
+.optimization-progress-state strong { font-size: 18px; }
+.optimization-progress-state span { color: var(--muted); font: 11px var(--mono); }
+.optimization-progress-steps { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; list-style: none; padding: 0; margin: 18px 0 4px; }
+.optimization-progress-steps li { padding-top: 9px; border-top: 2px solid var(--line); color: var(--subtle); font-size: 10px; white-space: nowrap; }
+.optimization-progress-steps li.complete { border-color: var(--success); color: var(--muted); }
+.optimization-progress-steps li.active { border-color: var(--accent); color: var(--text); }
 .optimization-execution-state { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line-soft); }
 @media(max-width:1000px) { .optimization-input { grid-template-columns: 1fr auto; } .optimization-input h2 { grid-column: 1 / -1; } .optimization-input-selection { grid-column: 1 / -1; } }
-@media(max-width:600px) { .optimization-input { grid-template-columns: 1fr; gap: 12px; padding: 20px 0; } .optimization-input > .button { justify-self: start; padding-left: 0; } .optimization-input-selection { gap: 8px; } }
+@media(max-width:600px) { .optimization-input { grid-template-columns: 1fr; gap: 12px; padding: 20px 0; } .optimization-input > .button { justify-self: start; padding-left: 0; } .optimization-input-selection { gap: 8px; } .optimization-progress-steps { grid-template-columns: repeat(3, 1fr); row-gap: 14px; } }
 .collection-toolbar { display:flex; gap:16px; align-items:center; margin-bottom:20px; }
 .collection-toolbar .text-input { max-width:360px; }
 .artifact-list { border-top:1px solid var(--line); }

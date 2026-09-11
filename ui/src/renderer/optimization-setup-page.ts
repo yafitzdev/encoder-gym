@@ -1,15 +1,15 @@
 import type { Actions } from "./actions.js";
 import type { OptimizationSetupController } from "./optimization-setup-controller.js";
-import { button, failureNotice, selectControl, status, workspacePage } from "./components.js";
+import { button, failureNotice, selectControl, workspacePage } from "./components.js";
 import { h } from "./dom.js";
 
 export function renderOptimizationSetup(controller: OptimizationSetupController, actions: Actions): HTMLElement {
-  const model = controller.model, selectedDataset = controller.dataset, busy = controller.loading || controller.saving;
+  const model = controller.model, selectedDataset = controller.dataset, busy = controller.loading || controller.saving || controller.running;
   const datasets: [string, string][] = controller.data?.datasets.flatMap(entry => entry.versions.map(item => [item.version.id, `${entry.dataset.name} · v${item.version.number} · ${item.rows.toLocaleString()} ${item.rows === 1 ? "row" : "rows"}`] as [string, string])) ?? [];
   const benchmarks: [string, string][] = controller.data?.benchmarks.map(version => [version.id, `Benchmark v${version.number}`]) ?? [];
   const refresh = button("Refresh", actions.refresh, "ghost", "refresh"); refresh.disabled = busy;
-  const save = button(controller.saving ? "Saving…" : controller.saved ? "Inputs saved" : controller.error ? "Retry save" : "Save inputs", () => { void controller.save(); }, "primary");
-  save.id = "optimization-save-inputs"; save.disabled = !controller.canSave;
+  const optimize = button(controller.running ? "Optimizing…" : controller.error && controller.run ? "Retry" : "Optimize", () => { void controller.optimize(); }, "primary");
+  optimize.id = "optimization-start"; optimize.disabled = !controller.canOptimize;
   const datasetSelect = selectControl("optimization-dataset", "Dataset version", [["", "Choose dataset"], ...datasets], controller.datasetId, value => controller.select("dataset", value));
   const benchmarkSelect = selectControl("optimization-benchmark", "Benchmark version", [["", "Choose benchmark"], ...benchmarks], controller.benchmarkId, value => controller.select("benchmark", value));
   for (const control of [datasetSelect, benchmarkSelect]) control.querySelector("select")!.disabled = busy;
@@ -26,7 +26,20 @@ export function renderOptimizationSetup(controller: OptimizationSetupController,
       h("section", { class: "optimization-input" }, h("h2", {}, "Evaluation"),
         benchmarks.length ? benchmarkSelect : button("Set up evaluation", () => actions.navigate({ page: "benchmarks" }), "secondary"),
         controller.benchmark ? button("Inspect benchmark", () => actions.navigate({ page: "benchmarks", id: controller.benchmark!.id, tab: "protocol" }), "ghost", "arrow") : null)),
-    h("div", { class: "optimization-input-actions" }, save, controller.saved ? status("No run started") : null),
+    h("div", { class: "optimization-input-actions" }, optimize),
     controller.saving ? h("div", { role: "status", class: "workspace-progress" }, controller.phase ?? "Saving…", " ", h("span", { "data-elapsed-start": String(controller.startedAt) })) : null,
-    h("div", { class: "optimization-execution-state" }, status("Automatic execution not connected", "warning"), button("View existing runs", () => actions.navigate({ page: "runs" }), "ghost", "arrow")));
+    controller.run ? runState(controller, actions) : null);
+}
+
+function runState(controller: OptimizationSetupController, actions: Actions): HTMLElement {
+  const run = controller.run!, phase = controller.runPhase;
+  const labels = { checking_inputs: "Checking inputs", preparing_data: "Preparing data", starting: "Starting", training: "Training", saving_candidate: "Saving candidate", evaluating: "Evaluating", complete: "Done" } as const;
+  const result = run.state === "candidate_accepted" ? "Candidate passed" : run.state === "candidate_rejected" ? "Candidate did not pass" : run.state === "baseline_retained" ? "No improvement" : undefined;
+  const phases = ["checking_inputs", "preparing_data", "starting", "training", "saving_candidate", "evaluating"] as const;
+  const active = phase === "complete" ? phases.length : Math.max(0, phases.indexOf(phase ?? "checking_inputs"));
+  return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": String(controller.running) },
+    h("div", { class: "optimization-progress-state" }, h("strong", {}, result ?? labels[phase ?? "checking_inputs"]),
+      controller.running && controller.startedAt ? h("span", { "data-elapsed-start": String(controller.startedAt) }) : null),
+    h("ol", { class: "optimization-progress-steps" }, ...phases.map((item, index) => h("li", { class: index < active ? "complete" : index === active ? "active" : "" }, labels[item]))),
+    !controller.running ? button("Runs", () => actions.navigate({ page: "runs" }), "ghost", "arrow") : null);
 }

@@ -486,7 +486,9 @@ export function mount(): void {
         dialog: () => element("project-dialog") as HTMLDialogElement,
       });
       view.benchmarks.sync(data.managed);
-      view.setup ??= new OptimizationSetupController(id, data.managed, bridge, () => { if (selection.selectedId === id) render(); });
+      view.setup ??= new OptimizationSetupController(id, data.managed, bridge, () => { if (selection.selectedId === id) render(); }, managed => {
+        if (selection.selectedId === id && opened?.content.state === "ready") opened = { ...opened, content: { state: "ready", workspace: { ...opened.content.workspace, managed } } };
+      });
       view.setup.sync(data.managed);
     }
     const linkedOptimizationIds = new Set(data?.runs.flatMap(run => run.optimizationId ? [run.optimizationId] : []) ?? []);

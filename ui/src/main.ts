@@ -15,6 +15,7 @@ import { CredentialStore } from "./credential-store.js";
 import type { ManagedProviderStatus, ManagedReadiness, ProviderRole } from "./managed-control.js";
 import type { NativeProgress } from "./managed-control.js";
 import type { ProjectActivityReference } from "./project-activity.js";
+import type { InputOptimizationPhase } from "./input-optimization.js";
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const smokeTest = process.argv.includes("--smoke-test");
@@ -212,6 +213,23 @@ ipcMain.handle("encoder-gym:save-optimization-setup", (_event, value: unknown, r
 ipcMain.handle("encoder-gym:optimization-launches", (_event, value: unknown) => backend.optimizationLaunch.list(projectId(value)));
 ipcMain.handle("encoder-gym:preview-optimization-launch", (_event, value: unknown, setup: unknown) => backend.optimizationLaunch.preview(projectId(value), setup));
 ipcMain.handle("encoder-gym:authorize-optimization-launch", (_event, value: unknown, request: unknown) => backend.optimizationLaunch.authorize(projectId(value), request));
+ipcMain.handle("encoder-gym:start-input-optimization", (_event, value: unknown, setup: unknown) => {
+  const id = projectId(value);
+  return trackProjectAction(id, "optimization.start", activityReference("setup", setup), () => backend.optimizationLaunch.start(id, setup), result => [
+    ...activityReference("run", result.run.id),
+  ]);
+});
+ipcMain.handle("encoder-gym:input-optimization-run", (_event, value: unknown, run: unknown) => backend.optimizationLaunch.show(projectId(value), run));
+ipcMain.handle("encoder-gym:drive-input-optimization", (_event, value: unknown, run: unknown) => {
+  const id = projectId(value), phases: Record<InputOptimizationPhase, NativeProgress["phase"]> = {
+    checking_inputs: "checking_files", preparing_data: "checking_training_data", starting: "loading_model", training: "training",
+    saving_candidate: "saving_checkpoint", evaluating: "evaluating_retrieval", complete: "saving_checkpoint",
+  };
+  return trackProjectAction(id, "optimization.run", activityReference("run", run), progress =>
+    backend.optimizationLaunch.drive(id, run, (phase, native) => progress(native ?? { phase: phases[phase] })), result => [
+      ...activityReference("run", result.id), ...activityReference("model", result.finalResult?.modelId ?? result.outcome?.selectedModelId),
+    ]);
+});
 ipcMain.handle("encoder-gym:preview-benchmark", (_event, value: unknown, run: unknown) => backend.benchmarks.preview(projectId(value), run));
 ipcMain.handle("encoder-gym:adopt-benchmark", (_event, value: unknown, request: unknown) => backend.benchmarks.adopt(projectId(value), request));
 ipcMain.handle("encoder-gym:mutate-dataset", (_event, value: unknown, request: unknown) => backend.datasetVersions.mutate(projectId(value), request));

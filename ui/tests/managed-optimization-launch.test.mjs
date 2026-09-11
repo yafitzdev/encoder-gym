@@ -15,7 +15,12 @@ function fixture() {
     generation: provider(11), advisor: provider(7), finalEvaluation: "selected_candidate_once", fingerprint };
   const preview = { scope, modelName: "Baseline", datasetRows: 10, benchmarkNumber: 1 };
   const authorization = id => ({ id, scope, authorizedBy: "local-operator", createdAt: new Date().toISOString(), fingerprint });
-  return { ...base, setupId, scope, preview, authorization };
+  const run = (state = "queued", extra = {}) => ({
+    run: { id: randomUUID(), projectId: base.projectId, launch: { id: randomUUID(), fingerprint }, setup: { id: setupId, fingerprint }, createdAt: new Date().toISOString(), fingerprint },
+    state, attempt: 0, materializationAttempt: 0, experimentAttempt: 0, executionAttempt: 0, finalAttempt: 0,
+    lastSequence: 1, headFingerprint: fingerprint, updatedAt: new Date().toISOString(), ...extra,
+  });
+  return { ...base, setupId, scope, preview, authorization, run };
 }
 function ports(f, command, exclusive = async (_id, work) => work()) {
   return { open: async id => { assert.equal(id, f.projectId); return f.workspace; }, command, exclusive };
@@ -60,4 +65,40 @@ test("one-click authorization preserves its retry, removes temp files and reject
     await assert.rejects(() => backend.authorize(f.projectId, invalid));
   }
   assert.equal(writes.length, 2);
+});
+
+test("one-click optimization reserves exact current inputs and removes its private request", async () => {
+  const f = fixture(), files = [], wire = f.run();
+  const backend = new ManagedOptimizationLaunch(ports(f, async args => {
+    if (args[0] === "optimization-launch") return f.preview;
+    assert.deepEqual(args.slice(0, 4), ["optimization-run", "owned-project", "start", "--file"]);
+    files.push(args[4]);
+    const request = JSON.parse(await readFile(args[4], "utf8"));
+    assert.equal(request.scope.setup.id, f.setupId);
+    return { actionId: randomUUID(), run: { ...wire, run: { ...wire.run, launch: { id: request.id, fingerprint } } } };
+  }));
+  const started = await backend.start(f.projectId, f.setupId);
+  assert.equal(started.run.id, wire.run.id);
+  assert.equal(started.run.state, "queued");
+  for (const file of files) { await assert.rejects(() => access(file)); await assert.rejects(() => access(dirname(file))); }
+});
+
+test("one-click optimization drives recoverable stages and withholds credentials from non-execution work", async () => {
+  const f = fixture(), calls = [], phases = [], environment = { SYNTH_OPENAI_API_KEY: "secret" }, wire = f.run("candidate_rejected", {
+    outcome: { run: { id: randomUUID(), fingerprint }, experimentFingerprint: fingerprint, experimentRun: { id: randomUUID(), fingerprint }, kind: "candidate_ready", selectedModel: { id: randomUUID(), fingerprint }, createdAt: new Date().toISOString(), fingerprint },
+    finalResult: { run: { id: randomUUID(), fingerprint }, outcomeFingerprint: fingerprint, experimentRun: { id: randomUUID(), fingerprint }, kind: "candidate_rejected", model: { id: randomUUID(), fingerprint }, finalReport: { id: randomUUID(), fingerprint }, createdAt: new Date().toISOString(), fingerprint },
+  });
+  const configured = new ManagedOptimizationLaunch({ ...ports(f, async (args, env) => { calls.push({ args, env }); return args[2] === "show" ? wire : { actionId: randomUUID(), run: wire }; }), environment: () => environment });
+  const result = await configured.drive(f.projectId, wire.run.id, phase => phases.push(phase));
+  assert.equal(result.state, "candidate_rejected");
+  assert.deepEqual(calls.map(call => call.args[2]), ["prepare", "materialize", "attach", "execute", "register", "show", "finalize", "show"]);
+  assert.deepEqual(calls.filter(call => call.env).map(call => call.args[2]), ["execute", "finalize"]);
+  assert.deepEqual(phases, ["checking_inputs", "preparing_data", "starting", "training", "saving_candidate", "evaluating", "complete"]);
+});
+
+test("a development result that retains the baseline skips sealed evaluation", async () => {
+  const f = fixture(), wire = f.run("baseline_retained", { outcome: { run: { id: randomUUID(), fingerprint }, experimentFingerprint: fingerprint, experimentRun: { id: randomUUID(), fingerprint }, kind: "baseline_retained", createdAt: new Date().toISOString(), fingerprint } }), commands = [];
+  const backend = new ManagedOptimizationLaunch({ ...ports(f, async args => { commands.push(args[2]); return args[2] === "show" ? wire : {}; }), environment: () => ({}) });
+  assert.equal((await backend.drive(f.projectId, wire.run.id)).state, "baseline_retained");
+  assert.ok(!commands.includes("finalize"));
 });
