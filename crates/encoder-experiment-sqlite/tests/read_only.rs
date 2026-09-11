@@ -119,12 +119,23 @@ async fn incompatible_schema_is_rejected_without_migration_or_repair() {
         let (path, url) = database(&directory);
         let writer = SqliteExperimentStore::connect(&url).await.unwrap();
         sqlx::query(mutation).execute(writer.pool()).await.unwrap();
+        // Freeze the fixture's main-file image before observing the reader.
+        // Otherwise the writer's background close/checkpoint can race the
+        // byte comparison and look like a mutation by the read-only connection.
+        let checkpoint: (i64, i64, i64) = sqlx::query_as("PRAGMA wal_checkpoint(TRUNCATE)")
+            .fetch_one(writer.pool())
+            .await
+            .unwrap();
+        assert_eq!(checkpoint, (0, 0, 0));
         writer.pool().close().await;
         let before = std::fs::read(&path).unwrap();
         let error = SqliteExperimentStore::connect_read_only(&url)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("database schema does not match"));
-        assert_eq!(before, std::fs::read(&path).unwrap());
+        assert!(
+            before == std::fs::read(&path).unwrap(),
+            "read-only schema rejection changed database bytes after {mutation}"
+        );
     }
 }
