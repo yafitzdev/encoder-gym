@@ -60,13 +60,17 @@ silently relabel an old verdict as a new acceptance decision.
 New benchmark versions must come from explicit test-data/protocol configuration
 or verified existing authority, never inferred from successful training. The
 Optimize request pins the selected benchmark version alongside model and dataset.
-Initial test-data onboarding and automatic execution are required follow-on
-integration, not implied by a historical-results catalog.
+For a connected task runtime with no recorded protocol, the adapter may compile
+its checked-in suite manifest and metric defaults into version 1. That explicit
+action evaluates the current baseline once; it is not inferred from a training
+run. Importing a new evaluator/test collection remains a separate onboarding
+boundary.
 
 ## CLI
 
 ```text
 synth workspace benchmark <PROJECT> list
+synth workspace benchmark <PROJECT> initialize [--expected-parent <VERSION_ID>]
 synth workspace benchmark <PROJECT> preview-run <EXPERIMENT_RUN_ID>
 synth workspace benchmark <PROJECT> adopt-run <EXPERIMENT_RUN_ID> [--expected-parent <VERSION_ID>] [--expected-definition <FINGERPRINT>]
 synth workspace benchmark <PROJECT> inspect <VERSION_ID>
@@ -80,14 +84,24 @@ the exact current parent; an identical definition reuses its original version
 and original provenance even if another run uses it. Inspection reopens the
 version's original binding and reproduces its definition from the verified
 scientific protocol; it neither needs Python nor opens native test files.
-Cataloging a benchmark never creates a fresh generation or consumes a holdout.
+Previewing or adopting a recorded benchmark never creates a fresh generation or
+consumes a holdout. `initialize` is the explicit exception: it uses the bound
+adapter's named development suites and one final suite, evaluates the current
+baseline, persists the resulting protocol, and then records version 1. It never
+trains or contacts a provider. Its action UUID and safe protocol/version
+references enter project Activity; final scores and test contents do not.
+Stable protocol and version IDs make retry idempotent. Once the protocol exists,
+retry recovers it without rerunning native evaluation.
 
 The desktop's Choose recorded benchmark dialog previews the selected run before
 saving. It always supplies the reviewed definition fingerprint and exact parent;
 a changed definition is rejected before a version is recorded. Choosing an
 already-cataloged definition opens that version without another mutation. A lost
 save response can retry the exact request without adding a duplicate version.
-This is onboarding from recorded authority, not yet initial test-data import.
+The recorded-run dialog is onboarding from historical authority. When a project
+has a connected runtime but no benchmark history, its first Optimize action
+initializes the project benchmark and then continues the same click. Importing
+an entirely new test-data/protocol definition is not implemented by either path.
 
 Results starts from every registered model and resolves development reports from
 all compatible project-owned scientific bindings. Reused report identities have
@@ -115,4 +129,7 @@ must not label this value as a test-set row count.
   missing and incompatible results and restart.
 - Exercise preview/adoption through the real production CLI in an isolated
   offline fixture; reject a definition changed since preview.
+- Exercise initialization through the real production CLI and native adapter
+  boundary; prove one baseline evaluation, no run/training/provider operation,
+  safe activity output, final-value isolation, and evaluation-free retry.
 - Keep existing Nomos evidence intact; real inspection is read-only.

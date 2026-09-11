@@ -22,6 +22,15 @@ use project_workspace_local::{
 use std::path::Path;
 use uuid::Uuid;
 
+fn emit_progress(phase: &str, completed: Option<u64>, total: Option<u64>) {
+    let mut value = serde_json::json!({"phase": phase});
+    if let (Some(completed), Some(total)) = (completed, total) {
+        value["completed"] = completed.into();
+        value["total"] = total.into();
+    }
+    eprintln!("ENCODER_GYM_PROGRESS {value}");
+}
+
 pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunCommand) -> Result<()> {
     use WorkspaceOptimizationRunCommand::*;
     match command {
@@ -761,6 +770,7 @@ async fn attach_experiment(
         .as_ref()
         .context("Materialize training data before attaching an experiment.")?;
     materialization.validate_for(&view.run, &launch, preparation)?;
+    emit_progress("loading_evaluation_protocol", None, None);
     let benchmark_id: Uuid = preparation.benchmark.id.parse()?;
     let benchmark = super::benchmarks::inspect(folder, benchmark_id).await?;
     ensure!(
@@ -803,6 +813,7 @@ async fn attach_experiment(
     );
     source_store.pool().close().await;
 
+    emit_progress("checking_runtime", None, None);
     let binding = workspace
         .scientific_binding
         .as_ref()
@@ -864,6 +875,7 @@ async fn attach_experiment(
         maximum_training_seconds > 0,
         "Optimization training budget cannot fund one candidate."
     );
+    emit_progress("creating_candidate", None, None);
     let candidate = backend
         .initial_training_candidate(
             view.run.child_id("candidate", 1)?,
@@ -871,6 +883,7 @@ async fn attach_experiment(
             maximum_training_seconds,
         )
         .await?;
+    emit_progress("creating_experiment", None, None);
     let runner = ExperimentRunner::new(&store, &backend);
     let protocol = runner
         .prepare_multi_protocol_from_benchmark_identified(
@@ -924,6 +937,7 @@ async fn materialize_training_project(
     folder: &Path,
     view: &project_workspace_core::ProjectOptimizationRunView,
 ) -> Result<ProjectOptimizationMaterialization> {
+    emit_progress("checking_runtime", None, None);
     let workspace = open_workspace(folder, true).await?;
     let preparation = view
         .preparation
@@ -943,12 +957,14 @@ async fn materialize_training_project(
             && binding.fingerprint == preparation.execution_binding.fingerprint,
         "Native runtime changed after input verification."
     );
+    emit_progress("checking_dataset", None, None);
     let dataset = dataset_versions::verify(folder, preparation.dataset.id).await?;
     ensure!(
         dataset.reference() == preparation.dataset
             && dataset.members.len() as u64 == preparation.dataset_rows,
         "Selected training dataset changed."
     );
+    emit_progress("loading_training_rows", None, None);
     let rows = dataset_versions::materialization_rows(folder, dataset.id).await?;
     ensure!(
         rows.len() == dataset.members.len(),
@@ -964,11 +980,19 @@ async fn materialize_training_project(
         dataset.fingerprint.clone(),
         preparation.dataset_rows,
     )?;
-    for row in rows {
+    let total = u64::try_from(rows.len())?;
+    let interval = (total / 20).max(1);
+    emit_progress("writing_training_rows", Some(0), Some(total));
+    for (index, row) in rows.into_iter().enumerate() {
         writer.append(&row.member.id, &row.member.content_fingerprint, &row.value)?;
+        let completed = u64::try_from(index + 1)?;
+        if completed == total || completed % interval == 0 {
+            emit_progress("writing_training_rows", Some(completed), Some(total));
+        }
     }
     let native = writer.finish()?;
     let backend = backend.with_training_dataset(native.clone())?;
+    emit_progress("checking_materialized_project", None, None);
     let fresh_project = backend.project_snapshot()?;
     ensure!(
         fresh_project.baseline_model.fingerprint == preparation.model.fingerprint,
@@ -1011,6 +1035,7 @@ async fn verify_preparation(
     folder: &Path,
     view: &project_workspace_core::ProjectOptimizationRunView,
 ) -> Result<ProjectOptimizationPreparation> {
+    emit_progress("checking_model", None, None);
     let workspace = open_workspace(folder, true).await?;
     let setup = optimization_setup::list(folder)
         .await?
@@ -1022,17 +1047,20 @@ async fn verify_preparation(
         .into_iter()
         .find(|value| value.id.to_string() == view.run.launch.id)
         .context("Optimization launch authorization is missing.")?;
+    emit_progress("checking_dataset", None, None);
     let dataset = dataset_versions::verify(folder, setup.inputs.dataset.id).await?;
     ensure!(
         dataset.reference() == setup.inputs.dataset,
         "Selected training dataset changed."
     );
+    emit_progress("checking_evaluation", None, None);
     let benchmark_id: Uuid = setup.inputs.benchmark.id.parse()?;
     let benchmark = super::benchmarks::inspect(folder, benchmark_id).await?;
     ensure!(
         benchmark.fingerprint == setup.inputs.benchmark.fingerprint,
         "Selected benchmark changed."
     );
+    emit_progress("checking_runtime", None, None);
     let binding = workspace
         .scientific_binding
         .as_ref()

@@ -1,7 +1,14 @@
 import type { NativeProgress, RunActivity } from "./managed-control.js";
 import { spawn } from "node:child_process";
 
-const phases = new Set(["checking_files", "checking_training_data", "loading_model", "preparing_batches", "training", "saving_checkpoint", "evaluating_retrieval", "evaluating_agent"]);
+const phases = new Set([
+  "checking_model", "checking_dataset", "checking_evaluation", "checking_runtime",
+  "loading_training_rows", "writing_training_rows", "checking_materialized_project",
+  "loading_evaluation_protocol", "creating_candidate", "creating_experiment",
+  "registering_candidate", "optimization_complete",
+  "checking_files", "checking_training_data", "loading_model", "preparing_batches",
+  "training", "saving_checkpoint", "evaluating_retrieval", "evaluating_agent",
+]);
 
 /** Treat subprocess output as untrusted; only this closed, numerical schema reaches the UI. */
 export function parseProgress(line: string): NativeProgress | undefined {

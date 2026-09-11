@@ -5,6 +5,7 @@ mod managed_training;
 mod progress;
 mod repair_delta;
 mod training_data;
+pub use benchmark::NomosBenchmarkPlan;
 pub use managed_training::{NomosTrainingDataset, NomosTrainingDatasetWriter};
 pub use progress::{NativePhase, NativeProgress, ProgressObserver};
 pub use training_data::{VerifiedTrainingData, VerifiedTrainingInput};
@@ -236,6 +237,18 @@ impl NomosBackend {
         maximum_training_seconds: u64,
     ) -> Result<TrainingCandidate, EncoderTaskAdapterError> {
         self.verify_current_snapshot(project.clone()).await?;
+        Self::initial_training_candidate_definition(id, project, maximum_training_seconds)
+    }
+
+    /// Build the adapter-owned candidate definition without touching native
+    /// files. Execution still re-verifies the complete current project before
+    /// any trainer receives it.
+    pub fn initial_training_candidate_definition(
+        id: Uuid,
+        project: &ExternalProjectSnapshot,
+        maximum_training_seconds: u64,
+    ) -> Result<TrainingCandidate, EncoderTaskAdapterError> {
+        project.validate_integrity().map_err(adapter_error)?;
         let parameters = BTreeMap::from([
             ("strategy".into(), ParameterValue::Text("fine_tune".into())),
             ("loss".into(), ParameterValue::Text("triplet".into())),

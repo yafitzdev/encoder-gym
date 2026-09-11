@@ -10,9 +10,10 @@ use encoder_experiment_core::{
         EvaluationReport, MetricContract, MetricDefinition, MetricDirection, MetricGate,
         MetricGateCondition,
     },
-    ports::ExperimentStore,
+    ports::{EncoderTaskBackend, ExperimentStore},
     protocol::ExperimentProtocol,
 };
+use encoder_experiment_nomos::NomosBackend;
 use encoder_experiment_sqlite::{SCHEMA_ID, SqliteExperimentStore, schema_fingerprint};
 use project_workspace_core::{
     AdapterBinding, BoundIdentity, RuntimeBinding, RuntimeKind, ScientificBinding,
@@ -20,7 +21,13 @@ use project_workspace_core::{
 };
 use project_workspace_local::{create_workspace, inspect_model, record_scientific_binding};
 use serde_json::json;
-use std::{collections::BTreeMap, path::Path};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 use uuid::Uuid;
 
 fn fp(c: char) -> String {
@@ -119,6 +126,238 @@ pub async fn fixture(root: &Path) -> (std::path::PathBuf, ExternalProjectSnapsho
         .unwrap();
     (folder, project, first, changed)
 }
+
+/// A tiny, fully valid Nomos runtime for exercising the production benchmark
+/// initialization path. The supplied executable impersonates only the two
+/// native evaluation modules and never trains or contacts a provider.
+#[allow(dead_code)]
+pub async fn initial_benchmark_fixture(
+    root: &Path,
+    executable: &Path,
+) -> (PathBuf, ExternalProjectSnapshot) {
+    let runtime = root.join("runtime");
+    fs::create_dir_all(&runtime).unwrap();
+    fs::write(
+        runtime.join("ENCODER_GYM_EXPERIMENT.md"),
+        "# Offline benchmark initialization fixture\n",
+    )
+    .unwrap();
+    fs::write(
+        runtime.join(".gitignore"),
+        "artifacts/\nruns/\nnative-invocations.log\n",
+    )
+    .unwrap();
+    for relative in [
+        "tools/collect_encoder_gym_development_observations.py",
+        "tools/evaluate_dense_router.py",
+        "fitz_tool/dense_router.py",
+        "fitz_tool/embedding_backend.py",
+        "fitz_tool/onnx_encoder.py",
+        "tools/generate_encoder_gym_repair_delta_v1.py",
+        "fitz_tool/encoder_gym_repair_delta_v1.py",
+        "fitz_tool/generic_contracts.py",
+        "fitz_tool/router_v2.py",
+        "fitz_tool/scaling_matrix_v1.py",
+    ] {
+        let path = runtime.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "# deterministic offline fixture\n").unwrap();
+    }
+
+    let baseline = runtime.join("baseline");
+    training_transformer::fixture::write_tiny_bert_bundle(&baseline).unwrap();
+    for (directory, file) in [
+        ("onnx", "encoder.onnx"),
+        ("reference", "model.bin"),
+        ("chat", "model.onnx"),
+    ] {
+        let path = runtime.join(directory);
+        fs::create_dir_all(&path).unwrap();
+        fs::write(path.join(file), format!("offline {directory} fixture\n")).unwrap();
+    }
+    for (path, content) in [
+        ("train.jsonl", "{\"text\":\"training\"}\n"),
+        ("development.jsonl", "{\"query\":\"development\"}\n"),
+        ("regression.jsonl", "{\"query\":\"regression\"}\n"),
+        ("holdout.jsonl", "{\"query\":\"NEVER_DISCLOSE_HOLDOUT\"}\n"),
+    ] {
+        fs::write(runtime.join(path), content).unwrap();
+    }
+
+    let (baseline_bytes, baseline_hash) = tree_pin(&baseline);
+    let (_, onnx_hash) = tree_pin(&runtime.join("onnx"));
+    let (reference_bytes, reference_hash) = tree_pin(&runtime.join("reference"));
+    let (chat_bytes, chat_hash) = tree_pin(&runtime.join("chat"));
+    let dataset = |path: &str, role: &str| {
+        let (bytes, sha256) = file_pin(&runtime.join(path));
+        json!({"path":path,"role":role,"bytes":bytes,"sha256":sha256})
+    };
+    let manifest = json!({
+        "schema_version":4,
+        "experiment":"Offline initial benchmark fixture",
+        "tree_hash_algorithm":"sha256-ordinal-path-size-content-sha256-v1",
+        "source":{"repository":"offline-fixture","access":"read_only_reference","commit":"fixture-source","snapshot_date":"2026-09-11"},
+        "isolation":{"git_remote_allowed":false,"hard_links_allowed":false,"symlinks_allowed":false,"outputs_must_remain_below_experiment_root":true},
+        "baseline":{
+            "pytorch_path":"baseline","pytorch_tree_sha256":baseline_hash,
+            "onnx_path":"onnx","onnx_tree_sha256":onnx_hash,
+            "weak_agent_raw_completed":{"completed":1,"total":1},
+            "weak_agent_complete_coprocessor_completed":{"completed":1,"total":1}
+        },
+        "reference_models":[{"key":"reference","path":"reference","format":"sentence-transformers","bytes":reference_bytes,"tree_sha256":reference_hash,"provenance":{}}],
+        "agent_evaluation":{
+            "backend":"onnx","chat_model_path":"chat","chat_model_format":"onnxruntime-genai","chat_model_bytes":chat_bytes,"chat_model_tree_sha256":chat_hash,"source":{},
+            "selector_strategy":"multiview","candidate_strategy":"multiview","nomos_top_k":2,"max_attempts":1,
+            "development":{"suite":"development","sessions":5,"pairing":"cycle","condition":"nomos"},
+            "sealed":{"suite":"promotion","sessions":7,"pairing":"cycle","condition":"nomos"}
+        },
+        "datasets":[
+            dataset("train.jsonl", "training"),
+            dataset("development.jsonl", "development_holdout"),
+            dataset("regression.jsonl", "development_holdout"),
+            dataset("holdout.jsonl", "sealed_holdout")
+        ],
+        "evaluation_suites":[
+            {"key":"development","dataset_path":"development.jsonl","role":"development"},
+            {"key":"regression","dataset_path":"regression.jsonl","role":"development"},
+            {"key":"holdout","dataset_path":"holdout.jsonl","role":"sealed_acceptance"}
+        ],
+        "evaluation_runs_tree_sha256":"8".repeat(64)
+    });
+    fs::write(
+        runtime.join("encoder-gym-experiment.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    git(&runtime, &["init", "--quiet"]);
+    git(&runtime, &["config", "user.name", "Encoder Gym Fixture"]);
+    git(
+        &runtime,
+        &["config", "user.email", "fixture@example.invalid"],
+    );
+    git(&runtime, &["add", "."]);
+    git(&runtime, &["commit", "--quiet", "-m", "fixture"]);
+
+    let backend = NomosBackend::open(&runtime, executable.to_path_buf()).unwrap();
+    let project = backend.project_snapshot().unwrap();
+    let preview = inspect_model(&baseline).unwrap();
+    assert_eq!(preview.bytes, baseline_bytes);
+    let folder = root.join("project");
+    let workspace = create_workspace(
+        &folder,
+        "Initial benchmark fixture",
+        &baseline,
+        &preview.fingerprint,
+        None,
+    )
+    .await
+    .unwrap();
+    let store = SqliteExperimentStore::connect(&format!(
+        "sqlite://{}",
+        folder.join("runs/scientific.sqlite").display()
+    ))
+    .await
+    .unwrap();
+    store.create_project(project.clone()).await.unwrap();
+    store.pool().close().await;
+    let identity = backend.identity();
+    let binding = ScientificBinding::new(
+        Uuid::new_v4(),
+        workspace.manifest.id,
+        workspace.model_catalog.unwrap().active_baseline_revision_id,
+        None,
+        AdapterBinding {
+            key: identity.name,
+            protocol: identity.protocol_version,
+            configuration_fingerprint: identity.configuration_fingerprint,
+        },
+        RuntimeBinding {
+            kind: RuntimeKind::ExternalIsolated,
+            location: runtime.to_string_lossy().into_owned(),
+            executable: Some(executable.to_string_lossy().into_owned()),
+            project_snapshot: BoundIdentity {
+                id: project.id.to_string(),
+                fingerprint: project.fingerprint.clone(),
+            },
+        },
+        ScientificStoreBinding {
+            database_path: "runs/scientific.sqlite".into(),
+            schema: BoundIdentity {
+                id: SCHEMA_ID.into(),
+                fingerprint: schema_fingerprint(),
+            },
+            snapshot_fingerprint: None,
+            snapshot_bytes: None,
+        },
+        project.source_revision.clone(),
+        "Offline initial benchmark runtime",
+        Utc::now(),
+    )
+    .unwrap();
+    record_scientific_binding(&folder, binding, None)
+        .await
+        .unwrap();
+    (folder, project)
+}
+
+#[allow(dead_code)]
+fn file_pin(path: &Path) -> (u64, String) {
+    let bytes = fs::read(path).unwrap();
+    (bytes.len() as u64, format!("{:x}", Sha256::digest(bytes)))
+}
+
+#[allow(dead_code)]
+fn tree_pin(path: &Path) -> (u64, String) {
+    fn collect(path: &Path, files: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(path).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_dir() {
+                collect(&entry.path(), files);
+            } else {
+                files.push(entry.path());
+            }
+        }
+    }
+    let mut files = Vec::new();
+    collect(path, &mut files);
+    files.sort_by_cached_key(|file| {
+        file.strip_prefix(path)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/")
+    });
+    let mut total = 0_u64;
+    let entries = files
+        .into_iter()
+        .map(|file| {
+            let relative = file
+                .strip_prefix(path)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            let (bytes, sha256) = file_pin(&file);
+            total += bytes;
+            format!("{relative}\t{bytes}\t{sha256}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    (total, format!("{:x}", Sha256::digest(entries.as_bytes())))
+}
+
+#[allow(dead_code)]
+fn git(root: &Path, arguments: &[&str]) {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(arguments)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {arguments:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 pub async fn create_run(
     store: &SqliteExperimentStore,
     project: &ExternalProjectSnapshot,

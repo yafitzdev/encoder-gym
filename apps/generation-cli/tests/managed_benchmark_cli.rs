@@ -32,8 +32,85 @@ fn run(root: &Path, args: &[&str]) -> Value {
 #[path = "fixtures/benchmark_support.rs"]
 mod benchmark_support;
 use benchmark_support::{
-    complete_rejected_candidate, create_run, fixture, protocol_for, register_fixture_model,
+    complete_rejected_candidate, create_run, fixture, initial_benchmark_fixture, protocol_for,
+    register_fixture_model,
 };
+
+#[tokio::test]
+async fn benchmark_initialize_evaluates_the_baseline_once_and_replays_without_native_work() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let executable = Path::new(env!("CARGO_BIN_EXE_synth-benchmark-fixture"));
+    let (folder, project) = initial_benchmark_fixture(root, executable).await;
+    assert_eq!(run(root, &["benchmark", "project", "list"]), json!([]));
+
+    let initialized = run(root, &["benchmark", "project", "initialize"]);
+    assert_eq!(initialized["version"]["number"], 1);
+    assert_eq!(
+        initialized["version"]["definition"]["suites"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|suite| suite["role"] == "development")
+            .count(),
+        2
+    );
+    let public = initialized.to_string();
+    assert!(!public.contains("99999.125"));
+    assert!(!public.contains("NEVER_DISCLOSE_HOLDOUT"));
+    let invocations = fs::read_to_string(root.join("runtime/native-invocations.log")).unwrap();
+    assert_eq!(invocations.lines().count(), 6);
+
+    let protocol_id: Uuid = initialized["version"]["source"]["protocol"]["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let store = SqliteExperimentStore::connect_read_only(&format!(
+        "sqlite://{}",
+        folder.join("runs/scientific.sqlite").display()
+    ))
+    .await
+    .unwrap();
+    let protocol = store.get_protocol(protocol_id).await.unwrap().unwrap();
+    assert_eq!(protocol.baseline_development_reports().len(), 2);
+    assert_eq!(protocol.baseline_sealed_report.metrics["mrr"], 99_999.125);
+    assert!(
+        store
+            .experiment_run_ids_for_project(project.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    store.pool().close().await;
+
+    let replayed = run(root, &["benchmark", "project", "initialize"]);
+    assert_eq!(replayed["version"], initialized["version"]);
+    assert_eq!(
+        fs::read_to_string(root.join("runtime/native-invocations.log")).unwrap(),
+        invocations
+    );
+    assert_eq!(
+        run(root, &["benchmark", "project", "list"])
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let action = run(
+        root,
+        &[
+            "activity",
+            "project",
+            "show",
+            initialized["actionId"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(action["operation"], "benchmark.initialize");
+    assert_eq!(action["state"], "succeeded");
+    assert!(!action.to_string().contains("99999.125"));
+    assert!(!action.to_string().contains("NEVER_DISCLOSE_HOLDOUT"));
+}
 
 #[tokio::test]
 async fn benchmark_preview_adoption_versions_replay_and_inspection_use_real_cli_boundaries() {

@@ -2,7 +2,7 @@ import type { ManagedRunStatus, NativeProgress } from "../managed-control.js";
 import type { OptimizationPageState } from "./optimization-page.js";
 import { h } from "./dom.js";
 
-const phaseLabels: Record<NativeProgress["phase"], string> = {
+const phaseLabels: Partial<Record<NativeProgress["phase"], string>> = {
   checking_files: "Checking model files",
   checking_training_data: "Checking training data",
   loading_model: "Loading model",
@@ -38,7 +38,7 @@ export function liveRun(run: ManagedRunStatus, state: OptimizationPageState): HT
   const counter = activity?.completed !== undefined && activity.total !== undefined ? activity : undefined;
   return h("section", { class: "live-run", "aria-label": "Live run progress" },
     h("div", { class: "live-run-heading" },
-      h("div", { role: "status" }, h("div", { class: "eyebrow" }, "Current task"), h("h3", {}, activity ? phaseLabels[activity.phase] : run.stage.label)),
+      h("div", { role: "status" }, h("div", { class: "eyebrow" }, "Current task"), h("h3", {}, activity ? phaseLabels[activity.phase] ?? activity.phase.replaceAll("_", " ") : run.stage.label)),
       startedAt !== undefined && Number.isFinite(startedAt) ? h("div", { class: "live-elapsed" }, h("span", {}, "Elapsed"), h("strong", { "data-elapsed-start": String(startedAt) })) : null),
     counter ? h("div", { class: "live-counter" },
       h("div", {}, h("span", {}, counter.phase === "preparing_batches" ? "Preparation batches" : "Training steps"), h("strong", {}, `${counter.completed!.toLocaleString()} / ${counter.total!.toLocaleString()}`)),
@@ -52,7 +52,7 @@ export function liveRun(run: ManagedRunStatus, state: OptimizationPageState): HT
 }
 
 export function recentActivity(run: ManagedRunStatus): HTMLElement | null {
-  const events = [...(run.timeline ?? []), ...(run.activity?.events.map(event => ({ at: event.at, label: phaseLabels[event.phase] })) ?? [])]
+  const events = [...(run.timeline ?? []), ...(run.activity?.events.map(event => ({ at: event.at, label: phaseLabels[event.phase] ?? event.phase.replaceAll("_", " ") })) ?? [])]
     .filter(event => Number.isFinite(Date.parse(event.at)))
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).slice(-8).reverse();
   if (!events.length) return null;

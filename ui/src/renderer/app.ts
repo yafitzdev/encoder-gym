@@ -3,7 +3,7 @@ import type { ManagedOptimizationReport, ManagedOptimizationResult, ManagedRunSt
 import { ProjectSelection, type OpenedProject, type ProjectCollection } from "../projects.js";
 import type { Actions, Location, Page, ProjectActions } from "./actions.js";
 import { candidateName, candidateRows, dateLabel, initialFilter, metricInfo, runName, setupId } from "./catalog.js";
-import { button, failureNotice, icon, tag } from "./components.js";
+import { button, failureNotice, icon, spinner, tag } from "./components.js";
 import { renderCompare, renderRun, type DetailState } from "./detail-pages.js";
 import { h } from "./dom.js";
 import { renderModels, type ModelPageState } from "./models-page.js";
@@ -468,7 +468,7 @@ export function mount(): void {
     promoteModel: (runId, name) => { void promoteAccepted(runId, name); },
     restoreBaseline: (targetRevisionId, name) => { void restoreBaseline(targetRevisionId, name); },
   };
-  const pages: [Page, string, string][] = [["models", "Models", "models"], ["datasets", "Data", "dataset"], ["runs", "Runs", "runs"], ["benchmarks", "Evaluation", "benchmark"], ["activity", "Activity", "activity"], ["project", "Project settings", "settings"]];
+  const pages: [Page, string, string][] = [["models", "Models", "models"], ["datasets", "Data", "dataset"], ["optimization", "Optimize", "optimize"], ["runs", "Runs", "runs"], ["benchmarks", "Evaluation", "benchmark"], ["activity", "Activity", "activity"], ["project", "Project settings", "settings"]];
   function render(): void {
     const current = view.history.current, data = workspace();
     const project = collection.projects.find(p => p.id === selection.selectedId);
@@ -500,7 +500,8 @@ export function mount(): void {
     const linkedOptimizationIds = new Set(data?.runs.flatMap(run => run.optimizationId ? [run.optimizationId] : []) ?? []);
     const runCount = projectRunIds.size + (data?.runs.filter(run => !run.optimizationId || !projectRunIds.has(run.optimizationId)).length ?? 0)
       + (view.optimization.run && !linkedOptimizationIds.has(view.optimization.run.run_id) && !projectRunIds.has(view.optimization.run.run_id) ? 1 : 0);
-    const activePage = ["model", "candidate", "baseline", "compare"].includes(current.page) ? "models" : ["run", "optimization"].includes(current.page) ? "runs" : current.page === "dataset" ? "datasets" : current.page;
+    const activePage = ["model", "candidate", "baseline", "compare"].includes(current.page) ? "models" : current.page === "run" ? "runs" : current.page === "dataset" ? "datasets" : current.page;
+    const projectRunActive = !!view.setup?.running || !!view.inputRuns?.runningId;
     const focus = document.activeElement, focusId = focus?.id;
     const caret = focus instanceof HTMLInputElement && ["text", "search"].includes(focus.type) ? [focus.selectionStart, focus.selectionEnd] : undefined;
     const scroll = main.scrollTop;
@@ -514,8 +515,8 @@ export function mount(): void {
         if (p.id === selection.selectedId) { collapsedProjects.has(p.id) ? collapsedProjects.delete(p.id) : collapsedProjects.add(p.id); render(); }
         else { collapsedProjects.delete(p.id); projects.select(p.id); }
       } }, icon("project"), h("span", {}, p.name), p.source.kind === "example" ? h("small", {}, "Example") : !p.source.workspaceId ? h("small", {}, "Legacy") : null),
-      expanded ? h("div", { class: "project-pages" }, ...pages.filter(([page]) => !["datasets", "activity"].includes(page) || (p.source.kind === "folder" && p.source.workspaceId)).map(([page, label, symbol]) => h("button", { type: "button", id: "nav-" + page, disabled: collectionBusy, class: "nav-item" + (page === activePage ? " active" : ""), "aria-current": page === activePage ? "page" : null, "data-page": page, onClick: () => navigate({ page }) }, icon(symbol), label,
-        data && ["models", "runs"].includes(page) ? h("span", { class: "nav-count" }, page === "models" ? modelInventory(data).length : runCount) : null))) : null);
+      expanded ? h("div", { class: "project-pages" }, ...pages.filter(([page]) => !["datasets", "activity", "optimization"].includes(page) || (p.source.kind === "folder" && p.source.workspaceId)).map(([page, label, symbol]) => h("button", { type: "button", id: "nav-" + page, disabled: collectionBusy, class: "nav-item" + (page === activePage ? " active" : ""), "aria-current": page === activePage ? "page" : null, "data-page": page, onClick: () => navigate(page === "optimization" ? { page, tab: "setup" } : { page }) }, icon(symbol), label,
+        data && ["models", "runs"].includes(page) ? h("span", { class: "nav-meta" }, page === "runs" && projectRunActive ? spinner() : null, h("span", { class: "nav-count" }, page === "models" ? modelInventory(data).length : runCount)) : null))) : null);
     }));
     const candidate = data ? candidateRows(data).find(r => r.candidate.id === current.id)?.candidate : undefined;
     const run = data?.runs.find(r => r.id === current.id);
@@ -527,10 +528,6 @@ export function mount(): void {
     element("source-state").replaceChildren(...(project ? [button(loading ? "Reading…" : opened?.content.state === "error" ? "Evidence unavailable" : data?.managed ? "Managed workspace" : data?.source === "recorded" ? "Recorded example" : data ? "Legacy journals" : "No records yet", () => navigate({ page: "project" }), "source-button"),
       ...(data ? [h("span", {}, dateLabel(data.capturedAt))] : [])] : []));
     const reload = element("reload-evidence") as HTMLButtonElement; reload.hidden = !project; reload.disabled = loading || collectionBusy;
-    const optimizeButton = element("project-optimize") as HTMLButtonElement;
-    optimizeButton.hidden = !data?.managed;
-    optimizeButton.disabled = loading || collectionBusy;
-    optimizeButton.textContent = "Optimize";
     for (const id of ["add-project", "open-project", "open-legacy-project"]) (element(id) as HTMLButtonElement).disabled = loading || collectionBusy || !!collectionError;
     let content: HTMLElement;
     if (collectionError) content = h("div", { class: "page-content" }, h("h1", { tabindex: "-1" }, "Project library unavailable"), h("section", { class: "project-recovery", role: "alert" }, failureNotice(collectionError), button("Try again", () => { void refreshCollection(); }, "primary")));
@@ -600,7 +597,6 @@ export function mount(): void {
   document.addEventListener("pointerup", extendedMouseButton, true);
   document.addEventListener("auxclick", extendedMouseButton, true);
   element("reload-evidence").addEventListener("click", actions.refresh);
-  element("project-optimize").addEventListener("click", actions.prepareOptimization);
   element("add-project").addEventListener("click", projects.create);
   element("open-project").addEventListener("click", projects.openManaged);
   element("open-legacy-project").addEventListener("click", projects.addFolder);

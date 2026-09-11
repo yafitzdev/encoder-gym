@@ -28,8 +28,20 @@ export function inputRunActivity(log: ProjectActivityLog, runId: string): InputR
 }
 
 export const inputRunStageLabel = (stage: string): string => ({
-  checking_files: "Checking inputs",
-  checking_training_data: "Preparing data",
+  checking_model: "Checking baseline model",
+  checking_dataset: "Checking dataset",
+  checking_evaluation: "Checking evaluation",
+  checking_runtime: "Checking local runtime",
+  loading_training_rows: "Loading training rows",
+  writing_training_rows: "Building training dataset",
+  checking_materialized_project: "Checking prepared project",
+  loading_evaluation_protocol: "Loading evaluation",
+  creating_candidate: "Creating candidate",
+  creating_experiment: "Creating optimization run",
+  registering_candidate: "Adding candidate to Models",
+  optimization_complete: "Complete",
+  checking_files: "Checking model files",
+  checking_training_data: "Checking training data",
   loading_model: "Loading model",
   preparing_batches: "Preparing batches",
   training: "Training candidate",
@@ -37,3 +49,46 @@ export const inputRunStageLabel = (stage: string): string => ({
   evaluating_retrieval: "Evaluating retrieval",
   evaluating_agent: "Evaluating agent",
 }[stage] ?? stage.replaceAll("_", " "));
+
+export interface InputRunStageContext {
+  model: string;
+  dataset: string;
+  datasetRows: number;
+  evaluation: string;
+  developmentSuites: string[];
+  finalSuite?: string;
+  finalEvaluation: boolean;
+}
+
+/** Short artifact-level context for the currently executing persisted stage. */
+export function inputRunStageDetail(progress: NativeProgress, context: InputRunStageContext): string {
+  const counter = progress.completed !== undefined && progress.total !== undefined
+    ? `${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()}`
+    : undefined;
+  const data = `${context.dataset} · ${context.datasetRows.toLocaleString()} ${context.datasetRows === 1 ? "row" : "rows"}`;
+  const suites = context.finalEvaluation && context.finalSuite
+    ? context.finalSuite
+    : context.developmentSuites.join(", ") || context.evaluation;
+  return ({
+    checking_model: context.model,
+    checking_dataset: data,
+    checking_evaluation: context.evaluation,
+    checking_runtime: "Model runtime · trainer · evaluation database",
+    loading_training_rows: data,
+    writing_training_rows: `${data}${counter ? ` · ${counter} written` : ""}`,
+    checking_materialized_project: `${context.model} + ${context.dataset}`,
+    loading_evaluation_protocol: context.evaluation,
+    creating_candidate: `${context.model} → Candidate 1`,
+    creating_experiment: `${context.evaluation} · ${context.developmentSuites.length} development suites`,
+    registering_candidate: "Candidate 1",
+    optimization_complete: "",
+    checking_files: context.model,
+    checking_training_data: data,
+    loading_model: context.model,
+    preparing_batches: data,
+    training: `Candidate 1${counter ? ` · ${counter} steps` : ""}`,
+    saving_checkpoint: "Candidate 1",
+    evaluating_retrieval: `${context.evaluation} · ${suites}`,
+    evaluating_agent: `${context.evaluation} · ${suites}`,
+  }[progress.phase] ?? context.evaluation);
+}

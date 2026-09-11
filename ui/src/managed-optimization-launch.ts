@@ -173,7 +173,7 @@ export class ManagedOptimizationLaunch {
       const stage = async (phase: InputOptimizationPhase, command: string, native = false): Promise<void> => {
         progress?.(phase);
         await this.ports.command<unknown>(["optimization-run", workspace.folder, command, runId], native ? this.ports.environment?.(projectId, workspace) : undefined,
-          native ? value => progress?.(phase, value) : undefined, signal);
+          value => progress?.(phase, value), signal);
       };
       try {
         await stage("checking_inputs", "prepare");

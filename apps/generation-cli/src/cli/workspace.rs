@@ -73,6 +73,11 @@ pub enum WorkspaceOptimizationRunCommand {
 pub enum WorkspaceBenchmarkCommand {
     /// List immutable versions of the project's shared evaluation benchmark.
     List,
+    /// Evaluate the baseline and create the first benchmark from the bound task runtime.
+    Initialize {
+        #[arg(long)]
+        expected_parent: Option<Uuid>,
+    },
     /// Preview the benchmark pinned by a recorded experiment without writing.
     PreviewRun { run_id: Uuid },
     /// Adopt a recorded experiment's benchmark; never executes evaluation.

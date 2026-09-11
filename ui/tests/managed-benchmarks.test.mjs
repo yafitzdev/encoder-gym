@@ -5,7 +5,7 @@ import { ManagedBenchmarks } from "../dist/evidence/managed-benchmarks.js";
 
 function fixture() {
   const projectId = randomUUID(), baselineId = randomUUID(), candidateId = randomUUID(), revisionId = randomUUID();
-  const version = { id: randomUUID(), projectId, fingerprint: "sha256:" + "a".repeat(64), definition: { suites: [{ key: "development", role: "development" }, { key: "holdout", role: "sealed_acceptance" }] } };
+  const version = { id: randomUUID(), projectId, number: 1, fingerprint: "sha256:" + "a".repeat(64), definition: { suites: [{ key: "development", role: "development" }, { key: "holdout", role: "sealed_acceptance" }] } };
   const workspace = { folder: "owned-project", manifest: { id: projectId }, benchmarkVersions: [version], modelCatalog: {
     artifacts: [{ id: baselineId }, { id: candidateId }], baselineRevisions: [{ id: revisionId, modelArtifactId: baselineId }], activeBaselineRevisionId: revisionId,
   } };
@@ -51,4 +51,22 @@ test("benchmark adoption is project-exclusive and pins the reviewed definition a
   assert.deepEqual(calls[0], calls[1]);
   for (const invalid of [{ ...request, folder: "foreign" }, { ...request, runId: "foreign" }, { ...request, expectedParent: "other" }, { ...request, definitionFingerprint: "not-a-hash" }]) await assert.rejects(() => backend.adopt(projectId, invalid));
   assert.equal(calls.length, 2);
+});
+
+test("initial benchmark creation is project-exclusive, observable and accepts an idempotent replay", async () => {
+  const { projectId, version, workspace } = fixture();
+  const initial = { ...workspace, scientificBinding: { id: randomUUID() }, benchmarkVersions: [] };
+  let recorded = false, progress;
+  const backend = new ManagedBenchmarks({
+    open: async id => { assert.equal(id, projectId); return recorded ? workspace : initial; },
+    exclusive: async (id, work) => { assert.equal(id, projectId); return work(); },
+    command: async (args, receive) => {
+      assert.deepEqual(args, ["benchmark", "owned-project", "initialize"]);
+      progress = { phase: "checking_files" }; receive?.(progress); recorded = true;
+      return { actionId: randomUUID(), version };
+    },
+  });
+  const result = await backend.initialize(projectId, value => { assert.deepEqual(value, progress); });
+  assert.equal(result.version.id, version.id);
+  assert.equal(result.version.number, 1);
 });

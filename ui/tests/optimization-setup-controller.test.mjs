@@ -12,6 +12,7 @@ function fixture(overrides = {}) {
     saveOptimizationSetup: async (_, request) => { writes.push(structuredClone(request)); const result = f.saved(request); history.push(result.setup); return result; },
     startInputOptimization: async () => { const value = run(); runs.push(value); return { actionId: randomUUID(), run: value }; },
     driveInputOptimization: async (_, id) => ({ ...runs.find(value => value.id === id), state: "baseline_retained", outcome: { kind: "baseline_retained" } }),
+    initializeBenchmark: async () => { throw new Error("Evaluation already exists"); },
     cancelInputOptimization: async (_, id) => ({ ...runs.find(value => value.id === id), state: "cancelled", failureCode: "user_requested" }),
     inputOptimizationRun: async (_, id) => runs.find(value => value.id === id),
     projectActivity: async () => ({ project_id: f.projectId, actions: [] }),
@@ -19,13 +20,31 @@ function fixture(overrides = {}) {
   const controller = new OptimizationSetupController(f.projectId, f.workspace, bridge, () => {});
   return { ...f, controller, bridge, history, writes, runs, run };
 }
-test("first setup uses model provenance; saved versions never follow latest dataset or benchmark", async () => {
+test("first setup uses model provenance and new runs use the current project evaluation", async () => {
   const f = fixture(); await f.controller.ensure(); assert.equal(f.controller.datasetId, f.version.id); assert.ok(f.controller.canSave);
   await f.controller.save(); assert.ok(f.controller.saved); assert.equal(f.writes.length, 1); await f.controller.save(); assert.equal(f.writes.length, 1);
   f.workspace.benchmarkVersions.push({ ...f.benchmark, id: randomUUID(), number: 2 });
   f.datasets[0].versions.push({ version: { ...f.version, id: randomUUID(), number: 2 }, rows: 11 });
   f.controller.refresh(); await f.controller.ensure();
-  assert.equal(f.controller.datasetId, f.version.id); assert.equal(f.controller.benchmarkId, f.benchmark.id); assert.ok(f.controller.saved);
+  assert.equal(f.controller.datasetId, f.version.id); assert.equal(f.controller.benchmarkId, f.workspace.benchmarkVersions[1].id); assert.equal(f.controller.saved, false);
+});
+
+test("Optimize creates a missing project evaluation and continues in the same click", async () => {
+  const f = fixture(), phases = [];
+  f.workspace.scientificBinding = { id: randomUUID() };
+  f.workspace.benchmarkVersions = [];
+  f.bridge.initializeBenchmark = async (_, receive) => {
+    for (const phase of ["checking_files", "evaluating_retrieval"]) { const value = { phase }; phases.push(phase); receive(value); }
+    f.workspace.benchmarkVersions.push(f.benchmark);
+    return { actionId: randomUUID(), version: f.benchmark };
+  };
+  await f.controller.ensure();
+  assert.equal(f.controller.benchmark, undefined); assert.equal(f.controller.canOptimize, true);
+  await f.controller.optimize();
+  assert.deepEqual(phases, ["checking_files", "evaluating_retrieval"]);
+  assert.equal(f.writes.length, 1); assert.equal(f.runs.length, 1);
+  assert.equal(f.controller.benchmarkId, f.benchmark.id);
+  assert.equal(f.controller.run.state, "baseline_retained");
 });
 for (const failure of ["save", "reload"]) test(`lost ${failure} responses retry the same identity without duplicate submission`, async () => {
   const f = fixture(), pending = deferred(); let reads = 0;

@@ -17,3 +17,11 @@ export function describeFailure(error: unknown): { title: string; recovery: stri
   for (const [pattern, title, recovery] of known) if (pattern.test(detail)) return { title, recovery, detail };
   return { title: "The operation couldn't finish", recovery: "Review the technical details, check your selection, and try again.", detail };
 }
+
+/** Remove desktop transport wrappers while preserving the backend's actual reason. */
+export function failureReason(error: unknown): string {
+  let reason = error instanceof Error ? error.message : String(error);
+  reason = reason.replace(/^Error invoking remote method '[^']+':\s*/i, "");
+  while (/^Error:\s*/i.test(reason)) reason = reason.replace(/^Error:\s*/i, "");
+  return reason.trim() || "Unknown error.";
+}

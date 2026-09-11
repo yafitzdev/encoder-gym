@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { describeFailure } from "../dist/evidence/presentation-errors.js";
+import { describeFailure, failureReason } from "../dist/evidence/presentation-errors.js";
 
 test("workspace errors explain recovery without displaying transport noise", () => {
   const raw = "Error invoking remote method 'encoder-gym:open-managed': Error: Error: This is not an Encoder Gym workspace.\nCaused by: Cannot read C:\\private\\encoder-gym.json";
@@ -9,6 +9,10 @@ test("workspace errors explain recovery without displaying transport noise", () 
   assert.match(result.recovery, /New project/);
   assert.equal(result.detail, raw);
   assert.doesNotMatch(result.title + result.recovery, /private|remote method/);
+});
+
+test("the visible error reason removes Electron transport wrappers", () => {
+  assert.equal(failureReason(new Error("Error invoking remote method 'encoder-gym:drive-input-optimization': Error: Error: Selected rows exceed 16 MiB.")), "Selected rows exceed 16 MiB.");
 });
 
 test("held-out training rejection explains the action without weakening the gate", () => {

@@ -46,3 +46,4 @@ export interface BenchmarkPreview {
 }
 export interface BenchmarkAdoption { runId: string; expectedParent: string | null; definitionFingerprint: string }
 export interface BenchmarkAdoptionResult { actionId: string; version: ProjectBenchmarkVersion }
+export type BenchmarkInitializationResult = BenchmarkAdoptionResult;

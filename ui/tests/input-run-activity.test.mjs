@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
-import { inputRunActivity, inputRunStageLabel } from "../dist/evidence/input-run-activity.js";
+import { inputRunActivity, inputRunStageDetail, inputRunStageLabel } from "../dist/evidence/input-run-activity.js";
 
 test("optimization activity resolves the exact run and latest durable counter", () => {
   const projectId = randomUUID(), runId = randomUUID(), otherRun = randomUUID(), actionId = randomUUID();
@@ -20,4 +20,8 @@ test("optimization activity resolves the exact run and latest durable counter", 
   assert.deepEqual(activity.progress, { phase: "training", completed: 40, total: 100 });
   assert.deepEqual(activity.stages, ["loading_model", "training"]);
   assert.equal(inputRunStageLabel(activity.progress.phase), "Training candidate");
+  assert.equal(inputRunStageDetail(activity.progress, {
+    model: "Nomos baseline", dataset: "Candidate dataset · v2", datasetRows: 6992,
+    evaluation: "Evaluation · Version 1", developmentSuites: ["generic holdout", "agent holdout"], finalEvaluation: false,
+  }), "Candidate 1 · 40 / 100 steps");
 });

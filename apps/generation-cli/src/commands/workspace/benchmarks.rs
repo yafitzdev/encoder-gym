@@ -2,9 +2,11 @@ use crate::cli::WorkspaceBenchmarkCommand;
 use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use encoder_experiment_core::{
-    benchmark::BenchmarkDefinition, journal::replay_experiment, ports::ExperimentStore,
+    benchmark::BenchmarkDefinition, domain::OptimizationBudget, journal::replay_experiment,
+    ports::ExperimentStore,
 };
 use encoder_experiment_nomos::NomosBackend;
+use encoder_experiment_runner::ExperimentRunner;
 use project_workspace_core::{
     ActivityEventState, ActivityFailure, ActivityReference, ActivitySource, BenchmarkSource,
     BoundIdentity, ProjectBenchmarkVersion,
@@ -31,6 +33,7 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceBenchmarkCommand) -
     use WorkspaceBenchmarkCommand::*;
     match command {
         List => super::print(&benchmarks::list(folder).await?),
+        Initialize { expected_parent } => initialize(folder, expected_parent).await,
         PreviewRun { run_id } => super::print(&preview(folder, run_id).await?),
         AdoptRun {
             run_id,
@@ -40,6 +43,125 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceBenchmarkCommand) -
         Inspect { version_id } => super::print(&inspect(folder, version_id).await?),
         Results { version_id } => super::print(&results(folder, version_id).await?),
     }
+}
+
+async fn initialize(folder: &Path, expected_parent: Option<Uuid>) -> Result<()> {
+    initialize_activity(folder).await?;
+    let action_id = Uuid::new_v4();
+    let event = |state, references, failure| AppendActivity {
+        action_id,
+        operation: "benchmark.initialize".into(),
+        source: ActivitySource::Cli,
+        state,
+        stage: None,
+        completed: None,
+        total: None,
+        references,
+        failure,
+        created_at: Utc::now(),
+    };
+    append_activity(folder, event(ActivityEventState::Started, vec![], None)).await?;
+    let result: Result<(ProjectBenchmarkVersion, Uuid)> = async {
+        let workspace = open_workspace(folder, false).await?;
+        let binding = workspace
+            .scientific_binding
+            .as_ref()
+            .context("Connect an evaluation runtime first.")?;
+        let store = super::open_bound_store_mutable(&workspace.folder, binding).await?;
+        let project = super::load_bound_project(&store, binding).await?;
+        let backend = super::open_nomos_binding(binding, &project)?.with_progress_observer(
+            std::sync::Arc::new(crate::commands::encoder_optimize::activity::ProgressOutput),
+        );
+        let plan = NomosBackend::initial_benchmark_plan(&project)?;
+        let candidate_id = derived_uuid(
+            "initial-benchmark-candidate-v1",
+            &serde_json::json!({
+                "project":project.id,
+                "projectFingerprint":project.fingerprint,
+                "metricContract":plan.metric_contract.fingerprint,
+                "developmentSuites":plan.development_suite_keys,
+                "sealedSuite":plan.sealed_suite_key,
+            }),
+        )?;
+        let candidate =
+            NomosBackend::initial_training_candidate_definition(candidate_id, &project, 1)?;
+        let protocol_id = derived_uuid(
+            "initial-benchmark-protocol-v1",
+            &serde_json::json!({
+                "project":project.id,
+                "projectFingerprint":project.fingerprint,
+                "metricContract":plan.metric_contract.fingerprint,
+                "developmentSuites":plan.development_suite_keys,
+                "sealedSuite":plan.sealed_suite_key,
+                "maximumEvaluationSeconds":plan.maximum_evaluation_seconds,
+                "candidate":candidate.fingerprint,
+            }),
+        )?;
+        let development_evaluations = u32::try_from(plan.development_suite_keys.len())?;
+        let runner = ExperimentRunner::new(&store, &backend);
+        let protocol = runner
+            .prepare_multi_protocol_identified(
+                protocol_id,
+                project.id,
+                plan.metric_contract,
+                OptimizationBudget {
+                    maximum_candidates: 1,
+                    maximum_training_seconds: 1,
+                    maximum_development_evaluations: development_evaluations,
+                    maximum_sealed_evaluations: 1,
+                },
+                plan.maximum_evaluation_seconds,
+                plan.development_suite_keys,
+                plan.sealed_suite_key,
+                vec![candidate],
+            )
+            .await?;
+        let definition = NomosBackend::recorded_benchmark(&project, &protocol)?;
+        NomosBackend::verify_benchmark_definition(&project, &definition)?;
+        let source = BenchmarkSource {
+            scientific_binding: BoundIdentity {
+                id: binding.id.to_string(),
+                fingerprint: binding.fingerprint.clone(),
+            },
+            project_snapshot: binding.runtime.project_snapshot.clone(),
+            protocol: BoundIdentity {
+                id: protocol.id.to_string(),
+                fingerprint: protocol.fingerprint.clone(),
+            },
+        };
+        store.pool().close().await;
+        let version = benchmarks::record(
+            folder,
+            benchmark_version_id(workspace.manifest.id, &definition)?,
+            expected_parent,
+            definition,
+            source,
+        )
+        .await?;
+        Ok((version, protocol_id))
+    }
+    .await;
+    let (state, references, failure) = match &result {
+        Ok((version, protocol_id)) => (
+            ActivityEventState::Succeeded,
+            vec![
+                ActivityReference::new("benchmark_version", version.id.to_string())?,
+                ActivityReference::new("protocol", protocol_id.to_string())?,
+            ],
+            None,
+        ),
+        Err(_) => (
+            ActivityEventState::Failed,
+            vec![],
+            Some(ActivityFailure::new(
+                "benchmark_initialization_failed",
+                "The benchmark was not created. Existing evaluation evidence is retained and retryable.",
+            )?),
+        ),
+    };
+    append_activity(folder, event(state, references, failure)).await?;
+    let (version, _) = result?;
+    super::print(&serde_json::json!({"actionId":action_id,"version":version}))
 }
 
 async fn results(
@@ -132,20 +254,37 @@ async fn preview(folder: &Path, run_id: Uuid) -> Result<BenchmarkPreview> {
         .iter()
         .find(|v| v.definition.fingerprint == definition.fingerprint)
         .map(|v| v.id);
-    let mut hash = Sha256::new();
-    hash.update(b"project-benchmark-version-v1");
-    hash.update(workspace.manifest.id.as_bytes());
-    hash.update(definition.fingerprint.as_bytes());
-    let mut bytes: [u8; 16] = hash.finalize()[..16].try_into().expect("16 digest bytes");
-    bytes[6] = (bytes[6] & 0x0f) | 0x80;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
     Ok(BenchmarkPreview {
-        version_id: existing_version.unwrap_or_else(|| Uuid::from_bytes(bytes)),
+        version_id: existing_version.map_or_else(
+            || benchmark_version_id(workspace.manifest.id, &definition),
+            Ok,
+        )?,
         expected_parent: workspace.benchmark_versions.last().map(|v| v.id),
         existing_version,
         definition,
         source,
     })
+}
+
+fn benchmark_version_id(project_id: Uuid, definition: &BenchmarkDefinition) -> Result<Uuid> {
+    let mut hash = Sha256::new();
+    hash.update(b"project-benchmark-version-v1");
+    hash.update(project_id.as_bytes());
+    hash.update(definition.fingerprint.as_bytes());
+    let mut bytes: [u8; 16] = hash.finalize()[..16].try_into().expect("16 digest bytes");
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Ok(Uuid::from_bytes(bytes))
+}
+
+fn derived_uuid(schema: &str, value: &impl Serialize) -> Result<Uuid> {
+    let mut hash = Sha256::new();
+    hash.update(schema.as_bytes());
+    hash.update(serde_json::to_vec(value)?);
+    let mut bytes: [u8; 16] = hash.finalize()[..16].try_into().expect("16 digest bytes");
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Ok(Uuid::from_bytes(bytes))
 }
 
 pub(super) async fn inspect(folder: &Path, version_id: Uuid) -> Result<ProjectBenchmarkVersion> {

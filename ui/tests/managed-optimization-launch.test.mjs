@@ -86,17 +86,22 @@ test("one-click optimization reserves exact current inputs and removes its priva
   for (const file of files) { await assert.rejects(() => access(file)); await assert.rejects(() => access(dirname(file))); }
 });
 
-test("one-click optimization drives recoverable stages and withholds credentials from non-execution work", async () => {
-  const f = fixture(), calls = [], phases = [], environment = { SYNTH_OPENAI_API_KEY: "secret" }, wire = f.run("candidate_rejected", {
+test("one-click optimization drives recoverable stages, forwards exact work, and withholds credentials from non-execution work", async () => {
+  const f = fixture(), calls = [], phases = [], details = [], environment = { SYNTH_OPENAI_API_KEY: "secret" }, wire = f.run("candidate_rejected", {
     outcome: { run: { id: randomUUID(), fingerprint }, experimentFingerprint: fingerprint, experimentRun: { id: randomUUID(), fingerprint }, kind: "candidate_ready", selectedModel: { id: randomUUID(), fingerprint }, createdAt: new Date().toISOString(), fingerprint },
     finalResult: { run: { id: randomUUID(), fingerprint }, outcomeFingerprint: fingerprint, experimentRun: { id: randomUUID(), fingerprint }, kind: "candidate_rejected", model: { id: randomUUID(), fingerprint }, finalReport: { id: randomUUID(), fingerprint }, createdAt: new Date().toISOString(), fingerprint },
   });
-  const configured = new ManagedOptimizationLaunch({ ...ports(f, async (args, env) => { calls.push({ args, env }); return args[2] === "show" ? wire : { actionId: randomUUID(), run: wire }; }), environment: () => environment });
-  const result = await configured.drive(f.projectId, wire.run.id, phase => phases.push(phase));
+  const configured = new ManagedOptimizationLaunch({ ...ports(f, async (args, env, progress) => {
+    calls.push({ args, env });
+    if (args[2] === "materialize") progress?.({ phase: "writing_training_rows", completed: 40, total: 100 });
+    return args[2] === "show" ? wire : { actionId: randomUUID(), run: wire };
+  }), environment: () => environment });
+  const result = await configured.drive(f.projectId, wire.run.id, (phase, native) => { phases.push(phase); if (native) details.push(native); });
   assert.equal(result.state, "candidate_rejected");
   assert.deepEqual(calls.map(call => call.args[2]), ["prepare", "materialize", "attach", "execute", "register", "show", "finalize", "show"]);
   assert.deepEqual(calls.filter(call => call.env).map(call => call.args[2]), ["execute", "finalize"]);
-  assert.deepEqual(phases, ["checking_inputs", "preparing_data", "starting", "training", "saving_candidate", "evaluating", "complete"]);
+  assert.deepEqual(phases, ["checking_inputs", "preparing_data", "preparing_data", "starting", "training", "saving_candidate", "evaluating", "complete"]);
+  assert.deepEqual(details, [{ phase: "writing_training_rows", completed: 40, total: 100 }]);
 });
 
 test("a development result that retains the baseline skips sealed evaluation", async () => {

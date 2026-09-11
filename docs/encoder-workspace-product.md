@@ -79,7 +79,9 @@ decision. No unbounded work or inferred spending.
 3. Shared benchmark — model-independent definition, immutable project versions,
    preview/adoption/inspection, comparable results, version history and protocol
    inspection are implemented. The exact selected version is pinned by Optimize.
-   Initial benchmark data onboarding remains pending.
+   CLI creation of version 1 from a connected adapter-owned runtime is
+   implemented. The desktop action and importing a new test/protocol collection
+   remain pending.
 4. Automatic bounded optimization — exact input/provider authority, finite
    limits, recoverable project-run roots, selected-data materialization, first
    candidate execution, registration, final evaluation and desktop one-click
@@ -404,20 +406,21 @@ and keep outstanding requirements visible.
 ### Desktop optimization inputs — 11 September 2026
 
 - Project Optimize now opens three compact input rows: the current baseline,
-  a named dataset version, and a shared benchmark version. Each opens its
-  ordinary artifact viewer. Missing inputs link to Data or Evaluation; a saved
-  version does not silently follow later dataset or benchmark versions.
+  a named dataset version, and the current shared evaluation. Each opens its
+  ordinary artifact viewer. Missing model/data inputs link to their inventory;
+  a connected project with no evaluation initializes it in the same Optimize
+  click. Historical setups keep their exact evaluation while new runs use the
+  current project version.
 - The fixed desktop bridge invokes the existing setup preview/save/list CLI.
   It rejects paths, execution settings, secrets and foreign/substituted inputs.
   Save retains the exact retry request after a lost save or reload response;
   changed inputs and refresh abandon that retry. Reopening/moving a project
   fences late responses, and retries reload current history without reactivating
   an older setup. Full custody verification stays in the local Rust adapter.
-- Existing optimization supervision remains in Runs. The new entry screen no
-  longer starts a previously prepared recipe unrelated to the user's selection.
-  It explicitly says automatic execution is not connected and that saving
-  inputs does not start a run. No new execution authority is inferred.
-- All four Rust gates passed, as did UI typecheck/build, 80 unit tests and four
+- Existing optimization supervision remains in Runs. The Optimize entry screen
+  saves exact visible inputs, reserves a durable project run and continues its
+  finite authorized stages without exposing an internal repair recipe.
+- All four Rust gates passed, as did UI typecheck/build, 99 unit tests and four
   isolated Electron launches. The actual renderer/IPC/CLI journey tests missing
   and multiple datasets, all three artifact links, save, a lost reply after
   commit, exact retry, changed data/benchmark selection, immutable history,
@@ -426,17 +429,17 @@ and keep outstanding requirements visible.
   narrow widths under `ui/qa/managed-optimization-inputs*`.
 - Read-only Nomos verification passed both model/dataset viewers, project pages,
   benchmark preview and the new Optimize entry. Its baseline-linked dataset is
-  selected, while evaluation correctly requires a catalog version. The saved
-  library, manifest, custody database and verified workspace facts are unchanged.
-  No setup, provider call, training or protected evaluation ran on Nomos.
+  selected; the current evaluation is project-scoped rather than a per-run
+  selector. No provider call, training or protected evaluation ran during UI
+  verification.
 - Local evidence: `target/optimization-inputs-rust-tests.log`,
   `target/optimization-inputs-ui-tests.log`,
   `target/optimization-inputs-electron-tests.log`, and
   `target/optimization-inputs-current-ui.log`.
-- Remaining work is still the complete automatic bounded optimization journey:
-  launch scope/budgets, adapter-owned selected-data admission/materialization,
-  agent and generation integration, automatic continuation and recovery. Fresh
-  benchmark onboarding and model-level promotion/restoration are also pending.
+- Remaining product work is the later bounded advisor/data-generation iteration
+  loop beyond the first finite candidate. Input custody, first-evaluation
+  initialization, automatic continuation/recovery and model promotion/restoration
+  are connected.
 
 ### Automatic run continuation — 11 September 2026
 
@@ -667,3 +670,25 @@ and keep outstanding requirements visible.
   ancestry and no-partial-output behavior. Desktop one-click composition and
   later bounded agent/data iterations remain outstanding. No real Nomos work
   ran.
+
+### Initial project benchmark — 11 September 2026
+
+- `workspace benchmark <project> initialize` now creates version 1 directly
+  from the connected task runtime when no historical experiment exists. The
+  Nomos adapter owns the named suites, full metric contract and finite
+  evaluation limit; presentation code supplies none of those details.
+- Initialization evaluates the current baseline once on every named
+  development suite and the single final suite, persists the scientific
+  protocol, and records the model-independent project version. It performs no
+  training or provider call and creates no optimization/experiment run.
+- Candidate/protocol/version identities are deterministic. Retry after protocol
+  persistence reuses it before native inspection, and retry after project
+  persistence returns the same version and provenance.
+- The actual production CLI and adapter boundary is covered by an isolated Git
+  runtime and deterministic native subprocess. The test proves six bounded
+  component evaluations on first creation, zero on retry, two development
+  reports, final-score/content exclusion from CLI and Activity, and one version.
+- Desktop Optimize now invokes this initialization automatically when the bound
+  project has no benchmark, shows its live phases and resumes safely after a
+  lost response. Import of an entirely new evaluator/test collection and later
+  bounded advisor/data iterations remain required by the full goal.

@@ -160,7 +160,6 @@ where
         candidates: Vec<TrainingCandidate>,
     ) -> Result<ExperimentProtocol, ExperimentRunnerError> {
         let project = self.project(project_id).await?;
-        self.backend.inspect(project.clone()).await?;
         development_suite_keys.sort();
         if development_suite_keys.is_empty()
             || development_suite_keys
@@ -192,6 +191,7 @@ where
             }
             return Ok(existing);
         }
+        self.backend.inspect(project.clone()).await?;
         let mut baseline_development_reports = Vec::with_capacity(development_suite_keys.len());
         for suite_key in development_suite_keys {
             baseline_development_reports.push(

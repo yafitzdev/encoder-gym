@@ -155,7 +155,7 @@ export async function runSmokeChecks(window: BrowserWindow, output: string, harn
   await open(supportId);
   await check("returning restores this project's own comparison context", "document.getElementById('candidate-search').value === 'Candidate' && document.querySelectorAll('[data-candidate-id] input:checked').length === 1");
   await nav("project"); await textButton("Rename project"); await type("project-name-input", "   "); await textButton("Save name");
-  await until("document.querySelector('dialog .form-error strong')?.textContent === 'Choose a valid project name'");
+  await until("document.querySelector('dialog .form-error')?.textContent.includes('Use a project name between 1 and 120 characters')");
   await check("invalid rename preserves input and restores focus for correction", "document.getElementById('project-name-input').value === '   ' && document.activeElement.id === 'project-name-input'");
   await type("project-name-input", "Support encoder"); await textButton("Save name");
   await until("!document.querySelector('#project-dialog[open]') && document.getElementById('breadcrumb').textContent.includes('Support encoder')");

@@ -1,6 +1,6 @@
 import { h, type Child } from "./dom.js";
 import { delta, metricInfo, score } from "./catalog.js";
-import { describeFailure } from "../presentation-errors.js";
+import { failureReason } from "../presentation-errors.js";
 
 const paths: Record<string, string[]> = {
   models: ["M4 7 12 3l8 4-8 4-8-4Z", "m4 12 8 4 8-4", "m4 17 8 4 8-4"],
@@ -21,6 +21,7 @@ const paths: Record<string, string[]> = {
   moon: ["M20 15.5A9 9 0 0 1 8.5 4 9 9 0 1 0 20 15.5Z"],
   refresh: ["M20 7v5h-5M4 17v-5h5", "M6 7a7 7 0 0 1 12 0l2 5M4 12l2 5a7 7 0 0 0 12 0"],
   activity: ["M5 4h14v16H5z", "M8 8h8M8 12h8M8 16h5"],
+  optimize: ["M13 2 4 14h7l-1 8 9-12h-7z"],
   sidebar: ["M3 4h18v16H3zM9 4v16"],
 };
 export function icon(name: string): HTMLElement { return h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", class: "icon" }, ...(paths[name] ?? paths.models!).map(d => h("path", { d }))); }
@@ -29,6 +30,7 @@ export function button(label: string, action: () => void, kind = "secondary", sy
 }
 export function tag(label: string, tone = "neutral"): HTMLElement { return h("span", { class: `tag ${tone}` }, label); }
 export function status(label: string, tone = "neutral"): HTMLElement { return h("span", { class: `status ${tone}` }, h("span", { class: "status-dot", "aria-hidden": "true" }), label); }
+export function spinner(): HTMLElement { return h("span", { class: "spinner", "aria-hidden": "true" }); }
 export function pageHeader(title: string, action?: Child): HTMLElement {
   return h("header", { class: "page-heading" }, h("h1", { tabindex: "-1" }, title), action ?? null);
 }
@@ -57,9 +59,7 @@ export function facts(entries: [string, Child][]): HTMLElement {
 export function copyField(value: string, copy: (value: string) => void): HTMLElement { return h("div", { class: "copy-field" }, h("code", {}, value), button("Copy", () => copy(value), "ghost small", "copy")); }
 export function details(title: string, content: Child, open = false): HTMLElement { return h("details", { class: "disclosure", open }, h("summary", {}, title), h("div", { class: "disclosure-content" }, content)); }
 export function failureNotice(error: unknown): HTMLElement {
-  const failure = describeFailure(error);
-  return h("div", { class: "failure-notice" }, h("strong", {}, failure.title), h("p", {}, failure.recovery),
-    details("Technical details", h("pre", {}, failure.detail)));
+  return h("div", { class: "failure-notice" }, h("strong", {}, "ERROR:"), h("span", {}, failureReason(error)));
 }
 export function selectControl(id: string, label: string, options: [string, string][], value: string, change: (value: string) => void): HTMLElement {
   return h("label", { class: "select-control", for: id }, h("span", {}, label), h("select", { id, value, onChange: (e: Event) => change((e.target as HTMLSelectElement).value) }, ...options.map(([v, text]) => h("option", { value: v }, text))));

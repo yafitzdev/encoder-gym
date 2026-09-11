@@ -115,7 +115,13 @@ export interface ManagedRunStatus {
 }
 
 export interface NativeProgress {
-  phase: "checking_files" | "checking_training_data" | "loading_model" | "preparing_batches" | "training" | "saving_checkpoint" | "evaluating_retrieval" | "evaluating_agent";
+  phase:
+    | "checking_model" | "checking_dataset" | "checking_evaluation" | "checking_runtime"
+    | "loading_training_rows" | "writing_training_rows" | "checking_materialized_project"
+    | "loading_evaluation_protocol" | "creating_candidate" | "creating_experiment"
+    | "registering_candidate" | "optimization_complete"
+    | "checking_files" | "checking_training_data" | "loading_model" | "preparing_batches"
+    | "training" | "saving_checkpoint" | "evaluating_retrieval" | "evaluating_agent";
   completed?: number;
   total?: number;
 }

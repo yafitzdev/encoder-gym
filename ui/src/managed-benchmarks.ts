@@ -1,9 +1,10 @@
-import type { BenchmarkAdoptionResult, BenchmarkPreview, BenchmarkQueryResult, ProjectBenchmarkResults, ProjectBenchmarkVersion } from "./benchmark-workspace.js";
+import type { BenchmarkAdoptionResult, BenchmarkInitializationResult, BenchmarkPreview, BenchmarkQueryResult, ProjectBenchmarkResults, ProjectBenchmarkVersion } from "./benchmark-workspace.js";
+import type { NativeProgress } from "./managed-control.js";
 import type { ManagedWorkspace } from "./managed-workspace.js";
 
 interface Ports {
   open(projectId: string): Promise<ManagedWorkspace>;
-  command<T>(args: string[]): Promise<T>;
+  command<T>(args: string[], progress?: (value: NativeProgress) => void): Promise<T>;
   exclusive<T>(projectId: string, run: () => Promise<T>): Promise<T>;
 }
 function uuid(value: unknown): string {
@@ -13,6 +14,24 @@ function uuid(value: unknown): string {
 /** Fixed project-bound CLI grammar; the renderer supplies no paths or report contents. */
 export class ManagedBenchmarks {
   constructor(private ports: Ports) {}
+  async initialize(projectId: string, progress?: (value: NativeProgress) => void): Promise<BenchmarkInitializationResult> {
+    return this.ports.exclusive(projectId, async () => {
+      const workspace = await this.ports.open(projectId);
+      if (!workspace.scientificBinding) throw new Error("Connect the project evaluation runtime first.");
+      const parent = workspace.benchmarkVersions?.at(-1)?.id;
+      const result = await this.ports.command<BenchmarkInitializationResult>([
+        "benchmark", workspace.folder, "initialize", ...(parent ? ["--expected-parent", parent] : []),
+      ], progress);
+      const actionId = uuid(result.actionId), versionId = uuid(result.version.id);
+      const current = await this.ports.open(projectId);
+      const recorded = current.benchmarkVersions?.find(version => version.id === versionId);
+      if (!recorded || recorded.projectId !== workspace.manifest.id || recorded.fingerprint !== result.version.fingerprint
+        || result.version.projectId !== workspace.manifest.id) {
+        throw new Error("Created benchmark does not match the project.");
+      }
+      return { actionId, version: recorded };
+    });
+  }
   async preview(projectId: string, run: unknown): Promise<BenchmarkPreview> {
     const runId = uuid(run), workspace = await this.ports.open(projectId);
     const preview = await this.ports.command<BenchmarkPreview>(["benchmark", workspace.folder, "preview-run", runId]);

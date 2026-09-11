@@ -158,12 +158,14 @@ inputs and reserved the project run.
 
 ## Desktop and execution integration
 
-The project-header Optimize action opens the desktop input selector. It shows
-the active baseline and named dataset/benchmark versions, with links to their
-ordinary viewers. First setup prefers the model's recorded training version;
-multiple unrelated datasets require a choice. Saved versions never follow a
-newer dataset or benchmark automatically. Reopening a project reloads persisted
-selection history and a changed baseline requires a new saved selection.
+Optimize is a first-class project page in the sidebar. It shows the active
+baseline, the chosen dataset version and the current project evaluation, with
+links to their ordinary viewers. First setup prefers the model's recorded
+training version; multiple unrelated datasets require a choice. Dataset
+selection remains explicit. Evaluation is not a per-run selector: every new
+setup pins the current project benchmark while historical setup records keep
+their original benchmark identity. A changed baseline or current evaluation
+therefore creates a new immutable setup.
 
 Save uses the same preview/save CLI, checks the preview against the displayed
 identities and expected parent, and preserves its exact retry UUID after a lost
@@ -227,6 +229,17 @@ it must not silently run a different recipe or dataset in response to a setup.
 - Native phase names and bounded counters come from the run's persisted project
   activity action. The Optimize and Runs pages show the same durable progress;
   neither parses subprocess prose or invents a percentage.
+- Product-level phases identify the exact artifact or work in progress: baseline
+  model, dataset version and row count, evaluation version and suites, runtime
+  checks, row materialization, candidate creation, training steps, checkpoint
+  save and evaluation. The Optimize status card and Runs navigation show a
+  spinner while the project action is active.
+- Optimization failures are one solid alert containing the backend reason as
+  `ERROR: <reason>`. Desktop IPC wrappers are removed; the alert has no nested
+  details or refresh action.
+- Dataset viewers retain a 16 MiB page bound. Full training materialization uses
+  its separately declared 512 MiB operation bound, so a valid selected dataset
+  is never rejected merely because it is larger than one UI page.
 - Stop first appends a terminal `cancelled` event to the project run, then
   interrupts the exact active worker and its native process tree. An older
   stage head cannot publish completion or failure after cancellation wins.
@@ -235,9 +248,8 @@ it must not silently run a different recipe or dataset in response to a setup.
 - The model viewer resolves a registered accepted candidate back through its
   exact scientific child and parent optimization UUID. `Make baseline` appends
   the normal baseline revision; rejected and previous models remain immutable.
-- UI typecheck, 96 unit tests and the full Electron acceptance pass.
+- UI typecheck, 99 unit tests and the full Electron acceptance pass.
   The Rust workspace gates and deterministic optimization recovery suite pass.
   No real Nomos training, provider call, final evaluation or baseline change was
   performed by this implementation work.
-- Bounded advisor/data-generation iterations and initial benchmark onboarding
-  remain open product work.
+- Bounded advisor/data-generation iterations remain open product work.

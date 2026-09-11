@@ -51,6 +51,10 @@ async function pickExecutable(title: string): Promise<string | undefined> {
   return selected.canceled ? undefined : selected.filePaths[0];
 }
 const projectId = (value: unknown): string => { if (typeof value !== "string" || !value) throw new Error("A project identity is required."); return value; };
+const requestId = (value: unknown): string => {
+  if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) throw new Error("A request identity is required.");
+  return value.toLowerCase();
+};
 const providerRole = (value: unknown): ProviderRole => {
   if (value !== "generation" && value !== "advisor" && value !== "evaluator") throw new Error("Choose a provider authority.");
   return value;
@@ -207,6 +211,12 @@ ipcMain.handle("encoder-gym:choose-dataset", async (_event, value: unknown, purp
 });
 ipcMain.handle("encoder-gym:query-datasets", (_event, value: unknown, request: unknown) => backend.datasetVersions.query(projectId(value), request));
 ipcMain.handle("encoder-gym:query-benchmarks", (_event, value: unknown, request: unknown) => backend.benchmarks.query(projectId(value), request));
+ipcMain.handle("encoder-gym:initialize-benchmark", (event, value: unknown, request: unknown) => {
+  const id = projectId(value), token = requestId(request);
+  return backend.benchmarks.initialize(id, progress => {
+    if (!event.sender.isDestroyed()) event.sender.send("encoder-gym:benchmark-progress", token, progress);
+  });
+});
 ipcMain.handle("encoder-gym:optimization-setups", (_event, value: unknown) => backend.optimizationSetup.list(projectId(value)));
 ipcMain.handle("encoder-gym:preview-optimization-setup", (_event, value: unknown, request: unknown) => backend.optimizationSetup.preview(projectId(value), request));
 ipcMain.handle("encoder-gym:save-optimization-setup", (_event, value: unknown, request: unknown) => backend.optimizationSetup.save(projectId(value), request));
@@ -223,8 +233,8 @@ ipcMain.handle("encoder-gym:input-optimization-run", (_event, value: unknown, ru
 ipcMain.handle("encoder-gym:input-optimization-runs", (_event, value: unknown) => backend.optimizationLaunch.runs(projectId(value)));
 ipcMain.handle("encoder-gym:drive-input-optimization", (_event, value: unknown, run: unknown) => {
   const id = projectId(value), phases: Record<InputOptimizationPhase, NativeProgress["phase"]> = {
-    checking_inputs: "checking_files", preparing_data: "checking_training_data", starting: "loading_model", training: "training",
-    saving_candidate: "saving_checkpoint", evaluating: "evaluating_retrieval", complete: "saving_checkpoint",
+    checking_inputs: "checking_model", preparing_data: "loading_training_rows", starting: "loading_evaluation_protocol", training: "checking_files",
+    saving_candidate: "registering_candidate", evaluating: "checking_evaluation", complete: "optimization_complete",
   };
   return trackProjectAction(id, "optimization.run", activityReference("run", run), progress =>
     backend.optimizationLaunch.drive(id, run, (phase, native) => progress(native ?? { phase: phases[phase] })), result => [

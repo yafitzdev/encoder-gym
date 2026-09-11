@@ -2,8 +2,8 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { OptimizationSelection, OptimizationSetup, OptimizationSetupPreview, OptimizationSetupRequest, OptimizationSetupSaved } from "./optimization-setup.js";
 import type { OptimizationLaunchAuthorization, OptimizationLaunchPreview, OptimizationLaunchRequest, OptimizationLaunchSaved } from "./optimization-launch.js";
 import type { DatasetQuery, DatasetQueryResult, DatasetMutation, DatasetMutationResult } from "./dataset-workspace.js";
-import type { BenchmarkAdoption, BenchmarkAdoptionResult, BenchmarkPreview, BenchmarkQuery, BenchmarkQueryResult } from "./benchmark-workspace.js";
-import type { ManagedBaselineRestorationRequest, ManagedOptimizationRequest, ManagedOptimizationResult, ManagedPromotionRequest, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, PreparedOptimizationChoice, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
+import type { BenchmarkAdoption, BenchmarkAdoptionResult, BenchmarkInitializationResult, BenchmarkPreview, BenchmarkQuery, BenchmarkQueryResult } from "./benchmark-workspace.js";
+import type { ManagedBaselineRestorationRequest, ManagedOptimizationRequest, ManagedOptimizationResult, ManagedPromotionRequest, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NativeProgress, NomosBindingPreview, OptimizationManifestChoice, PreparedOptimizationChoice, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
 import type { OpenedProject, ProjectCollection } from "./projects.js";
 import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, ModelChoice } from "./managed-workspace.js";
 import type { ProjectActivityExport, ProjectActivityLog } from "./project-activity.js";
@@ -22,6 +22,7 @@ export interface EncoderGymBridge {
   inputOptimizationRun(id: string, runId: string): Promise<InputOptimizationRun>;
   inputOptimizationRuns(id: string): Promise<InputOptimizationRun[]>;
   queryBenchmarks(id: string, request: BenchmarkQuery): Promise<BenchmarkQueryResult>;
+  initializeBenchmark(id: string, progress?: (value: NativeProgress) => void): Promise<BenchmarkInitializationResult>;
   previewBenchmark(id: string, runId: string): Promise<BenchmarkPreview>;
   adoptBenchmark(id: string, request: BenchmarkAdoption): Promise<BenchmarkAdoptionResult>;
   queryDatasets(id: string, request: DatasetQuery): Promise<DatasetQueryResult>;
@@ -78,6 +79,17 @@ const bridge: EncoderGymBridge = {
   inputOptimizationRun: (id, runId) => ipcRenderer.invoke("encoder-gym:input-optimization-run", id, runId),
   inputOptimizationRuns: id => ipcRenderer.invoke("encoder-gym:input-optimization-runs", id),
   queryBenchmarks: (id, request) => ipcRenderer.invoke("encoder-gym:query-benchmarks", id, request),
+  initializeBenchmark: (id, receive) => {
+    const requestId = globalThis.crypto.randomUUID();
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown, progress: unknown): void => {
+      if (value !== requestId || !receive) return;
+      const parsed = nativeProgress(progress);
+      if (parsed) receive(parsed);
+    };
+    ipcRenderer.on("encoder-gym:benchmark-progress", listener);
+    return ipcRenderer.invoke("encoder-gym:initialize-benchmark", id, requestId)
+      .finally(() => ipcRenderer.removeListener("encoder-gym:benchmark-progress", listener));
+  },
   previewBenchmark: (id, runId) => ipcRenderer.invoke("encoder-gym:preview-benchmark", id, runId),
   adoptBenchmark: (id, request) => ipcRenderer.invoke("encoder-gym:adopt-benchmark", id, request),
   queryDatasets: (id, request) => ipcRenderer.invoke("encoder-gym:query-datasets", id, request),
@@ -133,3 +145,17 @@ const bridge: EncoderGymBridge = {
 };
 
 contextBridge.exposeInMainWorld("encoderGym", Object.freeze(bridge));
+
+const nativePhases = new Set<NativeProgress["phase"]>([
+  "checking_files", "checking_training_data", "loading_model", "preparing_batches", "training",
+  "saving_checkpoint", "evaluating_retrieval", "evaluating_agent",
+]);
+function nativeProgress(value: unknown): NativeProgress | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const input = value as Record<string, unknown>;
+  if (Object.keys(input).some(key => !["phase", "completed", "total"].includes(key)) || !nativePhases.has(input.phase as NativeProgress["phase"])) return;
+  if (input.completed === undefined && input.total === undefined) return { phase: input.phase as NativeProgress["phase"] };
+  if (!Number.isSafeInteger(input.completed) || !Number.isSafeInteger(input.total)
+    || (input.completed as number) < 0 || (input.total as number) < 1 || (input.completed as number) > (input.total as number)) return;
+  return { phase: input.phase as NativeProgress["phase"], completed: input.completed as number, total: input.total as number };
+}
