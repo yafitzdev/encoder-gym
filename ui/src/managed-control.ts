@@ -192,6 +192,11 @@ export interface ManagedPromotionRequest {
   reason?: string;
 }
 
+export interface ManagedBaselineRestorationRequest {
+  targetRevisionId: string;
+  expectedBaselineRevisionId: string;
+}
+
 export type ProviderRole = "generation" | "advisor" | "evaluator";
 export interface ProviderLimitsInput { maximumRequests: number; maximumInputTokens: number; maximumOutputTokens: number; maximumCostMicrousd: number }
 export interface ProviderInput {

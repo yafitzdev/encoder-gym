@@ -39,6 +39,7 @@ const operationLabels: Record<string, string> = {
   "optimization.authorize_sealed": "Sealed evaluation authorized",
   "optimization.cancel": "Run cancelled",
   "model.promote": "Model promoted",
+  "model.restore_baseline": "Baseline restored",
   "providers.configure": "Providers configured",
   "credential.save": "Credential saved",
   "credential.remove": "Credential removed",

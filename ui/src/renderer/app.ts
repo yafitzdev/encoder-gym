@@ -28,8 +28,8 @@ import { scientificRuntimeDialog } from "./scientific-runtime-dialog.js";
 import { renderActivity, type ActivityPageActions, type ActivityPageState } from "./activity-page.js";
 
 const element = (id: string): HTMLElement => { const found = document.getElementById(id); if (!found) throw new Error("Missing #" + id); return found; };
-interface ProjectView { history: NavigationHistory; models: ModelPageState; details: Map<string, DetailState>; optimization: OptimizationPageState; providers: ProviderPageState; activity: ActivityPageState; datasets?: DatasetController; benchmarks?: BenchmarkController; setup?: OptimizationSetupController }
-const newView = (): ProjectView => ({ history: new NavigationHistory(), models: { filter: initialFilter(), selected: new Set(), suiteIndex: 0 }, details: new Map(), optimization: { loading: false }, providers: { loading: false }, activity: { loading: false } });
+interface ProjectView { history: NavigationHistory; models: ModelPageState; details: Map<string, DetailState>; optimization: OptimizationPageState; providers: ProviderPageState; activity: ActivityPageState; baselineBusy: boolean; datasets?: DatasetController; benchmarks?: BenchmarkController; setup?: OptimizationSetupController }
+const newView = (): ProjectView => ({ history: new NavigationHistory(), models: { filter: initialFilter(), selected: new Set(), suiteIndex: 0 }, details: new Map(), optimization: { loading: false }, providers: { loading: false }, activity: { loading: false }, baselineBusy: false });
 
 export function mount(): void {
   const bridge = window.encoderGym ?? previewBridge();
@@ -292,24 +292,40 @@ export function mount(): void {
     void pollOptimization(id, state);
   }, 2000);
   window.setInterval(() => updateRunClocks(main), 1000);
-  async function promoteAccepted(): Promise<void> {
-    const id = selection.selectedId, run = view.optimization.run, managed = workspace()?.managed;
+  async function promoteAccepted(runId = view.optimization.run?.run_id, modelName = "accepted candidate"): Promise<void> {
+    const id = selection.selectedId, managed = workspace()?.managed;
     const expectedBaselineRevisionId = managed?.modelCatalog?.activeBaselineRevisionId;
-    if (!id || !run || !expectedBaselineRevisionId || view.optimization.loading) return;
-    if (!window.confirm("Promote this sealed-accepted checkpoint to the project baseline? The current baseline remains in immutable history.")) return;
-    const state = view.optimization; state.loading = true; state.executing = "promote"; state.error = undefined; state.errorTitle = undefined; render();
+    if (!id || !runId || !expectedBaselineRevisionId || view.baselineBusy) return;
+    if (!window.confirm(`Make ${modelName} the baseline?`)) return;
+    const state = view.optimization, fromRun = ["run", "optimization"].includes(view.history.current.page) && state.run?.run_id === runId;
+    view.baselineBusy = true;
+    if (fromRun) { state.loading = true; state.executing = "promote"; state.error = undefined; state.errorTitle = undefined; }
+    render();
     try {
-      const latest = await bridge.promoteAccepted(id, { runId: run.run_id, expectedBaselineRevisionId });
+      const latest = await bridge.promoteAccepted(id, { runId, expectedBaselineRevisionId });
       if (selection.selectedId === id) {
         opened = latest;
-        notify("Accepted checkpoint promoted. Reconnect the scientific runtime before the next run.");
+        notify("Baseline updated. Reconnect the runtime before optimizing.");
       }
     } catch (error) {
-      state.errorTitle = "Could not promote the accepted checkpoint";
-      state.error = message(error);
+      if (fromRun) { state.errorTitle = "Could not update the baseline"; state.error = message(error); }
+      else operationError = error;
     } finally {
-      state.loading = false; state.executing = undefined; if (selection.selectedId === id) render();
+      view.baselineBusy = false;
+      if (fromRun) { state.loading = false; state.executing = undefined; }
+      if (selection.selectedId === id) render();
     }
+  }
+  async function restoreBaseline(targetRevisionId: string, modelName: string): Promise<void> {
+    const id = selection.selectedId, expectedBaselineRevisionId = workspace()?.managed?.modelCatalog?.activeBaselineRevisionId;
+    if (!id || !expectedBaselineRevisionId || view.baselineBusy) return;
+    if (!window.confirm(`Restore ${modelName} as the baseline?`)) return;
+    view.baselineBusy = true; operationError = undefined; render();
+    try {
+      const latest = await bridge.restoreBaseline(id, { targetRevisionId, expectedBaselineRevisionId });
+      if (selection.selectedId === id) { opened = latest; notify("Baseline restored. Reconnect the runtime before optimizing."); }
+    } catch (error) { operationError = error; }
+    finally { view.baselineBusy = false; if (selection.selectedId === id) render(); }
   }
   async function loadOptimizationReport(): Promise<void> {
     const id = selection.selectedId, runId = view.optimization.run?.run_id;
@@ -447,6 +463,9 @@ export function mount(): void {
       navigate({ page: "compare", candidateIds: rows.map(row => row.candidate.id) });
     },
     prepareOptimization: () => { navigate({ page: "optimization", tab: "setup" }); },
+    get baselineBusy() { return view.baselineBusy; },
+    promoteModel: (runId, name) => { void promoteAccepted(runId, name); },
+    restoreBaseline: (targetRevisionId, name) => { void restoreBaseline(targetRevisionId, name); },
   };
   const pages: [Page, string, string][] = [["models", "Models", "models"], ["datasets", "Data", "dataset"], ["runs", "Runs", "runs"], ["benchmarks", "Evaluation", "benchmark"], ["activity", "Activity", "activity"], ["project", "Project settings", "settings"]];
   function render(): void {

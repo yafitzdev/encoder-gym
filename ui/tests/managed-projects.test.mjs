@@ -187,6 +187,63 @@ test("managed control accepts only native-picked manifests and fixed project-sco
   await assert.rejects(() => backend.optimize(id, { action: "status", runId: "../other" }), /Invalid run identity/);
 });
 
+test("baseline restoration accepts only an earlier revision and verifies the appended result", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gym-baseline-restore-")), folder = join(root, "project");
+  mkdirSync(folder);
+  const id = randomUUID(), previousModelId = randomUUID(), activeModelId = randomUUID();
+  const previousRevisionId = randomUUID(), activeRevisionId = randomUUID();
+  const baseline = { source: join(folder, "baseline"), format: "safetensors-encoder", architecture: "bert", files: [], bytes: 10, fingerprint: "sha256:" + "a".repeat(64), execution: "not-configured" };
+  const artifact = (modelId, name, fingerprint) => ({ id: modelId, projectId: id, name, createdAt: new Date().toISOString(), origin: "imported", path: `models/${modelId}`, format: baseline.format, bytes: 10, fingerprint });
+  const revision = (revisionId, sequence, modelArtifactId, previousRevisionId, change) => ({ id: revisionId, projectId: id, sequence, modelArtifactId, ...(previousRevisionId ? { previousRevisionId } : {}), change, actor: "fixture", reason: "fixture", createdAt: new Date().toISOString(), fingerprint: "sha256:" + String(sequence).repeat(64) });
+  let workspace = {
+    folder, verified: true,
+    manifest: { version: 1, id, name: "Restoration fixture", createdAt: new Date().toISOString(), task: "retrieval", baseline }, datasets: [],
+    modelCatalog: {
+      projectId: id,
+      artifacts: [artifact(previousModelId, "Original baseline", "sha256:" + "b".repeat(64)), artifact(activeModelId, "Current baseline", "sha256:" + "c".repeat(64))],
+      baselineRevisions: [
+        revision(previousRevisionId, 1, previousModelId, undefined, { kind: "initialization", source_fingerprint: baseline.fingerprint }),
+        revision(activeRevisionId, 2, activeModelId, previousRevisionId, { kind: "promotion", decision_id: randomUUID(), decision_fingerprint: "sha256:" + "d".repeat(64) }),
+      ],
+      activeBaselineRevisionId: activeRevisionId,
+    },
+  };
+  const registry = new ProjectRegistry(join(root, "profile", "projects.json")); registry.addManaged(workspace);
+  const calls = [];
+  let substituteResult = false;
+  const executor = async (_executable, args) => {
+    calls.push(args);
+    if (args[3] === "verify" || args[3] === "open") return JSON.stringify(workspace);
+    if (args[3] === "restore-baseline") {
+      const value = option => args[args.indexOf(option) + 1];
+      const restoredId = value("--revision-id");
+      const targetId = substituteResult ? previousRevisionId : value("--target-revision-id");
+      workspace = { ...workspace, modelCatalog: { ...workspace.modelCatalog,
+        baselineRevisions: [...workspace.modelCatalog.baselineRevisions, revision(restoredId, 3, previousModelId, activeRevisionId, { kind: "restoration", target_revision_id: targetId })],
+        activeBaselineRevisionId: restoredId,
+      } };
+      return JSON.stringify(workspace);
+    }
+    throw new Error("unexpected command");
+  };
+  const backend = new ManagedBackend("owned-synth", registry, executor);
+  const restored = await backend.restoreBaseline(id, { targetRevisionId: previousRevisionId, expectedBaselineRevisionId: activeRevisionId });
+  const restoreCall = calls.find(args => args[3] === "restore-baseline");
+  assert.deepEqual(restoreCall.slice(4, 5), [folder]);
+  assert.equal(restoreCall.includes("--actor"), false);
+  assert.equal(restoreCall.includes("--reason"), false);
+  assert.match(restoreCall[restoreCall.indexOf("--revision-id") + 1], /^[0-9a-f-]{36}$/);
+  assert.equal(restoreCall[restoreCall.indexOf("--target-revision-id") + 1], previousRevisionId);
+  assert.equal(restored.modelCatalog.activeBaselineRevisionId, restoreCall[restoreCall.indexOf("--revision-id") + 1]);
+
+  await assert.rejects(() => backend.restoreBaseline(id, { targetRevisionId: previousRevisionId, expectedBaselineRevisionId: activeRevisionId, path: root }), /unsupported setting/);
+  await assert.rejects(() => backend.restoreBaseline(id, { targetRevisionId: randomUUID(), expectedBaselineRevisionId: restored.modelCatalog.activeBaselineRevisionId }), /previous baseline model/);
+  await assert.rejects(() => backend.restoreBaseline(id, { targetRevisionId: previousRevisionId, expectedBaselineRevisionId: activeRevisionId }), /active baseline changed/);
+
+  substituteResult = true;
+  await assert.rejects(() => backend.restoreBaseline(id, { targetRevisionId: activeRevisionId, expectedBaselineRevisionId: restored.modelCatalog.activeBaselineRevisionId }), /mismatched project history/);
+});
+
 test("managed control rejects a duplicate mutating operation for one project", async () => {
   const root = mkdtempSync(join(tmpdir(), "gym-managed-exclusive-")), folder = join(root, "project"); mkdirSync(folder);
   const id = randomUUID(), baseline = { source: folder, format: "safetensors-encoder", architecture: "bert", files: [], bytes: 10, fingerprint: "sha256:" + "b".repeat(64), execution: "not-configured" };

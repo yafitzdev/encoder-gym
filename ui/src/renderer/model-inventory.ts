@@ -7,6 +7,27 @@ export interface InventoryModel {
   artifact: ModelArtifact; catalogArtifact?: CatalogArtifact; evidence?: CandidateRow;
 }
 
+export type BaselineAction = { kind: "promote"; runId: string } | { kind: "restore"; revisionId: string };
+
+/** Only durable acceptance or immutable baseline history can offer a baseline action. */
+export function baselineAction(workspace: WorkspaceSnapshot, model: InventoryModel): BaselineAction | undefined {
+  const catalog = workspace.managed?.modelCatalog;
+  const active = catalog?.baselineRevisions.find(revision => revision.id === catalog.activeBaselineRevisionId);
+  if (model.role === "Candidate" && model.evidence?.run.optimizationId
+    && model.evidence.run.decision === "promote_candidate"
+    && model.evidence.run.selectedCandidateId === model.evidence.candidate.id
+    && model.evidence.run.acceptance.state === "passed"
+    && model.catalogArtifact?.parentModelId === active?.modelArtifactId) {
+    return { kind: "promote", runId: model.evidence.run.optimizationId };
+  }
+  if (model.role === "Previous baseline") {
+    const revision = [...(catalog?.baselineRevisions ?? [])].reverse()
+      .find(candidate => candidate.modelArtifactId === model.id && candidate.id !== catalog?.activeBaselineRevisionId);
+    if (revision) return { kind: "restore", revisionId: revision.id };
+  }
+  return undefined;
+}
+
 /** Artifact identity and producing run bind evidence; names and outcomes never do. */
 export function modelInventory(workspace: WorkspaceSnapshot): InventoryModel[] {
   const catalog = workspace.managed?.modelCatalog;

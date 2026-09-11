@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { projectRun } from "../dist/evidence/read-workspace.js";
-import { modelInventory, findModel } from "../dist/evidence/model-inventory.js";
+import { baselineAction, modelInventory, findModel } from "../dist/evidence/model-inventory.js";
 import { candidateRows } from "../dist/evidence/catalog.js";
 import { experimentFixture } from "./fixtures/experiment.mjs";
 
@@ -19,10 +19,22 @@ test("registered rejected outputs survive inventory and follow scientific source
   assert.equal(findModel(world, output.id).evidence.candidate.development[0].verdict, "failed");
   assert.equal(candidateRows(world).length, 1, "different inventory hash must still bind the native evidence");
   assert.equal(findModel(world, candidate.model.id).id, output.id);
+  const registered = findModel(world, output.id);
+  run.optimizationId = "optimization-run";
+  run.decision = "promote_candidate";
+  run.selectedCandidateId = candidate.id;
+  run.acceptance = { state: "passed" };
+  output.parentModelId = baseline.id;
+  assert.deepEqual(baselineAction(world, registered), { kind: "promote", runId: "optimization-run" });
+  run.acceptance.state = "failed";
+  assert.equal(baselineAction(world, registered), undefined, "a candidate without recorded acceptance cannot be promoted");
+  run.acceptance.state = "passed";
   catalog.baselineRevisions.push({ id: "revision-2", modelArtifactId: output.id });
   catalog.activeBaselineRevisionId = "revision-2";
   assert.equal(findModel(world, output.id).role, "Baseline");
   assert.equal(findModel(world, baseline.id).role, "Previous baseline");
+  assert.equal(baselineAction(world, findModel(world, output.id)), undefined, "the active baseline has no redundant control");
+  assert.deepEqual(baselineAction(world, findModel(world, baseline.id)), { kind: "restore", revisionId: "revision-1" });
   assert.equal(modelInventory(world).length, 2, "promotion never erases either model");
   output.producingRun.id = "another-run";
   assert.equal(findModel(world, output.id).evidence, undefined, "same bytes cannot borrow unrelated evidence");

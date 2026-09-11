@@ -13,6 +13,9 @@ export interface Actions {
   connect(): void;
   compare(rows: CandidateRow[]): void;
   prepareOptimization(): void;
+  readonly baselineBusy: boolean;
+  promoteModel(runId: string, name: string): void;
+  restoreBaseline(targetRevisionId: string, name: string): void;
 }
 
 export interface ProjectActions {

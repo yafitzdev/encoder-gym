@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import type { BrowserWindow } from "electron";
 import type { ProjectRegistry } from "./project-registry.js";
 import type { ManagedBackend } from "./managed-backend.js";
-import type { ManagedOptimizationRequest, ManagedPromotionRequest, ManagedReadiness, ManagedRunStatus } from "./managed-control.js";
+import type { ManagedBaselineRestorationRequest, ManagedOptimizationRequest, ManagedPromotionRequest, ManagedReadiness, ManagedRunStatus } from "./managed-control.js";
 
 interface Harness { registry: ProjectRegistry; backend: ManagedBackend; chooseFolder(path?: string): void; restart: boolean }
 export async function runManagedSmokeChecks(window: BrowserWindow, output: string, harness: Harness): Promise<void> {
@@ -146,7 +146,9 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   const prepareMethod = harness.backend.prepareOptimization.bind(harness.backend);
   const optimizeMethod = harness.backend.optimize.bind(harness.backend);
   const promoteMethod = harness.backend.promoteAccepted.bind(harness.backend);
+  const restoreMethod = harness.backend.restoreBaseline.bind(harness.backend);
   const managed = await harness.backend.openRegistered(firstId);
+  let displayedManaged = managed;
   const catalog = managed.modelCatalog;
   if (!catalog) throw new Error("Managed smoke project has no model catalog");
   const runId = randomUUID(), experimentId = randomUUID(), candidateId = randomUUID();
@@ -216,7 +218,18 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
       const previous = catalog.baselineRevisions.find(item => item.id === catalog.activeBaselineRevisionId)!;
       const candidate = { id: randomUUID(), projectId: firstId, name: "Accepted smoke candidate", createdAt: new Date().toISOString(), origin: "trained" as const, path: "models/candidates/smoke", format: managed.manifest.baseline.format, bytes: 10, fingerprint: "sha256:" + "5".repeat(64), parentModelId: previous.modelArtifactId, producingRun: { id: experimentId, fingerprint: "sha256:" + "6".repeat(64) }, trainingSnapshot: { id: trainingSnapshotId, fingerprint: "sha256:" + "7".repeat(64) } };
       const revisionId = randomUUID();
-      return { ...managed, modelCatalog: { ...catalog, artifacts: [...catalog.artifacts, candidate], baselineRevisions: [...catalog.baselineRevisions, { id: revisionId, projectId: firstId, sequence: catalog.baselineRevisions.length + 1, modelArtifactId: candidate.id, previousRevisionId: catalog.activeBaselineRevisionId, change: { kind: "promotion" as const, decision_id: randomUUID(), decision_fingerprint: "sha256:" + "8".repeat(64) }, actor: "local-operator", reason: "Smoke accepted promotion", createdAt: new Date().toISOString(), fingerprint: "sha256:" + "9".repeat(64) }], activeBaselineRevisionId: revisionId } };
+      displayedManaged = { ...managed, modelCatalog: { ...catalog, artifacts: [...catalog.artifacts, candidate], baselineRevisions: [...catalog.baselineRevisions, { id: revisionId, projectId: firstId, sequence: catalog.baselineRevisions.length + 1, modelArtifactId: candidate.id, previousRevisionId: catalog.activeBaselineRevisionId, change: { kind: "promotion" as const, decision_id: randomUUID(), decision_fingerprint: "sha256:" + "8".repeat(64) }, actor: "local-operator", reason: "Smoke accepted promotion", createdAt: new Date().toISOString(), fingerprint: "sha256:" + "9".repeat(64) }], activeBaselineRevisionId: revisionId } };
+      return displayedManaged;
+    };
+    harness.backend.restoreBaseline = async (projectId, request) => {
+      if (projectId !== firstId) return restoreMethod(projectId, request);
+      const intent = request as ManagedBaselineRestorationRequest, current = displayedManaged.modelCatalog;
+      if (!current || intent.expectedBaselineRevisionId !== current.activeBaselineRevisionId) throw new Error("Restoration request lost its active baseline");
+      const target = current.baselineRevisions.find(revision => revision.id === intent.targetRevisionId);
+      if (!target) throw new Error("Restoration target is not in baseline history");
+      const revisionId = randomUUID();
+      displayedManaged = { ...displayedManaged, modelCatalog: { ...current, baselineRevisions: [...current.baselineRevisions, { id: revisionId, projectId: firstId, sequence: current.baselineRevisions.length + 1, modelArtifactId: target.modelArtifactId, previousRevisionId: current.activeBaselineRevisionId, change: { kind: "restoration" as const, target_revision_id: target.id }, actor: "local-operator", reason: "Smoke baseline restoration", createdAt: new Date().toISOString(), fingerprint: "sha256:" + "a".repeat(64) }], activeBaselineRevisionId: revisionId } };
+      return displayedManaged;
     };
 
     // Existing CLI-created runs remain supervised through Runs. Optimize no
@@ -261,7 +274,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await check("terminal report exposes aggregate evidence and provenance without sealed values", "document.querySelector('.run-report').textContent.includes('6,824 rows') && document.querySelector('.run-report').textContent.includes('generic_holdout') && document.querySelector('.run-report').textContent.includes('0.81 baseline') && document.querySelector('.run-report').textContent.includes('Known evidence limits') && !document.querySelector('.run-report').textContent.includes('sealed score')");
     await screenshot("managed-optimization-report");
     await textButton("Promote accepted candidate"); await until("document.querySelector('.promotion-result')?.textContent.includes('Accepted candidate is now the baseline')");
-    await check("promotion immediately updates the active managed baseline", "document.querySelector('.launch-summary h2').textContent === 'Baseline updated' && document.querySelector('.promotion-result').textContent.includes('Accepted candidate is now the baseline') && document.getElementById('toast').textContent.includes('promoted')");
+    await check("promotion immediately updates the active managed baseline", "document.querySelector('.launch-summary h2').textContent === 'Baseline updated' && document.querySelector('.promotion-result').textContent.includes('Accepted candidate is now the baseline') && document.getElementById('toast').textContent.includes('Baseline updated')");
     await screenshot("managed-optimization-promoted");
 
     currentRun = run("failed", "none", undefined, "Native trainer exited before the checkpoint was committed.");
@@ -286,12 +299,20 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     currentRun = run("completed", "none", "promote_candidate");
     readiness.launchPreview = { ...preview, existingRun: { runId, state: "completed" } };
     await textButton("Refresh"); await until("document.querySelector('.launch-summary h2')?.textContent === 'Baseline updated'");
+    await nav("models"); await until("document.querySelectorAll('.artifact-row').length === 2");
+    await evaluate("[...document.querySelectorAll('.artifact-row')].find(row=>row.textContent.includes('Previous baseline')).querySelector('.candidate-link').click()");
+    await until("[...document.querySelectorAll('#page button')].some(button=>button.textContent === 'Restore baseline')");
+    await check("historical model exposes restoration while the active baseline has no redundant action", "document.querySelector('.model-view .tag').textContent === 'Previous baseline' && [...document.querySelectorAll('#page button')].some(button=>button.textContent === 'Restore baseline') && ![...document.querySelectorAll('#page button')].some(button=>button.textContent === 'Make baseline')");
+    await textButton("Restore baseline"); await until("document.querySelector('.model-view .tag')?.textContent === 'Baseline'");
+    await check("restoring from the model viewer updates the shared baseline snapshot", "![...document.querySelectorAll('#page button')].some(button=>button.textContent === 'Restore baseline') && document.getElementById('toast').textContent.includes('restored')");
+    await screenshot("managed-model-baseline-restored");
   } finally {
     releaseTraining();
     harness.backend.readiness = readinessMethod;
     harness.backend.prepareOptimization = prepareMethod;
     harness.backend.optimize = optimizeMethod;
     harness.backend.promoteAccepted = promoteMethod;
+    harness.backend.restoreBaseline = restoreMethod;
   }
 
   await nav("models");

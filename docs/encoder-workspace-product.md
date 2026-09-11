@@ -477,3 +477,20 @@ and keep outstanding requirements visible.
   must still admit the selected dataset, pin finite budgets and use the bounded
   agent/generation contracts. Managed integration, benchmark onboarding,
   promotion/restoration controls and the complete Optimize journey remain open.
+
+### Model baseline controls — 11 September 2026
+
+- The model viewer now owns baseline changes. A candidate that passed the
+  recorded final decision exposes `Make baseline`; a historical baseline
+  exposes `Restore baseline`; the active baseline has no redundant action.
+- Restoration appends a new baseline revision and advances the active pointer.
+  It never rewrites model artifacts or earlier revisions, and stale renderer
+  state is rejected against the exact active revision observed by the user.
+- The desktop bridge accepts only revision UUIDs, generates the new revision
+  identity internally, invokes one fixed project-scoped CLI command and verifies
+  the returned project, target model and appended restoration record.
+- Restoration is recorded by the CLI in the project Activity journal as
+  `Baseline restored`, with action/event UUIDs and revision references.
+- UI typecheck/build, all 83 unit tests and the full four-launch Electron
+  acceptance suite pass, including the model-view restoration journey. No real
+  project, provider, training process or protected evaluation was touched.

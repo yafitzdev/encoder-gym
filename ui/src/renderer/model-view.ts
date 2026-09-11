@@ -4,7 +4,7 @@ import { bytesLabel, candidateName, dateLabel, durationLabel, metricInfo, runLab
 import { button, copyField, details, empty, facts, pageHeader, sectionHeader, tabs, tag } from "./components.js";
 import { renderResults, trainingDetails, runListItem, type DetailState } from "./detail-pages.js";
 import { h } from "./dom.js";
-import { findModel, type InventoryModel } from "./model-inventory.js";
+import { baselineAction, findModel, type InventoryModel } from "./model-inventory.js";
 
 export function renderModel(workspace: WorkspaceSnapshot, id: string, tab: string, state: DetailState, actions: Actions, runId?: string): HTMLElement {
   let model: InventoryModel | undefined = findModel(workspace, id);
@@ -23,6 +23,13 @@ export function renderModel(workspace: WorkspaceSnapshot, id: string, tab: strin
   const reports = [...new Map(baselineReports.map(r => [r.id, r])).values()];
   const selectedTab = ["overview", "results", "training", "artifact"].includes(tab) ? tab : "overview";
   const parent = catalog?.parentModelId ? findModel(workspace, catalog.parentModelId) : row ? findModel(workspace, row.run.baseline.id) : undefined;
+  const allowedBaselineAction = baselineAction(workspace, m);
+  const baselineActionButton = allowedBaselineAction?.kind === "promote"
+    ? button(actions.baselineBusy ? "Updating…" : "Make baseline", () => actions.promoteModel(allowedBaselineAction.runId, m.name), "primary")
+    : allowedBaselineAction?.kind === "restore"
+      ? button(actions.baselineBusy ? "Updating…" : "Restore baseline", () => actions.restoreBaseline(allowedBaselineAction.revisionId, m.name), "secondary")
+      : null;
+  if (baselineActionButton) baselineActionButton.disabled = actions.baselineBusy;
   const snapshotId = catalog?.trainingSnapshot?.id ?? row?.candidate.parameters.repair_snapshot_id;
   const snapshotRows = row?.candidate.parameters.repair_total_rows;
   const trainingData = workspace.managed?.modelDatasetLinks?.find(link => link.projectId === catalog?.projectId && link.modelId === catalog.id && link.modelFingerprint === catalog.fingerprint);
@@ -49,7 +56,7 @@ export function renderModel(workspace: WorkspaceSnapshot, id: string, tab: strin
   ]), row ? h("section", {}, sectionHeader("Run history"), ...row.attempts.map(r => runListItem(r, workspace, actions))) : null);
   return h("div", { class: "page-content detail-page model-view", "data-model-id": m.id },
     button("All models", () => actions.backTo("models"), "back-link", "back"),
-    pageHeader(m.name, tag(m.role, m.role === "Baseline" ? "accent" : "neutral")),
+    pageHeader(m.name, h("div", { class: "inline-group model-baseline-actions" }, tag(m.role, m.role === "Baseline" ? "accent" : "neutral"), baselineActionButton)),
     tabs([["overview", "Overview"], ["results", "Evaluation"], ["training", "Training"], ["artifact", "Details"]], selectedTab,
       value => actions.navigate({ page: "model", id: m.id, tab: value, runId })),
     h("div", { id: "detail-panel", role: "tabpanel", "aria-labelledby": `tab-${selectedTab}` },

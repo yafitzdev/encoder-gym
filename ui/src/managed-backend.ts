@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
-import type { ManagedLaunchPreview, ManagedOptimizationAuthority, ManagedOptimizationRequest, ManagedOptimizationResult, ManagedPromotionRequest, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, PreparedOptimizationChoice, ProviderInput, ProviderSettingsRequest } from "./managed-control.js";
+import type { ManagedBaselineRestorationRequest, ManagedLaunchPreview, ManagedOptimizationAuthority, ManagedOptimizationRequest, ManagedOptimizationResult, ManagedPromotionRequest, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, PreparedOptimizationChoice, ProviderInput, ProviderSettingsRequest } from "./managed-control.js";
 import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, LocalModel, ManagedWorkspace, ModelChoice } from "./managed-workspace.js";
 import type { ProjectRegistry } from "./project-registry.js";
 import type { WorkspaceSnapshot } from "./workspace.js";
@@ -401,6 +401,31 @@ export class ManagedBackend {
       "promote", workspace.folder, "--run-id", runId,
       "--expected-baseline-revision-id", expected, "--actor", actor, "--reason", reason,
     ]));
+  }
+
+  async restoreBaseline(projectId: string, value: unknown): Promise<ManagedWorkspace> {
+    const request = object(value, "baseline restoration", ["targetRevisionId", "expectedBaselineRevisionId"]) as unknown as ManagedBaselineRestorationRequest;
+    const targetRevisionId = uuid(request.targetRevisionId, "previous baseline revision");
+    const expectedBaselineRevisionId = uuid(request.expectedBaselineRevisionId, "active baseline revision");
+    const workspace = await this.openRegistered(projectId, true);
+    const catalog = workspace.modelCatalog;
+    if (!catalog || catalog.activeBaselineRevisionId !== expectedBaselineRevisionId) throw new Error("The active baseline changed. Reload Models and try again.");
+    const target = catalog.baselineRevisions.find(revision => revision.id === targetRevisionId);
+    const active = catalog.baselineRevisions.find(revision => revision.id === expectedBaselineRevisionId);
+    if (!target || !active || target.modelArtifactId === active.modelArtifactId) throw new Error("Choose a previous baseline model that is not already active.");
+    const revisionId = randomUUID();
+    const result = await this.exclusiveProject(projectId, () => this.command<ManagedWorkspace>([
+      "restore-baseline", workspace.folder, "--revision-id", revisionId,
+      "--target-revision-id", targetRevisionId,
+      "--expected-baseline-revision-id", expectedBaselineRevisionId,
+    ]));
+    const restored = result.modelCatalog;
+    const revision = restored?.baselineRevisions.find(candidate => candidate.id === revisionId);
+    if (result.manifest.id !== projectId || restored?.activeBaselineRevisionId !== revisionId || revision?.modelArtifactId !== target.modelArtifactId
+      || revision.change.kind !== "restoration" || revision.change.target_revision_id !== targetRevisionId) {
+      throw new Error("The baseline restoration returned mismatched project history.");
+    }
+    return result;
   }
 
   async providerStatus(projectId: string): Promise<ManagedProviderStatus> {

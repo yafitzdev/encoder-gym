@@ -272,6 +272,11 @@ ipcMain.handle("encoder-gym:promote-accepted", async (_event, value: unknown, re
     return { project: registry.get(id), content: { state: "ready", workspace: managedSnapshot(workspace) } } satisfies OpenedProject;
   }, result => result.content.state === "ready" ? activityReference("baseline_revision", result.content.workspace.managed?.modelCatalog?.activeBaselineRevisionId) : []);
 });
+ipcMain.handle("encoder-gym:restore-baseline", async (_event, value: unknown, request: unknown) => {
+  const id = projectId(value);
+  const workspace = await backend.restoreBaseline(id, request);
+  return { project: registry.get(id), content: { state: "ready", workspace: managedSnapshot(workspace) } } satisfies OpenedProject;
+});
 ipcMain.handle("encoder-gym:managed-providers", async (_event, value: unknown) => desktopProviderStatus(await backend.providerStatus(projectId(value))));
 ipcMain.handle("encoder-gym:configure-managed-providers", async (_event, value: unknown, settings: unknown) => {
   const id = projectId(value);

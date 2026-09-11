@@ -3,7 +3,7 @@ import type { OptimizationSelection, OptimizationSetup, OptimizationSetupPreview
 import type { OptimizationLaunchAuthorization, OptimizationLaunchPreview, OptimizationLaunchRequest, OptimizationLaunchSaved } from "./optimization-launch.js";
 import type { DatasetQuery, DatasetQueryResult, DatasetMutation, DatasetMutationResult } from "./dataset-workspace.js";
 import type { BenchmarkAdoption, BenchmarkAdoptionResult, BenchmarkPreview, BenchmarkQuery, BenchmarkQueryResult } from "./benchmark-workspace.js";
-import type { ManagedOptimizationRequest, ManagedOptimizationResult, ManagedPromotionRequest, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, PreparedOptimizationChoice, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
+import type { ManagedBaselineRestorationRequest, ManagedOptimizationRequest, ManagedOptimizationResult, ManagedPromotionRequest, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NomosBindingPreview, OptimizationManifestChoice, PreparedOptimizationChoice, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
 import type { OpenedProject, ProjectCollection } from "./projects.js";
 import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, ModelChoice } from "./managed-workspace.js";
 import type { ProjectActivityExport, ProjectActivityLog } from "./project-activity.js";
@@ -33,6 +33,7 @@ export interface EncoderGymBridge {
   chooseOptimizationManifest(id: string): Promise<OptimizationManifestChoice | null>;
   managedOptimize(id: string, request: ManagedOptimizationRequest): Promise<ManagedOptimizationResult>;
   promoteAccepted(id: string, request: ManagedPromotionRequest): Promise<OpenedProject>;
+  restoreBaseline(id: string, request: ManagedBaselineRestorationRequest): Promise<OpenedProject>;
   managedProviders(id: string): Promise<ManagedProviderStatus>;
   configureManagedProviders(id: string, request: ProviderSettingsRequest): Promise<ManagedProviderStatus>;
   setProviderCredential(id: string, role: ProviderRole, secret: string): Promise<ManagedProviderStatus>;
@@ -83,6 +84,7 @@ const bridge: EncoderGymBridge = {
   chooseOptimizationManifest: id => ipcRenderer.invoke("encoder-gym:choose-optimization-manifest", id),
   managedOptimize: (id, request) => ipcRenderer.invoke("encoder-gym:managed-optimize", id, request),
   promoteAccepted: (id, request) => ipcRenderer.invoke("encoder-gym:promote-accepted", id, request),
+  restoreBaseline: (id, request) => ipcRenderer.invoke("encoder-gym:restore-baseline", id, request),
   managedProviders: id => ipcRenderer.invoke("encoder-gym:managed-providers", id),
   configureManagedProviders: (id, request) => ipcRenderer.invoke("encoder-gym:configure-managed-providers", id, request),
   setProviderCredential: (id, role, secret) => ipcRenderer.invoke("encoder-gym:set-provider-credential", id, role, secret),
