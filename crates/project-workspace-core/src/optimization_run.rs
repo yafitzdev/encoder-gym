@@ -295,6 +295,108 @@ pub struct ProjectOptimizationOutcome {
     pub fingerprint: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectOptimizationFinalResultKind {
+    CandidateAccepted,
+    CandidateRejected,
+}
+
+/// Row-free result of the single final evaluation authorized by the launch.
+/// Metric values remain in the evaluation slice's immutable report.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectOptimizationFinalResult {
+    pub run: BoundIdentity,
+    pub outcome_fingerprint: String,
+    pub experiment_run: BoundIdentity,
+    pub kind: ProjectOptimizationFinalResultKind,
+    pub model: BoundIdentity,
+    pub final_report: BoundIdentity,
+    pub created_at: DateTime<Utc>,
+    pub fingerprint: String,
+}
+
+impl ProjectOptimizationFinalResult {
+    #[allow(clippy::too_many_arguments)]
+    pub fn create(
+        run: &ProjectOptimizationRun,
+        launch: &OptimizationLaunchAuthorization,
+        preparation: &ProjectOptimizationPreparation,
+        materialization: &ProjectOptimizationMaterialization,
+        experiment: &ProjectOptimizationExperiment,
+        outcome: &ProjectOptimizationOutcome,
+        experiment_run: BoundIdentity,
+        kind: ProjectOptimizationFinalResultKind,
+        final_report: BoundIdentity,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        outcome.validate_for(run, launch, preparation, materialization, experiment)?;
+        let model = outcome.selected_model.clone().ok_or_else(|| {
+            Invalid("Final evaluation requires a development-selected model.".into())
+        })?;
+        let mut value = Self {
+            run: run.identity(),
+            outcome_fingerprint: outcome.fingerprint.clone(),
+            experiment_run,
+            kind,
+            model,
+            final_report,
+            created_at,
+            fingerprint: String::new(),
+        };
+        value.fingerprint = value.reproduce()?;
+        value.validate_for(
+            run,
+            launch,
+            preparation,
+            materialization,
+            experiment,
+            outcome,
+        )?;
+        Ok(value)
+    }
+
+    pub fn reproduce(&self) -> Result<String, Invalid> {
+        artifact_core::fingerprint(&serde_json::json!({
+            "run":self.run,"outcomeFingerprint":self.outcome_fingerprint,
+            "experimentRun":self.experiment_run,"kind":self.kind,
+            "model":self.model,"finalReport":self.final_report,
+            "createdAt":self.created_at,
+        }))
+        .map_err(|error| Invalid(error.to_string()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_for(
+        &self,
+        run: &ProjectOptimizationRun,
+        launch: &OptimizationLaunchAuthorization,
+        preparation: &ProjectOptimizationPreparation,
+        materialization: &ProjectOptimizationMaterialization,
+        experiment: &ProjectOptimizationExperiment,
+        outcome: &ProjectOptimizationOutcome,
+    ) -> Result<(), Invalid> {
+        outcome.validate_for(run, launch, preparation, materialization, experiment)?;
+        self.run.validate("Optimization run")?;
+        self.experiment_run.validate("Experiment run")?;
+        self.model.validate("Selected model")?;
+        self.final_report.validate("Final evaluation report")?;
+        require(
+            self.run == run.identity()
+                && outcome.kind == ProjectOptimizationOutcomeKind::CandidateReady
+                && self.outcome_fingerprint == outcome.fingerprint
+                && self.experiment_run.id == experiment.experiment_run.id
+                && self.experiment_run.fingerprint != outcome.experiment_run.fingerprint
+                && outcome.selected_model.as_ref() == Some(&self.model)
+                && Uuid::parse_str(&self.final_report.id).is_ok_and(|id| !id.is_nil())
+                && self.created_at >= outcome.created_at
+                && self.reproduce()? == self.fingerprint,
+            "Final optimization result changed or does not match its selected candidate.",
+        )
+    }
+}
+
 impl ProjectOptimizationOutcome {
     #[allow(clippy::too_many_arguments)]
     pub fn create(
@@ -525,6 +627,9 @@ pub enum ProjectOptimizationEventKind {
     ExecutionStarted,
     ExecutionCompleted,
     ExecutionFailed,
+    FinalEvaluationStarted,
+    FinalEvaluationCompleted,
+    FinalEvaluationFailed,
 }
 
 impl ProjectOptimizationEventKind {
@@ -543,6 +648,9 @@ impl ProjectOptimizationEventKind {
             Self::ExecutionStarted => "execution_started",
             Self::ExecutionCompleted => "execution_completed",
             Self::ExecutionFailed => "execution_failed",
+            Self::FinalEvaluationStarted => "final_evaluation_started",
+            Self::FinalEvaluationCompleted => "final_evaluation_completed",
+            Self::FinalEvaluationFailed => "final_evaluation_failed",
         }
     }
 }
@@ -567,6 +675,8 @@ pub struct ProjectOptimizationEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<ProjectOptimizationOutcome>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_result: Option<ProjectOptimizationFinalResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_code: Option<String>,
     pub created_at: DateTime<Utc>,
     pub fingerprint: String,
@@ -590,6 +700,7 @@ impl ProjectOptimizationEvent {
             materialization: None,
             experiment: None,
             outcome: None,
+            final_result: None,
             failure_code: None,
             created_at,
             fingerprint: String::new(),
@@ -612,6 +723,7 @@ impl ProjectOptimizationEvent {
             previous,
             ProjectOptimizationEventKind::PreparationStarted,
             attempt,
+            None,
             None,
             None,
             None,
@@ -640,6 +752,7 @@ impl ProjectOptimizationEvent {
             None,
             None,
             None,
+            None,
             created_at,
         )
     }
@@ -663,6 +776,7 @@ impl ProjectOptimizationEvent {
             None,
             Some(failure_code.into()),
             None,
+            None,
             created_at,
         )
     }
@@ -680,6 +794,7 @@ impl ProjectOptimizationEvent {
             previous,
             ProjectOptimizationEventKind::MaterializationStarted,
             attempt,
+            None,
             None,
             None,
             None,
@@ -708,6 +823,7 @@ impl ProjectOptimizationEvent {
             None,
             None,
             None,
+            None,
             created_at,
         )
     }
@@ -731,6 +847,7 @@ impl ProjectOptimizationEvent {
             None,
             Some(failure_code.into()),
             None,
+            None,
             created_at,
         )
     }
@@ -748,6 +865,7 @@ impl ProjectOptimizationEvent {
             previous,
             ProjectOptimizationEventKind::ExperimentAttachmentStarted,
             attempt,
+            None,
             None,
             None,
             None,
@@ -776,6 +894,7 @@ impl ProjectOptimizationEvent {
             Some(experiment),
             None,
             None,
+            None,
             created_at,
         )
     }
@@ -799,6 +918,7 @@ impl ProjectOptimizationEvent {
             None,
             Some(failure_code.into()),
             None,
+            None,
             created_at,
         )
     }
@@ -816,6 +936,7 @@ impl ProjectOptimizationEvent {
             previous,
             ProjectOptimizationEventKind::ExecutionStarted,
             attempt,
+            None,
             None,
             None,
             None,
@@ -844,6 +965,7 @@ impl ProjectOptimizationEvent {
             None,
             None,
             Some(outcome),
+            None,
             created_at,
         )
     }
@@ -867,6 +989,78 @@ impl ProjectOptimizationEvent {
             None,
             Some(failure_code.into()),
             None,
+            None,
+            created_at,
+        )
+    }
+
+    pub fn final_evaluation_started(
+        id: Uuid,
+        run: &ProjectOptimizationRun,
+        previous: &Self,
+        attempt: u32,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        Self::next(
+            id,
+            run,
+            previous,
+            ProjectOptimizationEventKind::FinalEvaluationStarted,
+            attempt,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            created_at,
+        )
+    }
+
+    pub fn final_evaluation_completed(
+        id: Uuid,
+        run: &ProjectOptimizationRun,
+        previous: &Self,
+        attempt: u32,
+        result: ProjectOptimizationFinalResult,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        Self::next(
+            id,
+            run,
+            previous,
+            ProjectOptimizationEventKind::FinalEvaluationCompleted,
+            attempt,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(result),
+            created_at,
+        )
+    }
+
+    pub fn final_evaluation_failed(
+        id: Uuid,
+        run: &ProjectOptimizationRun,
+        previous: &Self,
+        attempt: u32,
+        failure_code: impl Into<String>,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        Self::next(
+            id,
+            run,
+            previous,
+            ProjectOptimizationEventKind::FinalEvaluationFailed,
+            attempt,
+            None,
+            None,
+            None,
+            Some(failure_code.into()),
+            None,
+            None,
             created_at,
         )
     }
@@ -883,6 +1077,7 @@ impl ProjectOptimizationEvent {
         experiment: Option<ProjectOptimizationExperiment>,
         failure_code: Option<String>,
         outcome: Option<ProjectOptimizationOutcome>,
+        final_result: Option<ProjectOptimizationFinalResult>,
         created_at: DateTime<Utc>,
     ) -> Result<Self, Invalid> {
         let mut value = Self {
@@ -900,6 +1095,7 @@ impl ProjectOptimizationEvent {
             materialization,
             experiment,
             outcome,
+            final_result,
             failure_code,
             created_at,
             fingerprint: String::new(),
@@ -960,7 +1156,13 @@ impl ProjectOptimizationEvent {
                 "experiment":self.experiment,"failureCode":self.failure_code,
                 "createdAt":self.created_at,
             })
-        } else {
+        } else if matches!(
+            self.kind,
+            ProjectOptimizationEventKind::ExecutionStarted
+                | ProjectOptimizationEventKind::ExecutionCompleted
+                | ProjectOptimizationEventKind::ExecutionFailed
+        ) {
+            // Preserve fingerprints from the shipped candidate-execution schema.
             serde_json::json!({
                 "id":self.id,"runId":self.run_id,"sequence":self.sequence,
                 "previousEventFingerprint":self.previous_event_fingerprint,
@@ -968,6 +1170,16 @@ impl ProjectOptimizationEvent {
                 "preparation":self.preparation,"materialization":self.materialization,
                 "experiment":self.experiment,"outcome":self.outcome,
                 "failureCode":self.failure_code,"createdAt":self.created_at,
+            })
+        } else {
+            serde_json::json!({
+                "id":self.id,"runId":self.run_id,"sequence":self.sequence,
+                "previousEventFingerprint":self.previous_event_fingerprint,
+                "kind":self.kind,"launch":self.launch,"attempt":self.attempt,
+                "preparation":self.preparation,"materialization":self.materialization,
+                "experiment":self.experiment,"outcome":self.outcome,
+                "finalResult":self.final_result,"failureCode":self.failure_code,
+                "createdAt":self.created_at,
             })
         };
         artifact_core::fingerprint(&value).map_err(|error| Invalid(error.to_string()))
@@ -995,6 +1207,7 @@ impl ProjectOptimizationEvent {
                 && self.materialization.is_none()
                 && self.experiment.is_none()
                 && self.outcome.is_none()
+                && self.final_result.is_none()
                 && self.failure_code.is_none()
                 && self.created_at == run.created_at,
             "Project optimization reservation event changed or is invalid.",
@@ -1023,6 +1236,7 @@ impl ProjectOptimizationEvent {
                     && self.materialization.is_none()
                     && self.experiment.is_none()
                     && self.outcome.is_none()
+                    && self.final_result.is_none()
                     && self.failure_code.is_none(),
                 "Preparation start cannot contain a result or failure.",
             ),
@@ -1031,6 +1245,7 @@ impl ProjectOptimizationEvent {
                     && self.materialization.is_none()
                     && self.experiment.is_none()
                     && self.outcome.is_none()
+                    && self.final_result.is_none()
                     && self.failure_code.is_none(),
                 "Preparation completion requires exactly one verified receipt.",
             ),
@@ -1041,6 +1256,7 @@ impl ProjectOptimizationEvent {
                         && self.materialization.is_none()
                         && self.experiment.is_none()
                         && self.outcome.is_none()
+                        && self.final_result.is_none()
                         && !code.is_empty()
                         && code.len() <= 80
                         && code.bytes().all(|byte| {
@@ -1056,6 +1272,7 @@ impl ProjectOptimizationEvent {
                     && self.materialization.is_none()
                     && self.experiment.is_none()
                     && self.outcome.is_none()
+                    && self.final_result.is_none()
                     && self.failure_code.is_none(),
                 "Materialization start cannot contain a result or failure.",
             ),
@@ -1064,6 +1281,7 @@ impl ProjectOptimizationEvent {
                     && self.materialization.is_some()
                     && self.experiment.is_none()
                     && self.outcome.is_none()
+                    && self.final_result.is_none()
                     && self.failure_code.is_none(),
                 "Materialization completion requires exactly one verified receipt.",
             ),
@@ -1074,6 +1292,7 @@ impl ProjectOptimizationEvent {
                         && self.materialization.is_none()
                         && self.experiment.is_none()
                         && self.outcome.is_none()
+                        && self.final_result.is_none()
                         && !code.is_empty()
                         && code.len() <= 80
                         && code.bytes().all(|byte| {
@@ -1089,6 +1308,7 @@ impl ProjectOptimizationEvent {
                     && self.materialization.is_none()
                     && self.experiment.is_none()
                     && self.outcome.is_none()
+                    && self.final_result.is_none()
                     && self.failure_code.is_none(),
                 "Experiment attachment start cannot contain a result or failure.",
             ),
@@ -1097,6 +1317,7 @@ impl ProjectOptimizationEvent {
                     && self.materialization.is_none()
                     && self.experiment.is_some()
                     && self.outcome.is_none()
+                    && self.final_result.is_none()
                     && self.failure_code.is_none(),
                 "Experiment attachment requires exactly one child receipt.",
             ),
@@ -1107,6 +1328,7 @@ impl ProjectOptimizationEvent {
                         && self.materialization.is_none()
                         && self.experiment.is_none()
                         && self.outcome.is_none()
+                        && self.final_result.is_none()
                         && !code.is_empty()
                         && code.len() <= 80
                         && code.bytes().all(|byte| {
@@ -1122,6 +1344,7 @@ impl ProjectOptimizationEvent {
                     && self.materialization.is_none()
                     && self.experiment.is_none()
                     && self.outcome.is_none()
+                    && self.final_result.is_none()
                     && self.failure_code.is_none(),
                 "Optimization execution start cannot contain a result or failure.",
             ),
@@ -1130,6 +1353,7 @@ impl ProjectOptimizationEvent {
                     && self.materialization.is_none()
                     && self.experiment.is_none()
                     && self.outcome.is_some()
+                    && self.final_result.is_none()
                     && self.failure_code.is_none(),
                 "Optimization execution completion requires exactly one outcome.",
             ),
@@ -1140,6 +1364,7 @@ impl ProjectOptimizationEvent {
                         && self.materialization.is_none()
                         && self.experiment.is_none()
                         && self.outcome.is_none()
+                        && self.final_result.is_none()
                         && !code.is_empty()
                         && code.len() <= 80
                         && code.bytes().all(|byte| {
@@ -1148,6 +1373,42 @@ impl ProjectOptimizationEvent {
                                 || matches!(byte, b'_' | b'-' | b'.')
                         }),
                     "Optimization execution failure requires a safe stable code.",
+                )
+            }
+            ProjectOptimizationEventKind::FinalEvaluationStarted => require(
+                self.preparation.is_none()
+                    && self.materialization.is_none()
+                    && self.experiment.is_none()
+                    && self.outcome.is_none()
+                    && self.final_result.is_none()
+                    && self.failure_code.is_none(),
+                "Final evaluation start cannot contain a result or failure.",
+            ),
+            ProjectOptimizationEventKind::FinalEvaluationCompleted => require(
+                self.preparation.is_none()
+                    && self.materialization.is_none()
+                    && self.experiment.is_none()
+                    && self.outcome.is_none()
+                    && self.final_result.is_some()
+                    && self.failure_code.is_none(),
+                "Final evaluation completion requires exactly one result.",
+            ),
+            ProjectOptimizationEventKind::FinalEvaluationFailed => {
+                let code = self.failure_code.as_deref().unwrap_or_default();
+                require(
+                    self.preparation.is_none()
+                        && self.materialization.is_none()
+                        && self.experiment.is_none()
+                        && self.outcome.is_none()
+                        && self.final_result.is_none()
+                        && !code.is_empty()
+                        && code.len() <= 80
+                        && code.bytes().all(|byte| {
+                            byte.is_ascii_lowercase()
+                                || byte.is_ascii_digit()
+                                || matches!(byte, b'_' | b'-' | b'.')
+                        }),
+                    "Final evaluation failure requires a safe stable code.",
                 )
             }
         }
@@ -1171,6 +1432,10 @@ pub enum ProjectOptimizationRunState {
     ReadyForFinalEvaluation,
     BaselineRetained,
     ExecutionFailed,
+    EvaluatingFinal,
+    CandidateAccepted,
+    CandidateRejected,
+    FinalEvaluationFailed,
 }
 
 impl ProjectOptimizationRunState {
@@ -1188,6 +1453,10 @@ impl ProjectOptimizationRunState {
                 | Self::ReadyForFinalEvaluation
                 | Self::BaselineRetained
                 | Self::ExecutionFailed
+                | Self::EvaluatingFinal
+                | Self::CandidateAccepted
+                | Self::CandidateRejected
+                | Self::FinalEvaluationFailed
         )
     }
 
@@ -1202,6 +1471,10 @@ impl ProjectOptimizationRunState {
                 | Self::ReadyForFinalEvaluation
                 | Self::BaselineRetained
                 | Self::ExecutionFailed
+                | Self::EvaluatingFinal
+                | Self::CandidateAccepted
+                | Self::CandidateRejected
+                | Self::FinalEvaluationFailed
         )
     }
 
@@ -1213,11 +1486,27 @@ impl ProjectOptimizationRunState {
                 | Self::ReadyForFinalEvaluation
                 | Self::BaselineRetained
                 | Self::ExecutionFailed
+                | Self::EvaluatingFinal
+                | Self::CandidateAccepted
+                | Self::CandidateRejected
+                | Self::FinalEvaluationFailed
         )
     }
 
     pub const fn has_outcome(self) -> bool {
-        matches!(self, Self::ReadyForFinalEvaluation | Self::BaselineRetained)
+        matches!(
+            self,
+            Self::ReadyForFinalEvaluation
+                | Self::BaselineRetained
+                | Self::EvaluatingFinal
+                | Self::CandidateAccepted
+                | Self::CandidateRejected
+                | Self::FinalEvaluationFailed
+        )
+    }
+
+    pub const fn has_final_result(self) -> bool {
+        matches!(self, Self::CandidateAccepted | Self::CandidateRejected)
     }
 }
 
@@ -1238,6 +1527,9 @@ pub struct ProjectOptimizationRunView {
     pub execution_attempt: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<ProjectOptimizationOutcome>,
+    pub final_attempt: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_result: Option<ProjectOptimizationFinalResult>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_code: Option<String>,
     pub last_sequence: u64,
@@ -1264,6 +1556,8 @@ pub fn replay_project_optimization(
     let mut experiment = None;
     let mut execution_attempt = 0;
     let mut outcome = None;
+    let mut final_attempt = 0;
+    let mut final_result = None;
     let mut failure_code = None;
     let mut previous = first;
     for event in &events[1..] {
@@ -1434,6 +1728,55 @@ pub fn replay_project_optimization(
                 state = ProjectOptimizationRunState::ExecutionFailed;
                 failure_code.clone_from(&event.failure_code);
             }
+            ProjectOptimizationEventKind::FinalEvaluationStarted => {
+                require(
+                    matches!(
+                        state,
+                        ProjectOptimizationRunState::ReadyForFinalEvaluation
+                            | ProjectOptimizationRunState::FinalEvaluationFailed
+                    ) && event_attempt == final_attempt + 1,
+                    "Final evaluation cannot start from this state.",
+                )?;
+                state = ProjectOptimizationRunState::EvaluatingFinal;
+                final_attempt = event_attempt;
+                failure_code = None;
+            }
+            ProjectOptimizationEventKind::FinalEvaluationCompleted => {
+                require(
+                    state == ProjectOptimizationRunState::EvaluatingFinal
+                        && event_attempt == final_attempt,
+                    "Final evaluation completion has no matching active attempt.",
+                )?;
+                let receipt = event.final_result.clone().expect("validated final result");
+                receipt.validate_for(
+                    run,
+                    launch,
+                    preparation.as_ref().expect("prepared run has preparation"),
+                    materialization
+                        .as_ref()
+                        .expect("materialized run has materialization"),
+                    experiment.as_ref().expect("attached run has experiment"),
+                    outcome.as_ref().expect("executed run has outcome"),
+                )?;
+                state = match receipt.kind {
+                    ProjectOptimizationFinalResultKind::CandidateAccepted => {
+                        ProjectOptimizationRunState::CandidateAccepted
+                    }
+                    ProjectOptimizationFinalResultKind::CandidateRejected => {
+                        ProjectOptimizationRunState::CandidateRejected
+                    }
+                };
+                final_result = Some(receipt);
+            }
+            ProjectOptimizationEventKind::FinalEvaluationFailed => {
+                require(
+                    state == ProjectOptimizationRunState::EvaluatingFinal
+                        && event_attempt == final_attempt,
+                    "Final evaluation failure has no matching active attempt.",
+                )?;
+                state = ProjectOptimizationRunState::FinalEvaluationFailed;
+                failure_code.clone_from(&event.failure_code);
+            }
         }
         previous = event;
     }
@@ -1448,6 +1791,8 @@ pub fn replay_project_optimization(
         experiment,
         execution_attempt,
         outcome,
+        final_attempt,
+        final_result,
         failure_code,
         last_sequence: previous.sequence,
         head_fingerprint: previous.fingerprint.clone(),
@@ -1856,6 +2201,67 @@ mod tests {
             &run,
             &launch,
             &[
+                reserved.clone(),
+                preparing.clone(),
+                ready.clone(),
+                materializing.clone(),
+                materialized.clone(),
+                attaching.clone(),
+                attached.clone(),
+                optimizing.clone(),
+                failed.clone(),
+                retried.clone(),
+                completed.clone(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            view.state,
+            ProjectOptimizationRunState::ReadyForFinalEvaluation
+        );
+        assert_eq!(view.execution_attempt, 2);
+        assert_eq!(view.outcome, Some(outcome.clone()));
+
+        let evaluating = ProjectOptimizationEvent::final_evaluation_started(
+            Uuid::new_v4(),
+            &run,
+            &completed,
+            1,
+            Utc::now(),
+        )
+        .unwrap();
+        let final_result = ProjectOptimizationFinalResult::create(
+            &run,
+            &launch,
+            &preparation,
+            &materialization,
+            &experiment,
+            &outcome,
+            BoundIdentity {
+                id: experiment.experiment_run.id.clone(),
+                fingerprint: digest('7'),
+            },
+            ProjectOptimizationFinalResultKind::CandidateAccepted,
+            BoundIdentity {
+                id: Uuid::new_v4().to_string(),
+                fingerprint: digest('8'),
+            },
+            Utc::now(),
+        )
+        .unwrap();
+        let finalized = ProjectOptimizationEvent::final_evaluation_completed(
+            Uuid::new_v4(),
+            &run,
+            &evaluating,
+            1,
+            final_result.clone(),
+            Utc::now(),
+        )
+        .unwrap();
+        let view = replay_project_optimization(
+            &run,
+            &launch,
+            &[
                 reserved,
                 preparing,
                 ready,
@@ -1867,15 +2273,14 @@ mod tests {
                 failed,
                 retried,
                 completed,
+                evaluating,
+                finalized,
             ],
         )
         .unwrap();
-        assert_eq!(
-            view.state,
-            ProjectOptimizationRunState::ReadyForFinalEvaluation
-        );
-        assert_eq!(view.execution_attempt, 2);
-        assert_eq!(view.outcome, Some(outcome));
+        assert_eq!(view.state, ProjectOptimizationRunState::CandidateAccepted);
+        assert_eq!(view.final_attempt, 1);
+        assert_eq!(view.final_result, Some(final_result));
     }
 
     #[test]

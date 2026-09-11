@@ -617,3 +617,22 @@ and keep outstanding requirements visible.
 - The desktop one-click composition, candidate registration, final evaluation,
   deterministic promotion decision and further bounded iterations remain
   outstanding. This backend stage does not execute the real Nomos project.
+
+### Authorized final candidate evaluation — 11 September 2026
+
+- `workspace optimization-run finalize` consumes the exact one-candidate final
+  evaluation authority already frozen in the launch record. It cannot run from
+  any state except a candidate selected by the shared development benchmark.
+- The scientific experiment journal owns authorization, evaluation, assessment
+  and final decision. The project journal records only the resulting experiment,
+  model and report identities as `candidate_accepted` or `candidate_rejected`;
+  final scores and holdout content are never copied into presentation custody.
+- Single-process execution ownership prevents duplicate local final evaluation.
+  The command reopens and verifies the exact target project, protocol, suite and
+  model before invoking the adapter. It never promotes or changes the baseline.
+- Core and actual-CLI tests cover hash-chained transition, failure recording,
+  retry custody and exact replay without native or protected test execution.
+  The full scientific runner suite continues to cover deterministic accepted and
+  rejected final decisions.
+- Candidate registration, desktop one-click composition and later bounded
+  agent/data iterations remain outstanding. No real Nomos evaluation ran.

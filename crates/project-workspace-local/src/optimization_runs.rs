@@ -10,9 +10,10 @@ use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use project_workspace_core::{
     OptimizationLaunchAuthorization, OptimizationSetup, ProjectOptimizationEvent,
-    ProjectOptimizationExperiment, ProjectOptimizationMaterialization, ProjectOptimizationOutcome,
-    ProjectOptimizationPreparation, ProjectOptimizationRun, ProjectOptimizationRunState,
-    ProjectOptimizationRunView, replay_project_optimization,
+    ProjectOptimizationExperiment, ProjectOptimizationFinalResult,
+    ProjectOptimizationMaterialization, ProjectOptimizationOutcome, ProjectOptimizationPreparation,
+    ProjectOptimizationRun, ProjectOptimizationRunState, ProjectOptimizationRunView,
+    replay_project_optimization,
 };
 use sqlx::{Connection, Row, SqliteConnection};
 use std::path::Path;
@@ -790,6 +791,171 @@ async fn record_execution(
     Ok(result)
 }
 
+/// Start or recover the one final evaluation explicitly authorized by this
+/// run's immutable launch scope.
+pub async fn begin_final_evaluation(
+    folder: &Path,
+    run_id: Uuid,
+) -> Result<ProjectOptimizationRunView> {
+    let workspace = open_workspace(folder, true).await?;
+    let mut database = connect(Path::new(&workspace.folder), false, false).await?;
+    sqlx::migrate!("./migrations").run(&mut database).await?;
+    let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
+    let setups = optimization_setup::load(&mut transaction, &workspace).await?;
+    let providers = load_provider_catalog_history(&mut transaction, &workspace.manifest).await?;
+    let launches =
+        optimization_launch::load(&mut transaction, &workspace, &setups, &providers).await?;
+    let view = load(&mut transaction, workspace.manifest.id, &launches, &setups)
+        .await?
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .context("Project optimization run was not found.")?;
+    if view.state == ProjectOptimizationRunState::EvaluatingFinal || view.state.has_final_result() {
+        transaction.commit().await?;
+        database.close().await?;
+        return Ok(view);
+    }
+    ensure!(
+        matches!(
+            view.state,
+            ProjectOptimizationRunState::ReadyForFinalEvaluation
+                | ProjectOptimizationRunState::FinalEvaluationFailed
+        ),
+        "A candidate must pass the shared benchmark before final evaluation."
+    );
+    let previous = last_event(&mut transaction, run_id).await?;
+    let event = ProjectOptimizationEvent::final_evaluation_started(
+        Uuid::new_v4(),
+        &view.run,
+        &previous,
+        view.final_attempt + 1,
+        Utc::now(),
+    )?;
+    insert_event(&mut transaction, &event).await?;
+    let result = load(&mut transaction, workspace.manifest.id, &launches, &setups)
+        .await?
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .expect("inserted final evaluation belongs to loaded run");
+    transaction.commit().await?;
+    database.close().await?;
+    Ok(result)
+}
+
+pub async fn finish_final_evaluation(
+    folder: &Path,
+    run_id: Uuid,
+    expected_head: &str,
+    result: ProjectOptimizationFinalResult,
+) -> Result<ProjectOptimizationRunView> {
+    record_final_evaluation(folder, run_id, expected_head, Some(result), None).await
+}
+
+pub async fn fail_final_evaluation(
+    folder: &Path,
+    run_id: Uuid,
+    expected_head: &str,
+    failure_code: &str,
+) -> Result<ProjectOptimizationRunView> {
+    record_final_evaluation(folder, run_id, expected_head, None, Some(failure_code)).await
+}
+
+async fn record_final_evaluation(
+    folder: &Path,
+    run_id: Uuid,
+    expected_head: &str,
+    result: Option<ProjectOptimizationFinalResult>,
+    failure_code: Option<&str>,
+) -> Result<ProjectOptimizationRunView> {
+    let workspace = open_workspace(folder, true).await?;
+    let mut database = connect(Path::new(&workspace.folder), false, false).await?;
+    sqlx::migrate!("./migrations").run(&mut database).await?;
+    let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
+    let setups = optimization_setup::load(&mut transaction, &workspace).await?;
+    let providers = load_provider_catalog_history(&mut transaction, &workspace.manifest).await?;
+    let launches =
+        optimization_launch::load(&mut transaction, &workspace, &setups, &providers).await?;
+    let view = load(&mut transaction, workspace.manifest.id, &launches, &setups)
+        .await?
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .context("Project optimization run was not found.")?;
+    if view.state.has_final_result() {
+        ensure!(
+            result.as_ref() == view.final_result.as_ref(),
+            "Final evaluation already completed with another result."
+        );
+        transaction.commit().await?;
+        database.close().await?;
+        return Ok(view);
+    }
+    if view.state == ProjectOptimizationRunState::FinalEvaluationFailed {
+        ensure!(
+            result.is_none() && failure_code == view.failure_code.as_deref(),
+            "Final evaluation attempt already recorded another failure."
+        );
+        transaction.commit().await?;
+        database.close().await?;
+        return Ok(view);
+    }
+    ensure!(
+        view.state == ProjectOptimizationRunState::EvaluatingFinal
+            && view.head_fingerprint == expected_head,
+        "Optimization journal changed; reload it before recording final evaluation."
+    );
+    let launch = launches
+        .iter()
+        .find(|value| value.id.to_string() == view.run.launch.id)
+        .context("Optimization launch authorization is missing.")?;
+    if let Some(receipt) = &result {
+        receipt.validate_for(
+            &view.run,
+            launch,
+            view.preparation
+                .as_ref()
+                .context("Optimization preparation is missing.")?,
+            view.materialization
+                .as_ref()
+                .context("Optimization materialization is missing.")?,
+            view.experiment
+                .as_ref()
+                .context("Optimization experiment is missing.")?,
+            view.outcome
+                .as_ref()
+                .context("Optimization candidate outcome is missing.")?,
+        )?;
+    }
+    let previous = last_event(&mut transaction, run_id).await?;
+    let event = match (result, failure_code) {
+        (Some(receipt), None) => ProjectOptimizationEvent::final_evaluation_completed(
+            Uuid::new_v4(),
+            &view.run,
+            &previous,
+            view.final_attempt,
+            receipt,
+            Utc::now(),
+        )?,
+        (None, Some(code)) => ProjectOptimizationEvent::final_evaluation_failed(
+            Uuid::new_v4(),
+            &view.run,
+            &previous,
+            view.final_attempt,
+            code,
+            Utc::now(),
+        )?,
+        _ => anyhow::bail!("Final evaluation must record exactly one result."),
+    };
+    insert_event(&mut transaction, &event).await?;
+    let loaded = load(&mut transaction, workspace.manifest.id, &launches, &setups)
+        .await?
+        .into_iter()
+        .find(|value| value.run.id == run_id)
+        .expect("inserted final evaluation result belongs to loaded run");
+    transaction.commit().await?;
+    database.close().await?;
+    Ok(loaded)
+}
+
 async fn last_event(
     database: &mut SqliteConnection,
     run_id: Uuid,
@@ -896,6 +1062,16 @@ async fn load(
                             materialization,
                             experiment,
                         )?;
+                        if let Some(result) = &view.final_result {
+                            result.validate_for(
+                                &run,
+                                launch,
+                                preparation,
+                                materialization,
+                                experiment,
+                                outcome,
+                            )?;
+                        }
                     }
                 }
             }

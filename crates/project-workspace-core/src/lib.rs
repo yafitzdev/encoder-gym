@@ -24,6 +24,7 @@ pub use optimization_launch::{
 };
 pub use optimization_run::{
     ProjectOptimizationEvent, ProjectOptimizationEventKind, ProjectOptimizationExperiment,
+    ProjectOptimizationFinalResult, ProjectOptimizationFinalResultKind,
     ProjectOptimizationMaterialization, ProjectOptimizationOutcome, ProjectOptimizationOutcomeKind,
     ProjectOptimizationPreparation, ProjectOptimizationRun, ProjectOptimizationRunState,
     ProjectOptimizationRunView, replay_project_optimization,

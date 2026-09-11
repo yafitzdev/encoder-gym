@@ -10,8 +10,10 @@ use encoder_experiment_nomos::NomosBackend;
 use encoder_experiment_runner::ExperimentRunner;
 use project_workspace_core::{
     ActivityEventState, ActivityFailure, ActivityReference, ActivitySource, BoundIdentity,
-    ProjectOptimizationExperiment, ProjectOptimizationMaterialization, ProjectOptimizationOutcome,
-    ProjectOptimizationOutcomeKind, ProjectOptimizationPreparation, ProjectOptimizationRunState,
+    ProjectOptimizationExperiment, ProjectOptimizationFinalResult,
+    ProjectOptimizationFinalResultKind, ProjectOptimizationMaterialization,
+    ProjectOptimizationOutcome, ProjectOptimizationOutcomeKind, ProjectOptimizationPreparation,
+    ProjectOptimizationRunState,
 };
 use project_workspace_local::{
     AppendActivity, append_activity, dataset_versions, initialize_activity, open_workspace,
@@ -29,6 +31,7 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunComm
         Materialize { run_id } => materialize(folder, run_id).await,
         Attach { run_id } => attach(folder, run_id).await,
         Execute { run_id } => execute_candidate(folder, run_id).await,
+        Finalize { run_id } => finalize_candidate(folder, run_id).await,
         Start {
             file,
             authorized_by,
@@ -87,6 +90,219 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunComm
             super::print(&serde_json::json!({"actionId":action_id,"run":result?}))
         }
     }
+}
+
+async fn finalize_candidate(folder: &Path, run_id: Uuid) -> Result<()> {
+    initialize_activity(folder).await?;
+    let action_id = Uuid::new_v4();
+    let references = vec![ActivityReference::new("run", run_id.to_string())?];
+    let activity = |state, failure| AppendActivity {
+        action_id,
+        operation: "optimization.final_evaluation".into(),
+        source: ActivitySource::Cli,
+        state,
+        stage: None,
+        completed: None,
+        total: None,
+        references: references.clone(),
+        failure,
+        created_at: Utc::now(),
+    };
+    append_activity(folder, activity(ActivityEventState::Started, None)).await?;
+    let result: Result<_> = async {
+        let started = optimization_runs::begin_final_evaluation(folder, run_id).await?;
+        if started.state.has_final_result() {
+            return Ok(started);
+        }
+        ensure!(
+            started.state == ProjectOptimizationRunState::EvaluatingFinal,
+            "Optimization run could not start final evaluation."
+        );
+        match run_final_evaluation(folder, &started).await {
+            Ok(receipt) => {
+                optimization_runs::finish_final_evaluation(
+                    folder,
+                    run_id,
+                    &started.head_fingerprint,
+                    receipt,
+                )
+                .await
+            }
+            Err(error) => {
+                optimization_runs::fail_final_evaluation(
+                    folder,
+                    run_id,
+                    &started.head_fingerprint,
+                    "final_evaluation_failed",
+                )
+                .await
+                .context("Final evaluation failed and its outcome could not be recorded.")?;
+                Err(error)
+            }
+        }
+    }
+    .await;
+    let terminal = if result.is_ok() {
+        activity(ActivityEventState::Succeeded, None)
+    } else {
+        activity(
+            ActivityEventState::Failed,
+            Some(ActivityFailure::new(
+                "final_evaluation_failed",
+                "The final evaluation did not complete. No baseline was changed.",
+            )?),
+        )
+    };
+    append_activity(folder, terminal).await?;
+    super::print(&serde_json::json!({"actionId":action_id,"run":result?}))
+}
+
+async fn run_final_evaluation(
+    folder: &Path,
+    view: &project_workspace_core::ProjectOptimizationRunView,
+) -> Result<ProjectOptimizationFinalResult> {
+    let workspace = open_workspace(folder, true).await?;
+    let launch = optimization_launch::list(folder)
+        .await?
+        .into_iter()
+        .find(|value| value.id.to_string() == view.run.launch.id)
+        .context("Optimization launch authorization is missing.")?;
+    let preparation = view
+        .preparation
+        .as_ref()
+        .context("Optimization preparation is missing.")?;
+    let materialization = view
+        .materialization
+        .as_ref()
+        .context("Optimization materialization is missing.")?;
+    let experiment = view
+        .experiment
+        .as_ref()
+        .context("Optimization experiment is missing.")?;
+    let outcome = view
+        .outcome
+        .as_ref()
+        .context("Candidate comparison outcome is missing.")?;
+    ensure!(
+        outcome.kind == ProjectOptimizationOutcomeKind::CandidateReady,
+        "No candidate is ready for final evaluation."
+    );
+    outcome.validate_for(&view.run, &launch, preparation, materialization, experiment)?;
+
+    let binding = workspace
+        .scientific_binding
+        .as_ref()
+        .context("Connect the native evaluation runtime.")?;
+    ensure!(
+        binding.id.to_string() == preparation.execution_binding.id
+            && binding.fingerprint == preparation.execution_binding.fingerprint,
+        "Native runtime changed after input verification."
+    );
+    let database_url = super::bound_store_url(Path::new(&workspace.folder), binding)?;
+    let _execution_lease = crate::commands::encoder_optimize::OptimizationExecutionLease::acquire(
+        &database_url,
+        view.run.id,
+    )?;
+    let store = super::open_bound_store_mutable(&workspace.folder, binding).await?;
+    let bound_project = super::load_bound_project(&store, binding).await?;
+    let backend = super::open_nomos_binding(binding, &bound_project)?.with_progress_observer(
+        std::sync::Arc::new(crate::commands::encoder_optimize::activity::ProgressOutput),
+    );
+    let project_id: Uuid = experiment.scientific_project.id.parse()?;
+    let project = store
+        .get_project(project_id)
+        .await?
+        .context("The optimization project snapshot is missing.")?;
+    ensure!(
+        project.fingerprint == experiment.scientific_project.fingerprint,
+        "Optimization project snapshot changed."
+    );
+    backend.verify_current_snapshot(project.clone()).await?;
+    let protocol_id: Uuid = experiment.protocol.id.parse()?;
+    let protocol = store
+        .get_protocol(protocol_id)
+        .await?
+        .context("The optimization protocol is missing.")?;
+    ensure!(
+        protocol.fingerprint == experiment.protocol.fingerprint
+            && protocol.project_snapshot_id == project.id
+            && protocol.sealed_suite_key == preparation.final_suite,
+        "Final evaluation protocol changed."
+    );
+    let run_id: Uuid = experiment.experiment_run.id.parse()?;
+    let runner = ExperimentRunner::new(&store, &backend);
+    let current = runner.status(run_id).await?;
+    ensure!(
+        current.protocol_id == protocol.id,
+        "Final evaluation run belongs to another protocol."
+    );
+    let authorized = match current.state {
+        ExperimentRunState::AwaitingSealedAuthorization => {
+            runner
+                .authorize_sealed(run_id, launch.authorized_by.clone())
+                .await?
+        }
+        _ => current,
+    };
+    let completed = match authorized.state {
+        ExperimentRunState::SealedAuthorized
+        | ExperimentRunState::SealedEvaluating
+        | ExperimentRunState::SealedEvaluated => runner.run_sealed(run_id).await?,
+        ExperimentRunState::Completed => authorized,
+        _ => anyhow::bail!("Final evaluation did not enter its authorized state."),
+    };
+    ensure!(
+        completed.state == ExperimentRunState::Completed,
+        "Final evaluation did not complete."
+    );
+    let model = completed
+        .selected_model()
+        .context("Final evaluation has no selected model.")?;
+    ensure!(
+        outcome.selected_model.as_ref().is_some_and(|selected| {
+            selected.id == model.id.to_string() && selected.fingerprint == model.fingerprint
+        }),
+        "Final evaluation selected another model."
+    );
+    let report = completed
+        .sealed_report
+        .as_ref()
+        .context("Final evaluation report is missing.")?;
+    ensure!(
+        report.evidence_role == EvidenceRole::SealedAcceptance
+            && report.suite_key == preparation.final_suite
+            && report.model == *model,
+        "Final evaluation report changed or belongs to another model."
+    );
+    let kind = match completed.final_decision {
+        Some(FinalDecision::PromoteCandidate) => {
+            ProjectOptimizationFinalResultKind::CandidateAccepted
+        }
+        Some(FinalDecision::RetainBaseline) => {
+            ProjectOptimizationFinalResultKind::CandidateRejected
+        }
+        None => anyhow::bail!("Final evaluation has no deterministic decision."),
+    };
+    let result = ProjectOptimizationFinalResult::create(
+        &view.run,
+        &launch,
+        preparation,
+        materialization,
+        experiment,
+        outcome,
+        BoundIdentity {
+            id: completed.run_id.to_string(),
+            fingerprint: completed.last_event_fingerprint,
+        },
+        kind,
+        BoundIdentity {
+            id: report.id.to_string(),
+            fingerprint: report.fingerprint.clone(),
+        },
+        Utc::now(),
+    )?;
+    store.pool().close().await;
+    Ok(result)
 }
 
 async fn execute_candidate(folder: &Path, run_id: Uuid) -> Result<()> {
@@ -193,6 +409,8 @@ async fn run_attached_candidate(
         view.run.id,
     )?;
     let store = super::open_bound_store_mutable(&workspace.folder, binding).await?;
+    let bound_project = super::load_bound_project(&store, binding).await?;
+    let base_backend = super::open_nomos_binding(binding, &bound_project)?;
     let project_id: Uuid = experiment.scientific_project.id.parse()?;
     let project = store
         .get_project(project_id)
@@ -202,7 +420,6 @@ async fn run_attached_candidate(
         project.fingerprint == experiment.scientific_project.fingerprint,
         "Optimization project snapshot changed."
     );
-    let base_backend = super::open_nomos_binding(binding, &project)?;
     let native = base_backend.load_training_dataset(
         view.run.id,
         preparation.dataset.id,

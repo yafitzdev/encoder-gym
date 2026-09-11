@@ -11,9 +11,11 @@ use encoder_experiment_nomos::NomosBackend;
 use encoder_experiment_sqlite::SqliteExperimentStore;
 use project_workspace_core::{
     BaselineRevision, BoundIdentity, OptimizationLaunchAuthorization, OptimizationSetup,
-    ProjectOptimizationExperiment, ProjectOptimizationMaterialization, ProjectOptimizationOutcome,
-    ProjectOptimizationOutcomeKind, ProjectOptimizationPreparation, ProviderAuthentication,
-    ProviderCatalog, ProviderConfiguration, ProviderKind, ProviderLimits, ProviderRole,
+    ProjectOptimizationExperiment, ProjectOptimizationFinalResult,
+    ProjectOptimizationFinalResultKind, ProjectOptimizationMaterialization,
+    ProjectOptimizationOutcome, ProjectOptimizationOutcomeKind, ProjectOptimizationPreparation,
+    ProviderAuthentication, ProviderCatalog, ProviderConfiguration, ProviderKind, ProviderLimits,
+    ProviderRole,
 };
 use project_workspace_local::{
     dataset_versions, import_dataset, inspect_dataset, open_workspace, optimization_runs,
@@ -768,6 +770,87 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
         serde_json::to_value(outcome).unwrap()
     );
     assert!(!completed.to_string().contains("SETUP_ROW_CANARY"));
+
+    let failed_final = invoke(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "finalize",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert!(!failed_final.status.success());
+    let failed_final_view = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "show",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(failed_final_view["state"], "final_evaluation_failed");
+    assert_eq!(failed_final_view["finalAttempt"], 1);
+    let evaluating = optimization_runs::begin_final_evaluation(
+        &folder,
+        started["run"]["run"]["id"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    let final_result = ProjectOptimizationFinalResult::create(
+        &evaluating.run,
+        &typed_launch,
+        evaluating.preparation.as_ref().unwrap(),
+        evaluating.materialization.as_ref().unwrap(),
+        evaluating.experiment.as_ref().unwrap(),
+        evaluating.outcome.as_ref().unwrap(),
+        BoundIdentity {
+            id: evaluating
+                .experiment
+                .as_ref()
+                .unwrap()
+                .experiment_run
+                .id
+                .clone(),
+            fingerprint: format!("sha256:{}", "1".repeat(64)),
+        },
+        ProjectOptimizationFinalResultKind::CandidateRejected,
+        BoundIdentity {
+            id: Uuid::new_v4().to_string(),
+            fingerprint: format!("sha256:{}", "2".repeat(64)),
+        },
+        Utc::now(),
+    )
+    .unwrap();
+    optimization_runs::finish_final_evaluation(
+        &folder,
+        evaluating.run.id,
+        &evaluating.head_fingerprint,
+        final_result.clone(),
+    )
+    .await
+    .unwrap();
+    let finalized = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "finalize",
+            started["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(finalized["run"]["state"], "candidate_rejected");
+    assert_eq!(finalized["run"]["finalAttempt"], 2);
+    assert_eq!(
+        finalized["run"]["finalResult"],
+        serde_json::to_value(final_result).unwrap()
+    );
+    assert!(!finalized.to_string().contains("SETUP_ROW_CANARY"));
     let orphan_request = json!({"id":Uuid::new_v4(),"scope":launch["scope"]});
     fs::write(
         root.join("orphan-launch.json"),
@@ -799,7 +882,7 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
                 "launch.json",
             ],
         )["run"],
-        completed["run"],
+        finalized["run"],
         "an exact retry returns its already-reserved run after later settings change"
     );
     assert!(
@@ -845,7 +928,7 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     );
     assert_eq!(
         run(root, &["optimization-run", "project", "list"]),
-        json!([completed["run"]])
+        json!([finalized["run"]])
     );
     let activity = run(root, &["activity", "project", "list"]);
     let text = activity.to_string();
@@ -855,6 +938,7 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     assert!(text.contains("optimization.materialize"));
     assert!(text.contains("optimization.attach_experiment"));
     assert!(text.contains("optimization.execute"));
+    assert!(text.contains("optimization.final_evaluation"));
     assert!(text.contains(started["run"]["run"]["id"].as_str().unwrap()));
     assert!(!text.contains("SETUP_ROW_CANARY"));
     assert!(!text.contains("apiKey"));

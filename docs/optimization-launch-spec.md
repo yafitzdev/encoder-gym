@@ -142,6 +142,13 @@ either `ready_for_final_evaluation` with the exact selected model identity, or
 `baseline_retained` when no candidate passes the shared benchmark. It never
 uses the final holdout or makes a provider request.
 
+`workspace optimization-run <PROJECT> finalize <RUN_ID>` consumes the launch's
+single `selected_candidate_once` authority. It evaluates only the exact model
+selected by the shared benchmark, records the normal sealed scientific report,
+and projects a row-free `candidate_accepted` or `candidate_rejected` result to
+the project run. The project event never contains scores or holdout payloads.
+The command does not promote the model or change the baseline.
+
 The Electron main-process bridge now exposes those three fixed project-scoped
 operations. It validates every response, rejects renderer-supplied paths,
 credentials, commands or execution fields, writes authorization requests only
