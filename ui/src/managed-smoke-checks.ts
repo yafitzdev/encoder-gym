@@ -606,12 +606,14 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     advisor: { kind: "fake", model: "fixture-advisor", authentication: "none", limits: fakeLimits },
   });
   const driveInputRun = harness.backend.optimizationLaunch.drive.bind(harness.backend.optimizationLaunch);
+  let emitOptimizationProgress: Parameters<typeof driveInputRun>[2];
   let activeRunId = "", finishOptimizationStatus!: () => void;
   const optimizationStatusPending = new Promise<void>(resolve => { finishOptimizationStatus = resolve; });
   harness.backend.optimizationLaunch.drive = async (projectId, selectedRun, progress) => {
     if (projectId !== setupProjectId) return driveInputRun(projectId, selectedRun, progress);
     if (typeof selectedRun !== "string") throw new Error("Optimize supplied an invalid run identity");
     activeRunId = selectedRun;
+    emitOptimizationProgress = progress;
     progress?.("preparing_data", { phase: "writing_training_rows", completed: 1, total: 1 });
     await optimizationStatusPending;
     return harness.backend.optimizationLaunch.show(projectId, selectedRun);
@@ -619,11 +621,15 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await click("#optimization-start");
   await until("document.querySelector('.optimization-progress .spinner') && document.querySelector('#nav-overview .spinner')");
   await until("document.querySelector('.optimization-progress')?.textContent.includes('Building training dataset')");
-  await check("Overview names current work and shows activity spinners", "document.querySelector('.optimization-progress').textContent.includes('Variant · v1 · 1 row · 1 / 1 written') && document.querySelector('.optimization-progress').getAttribute('aria-busy') === 'true' && document.querySelector('#nav-overview .spinner')");
+  await check("Overview names current work and shows activity spinners", "document.querySelector('.optimization-progress').textContent.includes('Variant · v1') && !document.querySelector('.optimization-progress').textContent.includes('1 / 1') && document.querySelector('.optimization-progress').getAttribute('aria-busy') === 'true' && document.querySelector('#nav-overview .spinner')");
+  await evaluate("window.__stableOptimizationSpinner=document.querySelector('.optimization-progress .spinner')");
+  emitOptimizationProgress?.("preparing_data", { phase: "writing_training_rows", completed: 1, total: 1, subject: "data.jsonl" });
+  await until("document.querySelector('.optimization-progress-detail')?.textContent === 'data.jsonl'");
+  await check("progress updates preserve one continuously animated spinner", "window.__stableOptimizationSpinner===document.querySelector('.optimization-progress .spinner')");
   await screenshot("managed-optimization-live");
   await nav("models"); await nav("overview");
   await until("document.querySelector('.focus-status .optimization-progress')?.textContent.includes('Building training dataset')");
-  await check("Overview preserves the same live panel across page navigation", "document.querySelectorAll('.optimization-progress').length === 1 && document.querySelector('.focus-status').textContent.includes('Variant · v1 · 1 row · 1 / 1 written') && document.querySelector('#nav-overview .spinner') && !document.getElementById('nav-runs')");
+  await check("Overview preserves the same live panel across page navigation", "document.querySelectorAll('.optimization-progress').length === 1 && document.querySelector('.focus-status').textContent.includes('data.jsonl') && !document.querySelector('.focus-status').textContent.includes('1 / 1') && document.querySelector('#nav-overview .spinner') && !document.getElementById('nav-runs')");
   await screenshot("managed-runs-live");
   finishOptimizationStatus();
   await until("document.querySelector('[data-run-id=" + JSON.stringify(activeRunId) + "] .focus-run-state')?.textContent.includes('Paused')");

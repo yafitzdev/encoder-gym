@@ -37,12 +37,14 @@ app.whenReady().then(async()=>{
     await click('#optimization-start');
     await evaluate('new Promise(resolve=>setTimeout(resolve,50))');
     await check('launch replaces draft in-place and opens one Status panel','!qa.state.draft && document.querySelectorAll(".optimization-progress").length===1 && document.querySelector("[data-run-id=new-root] .focus-run-body")');
+    await evaluate('window.__stableRunSpinner=document.querySelector(".optimization-progress .spinner")');
     await evaluate(`qa.setup.activity={startedAt:'2026-09-14T12:00:00Z',updatedAt:'2026-09-14T12:01:00Z',progress:{phase:'training',completed:40,total:100},events:[{at:'2026-09-14T12:01:00Z',progress:{phase:'training',completed:40,total:100}}]};qa.render()`);
-    await check('live status exposes exact work, counters and activity','document.querySelector("progress").value===40 && document.querySelector("progress").max===100 && document.querySelector(".focus-events").textContent.includes("40 / 100 steps") && document.querySelector(".optimization-progress .spinner")');
+    await check('live status exposes exact work and an unlabeled meter','document.querySelector("progress").value===40 && document.querySelector("progress").max===100 && !document.querySelector(".focus-status").textContent.includes("40 / 100") && document.querySelector(".optimization-progress .spinner")');
+    await check('live progress preserves one continuously animated spinner','window.__stableRunSpinner===document.querySelector(".optimization-progress .spinner")');
     await check('stage tracker follows the native task','document.querySelector(".optimization-progress-steps li.active").textContent==="Training"');
     await capture('status-dark');
     await evaluate(`qa.setup.liveProgress={phase:'verifying_file',subject:'model.safetensors',completed:8388608,total:16777216,unit:'bytes'};qa.render()`);
-    await check('native filename and readable byte progress are visible immediately','document.querySelector(".optimization-progress-detail").textContent==="model.safetensors" && document.querySelector(".optimization-live-progress").textContent.includes("8 / 16 MiB")');
+    await check('native filename and an unlabeled file meter are visible immediately','document.querySelector(".optimization-progress-detail").textContent==="model.safetensors" && document.querySelector(".optimization-live-progress").textContent.trim()===""');
     await check('run stages precede and outweigh the current-step meter','document.querySelector(".optimization-progress-steps").compareDocumentPosition(document.querySelector(".optimization-live-progress")) & Node.DOCUMENT_POSITION_FOLLOWING && parseFloat(getComputedStyle(document.querySelector(".optimization-progress-steps li.active")).borderTopWidth) > parseFloat(getComputedStyle(document.querySelector(".optimization-live-progress progress")).height)');
     await capture('file-progress-dark');
     await evaluate(`qa.setup.liveProgress=undefined;qa.render()`);

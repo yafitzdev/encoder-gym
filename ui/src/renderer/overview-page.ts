@@ -13,6 +13,10 @@ import { runContext } from "./workspace-pages.js";
 import { comparisonTone, overviewRecords, reportDecision, type OverviewRecord } from "./overview-records.js";
 import { failureReason } from "../presentation-errors.js";
 
+// The standalone renderer verification uses the same keyed replacement rule
+// as the full application shell.
+export { preserveKeyedNodes } from "./dom.js";
+
 type Stage = "setup" | "status" | "report";
 export interface OverviewState { expanded?: string | null; tabs: Map<string, Stage>; draft: boolean; launching: boolean }
 export const newOverviewState = (): OverviewState => ({ tabs: new Map(), draft: false, launching: false });
@@ -82,7 +86,7 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
       h("button", { type: "button", id: "overview-run-" + id, class: "focus-run-heading", "aria-expanded": String(expanded), "aria-controls": panelId,
         onClick: () => { state.expanded = expanded ? null : id; actions.render(); } },
       disclosureIndicator(expanded), h("strong", {}, name),
-      h("span", { class: "focus-run-state " + (label === "KEEP" ? "success" : ["REJECT", "Failed"].includes(label) ? "danger" : "muted") }, running ? spinner() : null, label),
+      h("span", { class: "focus-run-state " + (label === "KEEP" ? "success" : ["REJECT", "Failed"].includes(label) ? "danger" : "muted") }, running ? spinner(`overview-row:${id}`) : null, label),
       record ? h("time", { datetime: record.createdAt }, dateLabel(record.createdAt)) : h("span", {})),
       expanded ? h("div", { id: panelId, class: "focus-run-body" },
         h("nav", { class: "focus-stages", "aria-label": name + " stages" }, ...(["setup", "status", "report"] as Stage[]).map((stage, index) =>
@@ -126,7 +130,7 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
   }
   function statusPanel(record?: OverviewRecord): HTMLElement {
     if (!record?.input) {
-      if (!record) return h("div", { class: "focus-status" }, pendingInputRunProgress(setup.initializingEvaluation ? setup.benchmarkProgress : setup.liveProgress));
+      if (!record) return h("div", { class: "focus-status" }, pendingInputRunProgress(setup.initializingEvaluation ? setup.benchmarkProgress : setup.liveProgress, "overview-draft-progress"));
       return h("div", {}, h("h2", {}, runLabel(record)), h("ol", { class: "focus-events" }, ...(record.experiment?.activity.slice(-5).reverse().map(event => h("li", {}, h("time", {}, clock(event.at)), event.kind.replaceAll("_", " "))) ?? [])),
         record.managed && !["completed", "cancelled", "failed"].includes(record.managed.state) ? button("Continue", () => actions.navigate({ page: "optimization" }), "primary") : null);
     }
@@ -138,7 +142,7 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     const resume = button("Resume", () => { void runs.resume(run); }, "primary"); resume.disabled = busy;
     return h("div", { class: "focus-status" },
       activity?.failure ? h("div", { class: "operation-failure", role: "alert" }, failureNotice(activity.failure.message)) : null,
-      inputRunProgress({ run, running, activity, startedAt: activity ? Date.parse(activity.startedAt) : setup.startedAt, context, liveProgress: setupBusy ? setup.liveProgress : runs.liveProgress, liveProgressAt: setupBusy ? setup.liveProgressAt : runs.liveProgressAt, registrationPending: needsRegistration(record) }),
+      inputRunProgress({ run, running, activity, startedAt: activity ? Date.parse(activity.startedAt) : setup.startedAt, context, liveProgress: setupBusy ? setup.liveProgress : runs.liveProgress, liveProgressAt: setupBusy ? setup.liveProgressAt : runs.liveProgressAt, registrationPending: needsRegistration(record), animationKey: `overview-progress:${run.id}` }),
       h("ol", { class: "focus-events", "aria-label": "Recent activity" }, ...(activity?.events ?? []).slice().reverse().map(event => h("li", {},
         h("time", { datetime: event.at }, clock(event.at)), h("div", {}, h("strong", {}, inputRunStageLabel(event.progress.phase)), h("span", {}, inputRunStageDetail(event.progress, context)))))),
       h("div", { class: "focus-controls" }, running ? stop : !inputOptimizationTerminal(run.state) || needsRegistration(record) ? resume : null));

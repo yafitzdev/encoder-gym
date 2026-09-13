@@ -5,7 +5,7 @@ import type { Actions, Location, Page, ProjectActions } from "./actions.js";
 import { candidateName, candidateRows, dateLabel, initialFilter, metricInfo, runName, setupId } from "./catalog.js";
 import { button, disclosureIndicator, failureNotice, icon, spinner, tag } from "./components.js";
 import { renderCompare, renderRun, type DetailState } from "./detail-pages.js";
-import { h } from "./dom.js";
+import { h, preserveKeyedNodes } from "./dom.js";
 import { renderModels, type ModelPageState } from "./models-page.js";
 import { renderModel } from "./model-view.js";
 import { findModel, modelInventory } from "./model-inventory.js";
@@ -524,17 +524,21 @@ export function mount(): void {
     const disclosurePage = `${project?.id}:${current.page}:${current.id ?? ""}:${view.optimization.run?.run_id ?? ""}`;
     const openDisclosures = main.dataset.disclosurePage === disclosurePage
       ? new Set([...main.querySelectorAll<HTMLDetailsElement>("details[open]")].map(node => node.querySelector("summary")?.textContent)) : new Set();
-    element("project-nav").replaceChildren(...collection.projects.map(p => {
+    const projectNav = element("project-nav");
+    const nextProjectNav = document.createDocumentFragment();
+    nextProjectNav.append(...collection.projects.map(p => {
       const expanded = p.id === project?.id && !collapsedProjects.has(p.id);
       const projectView = views.get(p.id), backgroundActive = !!projectView?.setup?.running || !!projectView?.setup?.saving || !!projectView?.setup?.initializingEvaluation || !!projectView?.inputRuns?.runningId;
       return h("section", { class: "project-folder" + (p.id === project?.id ? " selected-project" : "") + (expanded ? " expanded-project" : "") },
       h("button", { type: "button", id: "project-" + p.id, disabled: collectionBusy, class: "project-folder-button", title: p.source.kind === "folder" ? p.source.path : "Recorded example", "data-project-id": p.id, "aria-expanded": String(expanded), onClick: () => {
         if (p.id === selection.selectedId) { collapsedProjects.has(p.id) ? collapsedProjects.delete(p.id) : collapsedProjects.add(p.id); render(); }
         else { collapsedProjects.delete(p.id); projects.select(p.id); }
-      } }, disclosureIndicator(expanded), icon("project"), h("span", {}, p.name), !expanded && backgroundActive ? h("span", { role: "status", "aria-label": "Optimization running" }, spinner()) : null, p.source.kind === "example" ? h("small", {}, "Example") : !p.source.workspaceId ? h("small", {}, "Legacy") : null),
+      } }, disclosureIndicator(expanded), icon("project"), h("span", {}, p.name), !expanded && backgroundActive ? h("span", { role: "status", "aria-label": "Optimization running" }, spinner(`project-folder:${p.id}`)) : null, p.source.kind === "example" ? h("small", {}, "Example") : !p.source.workspaceId ? h("small", {}, "Legacy") : null),
       expanded ? h("div", { class: "project-pages" }, ...pages.filter(([page]) => page === "runs" ? !(p.source.kind === "folder" && p.source.workspaceId) : !["datasets", "activity", "overview"].includes(page) || (p.source.kind === "folder" && p.source.workspaceId)).map(([page, label, symbol]) => h("button", { type: "button", id: "nav-" + page, disabled: collectionBusy, class: "nav-item" + (page === activePage ? " active" : ""), "aria-current": page === activePage ? "page" : null, "data-page": page, onClick: () => navigate({ page }) }, icon(symbol), label,
-        page === "overview" && projectRunActive ? h("span", { class: "nav-meta", role: "status", "aria-label": "Optimization running" }, spinner()) : data && ["models", "runs"].includes(page) ? h("span", { class: "nav-meta" }, h("span", { class: "nav-count" }, page === "models" ? modelInventory(data).length : runCount)) : null))) : null);
+        page === "overview" && projectRunActive ? h("span", { class: "nav-meta", role: "status", "aria-label": "Optimization running" }, spinner(`overview-nav:${p.id}`)) : data && ["models", "runs"].includes(page) ? h("span", { class: "nav-meta" }, h("span", { class: "nav-count" }, page === "models" ? modelInventory(data).length : runCount)) : null))) : null);
     }));
+    preserveKeyedNodes(projectNav, nextProjectNav);
+    projectNav.replaceChildren(nextProjectNav);
     const candidate = data ? candidateRows(data).find(r => r.candidate.id === current.id)?.candidate : undefined;
     const run = data?.runs.find(r => r.id === current.id);
     const projectRun = inputRunById(view.inputRuns, view.setup, current.id);
@@ -572,7 +576,11 @@ export function mount(): void {
     if (operationError !== undefined) content.prepend(h("section", { id: "operation-error", role: "alert", class: "operation-failure" }, failureNotice(operationError), button("Dismiss", () => { operationError = undefined; render(); focusHeading(); }, "ghost small")));
     content.inert = loading || collectionBusy;
     main.setAttribute("aria-busy", String(loading || collectionBusy));
-    main.replaceChildren(...(loading || collectionBusy ? [h("div", { class: "workspace-progress", role: "status" }, loadingMessage)] : []), content); main.scrollTop = scroll;
+    const nextMain = document.createDocumentFragment();
+    if (loading || collectionBusy) nextMain.append(h("div", { class: "workspace-progress", role: "status" }, loadingMessage));
+    nextMain.append(content);
+    preserveKeyedNodes(main, nextMain);
+    main.replaceChildren(nextMain); main.scrollTop = scroll;
     main.dataset.disclosurePage = disclosurePage;
     for (const disclosure of main.querySelectorAll<HTMLDetailsElement>("details")) {
       if (openDisclosures.has(disclosure.querySelector("summary")?.textContent)) disclosure.open = true;

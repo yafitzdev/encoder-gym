@@ -37,3 +37,25 @@ function appendChildren(node: { append(...nodes: Array<Node | string>): void }, 
     node.append(child instanceof Node ? child : document.createTextNode(String(child)));
   }
 }
+
+/**
+ * Move keyed live nodes from the current tree into its replacement.
+ *
+ * The renderer intentionally rebuilds ordinary presentation state. Animated
+ * status nodes are different: replacing them restarts their CSS animation and
+ * creates visible jitter during frequent progress updates.
+ */
+export function preserveKeyedNodes(current: ParentNode, replacement: ParentNode): void {
+  const existing = new Map<string, HTMLElement>();
+  for (const node of current.querySelectorAll<HTMLElement>("[data-preserve-key]")) {
+    const key = node.dataset.preserveKey;
+    if (key) existing.set(key, node);
+  }
+  for (const next of replacement.querySelectorAll<HTMLElement>("[data-preserve-key]")) {
+    const key = next.dataset.preserveKey;
+    const previous = key ? existing.get(key) : undefined;
+    if (previous && previous.tagName === next.tagName && previous.className === next.className) {
+      next.replaceWith(previous);
+    }
+  }
+}

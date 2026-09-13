@@ -1,5 +1,5 @@
 <!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../dist/renderer/styles.css"><style>body{display:block;overflow:auto}main{max-width:1200px;margin:auto}.page-content{padding:32px}</style></head><body><main id="page"></main><script type="module">
-import { renderOverview, newOverviewState } from '../dist/renderer/overview-page.js';
+import { renderOverview, newOverviewState, preserveKeyedNodes } from '../dist/renderer/overview-page.js';
 import { OptimizationSetupController } from '../dist/evidence/optimization-setup-controller.js';
 import { InputRunsController } from '../dist/evidence/input-runs-controller.js';
 window.fixtureReady = true;
@@ -21,7 +21,7 @@ window.startFixture = initial => {
   setup.data={datasets,benchmarks:[benchmark],history:[saved]}; setup.datasetId=saved.inputs.dataset.id;setup.benchmarkId=benchmark.id;
   runs.runs=roots;
   const actions={render,navigate:location=>window.lastNavigation=location};
-  function render(){document.getElementById('page').replaceChildren(renderOverview(workspace,state,setup,runs,actions))}
+  function render(){const page=document.getElementById('page'),next=document.createDocumentFragment();next.append(renderOverview(workspace,state,setup,runs,actions));preserveKeyedNodes(page,next);page.replaceChildren(next)}
   window.qa={state,setup,runs,workspace,render,finish:()=>finish?.()}; render();
 };
 </script></body></html>

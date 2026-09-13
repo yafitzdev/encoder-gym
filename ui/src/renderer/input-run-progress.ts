@@ -1,7 +1,6 @@
 import type { NativeProgress } from "../managed-control.js";
 import { inputOptimizationPhase, type InputOptimizationRun } from "../input-optimization.js";
 import { spinner } from "./components.js";
-import { progressCounter } from "../native-progress.js";
 import { h } from "./dom.js";
 import { inputRunStageDetail, inputRunStageLabel, type InputRunActivity, type InputRunStageContext } from "./input-run-activity.js";
 
@@ -24,14 +23,15 @@ export interface InputRunProgressOptions {
   liveProgress?: NativeProgress;
   liveProgressAt?: number;
   registrationPending?: boolean;
+  animationKey?: string;
 }
 
-export function pendingInputRunProgress(progress?: NativeProgress): HTMLElement {
+export function pendingInputRunProgress(progress?: NativeProgress, animationKey = "pending-run"): HTMLElement {
   return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": "true" },
     progressSteps(0, false),
     h("div", { class: "optimization-current-work" },
       h("div", { class: "optimization-progress-state" },
-        h("div", { class: "optimization-progress-title" }, spinner(), h("strong", {}, progress ? inputRunStageLabel(progress.phase) : "Starting run"))),
+        h("div", { class: "optimization-progress-title" }, spinner(animationKey), h("strong", {}, progress ? inputRunStageLabel(progress.phase) : "Starting run"))),
       h("p", { class: "optimization-progress-detail" }, progress?.subject ?? "Creating the run record"),
       progress ? counterBar(progress) : null));
 }
@@ -62,7 +62,7 @@ export function inputRunProgress(options: InputRunProgressOptions): HTMLElement 
     progressSteps(active, failed),
     h("div", { class: "optimization-current-work" },
       h("div", { class: "optimization-progress-state" },
-        h("div", { class: "optimization-progress-title" }, running ? spinner() : null, h("strong", {}, current)),
+        h("div", { class: "optimization-progress-title" }, running ? spinner(options.animationKey ?? `run-progress:${run.id}`) : null, h("strong", {}, current)),
         running && startedAt ? h("span", {}, "Elapsed ", h("span", { "data-elapsed-start": String(startedAt) })) : null),
       detail ? h("p", { class: "optimization-progress-detail" }, detail) : null,
       !result && progress ? counterBar(progress) : null,
@@ -71,10 +71,8 @@ export function inputRunProgress(options: InputRunProgressOptions): HTMLElement 
 
 function counterBar(progress: NativeProgress): HTMLElement | null {
   if (progress.completed === undefined || progress.total === undefined) return null;
-  const label = progressCounter(progress);
-  return h("div", { class: "optimization-live-progress" + (label ? "" : " meter-only") },
-    h("progress", { value: progress.completed, max: progress.total, "aria-label": progress.subject ?? inputRunStageLabel(progress.phase) }),
-    label ? h("span", {}, label) : null);
+  return h("div", { class: "optimization-live-progress meter-only" },
+    h("progress", { value: progress.completed, max: progress.total, "aria-label": progress.subject ?? inputRunStageLabel(progress.phase) }));
 }
 
 function progressSteps(active: number, failed: boolean): HTMLElement {

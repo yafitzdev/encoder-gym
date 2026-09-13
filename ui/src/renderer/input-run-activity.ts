@@ -76,10 +76,7 @@ export interface InputRunStageContext {
 /** Short artifact-level context for the currently executing persisted stage. */
 export function inputRunStageDetail(progress: NativeProgress, context: InputRunStageContext): string {
   if (progress.subject) return progress.subject;
-  const counter = progress.completed !== undefined && progress.total !== undefined
-    ? `${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()}`
-    : undefined;
-  const data = context.dataset + (context.datasetRows === undefined ? "" : ` · ${context.datasetRows.toLocaleString()} ${context.datasetRows === 1 ? "row" : "rows"}`);
+  const data = context.dataset;
   const suites = context.finalEvaluation && context.finalSuite
     ? context.finalSuite
     : context.developmentSuites.join(", ") || context.evaluation;
@@ -91,7 +88,7 @@ export function inputRunStageDetail(progress: NativeProgress, context: InputRunS
     checking_evaluation: context.evaluation,
     checking_runtime: "Model runtime · trainer · evaluation database",
     loading_training_rows: data,
-    writing_training_rows: `${data}${counter ? ` · ${counter} written` : ""}`,
+    writing_training_rows: data,
     checking_materialized_project: `${context.model} + ${context.dataset}`,
     loading_evaluation_protocol: context.evaluation,
     creating_candidate: `${context.model} → Candidate 1`,
@@ -102,7 +99,7 @@ export function inputRunStageDetail(progress: NativeProgress, context: InputRunS
     checking_training_data: data,
     loading_model: context.model,
     preparing_batches: data,
-    training: `Candidate 1${counter ? ` · ${counter} steps` : ""}`,
+    training: "Candidate 1",
     saving_checkpoint: "Candidate 1",
     evaluating_retrieval: `${context.evaluation} · ${suites}`,
     evaluating_agent: `${context.evaluation} · ${suites}`,

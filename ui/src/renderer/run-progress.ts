@@ -41,7 +41,6 @@ export function liveRun(run: ManagedRunStatus, state: OptimizationPageState): HT
       h("div", { role: "status" }, h("div", { class: "eyebrow" }, "Current task"), h("h3", {}, activity ? phaseLabels[activity.phase] ?? activity.phase.replaceAll("_", " ") : run.stage.label)),
       startedAt !== undefined && Number.isFinite(startedAt) ? h("div", { class: "live-elapsed" }, h("span", {}, "Elapsed"), h("strong", { "data-elapsed-start": String(startedAt) })) : null),
     counter ? h("div", { class: "live-counter" },
-      h("div", {}, h("span", {}, counter.phase === "preparing_batches" ? "Preparation batches" : "Training steps"), h("strong", {}, `${counter.completed!.toLocaleString()} / ${counter.total!.toLocaleString()}`)),
       h("progress", { value: String(counter.completed), max: String(counter.total), "aria-label": counter.phase === "preparing_batches" ? "Preparation batches" : "Training steps" })) : null,
     h("div", { class: "live-run-meta" },
       h("span", { class: "run-freshness", ...(state.statusCheckedAt ? { "data-checked-at": String(state.statusCheckedAt) } : {}) }, "Waiting for status…"),

@@ -31,12 +31,8 @@ export function button(label: string, action: () => void, kind = "secondary", sy
 }
 export function tag(label: string, tone = "neutral"): HTMLElement { return h("span", { class: `tag ${tone}` }, label); }
 export function status(label: string, tone = "neutral"): HTMLElement { return h("span", { class: `status ${tone}` }, h("span", { class: "status-dot", "aria-hidden": "true" }), label); }
-const SPINNER_PERIOD_MS = 700;
-export function spinner(): HTMLElement {
-  // Renderer updates replace status nodes. Sync every replacement to wall-clock
-  // phase so live file telemetry cannot visibly restart the animation.
-  const phase = Date.now() % SPINNER_PERIOD_MS;
-  return h("span", { class: "spinner", "aria-hidden": "true", style: `animation-delay: -${phase}ms` });
+export function spinner(key?: string): HTMLElement {
+  return h("span", { class: "spinner", "aria-hidden": "true", ...(key ? { "data-preserve-key": `spinner:${key}` } : {}) });
 }
 /** Fixed-size disclosure indicator; state changes rotation, never its geometry. */
 export function disclosureIndicator(expanded: boolean): HTMLElement {
