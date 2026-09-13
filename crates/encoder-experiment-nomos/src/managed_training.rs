@@ -403,11 +403,6 @@ fn validate_native_training_row(value: &Value) -> Result<String, EncoderTaskAdap
         "previous_candidate_ids",
         false,
     )?;
-    if !previous.is_subset(&legal) {
-        return Err(adapter_error(
-            "Nomos previous candidates are not legal candidates",
-        ));
-    }
     let registry = row
         .get("tool_registry")
         .and_then(Value::as_object)
@@ -435,6 +430,11 @@ fn validate_native_training_row(value: &Value) -> Result<String, EncoderTaskAdap
     if !legal.is_subset(&tool_ids) {
         return Err(adapter_error(
             "Nomos legal candidates are absent from the tool registry",
+        ));
+    }
+    if !previous.is_subset(&tool_ids) {
+        return Err(adapter_error(
+            "Nomos previous candidates are absent from the tool registry",
         ));
     }
     let label = row
@@ -720,6 +720,40 @@ mod tests {
             rejected
                 .append(&prefixed(&"e".repeat(64)), &invalid_fingerprint, &invalid)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn recovery_rows_may_exclude_previous_candidates_from_the_legal_pool() {
+        let mut recovery = row("decision-recovery");
+        recovery["task_kind"] = json!("recover");
+        recovery["previous_candidate_ids"] = json!(["tool_previous"]);
+        recovery["tool_registry"]["tools"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "tool_id":"tool_previous",
+                "tool_family":"search",
+                "description":"A candidate rejected during the previous retrieval pass",
+                "capabilities":["search"],
+                "input_modalities":["text"],
+                "output_modalities":["text"],
+                "evidence_roles":["primary"],
+                "side_effect_class":"none",
+                "argument_schema":{}
+            }));
+
+        assert_eq!(
+            validate_native_training_row(&recovery).unwrap(),
+            "decision-recovery"
+        );
+
+        recovery["previous_candidate_ids"] = json!(["missing_tool"]);
+        assert_eq!(
+            validate_native_training_row(&recovery)
+                .unwrap_err()
+                .to_string(),
+            "encoder task adapter failed: Nomos previous candidates are absent from the tool registry"
         );
     }
 }

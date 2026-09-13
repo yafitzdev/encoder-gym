@@ -23,14 +23,14 @@
 .focus-field select:disabled { opacity: 1; color: var(--muted); }
 .focus-controls { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
 .focus-status .optimization-progress { margin: 0; border: 0; padding: 0; background: transparent; width: 100%; max-width: none; }
-.focus-status .optimization-progress-steps { margin-top: 24px; }
+.focus-status .optimization-progress-steps { margin-top: 0; }
 .focus-events { list-style: none; margin: 24px 0 0; padding: 0; max-height: 230px; overflow-y: auto; scrollbar-gutter: stable; }
 .focus-events li { display: grid; grid-template-columns: 85px minmax(0,1fr); gap: 20px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
 .focus-events time { color: var(--muted); font: 12px/1.7 var(--mono); }
 .focus-events li div { display: grid; gap: 3px; }
 .focus-events li span { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .focus-status .optimization-progress-detail { color: var(--text); font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
-.focus-status .optimization-progress-title { font-size: 19px; }
+.focus-status .optimization-progress-title { font-size: 16px; }
 .focus-status .optimization-live-progress { width: 100%; }
 .focus-status .optimization-progress-steps { gap: 8px; }
 .focus-run-heading:focus-visible, .focus-stages button:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
@@ -789,16 +789,18 @@ dialog::backdrop { background: #0008; }
 .optimization-progress { max-width: 840px; margin-top: 28px; padding: 20px 22px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
 .optimization-progress-state { display: flex; justify-content: space-between; align-items: baseline; gap: 18px; }
 .optimization-progress-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.optimization-progress-state strong { font-size: 18px; }
+.optimization-current-work { padding-top: 17px; border-top: 1px solid var(--line-soft); }
+.optimization-progress-state strong { font-size: 16px; }
 .optimization-progress-state > span { color: var(--muted); font: 11px var(--mono); }
 .optimization-progress-title .spinner { color: var(--accent); width: 16px; height: 16px; }
 .optimization-progress-detail { margin-top: 7px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-.optimization-live-progress { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; margin-top: 18px; color: var(--muted); font: 11px var(--mono); }
-.optimization-live-progress progress { width: 100%; height: 7px; accent-color: var(--accent); }
+.optimization-live-progress { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; margin-top: 13px; color: var(--muted); font: 11px var(--mono); }
+.optimization-live-progress progress { width: 100%; height: 3px; accent-color: var(--accent); }
+.optimization-progress-updated { display: block; margin-top: 10px; font-size: 10px; }
 .optimization-live-stages { display: flex; gap: 8px 20px; flex-wrap: wrap; list-style: none; padding: 16px 0 0; margin: 16px 0 0; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 11px; }
 .optimization-live-stages li::before { content: "✓"; margin-right: 7px; color: var(--success); }
-.optimization-progress-steps { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; list-style: none; padding: 0; margin: 18px 0 4px; }
-.optimization-progress-steps li { padding-top: 9px; border-top: 2px solid var(--line); color: var(--subtle); font-size: 10px; white-space: nowrap; }
+.optimization-progress-steps { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; list-style: none; padding: 0; margin: 0 0 17px; }
+.optimization-progress-steps li { padding-top: 9px; border-top: 4px solid var(--line); color: var(--subtle); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .optimization-progress-steps li.complete { border-color: var(--success); color: var(--muted); }
 .optimization-progress-steps li.active { border-color: var(--accent); color: var(--text); }
 .optimization-progress-steps li.failed { border-color: var(--danger); color: var(--danger); }

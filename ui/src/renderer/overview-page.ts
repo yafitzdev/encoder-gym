@@ -11,6 +11,7 @@ import { inputRunProgress, pendingInputRunProgress } from "./input-run-progress.
 import { inputRunStageDetail, inputRunStageLabel } from "./input-run-activity.js";
 import { runContext } from "./workspace-pages.js";
 import { comparisonTone, overviewRecords, reportDecision, type OverviewRecord } from "./overview-records.js";
+import { failureReason } from "../presentation-errors.js";
 
 type Stage = "setup" | "status" | "report";
 export interface OverviewState { expanded?: string | null; tabs: Map<string, Stage>; draft: boolean; launching: boolean }
@@ -39,7 +40,13 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     setup.newDraft(); state.draft = true; state.expanded = "draft"; state.tabs.set("draft", "setup"); actions.render();
   }, "primary");
   create.id = "overview-new-run"; create.disabled = busy || setup.loading || runs.loading;
-  const error = setup.error ?? runs.error;
+  const controllerError = setup.error ?? runs.error;
+  const expandedRun = records.find(record => record.id === state.expanded)?.input;
+  const expandedActivity = expandedRun
+    ? setup.run?.id === expandedRun.id && setup.activity?.failure ? setup.activity : runs.activities.get(expandedRun.id)
+    : undefined;
+  const error = controllerError && (!expandedActivity?.failure
+    || failureReason(controllerError) !== failureReason(expandedActivity.failure.message)) ? controllerError : undefined;
   return workspacePage("Overview", create,
     error ? h("div", { class: "operation-failure", role: "alert" }, failureNotice(error), !setup.data || !runs.runs ? button("Retry", () => { setup.refresh(); runs.refresh(); }, "secondary") : null) : null,
     (setup.loading || runs.loading) && !records.length ? h("div", { role: "status", class: "workspace-progress" }, spinner(), "Loading runs") : null,

@@ -43,11 +43,14 @@ app.whenReady().then(async()=>{
     await capture('status-dark');
     await evaluate(`qa.setup.liveProgress={phase:'verifying_file',subject:'model.safetensors',completed:8388608,total:16777216,unit:'bytes'};qa.render()`);
     await check('native filename and readable byte progress are visible immediately','document.querySelector(".optimization-progress-detail").textContent==="model.safetensors" && document.querySelector(".optimization-live-progress").textContent.includes("8 / 16 MiB")');
+    await check('run stages precede and outweigh the current-step meter','document.querySelector(".optimization-progress-steps").compareDocumentPosition(document.querySelector(".optimization-live-progress")) & Node.DOCUMENT_POSITION_FOLLOWING && parseFloat(getComputedStyle(document.querySelector(".optimization-progress-steps li.active")).borderTopWidth) > parseFloat(getComputedStyle(document.querySelector(".optimization-live-progress progress")).height)');
     await capture('file-progress-dark');
     await evaluate(`qa.setup.liveProgress=undefined;qa.render()`);
     await evaluate('[...document.querySelectorAll(".focus-controls button")].find(button=>button.textContent==="Stop").click()');
     await evaluate('new Promise(resolve=>setTimeout(resolve,50))');
     await check('stop preserves a resumable run','!qa.setup.running && [...document.querySelectorAll(".focus-controls button")].some(button=>button.textContent==="Resume")');
+    await evaluate(`qa.setup.run.state='materialization_failed';qa.setup.error=new Error('encoder task adapter failed: invalid training row');qa.setup.activity={startedAt:'2026-09-14T12:00:00Z',updatedAt:'2026-09-14T12:01:00Z',progress:{phase:'verifying_file',subject:'encoder-gym.json',completed:2400,total:2400,unit:'bytes'},failure:{code:'adapter',message:'encoder task adapter failed: invalid training row'},events:[{at:'2026-09-14T12:01:00Z',progress:{phase:'verifying_file',subject:'encoder-gym.json',completed:2400,total:2400,unit:'bytes'}}]};qa.render()`);
+    await check('a run failure appears once and names the failed stage','document.querySelectorAll(".operation-failure").length===1 && document.querySelector(".optimization-progress-title strong").textContent==="Preparing data failed"');
     for(const width of [1040,760,390]){
       window.setContentSize(width,900);await capture('status-'+width);
       await check('no page overflow at '+width,'document.documentElement.scrollWidth<=innerWidth && document.getElementById("page").scrollWidth<=innerWidth');

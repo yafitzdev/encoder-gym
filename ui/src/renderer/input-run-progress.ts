@@ -28,11 +28,12 @@ export interface InputRunProgressOptions {
 
 export function pendingInputRunProgress(progress?: NativeProgress): HTMLElement {
   return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": "true" },
-    h("div", { class: "optimization-progress-state" },
-      h("div", { class: "optimization-progress-title" }, spinner(), h("strong", {}, progress ? inputRunStageLabel(progress.phase) : "Starting run"))),
-    h("p", { class: "optimization-progress-detail" }, progress?.subject ?? "Creating the run record"),
-    progress ? counterBar(progress) : null,
-    progressSteps(0, false));
+    progressSteps(0, false),
+    h("div", { class: "optimization-current-work" },
+      h("div", { class: "optimization-progress-state" },
+        h("div", { class: "optimization-progress-title" }, spinner(), h("strong", {}, progress ? inputRunStageLabel(progress.phase) : "Starting run"))),
+      h("p", { class: "optimization-progress-detail" }, progress?.subject ?? "Creating the run record"),
+      progress ? counterBar(progress) : null));
 }
 
 /** The single live-status presentation shared by Optimize and Runs. */
@@ -54,16 +55,18 @@ export function inputRunProgress(options: InputRunProgressOptions): HTMLElement 
   const active = visiblePhase === "complete" ? phases.length : Math.max(0, phases.indexOf(visiblePhase));
   const activeProgress: NativeProgress = progress ?? { phase: fallback[phase] };
   const stage = inputRunStageLabel(activeProgress.phase);
-  const current = result ?? (failed ? `Failed while ${stage.toLocaleLowerCase()}` : running ? stage : `Paused · ${stage}`);
+  const phaseLabel = phase === "complete" ? "Complete" : labels[phase];
+  const current = result ?? (failed ? `${phaseLabel} failed` : running ? stage : `Paused · ${stage}`);
   const detail = result ? "" : inputRunStageDetail(activeProgress, context);
   return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": String(running) },
-    h("div", { class: "optimization-progress-state" },
-      h("div", { class: "optimization-progress-title" }, running ? spinner() : null, h("strong", {}, current)),
-      running && startedAt ? h("span", {}, "Elapsed ", h("span", { "data-elapsed-start": String(startedAt) })) : null),
-    detail ? h("p", { class: "optimization-progress-detail" }, detail) : null,
-    progress ? counterBar(progress) : null,
     progressSteps(active, failed),
-    running && (options.liveProgressAt || activity?.updatedAt) ? h("small", { class: "muted", "data-checked-at": String(options.liveProgressAt ?? Date.parse(activity!.updatedAt)) }, "Updated just now") : null);
+    h("div", { class: "optimization-current-work" },
+      h("div", { class: "optimization-progress-state" },
+        h("div", { class: "optimization-progress-title" }, running ? spinner() : null, h("strong", {}, current)),
+        running && startedAt ? h("span", {}, "Elapsed ", h("span", { "data-elapsed-start": String(startedAt) })) : null),
+      detail ? h("p", { class: "optimization-progress-detail" }, detail) : null,
+      !result && progress ? counterBar(progress) : null,
+      running && (options.liveProgressAt || activity?.updatedAt) ? h("small", { class: "optimization-progress-updated muted", "data-checked-at": String(options.liveProgressAt ?? Date.parse(activity!.updatedAt)) }, "Updated just now") : null));
 }
 
 function counterBar(progress: NativeProgress): HTMLElement | null {
@@ -74,6 +77,9 @@ function counterBar(progress: NativeProgress): HTMLElement | null {
 }
 
 function progressSteps(active: number, failed: boolean): HTMLElement {
-  return h("ol", { class: "optimization-progress-steps" },
-    ...phases.map((item, index) => h("li", { class: index < active ? "complete" : index === active ? failed ? "failed" : "active" : "" }, labels[item])));
+  return h("ol", { class: "optimization-progress-steps", "aria-label": "Run stages" },
+    ...phases.map((item, index) => h("li", {
+      class: index < active ? "complete" : index === active ? failed ? "failed" : "active" : "",
+      "aria-current": index === active ? "step" : null,
+    }, labels[item])));
 }
