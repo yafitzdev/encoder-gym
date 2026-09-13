@@ -795,6 +795,7 @@ dialog::backdrop { background: #0008; }
 .optimization-progress-title .spinner { color: var(--accent); width: 16px; height: 16px; }
 .optimization-progress-detail { margin-top: 7px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .optimization-live-progress { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; margin-top: 13px; color: var(--muted); font: 11px var(--mono); }
+.optimization-live-progress.meter-only { grid-template-columns: minmax(0, 1fr); }
 .optimization-live-progress progress { width: 100%; height: 3px; accent-color: var(--accent); }
 .optimization-progress-updated { display: block; margin-top: 10px; font-size: 10px; }
 .optimization-live-stages { display: flex; gap: 8px 20px; flex-wrap: wrap; list-style: none; padding: 16px 0 0; margin: 16px 0 0; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 11px; }

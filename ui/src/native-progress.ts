@@ -31,12 +31,7 @@ export function validateNativeProgress(input: unknown): NativeProgress | undefin
 
 export function progressCounter(progress: NativeProgress): string | undefined {
   if (progress.completed === undefined || progress.total === undefined) return;
-  if (progress.unit === "bytes") {
-    const divisor = progress.total >= 1024 * 1024 ? 1024 * 1024 : progress.total >= 1024 ? 1024 : 1;
-    const unit = divisor === 1 ? "B" : divisor === 1024 ? "KiB" : "MiB";
-    const format = (value: number) => (value / divisor).toLocaleString(undefined, { maximumFractionDigits: 1 });
-    return `${format(progress.completed)} / ${format(progress.total)} ${unit}`;
-  }
+  if (progress.unit === "bytes") return;
   const unit = progress.phase === "verifying_rows" || progress.phase === "writing_training_rows" ? " rows" : progress.phase === "training" ? " steps" : progress.phase === "preparing_batches" ? " batches" : "";
   return `${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()}${unit}`;
 }

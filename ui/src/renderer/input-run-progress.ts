@@ -70,10 +70,11 @@ export function inputRunProgress(options: InputRunProgressOptions): HTMLElement 
 }
 
 function counterBar(progress: NativeProgress): HTMLElement | null {
+  if (progress.completed === undefined || progress.total === undefined) return null;
   const label = progressCounter(progress);
-  return label ? h("div", { class: "optimization-live-progress" },
-    h("progress", { value: progress.completed!, max: progress.total!, "aria-label": progress.subject ?? inputRunStageLabel(progress.phase) }),
-    h("span", {}, label)) : null;
+  return h("div", { class: "optimization-live-progress" + (label ? "" : " meter-only") },
+    h("progress", { value: progress.completed, max: progress.total, "aria-label": progress.subject ?? inputRunStageLabel(progress.phase) }),
+    label ? h("span", {}, label) : null);
 }
 
 function progressSteps(active: number, failed: boolean): HTMLElement {

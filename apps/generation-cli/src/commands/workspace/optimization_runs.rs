@@ -2,7 +2,7 @@ use crate::cli::WorkspaceOptimizationRunCommand;
 use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use encoder_experiment_core::{
-    domain::{EvidenceRole, OptimizationBudget},
+    domain::{EvidenceRole, ExternalProjectSnapshot, ModelArtifactIdentity, OptimizationBudget},
     journal::{ExperimentRunState, FinalDecision},
     ports::{EncoderTaskBackend, ExperimentStore},
 };
@@ -10,10 +10,10 @@ use encoder_experiment_nomos::NomosBackend;
 use encoder_experiment_runner::ExperimentRunner;
 use project_workspace_core::{
     ActivityEventState, ActivityFailure, ActivityReference, ActivitySource, BoundIdentity,
-    ProjectOptimizationExperiment, ProjectOptimizationFinalResult,
-    ProjectOptimizationFinalResultKind, ProjectOptimizationMaterialization,
-    ProjectOptimizationOutcome, ProjectOptimizationOutcomeKind, ProjectOptimizationPreparation,
-    ProjectOptimizationRunState,
+    LocalModel, ModelArtifact, ModelCatalog, ProjectOptimizationExperiment,
+    ProjectOptimizationFinalResult, ProjectOptimizationFinalResultKind,
+    ProjectOptimizationMaterialization, ProjectOptimizationOutcome, ProjectOptimizationOutcomeKind,
+    ProjectOptimizationPreparation, ProjectOptimizationRunState,
 };
 use project_workspace_local::{
     AppendActivity, append_activity, dataset_versions, initialize_activity, open_workspace,
@@ -994,10 +994,15 @@ async fn materialize_training_project(
     let backend = backend.with_training_dataset(native.clone())?;
     emit_progress("checking_materialized_project", None, None);
     let fresh_project = backend.project_snapshot()?;
-    ensure!(
-        fresh_project.baseline_model.fingerprint == preparation.model.fingerprint,
-        "Materialized project uses another baseline model."
-    );
+    verify_runtime_baseline(
+        workspace
+            .model_catalog
+            .as_ref()
+            .context("Model catalog is missing.")?,
+        &preparation.model,
+        &backend,
+        &fresh_project,
+    )?;
     let benchmark_id: Uuid = preparation.benchmark.id.parse()?;
     let benchmark = super::benchmarks::inspect(folder, benchmark_id).await?;
     NomosBackend::verify_benchmark_definition(&fresh_project, &benchmark.definition)?;
@@ -1072,6 +1077,15 @@ async fn verify_preparation(
     let store = super::open_bound_store(&workspace.folder, binding).await?;
     let project = super::load_bound_project(&store, binding).await?;
     let backend = super::open_nomos_binding(binding, &project)?;
+    verify_runtime_baseline(
+        workspace
+            .model_catalog
+            .as_ref()
+            .context("Model catalog is missing.")?,
+        &setup.inputs.model,
+        &backend,
+        &project,
+    )?;
     backend.inspect(project.clone()).await?;
     NomosBackend::verify_benchmark_definition(&project, &benchmark.definition)?;
     store.pool().close().await;
@@ -1110,4 +1124,118 @@ async fn verify_preparation(
         Utc::now(),
     )
     .map_err(Into::into)
+}
+
+fn verify_runtime_baseline(
+    catalog: &ModelCatalog,
+    expected: &BoundIdentity,
+    backend: &NomosBackend,
+    project: &ExternalProjectSnapshot,
+) -> Result<()> {
+    let expected_id: Uuid = expected
+        .id
+        .parse()
+        .context("Baseline model identity is invalid.")?;
+    let managed = catalog
+        .artifacts
+        .iter()
+        .find(|model| model.id == expected_id)
+        .context("Selected baseline model is missing from the managed catalog.")?;
+    let runtime = project_workspace_local::inspect_model(
+        &backend.verified_model_path(&project.baseline_model)?,
+    )?;
+    verify_runtime_baseline_identity(expected, managed, &project.baseline_model, &runtime)
+}
+
+fn verify_runtime_baseline_identity(
+    expected: &BoundIdentity,
+    managed: &ModelArtifact,
+    scientific: &ModelArtifactIdentity,
+    runtime: &LocalModel,
+) -> Result<()> {
+    ensure!(
+        managed.id.to_string() == expected.id
+            && managed.fingerprint == expected.fingerprint
+            && runtime.fingerprint == managed.fingerprint
+            && runtime.bytes == managed.bytes
+            && runtime.format == managed.format
+            && scientific.bytes == runtime.bytes
+            && scientific.format == runtime.format
+            && managed.source_model.as_ref().is_none_or(|source| {
+                source.id == scientific.id.to_string()
+                    && source.fingerprint == scientific.fingerprint
+            }),
+        "Materialized project uses another baseline model."
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use project_workspace_core::ModelOrigin;
+
+    fn fingerprint(character: char) -> String {
+        format!("sha256:{}", character.to_string().repeat(64))
+    }
+
+    fn managed_model(fingerprint: String) -> ModelArtifact {
+        ModelArtifact {
+            id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            name: "Baseline".into(),
+            created_at: Utc::now(),
+            origin: ModelOrigin::Imported,
+            path: "models/baseline".into(),
+            format: "sentence-transformers".into(),
+            bytes: 42,
+            fingerprint,
+            parent_model_id: None,
+            producing_run: None,
+            source_model: None,
+            training_snapshot: None,
+            trainer: None,
+            effective_configuration_fingerprint: None,
+            tokenizer_fingerprint: None,
+            source_revision: None,
+        }
+    }
+
+    fn runtime_model(fingerprint: String) -> LocalModel {
+        LocalModel {
+            source: "fixture".into(),
+            format: "sentence-transformers".into(),
+            architecture: "bert".into(),
+            files: vec![],
+            bytes: 42,
+            fingerprint,
+            execution: "not-configured".into(),
+        }
+    }
+
+    #[test]
+    fn imported_baseline_compares_content_across_distinct_identity_schemes() {
+        let managed = managed_model(fingerprint('a'));
+        let expected = BoundIdentity {
+            id: managed.id.to_string(),
+            fingerprint: managed.fingerprint.clone(),
+        };
+        let scientific = ModelArtifactIdentity::new(
+            "artifacts/baseline",
+            "sentence-transformers",
+            42,
+            fingerprint('b'),
+        )
+        .unwrap();
+        let runtime = runtime_model(managed.fingerprint.clone());
+
+        verify_runtime_baseline_identity(&expected, &managed, &scientific, &runtime).unwrap();
+
+        let changed_runtime = runtime_model(fingerprint('c'));
+        assert!(
+            verify_runtime_baseline_identity(&expected, &managed, &scientific, &changed_runtime)
+                .is_err()
+        );
+    }
 }
