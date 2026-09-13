@@ -102,6 +102,13 @@ fn protocol(project: &ExternalProjectSnapshot, sequence: u32) -> ExperimentProto
 }
 
 fn project_with_changed_training(source: &ExternalProjectSnapshot) -> ExternalProjectSnapshot {
+    let copied_baseline = ModelArtifactIdentity::new(
+        "materialized/baseline",
+        source.baseline_model.format.clone(),
+        source.baseline_model.bytes,
+        source.baseline_model.fingerprint.clone(),
+    )
+    .unwrap();
     ExternalProjectSnapshot::create(
         "Fixture with selected training data",
         source.task,
@@ -119,7 +126,7 @@ fn project_with_changed_training(source: &ExternalProjectSnapshot) -> ExternalPr
                 input
             })
             .collect(),
-        source.baseline_model.clone(),
+        copied_baseline,
         json!({"training":"selected immutable version"}),
         Utc::now(),
     )
@@ -261,6 +268,9 @@ fn unchanged_shared_baseline_evidence_is_referenced_with_exact_provenance() {
         )
         .unwrap();
     assert_eq!(referenced.project_snapshot_id, target.id);
+    assert_eq!(referenced.model, target.baseline_model);
+    assert_ne!(referenced.model.id, source.baseline_model.id);
+    assert!(referenced.model.has_same_content(&source.baseline_model));
     assert_eq!(
         referenced.metrics,
         source_protocol.baseline_development_report.metrics
@@ -286,6 +296,21 @@ fn unchanged_shared_baseline_evidence_is_referenced_with_exact_provenance() {
                 &target,
                 &source_protocol.baseline_development_report,
                 &changed,
+            )
+            .is_err()
+    );
+
+    let different_baseline = project('b');
+    let incompatible_target = project_with_changed_training(&different_baseline);
+    assert!(
+        benchmark
+            .reference_baseline_report(
+                uuid::Uuid::new_v4(),
+                &source,
+                &source_protocol,
+                &incompatible_target,
+                &source_protocol.baseline_development_report,
+                Utc::now(),
             )
             .is_err()
     );

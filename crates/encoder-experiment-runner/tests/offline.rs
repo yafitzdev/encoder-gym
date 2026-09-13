@@ -586,7 +586,13 @@ async fn shared_benchmark_protocol_reuses_baseline_reports_without_evaluation() 
                 input
             })
             .collect(),
-        source.baseline_model.clone(),
+        ModelArtifactIdentity::new(
+            "materialized/baseline",
+            source.baseline_model.format.clone(),
+            source.baseline_model.bytes,
+            source.baseline_model.fingerprint.clone(),
+        )
+        .unwrap(),
         json!({"suites":["development_a","development_b","sealed"],"training":"selected"}),
         Utc::now(),
     )
@@ -626,9 +632,12 @@ async fn shared_benchmark_protocol_reuses_baseline_reports_without_evaluation() 
         prepared
             .baseline_development_reports()
             .iter()
-            .all(|report| report.reference.is_some())
+            .all(|report| report.reference.is_some() && report.model == target.baseline_model)
     );
-    assert!(prepared.baseline_sealed_report.reference.is_some());
+    assert!(
+        prepared.baseline_sealed_report.reference.is_some()
+            && prepared.baseline_sealed_report.model == target.baseline_model
+    );
 
     let recovered = runner
         .prepare_multi_protocol_from_benchmark_identified(

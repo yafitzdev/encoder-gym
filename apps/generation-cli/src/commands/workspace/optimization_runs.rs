@@ -755,7 +755,9 @@ async fn attach_experiment(
     folder: &Path,
     view: &project_workspace_core::ProjectOptimizationRunView,
 ) -> Result<ProjectOptimizationExperiment> {
-    let workspace = open_workspace(folder, true).await?;
+    // Verify only the pinned model, dataset, benchmark, and runtime below.
+    // A full workspace rehash would repeatedly read unrelated artifacts.
+    let workspace = open_workspace(folder, false).await?;
     let launch = optimization_launch::list(folder)
         .await?
         .into_iter()
@@ -938,7 +940,9 @@ async fn materialize_training_project(
     view: &project_workspace_core::ProjectOptimizationRunView,
 ) -> Result<ProjectOptimizationMaterialization> {
     emit_progress("checking_runtime", None, None);
-    let workspace = open_workspace(folder, true).await?;
+    // Dataset source integrity is verified by the single-pass materialization
+    // scanner below. The runtime checks cover the other selected inputs.
+    let workspace = open_workspace(folder, false).await?;
     let preparation = view
         .preparation
         .as_ref()
@@ -958,13 +962,15 @@ async fn materialize_training_project(
         "Native runtime changed after input verification."
     );
     emit_progress("checking_dataset", None, None);
-    let dataset = dataset_versions::verify(folder, preparation.dataset.id).await?;
+    let dataset = dataset_versions::inspect(folder, preparation.dataset.id).await?;
     ensure!(
         dataset.reference() == preparation.dataset
             && dataset.members.len() as u64 == preparation.dataset_rows,
         "Selected training dataset changed."
     );
     emit_progress("loading_training_rows", None, None);
+    // This extraction is also the source checksum and membership verification;
+    // do not read the same complete dataset once immediately beforehand.
     let rows = dataset_versions::materialization_rows(folder, dataset.id).await?;
     ensure!(
         rows.len() == dataset.members.len(),
@@ -1041,7 +1047,9 @@ async fn verify_preparation(
     view: &project_workspace_core::ProjectOptimizationRunView,
 ) -> Result<ProjectOptimizationPreparation> {
     emit_progress("checking_model", None, None);
-    let workspace = open_workspace(folder, true).await?;
+    // Verify only the pinned model, dataset, benchmark, and runtime below.
+    // A full workspace rehash would repeatedly read unrelated artifacts.
+    let workspace = open_workspace(folder, false).await?;
     let setup = optimization_setup::list(folder)
         .await?
         .into_iter()

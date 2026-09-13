@@ -362,7 +362,7 @@ impl EvaluationReport {
             id,
             project_snapshot_id: target_project.id,
             project_snapshot_fingerprint: target_project.fingerprint.clone(),
-            model: source_report.model.clone(),
+            model: target_project.baseline_model.clone(),
             evidence_role: source_report.evidence_role,
             suite_key: source_report.suite_key.clone(),
             suite_fingerprint: source_report.suite_fingerprint.clone(),

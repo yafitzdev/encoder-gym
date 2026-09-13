@@ -13,12 +13,13 @@ use dataset_core::{
 use project_workspace_core::DatasetPurpose;
 use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
     ManagedWorkspace,
-    files::{contained, hash},
-    inspect_dataset, open_workspace,
+    files::{contained, plain},
+    open_workspace,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -59,14 +60,14 @@ fn scan(
         "Only training sources may be inspected or used in training datasets."
     );
     let path = contained(Path::new(&workspace.folder), &source.artifact.path)?;
-    let preview = inspect_dataset(&path, DatasetPurpose::Training)?;
+    let metadata = plain(&path)?;
     ensure!(
-        preview.artifact.fingerprint == source.artifact.fingerprint
-            && preview.artifact.bytes == source.artifact.bytes
-            && preview.rows == source.rows,
+        metadata.is_file() && metadata.len() == source.artifact.bytes,
         "The dataset source no longer matches its immutable import."
     );
     let mut reader = BufReader::new(File::open(&path)?);
+    let mut hasher = Sha256::new();
+    let mut source_bytes = 0_u64;
     let mut members = BTreeMap::new();
     let mut payloads = BTreeMap::new();
     let mut record = 0;
@@ -80,6 +81,8 @@ fn scan(
         if count == 0 {
             break;
         }
+        source_bytes += u64::try_from(count)?;
+        hasher.update(&line);
         ensure!(
             line.len() <= 8 * 1_048_576,
             "A source record exceeds the inspection limit."
@@ -91,9 +94,9 @@ fn scan(
         if record % 100 == 0 || record == source.rows {
             crate::progress::row_progress(&source.name, record, source.rows);
         }
-        // The complete source was already validated and checksum-bound above.
-        // A page only needs content fingerprints for the requested records;
-        // constructing membership for every large native row makes paging slow.
+        // The checksum is computed during this same streaming pass. A bounded
+        // read therefore only parses selected records while still proving the
+        // complete source is the immutable imported file.
         if selected.is_some_and(|records| !records.contains(&record)) {
             continue;
         }
@@ -124,8 +127,11 @@ fn scan(
             payloads.insert(record, value);
         }
     }
+    let observed_fingerprint = format!("sha256:{:x}", hasher.finalize());
     ensure!(
-        record == source.rows && hash(&path, &source.artifact.path)? == source.artifact,
+        record == source.rows
+            && source_bytes == source.artifact.bytes
+            && observed_fingerprint == source.artifact.fingerprint,
         "Dataset changed while reading its records."
     );
     Ok(SourceContents {

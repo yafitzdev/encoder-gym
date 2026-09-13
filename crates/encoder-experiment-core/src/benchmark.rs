@@ -227,7 +227,10 @@ impl BenchmarkDefinition {
             || reference.source_protocol_fingerprint != source_protocol.fingerprint
             || reference.source_report_id != source_report.id
             || reference.source_report_fingerprint != source_report.fingerprint
-            || referenced_report.model != source_report.model
+            || referenced_report.model != target_project.baseline_model
+            || !referenced_report
+                .model
+                .has_same_content(&source_report.model)
             || referenced_report.evidence_role != source_report.evidence_role
             || referenced_report.suite_key != source_report.suite_key
             || referenced_report.suite_fingerprint != source_report.suite_fingerprint
@@ -263,7 +266,9 @@ impl BenchmarkDefinition {
             || target_project.task != self.task
             || target_project.backend != self.backend
             || target_project.source_revision != self.source_revision
-            || target_project.baseline_model != source_report.model
+            || !target_project
+                .baseline_model
+                .has_same_content(&source_report.model)
             || !source_protocol
                 .baseline_development_reports()
                 .into_iter()

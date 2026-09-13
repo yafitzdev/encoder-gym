@@ -152,6 +152,18 @@ impl ModelArtifactIdentity {
         }
         Ok(())
     }
+
+    /// Whether two identities name byte-for-byte equivalent model artifacts.
+    ///
+    /// A materialized project owns a new artifact identity and location even
+    /// when it copies the immutable baseline. Evidence reuse is therefore
+    /// based on content, while the target report remains bound to the target
+    /// project's own model identity.
+    pub fn has_same_content(&self, other: &Self) -> bool {
+        self.format == other.format
+            && self.bytes == other.bytes
+            && self.fingerprint == other.fingerprint
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -228,7 +228,9 @@ pub async fn inspect(folder: &Path, version_id: Uuid) -> Result<DatasetVersion> 
 /// Deep preparation boundary: reproduce version history and re-read every
 /// selected source row without returning row payloads to the caller.
 pub async fn verify(folder: &Path, version_id: Uuid) -> Result<DatasetVersion> {
-    let workspace = open_workspace(folder, true).await?;
+    // The selected source files are checksum-verified by rows::verify_members.
+    // Rehashing every unrelated project artifact here duplicates large I/O.
+    let workspace = open_workspace(folder, false).await?;
     let version = inspect_workspace(&workspace, version_id).await?;
     rows::verify_members(&workspace, &version.members)?;
     Ok(version)
@@ -240,7 +242,9 @@ pub async fn materialization_rows(
     folder: &Path,
     version_id: Uuid,
 ) -> Result<Vec<InspectedDatasetRow>> {
-    let workspace = open_workspace(folder, true).await?;
+    // The materialization scanner verifies each selected source in the same
+    // pass that extracts its rows.
+    let workspace = open_workspace(folder, false).await?;
     let version = inspect_workspace(&workspace, version_id).await?;
     rows::inspect_materialization_members(&workspace, &version.members)
 }
