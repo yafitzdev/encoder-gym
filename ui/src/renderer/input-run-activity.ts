@@ -9,6 +9,7 @@ export interface InputRunActivity {
   progress?: NativeProgress;
   failure?: ProjectActivityFailure;
   stages: string[];
+  events?: { at: string; progress: NativeProgress }[];
 }
 
 /** Project activity is the durable source for desktop orchestration progress. */
@@ -27,6 +28,7 @@ export function inputRunActivity(log: ProjectActivityLog, runId: string): InputR
     ...(latest ? { progress: { phase: latest.stage as NativeProgress["phase"], ...(latest.completed !== undefined && latest.total !== undefined ? { completed: latest.completed, total: latest.total } : {}) } } : {}),
     ...(failure ? { failure } : {}),
     stages: [...new Set(progressEvents.map(event => event.stage!))],
+    events: progressEvents.slice(-5).map(event => ({ at: event.created_at, progress: { phase: event.stage as NativeProgress["phase"], ...(event.completed !== undefined && event.total !== undefined ? { completed: event.completed, total: event.total } : {}) } })),
   };
 }
 
@@ -56,7 +58,7 @@ export const inputRunStageLabel = (stage: string): string => ({
 export interface InputRunStageContext {
   model: string;
   dataset: string;
-  datasetRows: number;
+  datasetRows?: number;
   evaluation: string;
   developmentSuites: string[];
   finalSuite?: string;
@@ -68,7 +70,7 @@ export function inputRunStageDetail(progress: NativeProgress, context: InputRunS
   const counter = progress.completed !== undefined && progress.total !== undefined
     ? `${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()}`
     : undefined;
-  const data = `${context.dataset} · ${context.datasetRows.toLocaleString()} ${context.datasetRows === 1 ? "row" : "rows"}`;
+  const data = context.dataset + (context.datasetRows === undefined ? "" : ` · ${context.datasetRows.toLocaleString()} ${context.datasetRows === 1 ? "row" : "rows"}`);
   const suites = context.finalEvaluation && context.finalSuite
     ? context.finalSuite
     : context.developmentSuites.join(", ") || context.evaluation;

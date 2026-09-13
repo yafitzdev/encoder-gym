@@ -1,6 +1,7 @@
 import type { EncoderGymBridge } from "../preload.js";
 import type { InputOptimizationRun } from "../input-optimization.js";
 import type { ManagedWorkspace } from "../managed-workspace.js";
+import type { WorkspaceSnapshot } from "../workspace.js";
 import { inputRunActivity, type InputRunActivity } from "./input-run-activity.js";
 
 export class InputRunsController {
@@ -9,9 +10,17 @@ export class InputRunsController {
   loading = false;
   runningId?: string;
   cancellingId?: string;
+  stoppingId?: string;
   error?: unknown;
   private epoch = 0;
-  constructor(readonly projectId: string, private bridge: EncoderGymBridge, private render: () => void, private updated?: (workspace: ManagedWorkspace) => void) {}
+  constructor(readonly projectId: string, private bridge: EncoderGymBridge, private render: () => void, private updated?: (workspace: ManagedWorkspace, snapshot?: WorkspaceSnapshot) => void) {}
+  async stop(run: InputOptimizationRun): Promise<void> {
+    if (this.runningId !== run.id || this.stoppingId) return;
+    this.stoppingId = run.id; this.render();
+    try { await this.bridge.stopInputOptimization(this.projectId, run.id); }
+    catch (error) { this.error = error; this.stoppingId = undefined; this.render(); }
+  }
+  retain(run: InputOptimizationRun): void { this.replace(run); }
   async ensure(): Promise<void> { if (!this.runs && !this.loading && !this.error) await this.load(); }
   refresh(): void { if (!this.runningId) { this.epoch++; this.runs = undefined; this.error = undefined; this.loading = false; this.render(); } }
   private async load(): Promise<void> {
@@ -40,7 +49,7 @@ export class InputRunsController {
     try {
       poll(); this.replace(await this.bridge.driveInputOptimization(this.projectId, run.id)); settled = true;
       const opened = await this.bridge.selectProject(this.projectId);
-      if (epoch === this.epoch && opened.content.state === "ready" && opened.content.workspace.managed) this.updated?.(opened.content.workspace.managed);
+      if (epoch === this.epoch && opened.content.state === "ready" && opened.content.workspace.managed) this.updated?.(opened.content.workspace.managed, opened.content.workspace);
       const activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30), run.id); if (activity) this.activities.set(run.id, activity);
     } catch (error) {
       settled = true;
@@ -50,7 +59,7 @@ export class InputRunsController {
       }
     } finally {
       settled = true; if (timer) clearTimeout(timer);
-      if (epoch === this.epoch) { this.runningId = undefined; this.render(); }
+      if (epoch === this.epoch) { this.runningId = undefined; this.stoppingId = undefined; this.render(); }
     }
   }
   async cancel(run: InputOptimizationRun): Promise<void> {

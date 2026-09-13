@@ -8,3 +8,4 @@ dist/
 !.env.example
 smoke-ok.txt
 qa/
+artifacts/

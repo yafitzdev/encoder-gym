@@ -27,7 +27,17 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   };
   const textButton = async (text: string) => evaluate("[...document.querySelectorAll('#page button, dialog[open] button')].find(b=>b.textContent === " + JSON.stringify(text) + ").click()");
   const type = async (id: string, value: string) => evaluate("document.getElementById(" + JSON.stringify(id) + ").value=" + JSON.stringify(value) + ";document.getElementById(" + JSON.stringify(id) + ").dispatchEvent(new Event('input',{bubbles:true}))");
-  const nav = async (page: string) => click('[data-page="' + page + '"]');
+  const nav = async (page: string) => {
+    await click('[data-page="' + (["optimization", "runs"].includes(page) ? "overview" : page) + '"]');
+    if (page === "optimization") {
+      await until("document.getElementById('overview-new-run') && !document.getElementById('overview-new-run').disabled");
+      await click("#overview-new-run");
+    }
+    if (page === "runs") {
+      await until("document.querySelector('.focus-run:not([data-run-id=draft])')");
+      await evaluate("(()=>{const heading=document.querySelector('.focus-run:not([data-run-id=draft]) .focus-run-heading');if(heading?.getAttribute('aria-expanded')==='false')heading.click()})()");
+    }
+  };
   const loaded = async () => until("!document.getElementById('source-state').textContent.includes('Reading') && document.querySelector('#page h1')");
   const screenshot = async (name: string, width = 1440, height = 960) => {
     window.setContentSize(width, height);
@@ -45,7 +55,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await check("historical benchmark keeps its rejected candidate after restart", "document.querySelectorAll('[data-benchmark-model]').length === 3 && document.querySelectorAll('.benchmark-score').length === 3");
     await screenshot("managed-benchmark-restarted");
     await nav("optimization"); await until("document.getElementById('optimization-start') && !document.querySelector('.workspace-progress')");
-    await check("optimization inputs survive an independent desktop process", "document.getElementById('optimization-dataset').selectedOptions[0].textContent.includes('Variant') && [...document.querySelectorAll('.optimization-input')].find(section=>section.querySelector('h2')?.textContent === 'Evaluation')?.textContent.includes('Version 2') && !document.getElementById('optimization-start').disabled && !document.querySelector('.launch-definition')");
+    await check("optimization inputs survive an independent desktop process", "document.getElementById('optimization-dataset').selectedOptions[0].textContent.includes('Variant') && document.getElementById('optimization-benchmark').selectedOptions[0].textContent.includes('v2') && !document.getElementById('optimization-start').disabled && !document.querySelector('.launch-definition')");
     await screenshot("managed-optimization-inputs-restarted");
     const routing = harness.registry.read().projects.find(project => project.name === "Routing encoder")!;
     await click('[data-project-id="' + routing.id + '"]'); await loaded();
@@ -91,19 +101,20 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
       window.setContentSize(1440, 960);
     }
     await click("#confirm-new-project"); await until("!document.querySelector('#project-dialog[open]')"); await loaded();
+    await nav("models");
     return harness.registry.read().selectedId!;
   };
   const firstId = await create("Routing encoder", one);
   await check("new project shows its baseline without fabricated runs or candidates", "document.querySelector('.artifact-row-name').textContent.includes('Routing encoder') && document.querySelectorAll('[data-candidate-id]').length === 0 && document.getElementById('source-state').textContent.includes('Managed workspace')");
   await screenshot("managed-baseline");
-  await check("Models is an inventory and Optimize is first-class navigation", "document.querySelector('.page-heading h1').textContent === 'Models' && !document.querySelector('.page-heading p') && document.querySelectorAll('.artifact-row').length === 1 && document.getElementById('nav-optimization') && !document.getElementById('project-optimize') && !document.getElementById('page').textContent.includes('Start optimization')");
+  await check("Models is an inventory and Overview owns the run journey", "document.querySelector('.page-heading h1').textContent === 'Models' && !document.querySelector('.page-heading p') && document.querySelectorAll('.artifact-row').length === 1 && document.getElementById('nav-overview') && !document.getElementById('nav-runs') && !document.getElementById('nav-optimization')");
   await check("Models omits decorative model and candidate count badges", "![...document.querySelectorAll('.baseline-name .tag')].some(e=>e.textContent.includes('sentence-transformers')) && document.querySelector('.candidate-section > .section-heading .tag') === null");
   await click('[data-project-id]');
   await check("selected project folder collapses independently", "document.querySelector('[data-project-id]').getAttribute('aria-expanded') === 'false' && !document.querySelector('.project-pages')");
   await click('[data-project-id]');
   await check("selected project folder expands without changing the page", "document.querySelector('[data-project-id]').getAttribute('aria-expanded') === 'true' && document.querySelector('.project-pages') && document.querySelector('.page-heading h1').textContent === 'Models'");
   const pageFrames: { left: number; top: number; width: number }[] = [];
-  for (const page of ["models", "datasets", "optimization", "runs", "benchmarks", "activity", "project"]) {
+  for (const page of ["models", "datasets", "overview", "benchmarks", "activity", "project"]) {
     await nav(page); await until("document.querySelector('.workspace-page > .page-heading + .workspace-page-body')");
     pageFrames.push(await evaluate("(()=>{const page=document.querySelector('.workspace-page').getBoundingClientRect(),heading=document.querySelector('.workspace-page > .page-heading').getBoundingClientRect();return {left:Math.round(page.left),top:Math.round(heading.top),width:Math.round(page.width)}})()"));
   }
@@ -112,9 +123,9 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await nav("activity"); await until("document.querySelector('.activity-list')");
   await check("project activity exposes action UUIDs and complete event chains", "document.querySelector('.activity-action') && document.querySelector('.activity-action code').textContent.includes('…') && !document.getElementById('page').textContent.includes('smoke-secret')");
   await nav("models");
-  await nav("optimization"); await until("document.querySelector('.optimization-inputs') && !document.querySelector('.workspace-progress')");
-  await check("Optimize starts from model, data and evaluation, not a prepared repair", "document.querySelectorAll('.optimization-input').length === 3 && document.getElementById('optimization-start').disabled && document.querySelector('.optimization-inputs').textContent.includes('Set up dataset') && document.querySelector('.optimization-inputs').textContent.includes('Connect evaluation') && !document.querySelector('.launch-definition')");
-  await check("optimization inputs expose no paths or credentials", "!document.querySelector('.optimization-inputs input') && !document.querySelector('.optimization-inputs').textContent.includes('project.sqlite')");
+  await nav("optimization"); await until("document.querySelector('.focus-setup') && !document.querySelector('.workspace-progress')");
+  await check("Overview starts with five concise inputs", "document.querySelectorAll('.focus-field').length === 5 && document.getElementById('optimization-start').disabled && !document.querySelector('.launch-definition')");
+  await check("optimization inputs expose no paths or credentials", "!document.querySelector('.focus-setup input') && !document.querySelector('.focus-setup').textContent.includes('project.sqlite')");
   await screenshot("managed-readiness");
   await nav("project"); await until("[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Configure providers' && !b.disabled)");
   await check("scientific runtime setup is a real project-settings action", "[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Connect scientific runtime') && !document.getElementById('page').textContent.includes('not implemented')");
@@ -241,9 +252,9 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await nav("benchmarks"); await until("document.querySelector('.empty-state h2')?.textContent === 'No benchmark'");
     await check("Evaluation does not substitute a prepared run for a project benchmark", "document.querySelector('.page-heading h1').textContent === 'Evaluation' && !document.querySelector('.page-heading p') && !document.querySelector('.evaluation-plan') && !document.querySelector('.benchmark-section')");
     await screenshot("managed-evaluation-empty");
-    await nav("runs"); await until("[...document.querySelectorAll('.unified-run-list button')].some(button=>button.textContent === 'Continue')"); await textButton("Continue");
+    await nav("runs"); await until("[...document.querySelectorAll('.focus-runs button')].some(button=>button.textContent === 'Continue')"); await textButton("Continue");
     await until("document.querySelector('.run-control')?.textContent.includes('Build and evaluate the candidate')");
-    await check("reservation exposes only the next durable stage", "document.querySelector('.launch-summary h2').textContent === 'Ready to continue' && [...document.querySelectorAll('.run-control button')].some(b=>b.textContent === 'Build and evaluate the candidate') && document.querySelector('#nav-runs .nav-count').textContent === '1'");
+    await check("reservation exposes only the next durable stage", "document.querySelector('.launch-summary h2').textContent === 'Ready to continue' && [...document.querySelectorAll('.run-control button')].some(b=>b.textContent === 'Build and evaluate the candidate') && document.getElementById('nav-overview')");
     await textButton("Build and evaluate the candidate"); await until("document.querySelector('.live-counter progress')?.value === 24");
     await check("running page shows real counters and activity without contradictory states or duplicate actions", "document.querySelector('.launch-summary h2').textContent === 'Running' && document.querySelector('.live-run h3').textContent === 'Training candidate' && document.querySelector('.live-counter progress').max === 120 && document.querySelectorAll('.run-activity li').length >= 3 && !document.querySelector('.run-actions') && !document.querySelector('.launch-definition') && !document.querySelector('.run-usage').checkVisibility()");
     await evaluate("window.__elapsed=document.querySelector('[data-elapsed-start]').textContent;document.querySelector('.run-control > details').open=true");
@@ -317,7 +328,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
 
   await nav("models");
   await nav("runs");
-  await check("managed runs remain one flat list without current or earlier hierarchy", "(document.querySelector('[data-optimization-link]') || document.querySelector('[data-managed-run-id]')) && document.querySelector('#nav-runs .nav-count').textContent === '1' && !document.querySelector('.optimization-run-row') && !document.querySelector('.unified-run-list > details')");
+  await check("managed runs use the shared accordion without current or earlier hierarchy", "document.querySelectorAll('.focus-run').length >= 1 && !document.querySelector('.optimization-run-row') && !document.querySelector('.unified-run-list')");
   await screenshot("managed-runs-parent");
   await nav("benchmarks");
   await until("document.querySelector('.empty-state h2')?.textContent === 'No benchmark'");
@@ -498,6 +509,8 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   const fixtureExecutable = join(harness.backend.executable, "..", process.platform === "win32" ? "synth-benchmark-fixture.exe" : "synth-benchmark-fixture");
   const benchmarkFixture = JSON.parse(execFileSync(fixtureExecutable, [join(root, "benchmark-fixture")], { encoding: "utf8", windowsHide: true, maxBuffer: 16 * 1024 * 1024 })) as { folder: string; firstRun: string; changedRun: string };
   harness.chooseFolder(benchmarkFixture.folder); await click("#open-project"); await until("document.querySelectorAll('[data-project-id]').length === 3"); await loaded();
+  await check("managed project opens on Overview", "document.querySelector('.page-heading h1').textContent==='Overview'");
+  await nav("models");
   await check("managed Models remains an inventory without duplicate comparison controls", "document.querySelectorAll('[data-model-id]').length === 3 && !document.querySelector('.artifact-list input[type=checkbox]') && !document.getElementById('compare-selected')");
   const scientificBefore = readFileSync(join(benchmarkFixture.folder, "runs/scientific.sqlite"));
   await nav("benchmarks"); await until("document.querySelector('.empty-state h2')?.textContent === 'No benchmark'");
@@ -547,10 +560,10 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await check("multiple starting datasets require a choice instead of guessing", "document.getElementById('optimization-dataset').value === '' && document.getElementById('optimization-start').disabled");
   const selectInput = async (id: string, value: string) => evaluate("(()=>{const input=document.getElementById(" + JSON.stringify(id) + ");input.value=" + JSON.stringify(value) + ";input.dispatchEvent(new Event('change',{bubbles:true}))})()");
   await selectInput("optimization-dataset", baseVersion);
-  await check("Optimize contains only named input versions, not row payload or old recipes", "document.querySelector('.optimization-inputs').textContent.includes('Baseline') && document.querySelectorAll('.optimization-input').length === 3 && !document.getElementById('page').textContent.includes('OPTIMIZATION_TRAINING_ROW_CANARY') && !document.querySelector('.launch-definition') && !document.getElementById('optimization-start').disabled");
-  await textButton("Inspect model"); await until("document.querySelector('.model-view')"); await click("#navigate-back");
-  await textButton("Inspect dataset"); await until("document.querySelectorAll('.dataset-row-entry').length === 1"); await click("#navigate-back");
-  await textButton("Inspect evaluation"); await until("document.querySelector('.benchmark-protocol')"); await click("#navigate-back");
+  await check("Setup contains only named input versions, not row payload or old recipes", "document.querySelector('.focus-setup').textContent.includes('Baseline') && document.querySelectorAll('.focus-field').length === 5 && !document.getElementById('page').textContent.includes('OPTIMIZATION_TRAINING_ROW_CANARY') && !document.querySelector('.launch-definition') && !document.getElementById('optimization-start').disabled");
+  await nav("models"); await click("#navigate-back");
+  await nav("datasets"); await click("#navigate-back");
+  await nav("benchmarks"); await click("#navigate-back");
   await check("artifact inspection returns to the same unsaved selections", "document.getElementById('optimization-dataset').value === " + JSON.stringify(baseVersion));
   const setupCatalog = imported.modelCatalog!, baseline = setupCatalog.baselineRevisions.find(value => value.id === setupCatalog.activeBaselineRevisionId)!;
   const saveInputs = harness.backend.optimizationSetup.save.bind(harness.backend.optimizationSetup);
@@ -604,16 +617,16 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     return harness.backend.optimizationLaunch.show(projectId, selectedRun);
   };
   await click("#optimization-start");
-  await until("document.querySelector('.optimization-progress .spinner') && document.querySelector('#nav-runs .spinner')");
+  await until("document.querySelector('.optimization-progress .spinner') && document.querySelector('#nav-overview .spinner')");
   await until("document.querySelector('.optimization-progress')?.textContent.includes('Building training dataset')");
-  await check("Optimize names the exact current work and shows both activity spinners", "document.querySelector('.optimization-progress').textContent.includes('Variant · v1 · 1 row · 1 / 1 written') && document.querySelector('.optimization-progress').getAttribute('aria-busy') === 'true' && document.querySelector('#nav-runs .spinner')");
+  await check("Overview names current work and shows activity spinners", "document.querySelector('.optimization-progress').textContent.includes('Variant · v1 · 1 row · 1 / 1 written') && document.querySelector('.optimization-progress').getAttribute('aria-busy') === 'true' && document.querySelector('#nav-overview .spinner')");
   await screenshot("managed-optimization-live");
-  await nav("runs");
-  await until("document.querySelector('.unified-run-entry.is-running .optimization-progress')?.textContent.includes('Building training dataset')");
-  await check("Runs preserves the full live progress view after leaving Optimize", "document.querySelector('.unified-run-entry.is-running .optimization-progress').textContent.includes('Variant · v1 · 1 row · 1 / 1 written') && document.querySelector('.unified-run-entry.is-running .optimization-progress').getAttribute('aria-busy') === 'true' && document.querySelector('#nav-runs .spinner') && !document.querySelector('.unified-run-list > details')");
+  await nav("models"); await nav("overview");
+  await until("document.querySelector('.focus-status .optimization-progress')?.textContent.includes('Building training dataset')");
+  await check("Overview preserves the same live panel across page navigation", "document.querySelectorAll('.optimization-progress').length === 1 && document.querySelector('.focus-status').textContent.includes('Variant · v1 · 1 row · 1 / 1 written') && document.querySelector('#nav-overview .spinner') && !document.getElementById('nav-runs')");
   await screenshot("managed-runs-live");
   finishOptimizationStatus();
-  await until("document.querySelector('[data-project-run-id=" + JSON.stringify(activeRunId) + "] .project-run-state')?.textContent.includes('Paused')");
+  await until("document.querySelector('[data-run-id=" + JSON.stringify(activeRunId) + "] .focus-run-state')?.textContent.includes('Paused')");
   harness.backend.optimizationLaunch.drive = driveInputRun;
   const queued = (await harness.backend.optimizationLaunch.runs(setupProjectId)).find(run => run.id === activeRunId);
   if (!queued) throw new Error("Optimize did not reserve its visible project run");
@@ -625,24 +638,19 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await inputRunPending;
     return harness.backend.optimizationLaunch.show(projectId, selectedRun);
   };
-  await nav("runs"); await until("document.querySelector('[data-project-run-id=" + JSON.stringify(queued.id) + "]')");
-  await check("project optimization has a stable run name instead of using its phase as a name", "(()=>{const row=document.querySelector('[data-project-run-id=" + JSON.stringify(queued.id) + "]');return row.querySelector('.run-number').textContent.startsWith('Run ') && row.querySelector('.run-list-name strong').textContent === 'Optimization' && row.querySelector('.run-list-name small').textContent.includes('Checking inputs') && row.querySelector('.project-run-action button').textContent === 'Open'})()");
-  await check("Runs does not expose repair recipes as the product workflow", "!document.querySelector('.unified-run-list').textContent.toLowerCase().includes('repair')");
-  await evaluate("document.querySelector('[data-project-run-id=" + JSON.stringify(queued.id) + "] .project-run-action button').click()");
-  await until("document.querySelector('.input-run-view .optimization-progress')");
-  await check("opening a stopped run shows its persistent progress bar", "document.querySelectorAll('.input-run-view .optimization-progress-steps li').length === 6 && document.querySelector('.input-run-view .optimization-progress').textContent.includes('Building training dataset') && [...document.querySelectorAll('.input-run-view button')].some(button=>button.textContent === 'Continue')");
-  await textButton("Continue");
-  await until("document.querySelector('.input-run-view .optimization-progress')?.textContent.includes('Training candidate')");
-  await check("run detail shows its persisted native stage, counter and sidebar spinner", "(()=>{const view=document.querySelector('.input-run-view');const bar=view.querySelector('progress');return view.textContent.includes('Training candidate') && bar.value===40 && bar.max===100 && document.querySelector('#nav-runs .spinner')})()");
-  await nav("runs"); await until("document.querySelector('[data-project-run-id=" + JSON.stringify(queued.id) + "]')?.textContent.includes('Training candidate')");
-  await check("the actively running list row expands to the same progress bar", "document.querySelectorAll('[data-project-run-id=" + JSON.stringify(queued.id) + "] .optimization-progress-steps li').length === 6");
+  await nav("runs"); await until("document.querySelector('[data-run-id=" + JSON.stringify(queued.id) + "]')");
+  await check("optimization keeps its stable name and saved progress while paused", "document.querySelector('.focus-run.expanded .focus-run-heading strong').textContent.startsWith('Run ') && document.querySelector('.focus-status').textContent.includes('Building training dataset') && document.querySelectorAll('.optimization-progress-steps li').length===6");
+  await check("Overview does not expose repair recipes as the workflow", "!document.querySelector('.focus-runs').textContent.toLowerCase().includes('repair')");
+  await textButton("Resume");
+  await until("document.querySelector('.focus-status .optimization-progress')?.textContent.includes('Training candidate')");
+  await check("resumed run shows its persisted counter and sidebar spinner", "(()=>{const bar=document.querySelector('.focus-status progress');return bar.value===40 && bar.max===100 && document.querySelector('#nav-overview .spinner')})()");
   await screenshot("managed-project-run-live");
-  await evaluate("[...document.querySelectorAll('[data-project-run-id=" + JSON.stringify(queued.id) + "] .project-run-action button')].find(button=>button.textContent === 'Stop').click()");
-  await until("document.querySelector('[data-project-run-id=" + JSON.stringify(queued.id) + "]')?.textContent.includes('Cancelled')");
+  await textButton("Stop");
+  await until("document.querySelector('.focus-controls')?.textContent.includes('Stopping after current stage')");
   finishInputRun();
-  await until("!document.querySelector('[data-project-run-id=" + JSON.stringify(queued.id) + "]')?.textContent.includes('Running')");
-  await check("Stop persists cancellation and removes every continuation action", "(()=>{const row=document.querySelector('[data-project-run-id=" + JSON.stringify(queued.id) + "]');return row.textContent.includes('Cancelled') && ![...row.querySelectorAll('button')].some(button=>['Continue','Retry','Stop'].includes(button.textContent))})()");
-  await screenshot("managed-project-run-cancelled");
+  await until("!document.querySelector('#nav-overview .spinner')");
+  await check("Stop leaves the same UUID resumable without cancelling it", "(()=>{const row=document.querySelector('[data-run-id=" + JSON.stringify(queued.id) + "]');return row.querySelector('.focus-run-state').textContent.includes('Paused') && [...row.querySelectorAll('button')].some(button=>button.textContent==='Resume')})()");
+  await screenshot("managed-project-run-stopped");
   harness.backend.optimizationLaunch.drive = driveInputRun;
   if (!scientificBefore.equals(readFileSync(join(benchmarkFixture.folder, "runs/scientific.sqlite")))) throw new Error("Benchmark inspection/adoption changed scientific evidence");
   console.log("Managed-workspace Electron acceptance passed.");

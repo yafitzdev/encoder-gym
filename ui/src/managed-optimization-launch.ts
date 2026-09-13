@@ -89,7 +89,15 @@ function same(a: unknown, b: unknown): boolean { return JSON.stringify(a) === JS
 
 /** Exact one-click authority only. It cannot execute a run or receive credentials. */
 export class ManagedOptimizationLaunch {
+  private active = new Map<string, { runId: string; stop: boolean }>();
   constructor(private ports: Ports) {}
+  /** Stop at a durable stage boundary; unlike cancel this preserves re-entry. */
+  async stop(projectId: string, runIdValue: unknown): Promise<void> {
+    const runId = uuid(runIdValue);
+    const active = this.active.get(projectId);
+    if (active?.runId === runId) active.stop = true;
+    else await this.show(projectId, runId);
+  }
   async list(projectId: string): Promise<OptimizationLaunchAuthorization[]> {
     const workspace = await this.ports.open(projectId);
     const history = await this.ports.command<unknown[]>(["optimization-launch", workspace.folder, "list"]);
@@ -170,7 +178,10 @@ export class ManagedOptimizationLaunch {
     const runId = uuid(runIdValue);
     return this.ports.exclusiveRun(projectId, runId, async signal => {
       const workspace = await this.ports.open(projectId);
+      const execution = { runId, stop: false };
+      this.active.set(projectId, execution);
       const stage = async (phase: InputOptimizationPhase, command: string, native = false): Promise<void> => {
+        if (execution.stop) throw stopped;
         progress?.(phase);
         await this.ports.command<unknown>(["optimization-run", workspace.folder, command, runId], native ? this.ports.environment?.(projectId, workspace) : undefined,
           value => progress?.(phase, value), signal);
@@ -190,9 +201,12 @@ export class ManagedOptimizationLaunch {
         return current;
       } catch (error) {
         const current = parseInputOptimizationRun(await this.ports.command<unknown>(["optimization-run", workspace.folder, "show", runId]), projectId);
-        if (current.state === "cancelled") return current;
+        if (current.state === "cancelled" || error === stopped) return current;
         throw error;
+      } finally {
+        this.active.delete(projectId);
       }
     });
   }
 }
+const stopped = Symbol("stopped at durable stage boundary");

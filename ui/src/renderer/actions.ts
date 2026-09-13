@@ -1,6 +1,6 @@
 import type { CandidateRow } from "./catalog.js";
 
-export type Page = "models" | "model" | "datasets" | "dataset" | "runs" | "benchmarks" | "activity" | "project" | "optimization" | "candidate" | "baseline" | "run" | "compare";
+export type Page = "overview" | "models" | "model" | "datasets" | "dataset" | "runs" | "benchmarks" | "activity" | "project" | "optimization" | "candidate" | "baseline" | "run" | "compare";
 export interface Location { page: Page; id?: string; tab?: string; offset?: number; runId?: string; candidateIds?: string[]; metric?: string }
 export interface Actions {
   navigate(location: Location): void;

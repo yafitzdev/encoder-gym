@@ -92,6 +92,7 @@ test("one-click optimization drives recoverable stages, forwards exact work, and
     outcome: { run: { id: randomUUID(), fingerprint }, experimentFingerprint: fingerprint, experimentRun: { id: randomUUID(), fingerprint }, kind: "candidate_ready", selectedModel: { id: randomUUID(), fingerprint }, createdAt: new Date().toISOString(), fingerprint },
     finalResult: { run: { id: randomUUID(), fingerprint }, outcomeFingerprint: fingerprint, experimentRun: { id: randomUUID(), fingerprint }, kind: "candidate_rejected", model: { id: randomUUID(), fingerprint }, finalReport: { id: randomUUID(), fingerprint }, createdAt: new Date().toISOString(), fingerprint },
   });
+  wire.finalResult.experimentRun = wire.outcome.experimentRun;
   const configured = new ManagedOptimizationLaunch({ ...ports(f, async (args, env, progress) => {
     calls.push({ args, env });
     if (args[2] === "materialize") progress?.({ phase: "writing_training_rows", completed: 40, total: 100 });
@@ -134,4 +135,37 @@ test("project optimization history is a typed project-owned read", async () => {
   assert.deepEqual(runs.map(run => run.setupId), [f.setupId, f.setupId]);
   const foreign = structuredClone(newer); foreign.run.projectId = randomUUID();
   await assert.rejects(() => new ManagedOptimizationLaunch(ports(f, async () => [foreign])).runs(f.projectId));
+});
+
+test("Stop finishes the in-flight stage without cancellation and Resume keeps the same UUID", async () => {
+  const f = fixture(), wire = f.run("ready"), calls = [];
+  let finish, entered;
+  const waiting = new Promise(resolve => { finish = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  let first = true;
+  const backend = new ManagedOptimizationLaunch({ ...ports(f, async args => {
+    calls.push(args);
+    if (args[2] === "prepare" && first) { first = false; entered(); await waiting; }
+    if (args[2] === "register") wire.state = "baseline_retained";
+    return args[2] === "show" ? wire : {};
+  }), abortRun: () => { throw new Error("Stop must not abort a checkpoint write"); } });
+  const driving = backend.drive(f.projectId, wire.run.id);
+  await started;
+  await backend.stop(f.projectId, wire.run.id);
+  assert.ok(!calls.some(args => args[2] === "materialize"));
+  finish();
+  assert.equal((await driving).state, "ready");
+  assert.ok(!calls.some(args => args[2] === "cancel" || args[2] === "execute"));
+  assert.equal((await backend.drive(f.projectId, wire.run.id)).state, "baseline_retained");
+  assert.ok(calls.every(args => args[3] === wire.run.id));
+});
+
+test("attached child identity is projected before execution and foreign children are rejected", async () => {
+  const f = fixture(), wire = f.run("ready_to_run"), ref = () => ({ id: randomUUID(), fingerprint });
+  wire.experiment = { run: { id: wire.run.id, fingerprint }, materializationFingerprint: fingerprint,
+    scientificProject: ref(), benchmark: ref(), sourceProtocol: ref(), candidate: ref(), protocol: ref(), experimentRun: ref(), createdAt: wire.updatedAt, fingerprint };
+  const backend = new ManagedOptimizationLaunch(ports(f, async () => wire));
+  assert.equal((await backend.show(f.projectId, wire.run.id)).experimentRunId, wire.experiment.experimentRun.id);
+  wire.experiment.run = ref();
+  await assert.rejects(() => backend.show(f.projectId, wire.run.id), /another run/);
 });

@@ -243,6 +243,10 @@ ipcMain.handle("encoder-gym:drive-input-optimization", (_event, value: unknown, 
 });
 ipcMain.handle("encoder-gym:cancel-input-optimization", (_event, value: unknown, run: unknown) =>
   backend.optimizationLaunch.cancel(projectId(value), run));
+ipcMain.handle("encoder-gym:stop-input-optimization", (_event, value: unknown, run: unknown) => {
+  const id = projectId(value);
+  return trackProjectAction(id, "optimization.stop", activityReference("run", run), () => backend.optimizationLaunch.stop(id, run), () => activityReference("run", run));
+});
 ipcMain.handle("encoder-gym:preview-benchmark", (_event, value: unknown, run: unknown) => backend.benchmarks.preview(projectId(value), run));
 ipcMain.handle("encoder-gym:adopt-benchmark", (_event, value: unknown, request: unknown) => backend.benchmarks.adopt(projectId(value), request));
 ipcMain.handle("encoder-gym:mutate-dataset", (_event, value: unknown, request: unknown) => backend.datasetVersions.mutate(projectId(value), request));

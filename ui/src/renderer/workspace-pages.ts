@@ -68,7 +68,8 @@ function projectRun(run: InputOptimizationRun, label: string, workspace: Workspa
 
 export function inputRunById(controller: InputRunsController | undefined, setup: OptimizationSetupController | undefined, id: string | undefined): InputOptimizationRun | undefined {
   if (!id) return undefined;
-  return setup?.run?.id === id ? setup.run : controller?.runs?.find(run => run.id === id);
+  const cached = controller?.runs?.find(run => run.id === id), current = setup?.run?.id === id ? setup.run : undefined;
+  return current && (!cached || current.lastSequence > cached.lastSequence || setup?.running) ? current : cached ?? current;
 }
 
 export function inputRunName(workspace: WorkspaceSnapshot, run: InputOptimizationRun, controller?: InputRunsController, setup?: OptimizationSetupController): string {
@@ -100,18 +101,18 @@ export function renderInputRun(workspace: WorkspaceSnapshot, run: InputOptimizat
     details("Run identity", facts([["Run", copyField(run.id, actions.copy)], ["Setup", copyField(run.setupId, actions.copy)]])));
 }
 
-function runContext(run: InputOptimizationRun, workspace: WorkspaceSnapshot, controller?: OptimizationSetupController): InputRunStageContext {
+export function runContext(run: InputOptimizationRun, workspace: WorkspaceSnapshot, controller?: OptimizationSetupController): InputRunStageContext {
   const saved = controller?.data?.history.find(item => item.id === run.setupId);
   const modelId = saved?.inputs.model.id ?? (controller?.run?.id === run.id ? controller.model?.id : undefined);
-  const model = modelId ? workspace.managed?.modelCatalog?.artifacts.find(item => item.id === modelId) : controller?.model;
+  const model = modelId ? workspace.managed?.modelCatalog?.artifacts.find(item => item.id === modelId) : undefined;
   const datasetId = saved?.inputs.dataset.id ?? (controller?.run?.id === run.id ? controller.datasetId : undefined);
-  const dataset = datasetId ? controller?.data?.datasets.flatMap(entry => entry.versions.map(version => ({ entry, version }))).find(item => item.version.version.id === datasetId) : controller?.dataset;
+  const dataset = datasetId ? controller?.data?.datasets.flatMap(entry => entry.versions.map(version => ({ entry, version }))).find(item => item.version.version.id === datasetId) : undefined;
   const benchmarkId = saved?.inputs.benchmark.id ?? (controller?.run?.id === run.id ? controller.benchmarkId : undefined);
-  const benchmark = benchmarkId ? controller?.data?.benchmarks.find(item => item.id === benchmarkId) : controller?.benchmark;
+  const benchmark = benchmarkId ? controller?.data?.benchmarks.find(item => item.id === benchmarkId) : undefined;
   return {
     model: model?.name ?? "Baseline model",
     dataset: dataset ? `${dataset.entry.dataset.name} · v${dataset.version.version.number}` : "Starting dataset",
-    datasetRows: dataset?.version.rows ?? 0,
+    datasetRows: dataset?.version.rows,
     evaluation: benchmark ? `Evaluation · Version ${benchmark.number}` : "Evaluation",
     developmentSuites: benchmark?.definition.suites.filter(suite => suite.role === "development").map(suite => suite.key.replaceAll("_", " ")) ?? [],
     finalSuite: benchmark?.definition.suites.find(suite => suite.role === "sealed_acceptance")?.key.replaceAll("_", " "),

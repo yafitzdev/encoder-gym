@@ -2,6 +2,8 @@ import type { EncoderGymBridge } from "../preload.js";
 import type { DatasetEntry } from "../dataset-workspace.js";
 import type { ProjectBenchmarkVersion } from "../benchmark-workspace.js";
 import type { ManagedWorkspace } from "../managed-workspace.js";
+import type { WorkspaceSnapshot } from "../workspace.js";
+import type { OptimizationLaunchAuthorization } from "../optimization-launch.js";
 import type { NativeProgress } from "../managed-control.js";
 import type { OptimizationInputs, OptimizationSetup, OptimizationSetupRequest } from "../optimization-setup.js";
 import { inputOptimizationPhase, inputOptimizationTerminal, type InputOptimizationPhase, type InputOptimizationRun } from "../input-optimization.js";
@@ -16,6 +18,8 @@ export class OptimizationSetupController {
   saving = false;
   running = false;
   cancelling = false;
+  stopping = false;
+  launches?: OptimizationLaunchAuthorization[];
   initializingEvaluation = false;
   run?: InputOptimizationRun;
   activity?: InputRunActivity;
@@ -25,7 +29,17 @@ export class OptimizationSetupController {
   error?: unknown;
   private epoch = 0;
   private retry?: OptimizationSetupRequest;
-  constructor(readonly projectId: string, public workspace: ManagedWorkspace, private bridge: EncoderGymBridge, private render: () => void, private updated?: (workspace: ManagedWorkspace) => void) {}
+  constructor(readonly projectId: string, public workspace: ManagedWorkspace, private bridge: EncoderGymBridge, private render: () => void, private updated?: (workspace: ManagedWorkspace, snapshot?: WorkspaceSnapshot) => void) {}
+  newDraft(): void {
+    if (this.running || this.saving || this.initializingEvaluation) return;
+    this.run = undefined; this.activity = undefined; this.error = undefined;
+  }
+  async stop(): Promise<void> {
+    if (!this.running || !this.run || this.stopping) return;
+    this.stopping = true; this.render();
+    try { await this.bridge.stopInputOptimization(this.projectId, this.run.id); }
+    catch (error) { this.error = error; this.stopping = false; this.render(); }
+  }
   get baseline() { const catalog = this.workspace.modelCatalog; return catalog?.baselineRevisions.find(revision => revision.id === catalog.activeBaselineRevisionId); }
   get model() { return this.workspace.modelCatalog?.artifacts.find(model => model.id === this.baseline?.modelArtifactId); }
   get dataset() { return this.data?.datasets.flatMap(entry => entry.versions.map(version => ({ entry, version }))).find(item => item.version.version.id === this.datasetId); }
@@ -50,6 +64,9 @@ export class OptimizationSetupController {
   get canCancel(): boolean { return this.running && !!this.run && !inputOptimizationTerminal(this.run.state) && !this.cancelling; }
   get runPhase(): InputOptimizationPhase | undefined { return this.run ? inputOptimizationPhase(this.run.state) : undefined; }
   sync(workspace: ManagedWorkspace): void {
+    // A read-only page refresh must not invalidate observation of an active
+    // drive. Its completion reloads the exact project before releasing busy.
+    if (this.running || this.initializingEvaluation) return;
     if (workspace !== this.workspace) { this.workspace = workspace; this.invalidate(); }
   }
   private invalidate(): void { this.epoch++; this.loading = false; this.error = undefined; this.data = undefined; this.retry = undefined; }
@@ -63,12 +80,14 @@ export class OptimizationSetupController {
   private async load(): Promise<void> {
     this.loading = true; const epoch = this.epoch; this.render();
     try {
-      const [datasets, benchmarks, history] = await Promise.all([
+      const [datasets, benchmarks, history, launches] = await Promise.all([
         this.bridge.queryDatasets(this.projectId, { kind: "list" }), this.bridge.queryBenchmarks(this.projectId, { kind: "list" }), this.bridge.optimizationSetups(this.projectId),
+        this.bridge.optimizationLaunches(this.projectId),
       ]);
       if (datasets.kind !== "list" || benchmarks.kind !== "list") throw new Error("Could not read optimization inputs.");
       if (epoch !== this.epoch) return;
       this.data = { datasets: datasets.entries, benchmarks: benchmarks.versions, history };
+      this.launches = launches;
       const latest = history.at(-1);
       // Saved versions never float to newly-created versions. For first setup,
       // prefer recorded model provenance, not an arbitrary training population.
@@ -145,7 +164,7 @@ export class OptimizationSetupController {
       if (epoch !== this.epoch) return;
       if (opened.content.state === "ready" && opened.content.workspace.managed) {
         this.workspace = opened.content.workspace.managed;
-        this.updated?.(this.workspace);
+        this.updated?.(this.workspace, opened.content.workspace);
       }
     } catch (error) {
       if (timer) clearTimeout(timer);
@@ -158,7 +177,7 @@ export class OptimizationSetupController {
         }
       }
     } finally {
-      if (epoch === this.epoch) { this.running = false; this.phase = undefined; this.startedAt = undefined; this.render(); }
+      if (epoch === this.epoch) { this.running = false; this.stopping = false; this.phase = undefined; this.startedAt = undefined; this.render(); }
     }
   }
   async initializeEvaluation(): Promise<void> {

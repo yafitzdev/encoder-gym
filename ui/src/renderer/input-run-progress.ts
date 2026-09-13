@@ -39,8 +39,14 @@ export function inputRunProgress(options: InputRunProgressOptions): HTMLElement 
     : run.state === "candidate_rejected" ? "Candidate did not pass"
     : run.state === "baseline_retained" ? "No improvement"
     : run.state === "cancelled" ? "Cancelled" : undefined;
-  const active = phase === "complete" ? phases.length : Math.max(0, phases.indexOf(phase));
   const progress = activity?.progress;
+  const observed = progress?.phase;
+  const visiblePhase = phase === "complete" ? phase : observed && ["evaluating_retrieval", "evaluating_agent"].includes(observed) ? "evaluating"
+    : observed === "saving_checkpoint" || observed === "registering_candidate" ? "saving_candidate"
+    : observed && ["checking_training_data", "loading_model", "preparing_batches", "training"].includes(observed) ? "training"
+    : observed && ["loading_training_rows", "writing_training_rows", "checking_materialized_project"].includes(observed) ? "preparing_data"
+    : observed && ["loading_evaluation_protocol", "creating_candidate", "creating_experiment"].includes(observed) ? "starting" : phase;
+  const active = visiblePhase === "complete" ? phases.length : Math.max(0, phases.indexOf(visiblePhase));
   const activeProgress: NativeProgress = progress ?? { phase: fallback[phase] };
   const stage = inputRunStageLabel(activeProgress.phase);
   const current = result ?? (failed ? `Failed while ${stage.toLocaleLowerCase()}` : stage);

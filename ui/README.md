@@ -35,10 +35,25 @@ Arbitrary repositories are not accepted. Earlier read-only journal folders
 remain available under **Earlier experiment folders → Connect legacy journals**.
 They are labelled Legacy and are not silently converted into managed projects.
 
-- **Project folders:** persistent entries in the sidebar. A newly opened project
-  starts on Models. Switching projects resumes each project's last page during
+- **Project folders:** persistent entries in the sidebar. A newly opened managed project
+  starts on Overview. Switching projects resumes each project's last page during
   the session; clicking the already-active folder collapses or expands it.
-- **Optimize:** a project-header action available on every managed page.
+- **Overview (managed projects):** the single run surface. An aligned accordion
+  lists every run; one expanded run contains Setup → Status → Report. New run
+  opens five fields: active baseline, starting dataset version, current project
+  benchmark, configured advisor, and configured generator. Credentials remain in
+  Project settings. The current provider contract has one configuration per role,
+  not a selectable library of credential profiles. Baseline changes remain in Models.
+  Historical fields are read-only and never substitute today's inputs or providers.
+  Status displays the persisted native task, artifact context, real counters and
+  recent timestamped events. No percentage or checkpoint is invented when the
+  backend supplies none. Stop requests a pause after the current CLI stage finishes;
+  Resume re-enters the same run UUID and ordinary idempotent stage contracts.
+  Terminal cancellation remains a separate legacy/CLI action. This is stage-level
+  recovery, not a promise of mid-batch training checkpoint recovery.
+  Report shows the recorded KEEP/REJECT decision with development comparisons;
+  candidate values and signed deltas use each metric's direction. Green numbers
+  cannot override a recorded rejection. Sealed scores remain outside this projection.
 - **Models:** the active baseline and every registered model, including rejected
   candidates and former baselines. Search the inventory or inspect any model;
   managed-project comparisons belong in Evaluation.
@@ -63,7 +78,7 @@ They are labelled Legacy and are not silently converted into managed projects.
   adopt-run <optimization>`. The viewer never infers training provenance from
   names or row counts. See
   [dataset versions](../docs/dataset-versions-spec.md).
-- **Runs:** immutable experiment records. A run owns its candidate attempts,
+- **Runs (legacy journal projects):** immutable experiment records. A run owns its candidate attempts,
   activity, recorded budgets, provenance, and final decision. Completion does
   not mean the candidate was accepted.
 - **Evaluation (managed projects):** one shared benchmark, with Results, Protocol

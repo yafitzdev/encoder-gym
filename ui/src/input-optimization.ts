@@ -12,6 +12,8 @@ export interface InputOptimizationRun {
   id: string;
   projectId: string;
   setupId: string;
+  launchId?: string;
+  experimentRunId?: string;
   createdAt: string;
   state: InputOptimizationState;
   attempt: number;
@@ -68,16 +70,24 @@ export function parseInputOptimizationRun(value: unknown, expectedProjectId: str
   const identity = record(item.run, "optimization run identity", ["id", "projectId", "launch", "setup", "createdAt", "fingerprint"]);
   const id = uuid(identity.id), projectId = uuid(identity.projectId);
   if (projectId !== expectedProjectId) throw new Error("Optimization run belongs to another project.");
-  bound(identity.launch); const setup = bound(identity.setup); const createdAt = instant(identity.createdAt); fingerprint(identity.fingerprint); fingerprint(item.headFingerprint);
+  const launch = bound(identity.launch); const setup = bound(identity.setup); const createdAt = instant(identity.createdAt); fingerprint(identity.fingerprint); fingerprint(item.headFingerprint);
   if (typeof item.state !== "string" || !states.has(item.state as InputOptimizationState)) throw new Error("Invalid optimization state.");
   const run: InputOptimizationRun = {
-    id, projectId, setupId: setup.id, createdAt, state: item.state as InputOptimizationState,
+    id, projectId, setupId: setup.id, launchId: launch.id, createdAt, state: item.state as InputOptimizationState,
     attempt: integer(item.attempt), materializationAttempt: integer(item.materializationAttempt), experimentAttempt: integer(item.experimentAttempt),
     executionAttempt: integer(item.executionAttempt), finalAttempt: integer(item.finalAttempt), lastSequence: integer(item.lastSequence), updatedAt: instant(item.updatedAt),
   };
   if (item.failureCode !== undefined) {
     if (typeof item.failureCode !== "string" || !/^[a-z0-9_.-]{1,80}$/.test(item.failureCode)) throw new Error("Invalid optimization failure.");
     run.failureCode = item.failureCode;
+  }
+  if (item.experiment !== undefined) {
+    const experiment = record(item.experiment, "optimization experiment", ["run", "materializationFingerprint", "scientificProject", "benchmark", "sourceProtocol", "candidate", "protocol", "experimentRun", "createdAt", "fingerprint"]);
+    if (bound(experiment.run).id !== id) throw new Error("Optimization experiment belongs to another run.");
+    fingerprint(experiment.materializationFingerprint);
+    for (const key of ["scientificProject", "benchmark", "sourceProtocol", "candidate", "protocol"]) bound(experiment[key]);
+    instant(experiment.createdAt); fingerprint(experiment.fingerprint);
+    run.experimentRunId = bound(experiment.experimentRun).id;
   }
   if (item.outcome !== undefined) {
     const outcome = record(item.outcome, "optimization outcome", ["run", "experimentFingerprint", "experimentRun", "kind", "selectedModel", "createdAt", "fingerprint"]);
@@ -86,12 +96,18 @@ export function parseInputOptimizationRun(value: unknown, expectedProjectId: str
     const selected = outcome.selectedModel === undefined ? undefined : bound(outcome.selectedModel);
     if ((outcome.kind === "candidate_ready") !== !!selected) throw new Error("Invalid optimization candidate result.");
     run.outcome = { kind: outcome.kind, ...(selected ? { selectedModelId: selected.id } : {}) };
+    const experimentId = bound(outcome.experimentRun).id;
+    if (run.experimentRunId && run.experimentRunId !== experimentId) throw new Error("Mismatched optimization experiment.");
+    run.experimentRunId = experimentId;
   }
   if (item.finalResult !== undefined) {
     const result = record(item.finalResult, "final optimization result", ["run", "outcomeFingerprint", "experimentRun", "kind", "model", "finalReport", "createdAt", "fingerprint"]);
     bound(result.run); fingerprint(result.outcomeFingerprint); bound(result.experimentRun); instant(result.createdAt); fingerprint(result.fingerprint);
     if (result.kind !== "candidate_accepted" && result.kind !== "candidate_rejected") throw new Error("Invalid final optimization result.");
     run.finalResult = { kind: result.kind, modelId: bound(result.model).id, reportId: bound(result.finalReport).id };
+    const experimentId = bound(result.experimentRun).id;
+    if (run.experimentRunId && run.experimentRunId !== experimentId) throw new Error("Mismatched optimization experiment.");
+    run.experimentRunId = experimentId;
   }
   return run;
 }

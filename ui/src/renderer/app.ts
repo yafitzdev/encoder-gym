@@ -10,7 +10,7 @@ import { renderModels, type ModelPageState } from "./models-page.js";
 import { renderModel } from "./model-view.js";
 import { findModel, modelInventory } from "./model-inventory.js";
 import { NavigationHistory } from "./state.js";
-import { inputRunById, inputRunName, renderBenchmarks, renderInputRun, renderRuns } from "./workspace-pages.js";
+import { inputRunById, inputRunName, renderBenchmarks, renderRuns } from "./workspace-pages.js";
 import { renderProjectSettings, renderProjectState, renderWelcome } from "./project-pages.js";
 import { previewBridge } from "./preview-bridge.js";
 import { newProjectDialog } from "./onboarding.js";
@@ -18,7 +18,6 @@ import { renderManagedSettings, type ProviderPageActions, type ProviderPageState
 import { DatasetController } from "./dataset-controller.js";
 import { BenchmarkController } from "./benchmark-controller.js";
 import { OptimizationSetupController } from "./optimization-setup-controller.js";
-import { renderOptimizationSetup } from "./optimization-setup-page.js";
 import { renderBenchmarkPage } from "./benchmark-page.js";
 import { renderDatasetPage } from "./dataset-pages.js";
 import { renderOptimization, type OptimizationPageActions, type OptimizationPageState } from "./optimization-page.js";
@@ -27,10 +26,11 @@ import { providerDialog } from "./provider-dialog.js";
 import { scientificRuntimeDialog } from "./scientific-runtime-dialog.js";
 import { renderActivity, type ActivityPageActions, type ActivityPageState } from "./activity-page.js";
 import { InputRunsController } from "./input-runs-controller.js";
+import { renderOverview, newOverviewState, type OverviewState } from "./overview-page.js";
 
 const element = (id: string): HTMLElement => { const found = document.getElementById(id); if (!found) throw new Error("Missing #" + id); return found; };
-interface ProjectView { history: NavigationHistory; models: ModelPageState; details: Map<string, DetailState>; optimization: OptimizationPageState; providers: ProviderPageState; activity: ActivityPageState; baselineBusy: boolean; datasets?: DatasetController; benchmarks?: BenchmarkController; setup?: OptimizationSetupController; inputRuns?: InputRunsController }
-const newView = (): ProjectView => ({ history: new NavigationHistory(), models: { filter: initialFilter(), selected: new Set(), suiteIndex: 0 }, details: new Map(), optimization: { loading: false }, providers: { loading: false }, activity: { loading: false }, baselineBusy: false });
+interface ProjectView { history: NavigationHistory; overview: OverviewState; models: ModelPageState; details: Map<string, DetailState>; optimization: OptimizationPageState; providers: ProviderPageState; activity: ActivityPageState; baselineBusy: boolean; datasets?: DatasetController; benchmarks?: BenchmarkController; setup?: OptimizationSetupController; inputRuns?: InputRunsController }
+const newView = (): ProjectView => ({ history: new NavigationHistory(), overview: newOverviewState(), models: { filter: initialFilter(), selected: new Set(), suiteIndex: 0 }, details: new Map(), optimization: { loading: false }, providers: { loading: false }, activity: { loading: false }, baselineBusy: false });
 
 export function mount(): void {
   const bridge = window.encoderGym ?? previewBridge();
@@ -65,6 +65,18 @@ export function mount(): void {
   };
 
   function navigate(location: Location): void {
+    if (workspace()?.managed) {
+      if (location.page === "runs" || location.page === "run") {
+        if (location.id) view.overview.expanded = location.id;
+        location = { page: "overview" };
+      } else if (location.page === "optimization" && location.tab === "setup") {
+        if (!view.setup?.running && !view.inputRuns?.runningId) {
+          if (view.setup?.run) view.inputRuns?.retain(view.setup.run);
+          view.setup?.newDraft(); view.overview.draft = true; view.overview.expanded = "draft"; view.overview.tabs.set("draft", "setup");
+        }
+        location = { page: "overview" };
+      }
+    }
     element("toast").hidden = true;
     shell.classList.remove("mobile-sidebar-open"); updateSidebar();
     if (location.page === "models" && location.id) view.models.filter.setup = location.id;
@@ -72,12 +84,13 @@ export function mount(): void {
     render(); main.scrollTop = 0; focusHeading();
     if (location.page === "project" && workspace()?.managed && !view.providers.status) void refreshProviders();
     if (location.page === "activity" && workspace()?.managed) void refreshActivity();
-    if ((location.page === "runs" || location.page === "benchmarks" && !view.optimization.readiness) && workspace()?.managed && !view.optimization.loading) void refreshOptimization();
+    if ((["runs", "overview"].includes(location.page) || location.page === "benchmarks" && !view.optimization.readiness) && workspace()?.managed && !view.optimization.loading) void refreshOptimization();
   }
   async function selectProject(id: string): Promise<void> {
     if (collectionBusy) return;
     if (selection.selectedId && collection.projects.some(project => project.id === selection.selectedId)) { view.history.capture(main.scrollTop, contentFocus()); views.set(selection.selectedId, view); }
     const changed = selection.selectedId !== id;
+    const firstVisit = !views.has(id);
     view = views.get(id) ?? newView(); views.set(id, view);
     if (changed) { opened = undefined; operationError = undefined; element("toast").hidden = true; main.scrollTop = 0; }
     collection.selectedId = id; loading = true; loadingMessage = "Reading project files…";
@@ -86,10 +99,12 @@ export function mount(): void {
     try {
       const next = await pending;
       if (!next) return;
-      opened = next; loading = false; render();
+      opened = next;
+      if (firstVisit && next.content.state === "ready" && next.content.workspace.managed) view.history.remember({ page: "overview" }, 0);
+      loading = false; render();
       if (view.history.current.page === "project" && next.content.state === "ready" && next.content.workspace.managed && !view.providers.status) void refreshProviders();
       if (view.history.current.page === "activity" && next.content.state === "ready" && next.content.workspace.managed) void refreshActivity();
-      if (["runs", "benchmarks"].includes(view.history.current.page) && next.content.state === "ready" && next.content.workspace.managed && !view.optimization.readiness && !view.optimization.loading) void refreshOptimization();
+      if (["runs", "overview", "benchmarks"].includes(view.history.current.page) && next.content.state === "ready" && next.content.workspace.managed && !view.optimization.readiness && !view.optimization.loading) void refreshOptimization();
       if (changed) restorePlace();
     } catch (error) {
       if (selection.selectedId !== id) return;
@@ -468,12 +483,13 @@ export function mount(): void {
     promoteModel: (runId, name) => { void promoteAccepted(runId, name); },
     restoreBaseline: (targetRevisionId, name) => { void restoreBaseline(targetRevisionId, name); },
   };
-  const pages: [Page, string, string][] = [["models", "Models", "models"], ["datasets", "Data", "dataset"], ["optimization", "Optimize", "optimize"], ["runs", "Runs", "runs"], ["benchmarks", "Evaluation", "benchmark"], ["activity", "Activity", "activity"], ["project", "Project settings", "settings"]];
+  const pages: [Page, string, string][] = [["overview", "Overview", "optimize"], ["models", "Models", "models"], ["datasets", "Data", "dataset"], ["runs", "Runs", "runs"], ["benchmarks", "Evaluation", "benchmark"], ["activity", "Activity", "activity"], ["project", "Project settings", "settings"]];
   function render(): void {
     const current = view.history.current, data = workspace();
     const project = collection.projects.find(p => p.id === selection.selectedId);
     if (project && data?.managed) {
       const id = project.id;
+      const owner = view;
       view.datasets ??= new DatasetController(id, data.managed, bridge, {
         render: () => { if (selection.selectedId === id) render(); },
         navigate: location => { if (selection.selectedId === id) navigate(location); },
@@ -487,12 +503,12 @@ export function mount(): void {
         dialog: () => element("project-dialog") as HTMLDialogElement,
       });
       view.benchmarks.sync(data.managed);
-      view.inputRuns ??= new InputRunsController(id, bridge, () => { if (selection.selectedId === id) render(); }, managed => {
-        if (selection.selectedId === id && opened?.content.state === "ready") opened = { ...opened, content: { state: "ready", workspace: { ...opened.content.workspace, managed } } };
+      view.inputRuns ??= new InputRunsController(id, bridge, () => { if (selection.selectedId === id) render(); }, (managed, snapshot) => {
+        if (selection.selectedId === id && opened?.content.state === "ready") opened = { ...opened, content: { state: "ready", workspace: snapshot ?? { ...opened.content.workspace, managed } } };
       });
-      view.setup ??= new OptimizationSetupController(id, data.managed, bridge, () => { if (selection.selectedId === id) render(); }, managed => {
-        if (selection.selectedId === id && opened?.content.state === "ready") opened = { ...opened, content: { state: "ready", workspace: { ...opened.content.workspace, managed } } };
-        view.inputRuns?.refresh();
+      view.setup ??= new OptimizationSetupController(id, data.managed, bridge, () => { if (selection.selectedId === id) render(); }, (managed, snapshot) => {
+        if (selection.selectedId === id && opened?.content.state === "ready") opened = { ...opened, content: { state: "ready", workspace: snapshot ?? { ...opened.content.workspace, managed } } };
+        owner.inputRuns?.refresh();
       });
       view.setup.sync(data.managed);
     }
@@ -500,8 +516,8 @@ export function mount(): void {
     const linkedOptimizationIds = new Set(data?.runs.flatMap(run => run.optimizationId ? [run.optimizationId] : []) ?? []);
     const runCount = projectRunIds.size + (data?.runs.filter(run => !run.optimizationId || !projectRunIds.has(run.optimizationId)).length ?? 0)
       + (view.optimization.run && !linkedOptimizationIds.has(view.optimization.run.run_id) && !projectRunIds.has(view.optimization.run.run_id) ? 1 : 0);
-    const activePage = ["model", "candidate", "baseline", "compare"].includes(current.page) ? "models" : current.page === "run" ? "runs" : current.page === "dataset" ? "datasets" : current.page;
-    const projectRunActive = !!view.setup?.running || !!view.inputRuns?.runningId;
+    const activePage = data?.managed && ["overview", "runs", "run", "optimization"].includes(current.page) ? "overview" : ["model", "candidate", "baseline", "compare"].includes(current.page) ? "models" : current.page === "run" ? "runs" : current.page === "dataset" ? "datasets" : current.page;
+    const projectRunActive = !!view.setup?.running || !!view.setup?.saving || !!view.setup?.initializingEvaluation || !!view.inputRuns?.runningId;
     const focus = document.activeElement, focusId = focus?.id;
     const caret = focus instanceof HTMLInputElement && ["text", "search"].includes(focus.type) ? [focus.selectionStart, focus.selectionEnd] : undefined;
     const scroll = main.scrollTop;
@@ -510,13 +526,14 @@ export function mount(): void {
       ? new Set([...main.querySelectorAll<HTMLDetailsElement>("details[open]")].map(node => node.querySelector("summary")?.textContent)) : new Set();
     element("project-nav").replaceChildren(...collection.projects.map(p => {
       const expanded = p.id === project?.id && !collapsedProjects.has(p.id);
+      const projectView = views.get(p.id), backgroundActive = !!projectView?.setup?.running || !!projectView?.setup?.saving || !!projectView?.setup?.initializingEvaluation || !!projectView?.inputRuns?.runningId;
       return h("section", { class: "project-folder" + (p.id === project?.id ? " selected-project" : "") + (expanded ? " expanded-project" : "") },
       h("button", { type: "button", id: "project-" + p.id, disabled: collectionBusy, class: "project-folder-button", title: p.source.kind === "folder" ? p.source.path : "Recorded example", "data-project-id": p.id, "aria-expanded": String(expanded), onClick: () => {
         if (p.id === selection.selectedId) { collapsedProjects.has(p.id) ? collapsedProjects.delete(p.id) : collapsedProjects.add(p.id); render(); }
         else { collapsedProjects.delete(p.id); projects.select(p.id); }
-      } }, icon("project"), h("span", {}, p.name), p.source.kind === "example" ? h("small", {}, "Example") : !p.source.workspaceId ? h("small", {}, "Legacy") : null),
-      expanded ? h("div", { class: "project-pages" }, ...pages.filter(([page]) => !["datasets", "activity", "optimization"].includes(page) || (p.source.kind === "folder" && p.source.workspaceId)).map(([page, label, symbol]) => h("button", { type: "button", id: "nav-" + page, disabled: collectionBusy, class: "nav-item" + (page === activePage ? " active" : ""), "aria-current": page === activePage ? "page" : null, "data-page": page, onClick: () => navigate(page === "optimization" ? { page, tab: "setup" } : { page }) }, icon(symbol), label,
-        data && ["models", "runs"].includes(page) ? h("span", { class: "nav-meta" }, page === "runs" && projectRunActive ? spinner() : null, h("span", { class: "nav-count" }, page === "models" ? modelInventory(data).length : runCount)) : null))) : null);
+      } }, icon("project"), h("span", {}, p.name), !expanded && backgroundActive ? h("span", { role: "status", "aria-label": "Optimization running" }, spinner()) : null, p.source.kind === "example" ? h("small", {}, "Example") : !p.source.workspaceId ? h("small", {}, "Legacy") : null),
+      expanded ? h("div", { class: "project-pages" }, ...pages.filter(([page]) => page === "runs" ? !(p.source.kind === "folder" && p.source.workspaceId) : !["datasets", "activity", "overview"].includes(page) || (p.source.kind === "folder" && p.source.workspaceId)).map(([page, label, symbol]) => h("button", { type: "button", id: "nav-" + page, disabled: collectionBusy, class: "nav-item" + (page === activePage ? " active" : ""), "aria-current": page === activePage ? "page" : null, "data-page": page, onClick: () => navigate({ page }) }, icon(symbol), label,
+        page === "overview" && projectRunActive ? h("span", { class: "nav-meta", role: "status", "aria-label": "Optimization running" }, spinner()) : data && ["models", "runs"].includes(page) ? h("span", { class: "nav-meta" }, h("span", { class: "nav-count" }, page === "models" ? modelInventory(data).length : runCount)) : null))) : null);
     }));
     const candidate = data ? candidateRows(data).find(r => r.candidate.id === current.id)?.candidate : undefined;
     const run = data?.runs.find(r => r.id === current.id);
@@ -541,12 +558,12 @@ export function mount(): void {
       const exactCandidate = current.runId ? data.runs.find(r => r.id === current.runId)?.candidates.find(c => c.id === current.id) : candidateRows(data).find(r => r.candidate.id === current.id)?.candidate;
       const detail = view.details.get(detailKey) ?? { failedOnly: exactCandidate?.development.some(d => d.checks.some(g => !g.passed)) ?? false };
       if (current.id) view.details.set(detailKey, detail);
-      if (current.page === "models") content = renderModels(data, view.models, actions);
+      if ((["overview", "runs", "run"].includes(current.page) || current.page === "optimization" && current.tab === "setup") && data.managed && view.setup && view.inputRuns) content = renderOverview(data, view.overview, view.setup, view.inputRuns, actions, view.optimization.run);
+      else if (current.page === "models") content = renderModels(data, view.models, actions);
       else if (["datasets", "dataset"].includes(current.page) && data.managed && view.datasets) content = renderDatasetPage(data, current, view.datasets, actions);
-      else if (current.page === "optimization" && current.tab === "setup" && view.setup) content = renderOptimizationSetup(view.setup, actions);
       else if (current.page === "optimization" && data.managed) content = renderOptimization(data.managed, view.optimization, optimizationActions);
       else if (current.page === "model" || current.page === "candidate") content = renderModel(data, current.id ?? "", current.tab ?? "overview", detail, actions, current.runId);
-      else if (current.page === "run") content = projectRun && data.managed && view.inputRuns ? renderInputRun(data, projectRun, inputRunName(data, projectRun, view.inputRuns, view.setup), actions, view.inputRuns, view.setup) : renderRun(data, current.id ?? "", current.tab ?? "overview", actions);
+      else if (current.page === "run") content = renderRun(data, current.id ?? "", current.tab ?? "overview", actions);
       else if (current.page === "runs") content = renderRuns(data, actions, view.optimization.run, data.managed ? view.inputRuns : undefined, data.managed ? view.setup : undefined);
       else if (current.page === "benchmarks") content = data.managed && view.benchmarks ? renderBenchmarkPage(data, current, view.benchmarks, actions) : renderBenchmarks(data, actions);
       else if (current.page === "baseline") content = renderModel(data, data.baseline.id, current.tab ?? "overview", detail, actions);
@@ -572,11 +589,11 @@ export function mount(): void {
       const controller = view.benchmarks;
       queueMicrotask(() => { if (view.benchmarks === controller && !loading && !collectionBusy && workspace()?.managed) void controller.ensure(current); });
     }
-    if (data?.managed && view.setup && ((current.page === "optimization" && current.tab === "setup") || current.page === "runs" || current.page === "run") && !loading && !collectionBusy) {
+    if (data?.managed && view.setup && ((current.page === "optimization" && current.tab === "setup") || current.page === "overview" || current.page === "runs" || current.page === "run") && !loading && !collectionBusy) {
       const controller = view.setup;
       queueMicrotask(() => { if (view.setup === controller && !loading && !collectionBusy && workspace()?.managed) void controller.ensure(); });
     }
-    if (data?.managed && view.inputRuns && (current.page === "runs" || current.page === "run") && !loading && !collectionBusy) {
+    if (data?.managed && view.inputRuns && ["overview", "runs", "run"].includes(current.page) && !loading && !collectionBusy) {
       const controller = view.inputRuns;
       queueMicrotask(() => { if (view.inputRuns === controller && !loading && !collectionBusy && workspace()?.managed) void controller.ensure(); });
     }

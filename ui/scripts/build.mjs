@@ -22,6 +22,8 @@ for (const [source, name] of [["catalog", "catalog"], ["model-inventory", "model
 });
 
 // Electron main process -> ESM bundle (electron stays external; bootstrap.cjs imports it).
+await build({ entryPoints: [fileURLToPath(new URL("../src/renderer/overview-records.ts", import.meta.url))], outfile: fileURLToPath(new URL("../dist/evidence/overview-records.js", import.meta.url)), bundle: true, platform: "node", format: "esm" });
+await build({ entryPoints: [fileURLToPath(new URL("../src/renderer/overview-page.ts", import.meta.url))], outfile: fileURLToPath(new URL("../dist/renderer/overview-page.js", import.meta.url)), bundle: true, platform: "browser", format: "esm" });
 await build({
   entryPoints: [fileURLToPath(new URL("../src/main.ts", import.meta.url))],
   outfile: fileURLToPath(new URL("../dist/main.js", import.meta.url)),

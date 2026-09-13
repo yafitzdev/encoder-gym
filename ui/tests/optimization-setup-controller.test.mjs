@@ -8,7 +8,7 @@ function fixture(overrides = {}) {
   const f = setupFixture(), history = [], writes = [], runs = [];
   const run = (state = "queued") => ({ id: randomUUID(), projectId: f.projectId, createdAt: new Date().toISOString(), state, attempt: 0, materializationAttempt: 0, experimentAttempt: 0, executionAttempt: 0, finalAttempt: 0, lastSequence: 1, updatedAt: new Date().toISOString() });
   const bridge = { queryDatasets: async () => ({ kind: "list", entries: f.datasets }), queryBenchmarks: async () => ({ kind: "list", versions: f.workspace.benchmarkVersions }),
-    optimizationSetups: async () => [...history], previewOptimizationSetup: async () => f.preview,
+    optimizationSetups: async () => [...history], optimizationLaunches: async () => [], previewOptimizationSetup: async () => f.preview,
     saveOptimizationSetup: async (_, request) => { writes.push(structuredClone(request)); const result = f.saved(request); history.push(result.setup); return result; },
     startInputOptimization: async () => { const value = run(); runs.push(value); return { actionId: randomUUID(), run: value }; },
     driveInputOptimization: async (_, id) => ({ ...runs.find(value => value.id === id), state: "baseline_retained", outcome: { kind: "baseline_retained" } }),
@@ -129,7 +129,7 @@ test("a failed execution retries the same durable run instead of reserving anoth
   assert.equal(f.controller.run.id, first); assert.equal(f.runs.length, 1); assert.equal(f.controller.run.state, "baseline_retained");
 });
 
-test("Stop cancels the active optimization and leaves Optimize ready for a new run", async () => {
+test("legacy Cancel permanently cancels the active optimization", async () => {
   const active = deferred();
   const f = fixture({ driveInputOptimization: async () => active.promise });
   await f.controller.ensure(); const optimizing = f.controller.optimize();
@@ -138,4 +138,19 @@ test("Stop cancels the active optimization and leaves Optimize ready for a new r
   await f.controller.cancel();
   active.resolve(f.controller.run); await optimizing;
   assert.equal(f.controller.run.state, "cancelled"); assert.equal(f.controller.running, false); assert.equal(f.controller.canOptimize, true);
+});
+
+test("Overview Stop waits for the stage and preserves the resumable run identity", async () => {
+  const active = deferred(); let stopRequests = 0;
+  const f = fixture({ driveInputOptimization: async () => active.promise,
+    stopInputOptimization: async (_, id) => { assert.equal(id, f.controller.run.id); stopRequests++; } });
+  await f.controller.ensure(); const optimizing = f.controller.optimize();
+  await new Promise(resolve => setImmediate(resolve));
+  const id = f.controller.run.id;
+  f.controller.sync({ ...f.workspace });
+  await f.controller.stop(); await f.controller.stop();
+  assert.equal(stopRequests, 1); assert.equal(f.controller.stopping, true); assert.equal(f.controller.running, true);
+  active.resolve({ ...f.controller.run, state: "ready", lastSequence: 2 }); await optimizing;
+  assert.equal(f.controller.run.id, id); assert.equal(f.controller.run.state, "ready");
+  assert.equal(f.controller.stopping, false); assert.equal(f.controller.running, false);
 });
