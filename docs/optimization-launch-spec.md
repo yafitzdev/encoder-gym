@@ -253,3 +253,21 @@ it must not silently run a different recipe or dataset in response to a setup.
   No real Nomos training, provider call, final evaluation or baseline change was
   performed by this implementation work.
 - Bounded advisor/data-generation iterations remain open product work.
+
+### Overview feedback and interruption — 13 September 2026
+
+- The run and project disclosures share a fixed-size SVG indicator. Status uses
+  one full-width layout for the current task, measured progress and recent work.
+- Task-scoped adapter observers report actual file basenames/bytes and source
+  row counts during verification, including before the run root exists. Native
+  evaluation identifies its specific suite; training retains its real counters.
+  No row text, absolute path, credentials or evaluation scores enter telemetry.
+- A request-token-scoped IPC stream updates the display independently of database
+  polling. Project activity retains sampled task details through ordinary safe
+  references; no historical event schema or fingerprints change.
+- Overview Stop interrupts the exact active worker tree, rather than waiting for
+  an entire macro stage. It does not append terminal cancellation or create new
+  child identities. Resume re-enters the existing recovery contracts and reuses
+  complete verified outputs. This is interruption, **not per-step optimizer
+  checkpointing**: unfinished native training can restart, and incomplete evidence
+  remains subject to the adapter's fail-closed recovery checks.

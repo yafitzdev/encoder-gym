@@ -1,5 +1,6 @@
 import type { NativeProgress } from "../managed-control.js";
 import type { ProjectActivityAction, ProjectActivityFailure, ProjectActivityLog } from "../project-activity.js";
+import { validateNativeProgress } from "../native-progress.js";
 
 export interface InputRunActivity {
   actionId: string;
@@ -19,20 +20,27 @@ export function inputRunActivity(log: ProjectActivityLog, runId: string): InputR
   if (!action) return undefined;
   const progressEvents = action.events.filter(event => event.state === "progress" && event.stage);
   const latest = progressEvents.at(-1);
+  const progressOf = (event: (typeof progressEvents)[number]): NativeProgress => validateNativeProgress({
+    phase: event.stage, completed: event.completed, total: event.total,
+    subject: event.references?.find(item => item.kind === "progress_subject")?.id,
+    unit: event.references?.find(item => item.kind === "progress_unit")?.id,
+  }) ?? { phase: "checking_files" };
   const failure = action.events.findLast(event => event.state === "failed")?.failure;
   return {
     actionId: action.action_id,
     state: action.state,
     startedAt: action.started_at,
     updatedAt: action.events.at(-1)?.created_at ?? action.started_at,
-    ...(latest ? { progress: { phase: latest.stage as NativeProgress["phase"], ...(latest.completed !== undefined && latest.total !== undefined ? { completed: latest.completed, total: latest.total } : {}) } } : {}),
+    ...(latest ? { progress: progressOf(latest) } : {}),
     ...(failure ? { failure } : {}),
     stages: [...new Set(progressEvents.map(event => event.stage!))],
-    events: progressEvents.slice(-5).map(event => ({ at: event.created_at, progress: { phase: event.stage as NativeProgress["phase"], ...(event.completed !== undefined && event.total !== undefined ? { completed: event.completed, total: event.total } : {}) } })),
+    events: progressEvents.slice(-5).map(event => ({ at: event.created_at, progress: progressOf(event) })),
   };
 }
 
 export const inputRunStageLabel = (stage: string): string => ({
+  verifying_file: "Verifying file checksum",
+  verifying_rows: "Validating training rows",
   checking_model: "Checking baseline model",
   checking_dataset: "Checking dataset",
   checking_evaluation: "Checking evaluation",
@@ -67,6 +75,7 @@ export interface InputRunStageContext {
 
 /** Short artifact-level context for the currently executing persisted stage. */
 export function inputRunStageDetail(progress: NativeProgress, context: InputRunStageContext): string {
+  if (progress.subject) return progress.subject;
   const counter = progress.completed !== undefined && progress.total !== undefined
     ? `${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()}`
     : undefined;
@@ -75,6 +84,8 @@ export function inputRunStageDetail(progress: NativeProgress, context: InputRunS
     ? context.finalSuite
     : context.developmentSuites.join(", ") || context.evaluation;
   return ({
+    verifying_file: "File checksum",
+    verifying_rows: data,
     checking_model: context.model,
     checking_dataset: data,
     checking_evaluation: context.evaluation,

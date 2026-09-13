@@ -11,6 +11,7 @@ const paths: Record<string, string[]> = {
   settings: ["M4 6h16M4 12h16M4 18h16", "M8 3v6M16 9v6M10 15v6"],
   arrow: ["M5 12h14m-5-5 5 5-5 5"],
   back: ["M19 12H5m5-5-5 5 5 5"],
+  chevron: ["m9 5 7 7-7 7"],
   search: ["M15 15l5 5", "M10.5 3a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15"],
   check: ["m5 12 4 4L19 6"],
   lock: ["M6 10h12v11H6z", "M8 10V6a4 4 0 0 1 8 0v4"],
@@ -31,6 +32,10 @@ export function button(label: string, action: () => void, kind = "secondary", sy
 export function tag(label: string, tone = "neutral"): HTMLElement { return h("span", { class: `tag ${tone}` }, label); }
 export function status(label: string, tone = "neutral"): HTMLElement { return h("span", { class: `status ${tone}` }, h("span", { class: "status-dot", "aria-hidden": "true" }), label); }
 export function spinner(): HTMLElement { return h("span", { class: "spinner", "aria-hidden": "true" }); }
+/** Fixed-size disclosure indicator; state changes rotation, never its geometry. */
+export function disclosureIndicator(expanded: boolean): HTMLElement {
+  return h("span", { class: "disclosure-indicator" + (expanded ? " is-expanded" : ""), "aria-hidden": "true" }, icon("chevron"));
+}
 export function pageHeader(title: string, action?: Child): HTMLElement {
   return h("header", { class: "page-heading" }, h("h1", { tabindex: "-1" }, title), action ?? null);
 }

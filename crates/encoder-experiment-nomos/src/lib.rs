@@ -7,7 +7,7 @@ mod repair_delta;
 mod training_data;
 pub use benchmark::NomosBenchmarkPlan;
 pub use managed_training::{NomosTrainingDataset, NomosTrainingDatasetWriter};
-pub use progress::{NativePhase, NativeProgress, ProgressObserver};
+pub use progress::{NativePhase, NativeProgress, ProgressObserver, with_file_progress};
 pub use training_data::{VerifiedTrainingData, VerifiedTrainingInput};
 
 use std::{
@@ -955,6 +955,14 @@ impl NomosBackend {
         }
     }
 
+    fn observe_subject(&self, phase: NativePhase, subject: &str) {
+        if let Some(observer) = &self.progress {
+            let mut progress = NativeProgress::phase(phase);
+            progress.subject = Some(subject.into());
+            observer.observe(progress);
+        }
+    }
+
     async fn run_bounded(
         &self,
         arguments: &[String],
@@ -1642,7 +1650,7 @@ impl EncoderTaskBackend for NomosBackend {
             let raw = if retrieval_output.exists() {
                 read_json(&retrieval_output)?
             } else {
-                self.observe(NativePhase::EvaluatingRetrieval);
+                self.observe_subject(NativePhase::EvaluatingRetrieval, &suite_key);
                 self.run_bounded(&arguments, maximum_seconds).await?;
                 read_json(&retrieval_output)?
             };
@@ -1735,7 +1743,7 @@ impl EncoderTaskBackend for NomosBackend {
                     }
                     read_json(&agent_output)?
                 } else {
-                    self.observe(NativePhase::EvaluatingAgent);
+                    self.observe_subject(NativePhase::EvaluatingAgent, &suite_key);
                     self.run_bounded(&agent_arguments, maximum_seconds).await?;
                     if !agent_trace.is_file() {
                         return Err(adapter_error(
@@ -3651,6 +3659,9 @@ fn remove_exact_scratch_file(
 fn sha256_file(path: &Path) -> Result<String, EncoderTaskAdapterError> {
     let file = fs::File::open(path)
         .map_err(|error| adapter_error(format!("could not hash Nomos file: {error}")))?;
+    let total = file.metadata().map_err(adapter_error)?.len();
+    let mut completed = 0;
+    progress::file_progress(path, 0, total);
     let mut reader = BufReader::new(file);
     let mut digest = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
@@ -3662,7 +3673,12 @@ fn sha256_file(path: &Path) -> Result<String, EncoderTaskAdapterError> {
             break;
         }
         digest.update(&buffer[..read]);
+        completed += read as u64;
+        if completed % (8 * 1024 * 1024) == 0 {
+            progress::file_progress(path, completed, total);
+        }
     }
+    progress::file_progress(path, completed, total);
     Ok(format!("{:x}", digest.finalize()))
 }
 

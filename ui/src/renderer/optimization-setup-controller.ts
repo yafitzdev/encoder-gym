@@ -25,6 +25,8 @@ export class OptimizationSetupController {
   activity?: InputRunActivity;
   phase?: string;
   benchmarkProgress?: NativeProgress;
+  liveProgress?: NativeProgress;
+  liveProgressAt?: number;
   startedAt?: number;
   error?: unknown;
   private epoch = 0;
@@ -32,7 +34,7 @@ export class OptimizationSetupController {
   constructor(readonly projectId: string, public workspace: ManagedWorkspace, private bridge: EncoderGymBridge, private render: () => void, private updated?: (workspace: ManagedWorkspace, snapshot?: WorkspaceSnapshot) => void) {}
   newDraft(): void {
     if (this.running || this.saving || this.initializingEvaluation) return;
-    this.run = undefined; this.activity = undefined; this.error = undefined;
+    this.run = undefined; this.activity = undefined; this.error = undefined; this.liveProgress = undefined;
   }
   async stop(): Promise<void> {
     if (!this.running || !this.run || this.stopping) return;
@@ -103,15 +105,16 @@ export class OptimizationSetupController {
     if (!this.canSave) return;
     const selected = this.selected!, epoch = this.epoch;
     this.saving = true; this.error = undefined; this.phase = this.retry ? "Verifying files and saving…" : "Checking inputs…"; this.startedAt = Date.now(); this.render();
+    const progress = (value: NativeProgress): void => { if (epoch === this.epoch && this.saving) { this.liveProgress = value; this.liveProgressAt = Date.now(); this.render(); } };
     try {
       if (!this.retry) {
-        const preview = await this.bridge.previewOptimizationSetup(this.projectId, { modelId: selected.model.id, datasetVersionId: selected.dataset.id, benchmarkVersionId: selected.benchmark.id });
+        const preview = await this.bridge.previewOptimizationSetup(this.projectId, { modelId: selected.model.id, datasetVersionId: selected.dataset.id, benchmarkVersionId: selected.benchmark.id }, progress);
         if (epoch !== this.epoch) return;
         if (!sameInputs(selected, preview.inputs) || preview.expectedParent !== (this.latest?.id ?? null)) throw new Error("Inputs changed. Refresh the project before saving.");
         this.retry = { id: crypto.randomUUID(), expectedParent: preview.expectedParent, inputs: preview.inputs };
       }
       this.phase = "Verifying files and saving…"; this.render();
-      await this.bridge.saveOptimizationSetup(this.projectId, this.retry);
+      await this.bridge.saveOptimizationSetup(this.projectId, this.retry, progress);
       if (epoch !== this.epoch) return;
       // Read current history even on a successful old retry: do not reactivate it.
       await this.load(); if (this.error) throw this.error;
@@ -129,6 +132,7 @@ export class OptimizationSetupController {
     if (!this.saved || this.error || !this.latest) return;
     const epoch = this.epoch;
     this.running = true; this.startedAt = Date.now(); this.render();
+    const progress = (value: NativeProgress): void => { if (epoch === this.epoch && this.running) { this.liveProgress = value; this.liveProgressAt = Date.now(); this.render(); } };
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       if (!this.run || inputOptimizationTerminal(this.run.state)) {
@@ -136,7 +140,7 @@ export class OptimizationSetupController {
         this.run = undefined;
         this.phase = "Starting run";
         this.render();
-        this.run = (await this.bridge.startInputOptimization(this.projectId, this.latest.id)).run;
+        this.run = (await this.bridge.startInputOptimization(this.projectId, this.latest.id, progress)).run;
         if (epoch !== this.epoch) return;
         this.phase = undefined;
         this.render();
@@ -156,7 +160,7 @@ export class OptimizationSetupController {
         }, 1250);
       };
       poll();
-      try { this.run = await this.bridge.driveInputOptimization(this.projectId, this.run.id); }
+      try { this.run = await this.bridge.driveInputOptimization(this.projectId, this.run.id, progress); }
       finally { settled = true; if (timer) clearTimeout(timer); }
       if (epoch !== this.epoch) return;
       this.activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30), this.run.id);

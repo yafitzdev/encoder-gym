@@ -71,6 +71,7 @@ fn scan(
     let mut payloads = BTreeMap::new();
     let mut record = 0;
     let mut returned_bytes = 0;
+    crate::progress::row_progress(&source.name, 0, source.rows);
     loop {
         let mut line = Vec::new();
         let count = (&mut reader)
@@ -87,6 +88,9 @@ fn scan(
             continue;
         }
         record += 1;
+        if record % 100 == 0 || record == source.rows {
+            crate::progress::row_progress(&source.name, record, source.rows);
+        }
         // The complete source was already validated and checksum-bound above.
         // A page only needs content fingerprints for the requested records;
         // constructing membership for every large native row makes paging slow.

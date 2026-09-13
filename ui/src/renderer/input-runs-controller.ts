@@ -2,6 +2,7 @@ import type { EncoderGymBridge } from "../preload.js";
 import type { InputOptimizationRun } from "../input-optimization.js";
 import type { ManagedWorkspace } from "../managed-workspace.js";
 import type { WorkspaceSnapshot } from "../workspace.js";
+import type { NativeProgress } from "../managed-control.js";
 import { inputRunActivity, type InputRunActivity } from "./input-run-activity.js";
 
 export class InputRunsController {
@@ -11,6 +12,8 @@ export class InputRunsController {
   runningId?: string;
   cancellingId?: string;
   stoppingId?: string;
+  liveProgress?: NativeProgress;
+  liveProgressAt?: number;
   error?: unknown;
   private epoch = 0;
   constructor(readonly projectId: string, private bridge: EncoderGymBridge, private render: () => void, private updated?: (workspace: ManagedWorkspace, snapshot?: WorkspaceSnapshot) => void) {}
@@ -36,7 +39,7 @@ export class InputRunsController {
   }
   async resume(run: InputOptimizationRun): Promise<void> {
     if (this.runningId || run.projectId !== this.projectId) return;
-    const epoch = this.epoch; this.runningId = run.id; this.error = undefined; this.replace(run); this.render();
+    const epoch = this.epoch; this.runningId = run.id; this.error = undefined; this.liveProgress = undefined; this.replace(run); this.render();
     let timer: ReturnType<typeof setTimeout> | undefined, settled = false;
     const poll = (): void => {
       timer = setTimeout(() => {
@@ -47,7 +50,9 @@ export class InputRunsController {
       }, 1250);
     };
     try {
-      poll(); this.replace(await this.bridge.driveInputOptimization(this.projectId, run.id)); settled = true;
+      poll(); this.replace(await this.bridge.driveInputOptimization(this.projectId, run.id, value => {
+        if (!settled && epoch === this.epoch) { this.liveProgress = value; this.liveProgressAt = Date.now(); this.render(); }
+      })); settled = true;
       const opened = await this.bridge.selectProject(this.projectId);
       if (epoch === this.epoch && opened.content.state === "ready" && opened.content.workspace.managed) this.updated?.(opened.content.workspace.managed, opened.content.workspace);
       const activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30), run.id); if (activity) this.activities.set(run.id, activity);

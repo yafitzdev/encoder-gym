@@ -140,7 +140,7 @@ test("legacy Cancel permanently cancels the active optimization", async () => {
   assert.equal(f.controller.run.state, "cancelled"); assert.equal(f.controller.running, false); assert.equal(f.controller.canOptimize, true);
 });
 
-test("Overview Stop waits for the stage and preserves the resumable run identity", async () => {
+test("Overview Stop waits for worker acknowledgement and preserves the resumable run identity", async () => {
   const active = deferred(); let stopRequests = 0;
   const f = fixture({ driveInputOptimization: async () => active.promise,
     stopInputOptimization: async (_, id) => { assert.equal(id, f.controller.run.id); stopRequests++; } });
@@ -153,4 +153,17 @@ test("Overview Stop waits for the stage and preserves the resumable run identity
   active.resolve({ ...f.controller.run, state: "ready", lastSequence: 2 }); await optimizing;
   assert.equal(f.controller.run.id, id); assert.equal(f.controller.run.state, "ready");
   assert.equal(f.controller.stopping, false); assert.equal(f.controller.running, false);
+});
+
+test("verification details arrive during setup before any run exists", async () => {
+  const pending = deferred(); let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const f = fixture({ previewOptimizationSetup: async (_id, _request, receive) => {
+    receive({ phase: "verifying_file", subject: "model.safetensors", completed: 512, total: 1024, unit: "bytes" });
+    entered(); return pending.promise;
+  } });
+  await f.controller.ensure(); const saving = f.controller.save(); await started;
+  assert.equal(f.controller.saving, true); assert.equal(f.controller.run, undefined);
+  assert.equal(f.controller.liveProgress.subject, "model.safetensors");
+  pending.reject(new Error("fixture complete")); await saving;
 });

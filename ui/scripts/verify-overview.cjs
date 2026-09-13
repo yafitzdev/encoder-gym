@@ -32,6 +32,7 @@ app.whenReady().then(async()=>{
     await click('#overview-run-draft');await check('all runs can be collapsed','document.querySelectorAll(".focus-run-body").length===0');
     await click('#overview-run-draft');
     await check('selection survives collapsing','document.getElementById("optimization-dataset").value===qa.setup.datasetId');
+    await check('disclosure is an SVG with centered stable geometry','document.querySelector(".focus-run.expanded .disclosure-indicator.is-expanded svg path") && document.querySelector(".disclosure-indicator").textContent===""');
     await capture('setup-dark');
     await click('#optimization-start');
     await evaluate('new Promise(resolve=>setTimeout(resolve,50))');
@@ -40,6 +41,10 @@ app.whenReady().then(async()=>{
     await check('live status exposes exact work, counters and activity','document.querySelector("progress").value===40 && document.querySelector("progress").max===100 && document.querySelector(".focus-events").textContent.includes("40 / 100 steps") && document.querySelector(".optimization-progress .spinner")');
     await check('stage tracker follows the native task','document.querySelector(".optimization-progress-steps li.active").textContent==="Training"');
     await capture('status-dark');
+    await evaluate(`qa.setup.liveProgress={phase:'verifying_file',subject:'model.safetensors',completed:8388608,total:16777216,unit:'bytes'};qa.render()`);
+    await check('native filename and readable byte progress are visible immediately','document.querySelector(".optimization-progress-detail").textContent==="model.safetensors" && document.querySelector(".optimization-live-progress").textContent.includes("8 / 16 MiB")');
+    await capture('file-progress-dark');
+    await evaluate(`qa.setup.liveProgress=undefined;qa.render()`);
     await evaluate('[...document.querySelectorAll(".focus-controls button")].find(button=>button.textContent==="Stop").click()');
     await evaluate('new Promise(resolve=>setTimeout(resolve,50))');
     await check('stop preserves a resumable run','!qa.setup.running && [...document.querySelectorAll(".focus-controls button")].some(button=>button.textContent==="Resume")');
@@ -50,6 +55,8 @@ app.whenReady().then(async()=>{
     window.setContentSize(1440,1000);
     await evaluate('document.documentElement.dataset.theme="light";qa.state.expanded="root";qa.state.tabs.set("root","report");qa.render()');await capture('report-light');
     await check('report green remains green under a rejected decision','document.querySelector(".focus-report h2").textContent==="REJECT" && document.querySelector("td.success")');
+    await evaluate(`qa.runs.runs.find(run=>run.id==='root').outcome={kind:'baseline_retained'};qa.workspace.runs[0].candidates[0].model={key:'candidate'};qa.state.tabs.set('root','status');qa.render()`);
+    await check('stopped candidate registration remains resumable after a decision','document.querySelector("[data-run-id=root] .optimization-progress").textContent.includes("Paused · Adding candidate to Models") && [...document.querySelectorAll("[data-run-id=root] .focus-controls button")].some(button=>button.textContent==="Resume")');
     console.log('Overview renderer verification complete.');
   }finally{window.destroy();app.quit()}
 }).catch(error=>{console.error(error);app.exit(1)});

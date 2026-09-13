@@ -6,6 +6,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const wire = value => `ENCODER_GYM_PROGRESS ${JSON.stringify(value)}\n`;
+test("detailed progress admits bounded filenames and bytes, not paths or payloads", () => {
+  const progress = { phase: "verifying_file", subject: "model.safetensors", unit: "bytes", completed: 8 * 1024 * 1024, total: 2 * 1024 * 1024 * 1024 };
+  assert.deepEqual(parseProgress(wire(progress)), progress);
+  assert.deepEqual(parseProgress(wire({ phase: "evaluating_agent", subject: "generic_holdout" })), { phase: "evaluating_agent", subject: "generic_holdout" });
+  for (const subject of ["C:\\private\\model.bin", "../../secret", "Bearer sk-\nsecret", "x".repeat(161)]) assert.equal(parseProgress(wire({ ...progress, subject })), undefined);
+  assert.equal(parseProgress(wire({ ...progress, score: 0.92 })), undefined);
+  assert.equal(parseProgress(wire({ ...progress, unit: "tokens" })), undefined);
+});
 test("progress stream handles chunk boundaries and recovers after oversized or untrusted lines", () => {
   const received = [], lines = new ProgressLines(value => received.push(value));
   const counter = { phase: "training", completed: 2, total: 10 }, valid = wire(counter);

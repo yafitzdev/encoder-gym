@@ -3,6 +3,16 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { inputRunActivity, inputRunStageDetail, inputRunStageLabel } from "../dist/evidence/input-run-activity.js";
 
+test("file identity and counters survive project activity persistence", () => {
+  const log = { actions: [{ action_id: "a", operation: "optimization.run", state: "progress", started_at: "2026-09-13T12:00:00Z",
+    references: [{ kind: "run", id: "run" }], events: [{ state: "progress", stage: "verifying_file", completed: 1024, total: 2048, created_at: "2026-09-13T12:00:01Z",
+      references: [{ kind: "progress_subject", id: "model.safetensors" }, { kind: "progress_unit", id: "bytes" }] }] }] };
+  const activity = inputRunActivity(log, "run");
+  assert.deepEqual(activity.progress, { phase: "verifying_file", subject: "model.safetensors", unit: "bytes", completed: 1024, total: 2048 });
+  assert.equal(inputRunStageDetail(activity.progress, {}), "model.safetensors");
+  assert.equal(activity.events[0].progress.subject, "model.safetensors");
+});
+
 test("optimization activity resolves the exact run and latest durable counter", () => {
   const projectId = randomUUID(), runId = randomUUID(), otherRun = randomUUID(), actionId = randomUUID();
   const event = (state, stage, completed, total, at) => ({ state, stage, completed, total, created_at: at });

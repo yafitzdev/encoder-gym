@@ -116,6 +116,7 @@ export interface ManagedRunStatus {
 
 export interface NativeProgress {
   phase:
+    | "verifying_file" | "verifying_rows"
     | "checking_model" | "checking_dataset" | "checking_evaluation" | "checking_runtime"
     | "loading_training_rows" | "writing_training_rows" | "checking_materialized_project"
     | "loading_evaluation_protocol" | "creating_candidate" | "creating_experiment"
@@ -124,6 +125,8 @@ export interface NativeProgress {
     | "training" | "saving_checkpoint" | "evaluating_retrieval" | "evaluating_agent";
   completed?: number;
   total?: number;
+  subject?: string;
+  unit?: "bytes";
 }
 export interface RunActivity extends NativeProgress {
   running: boolean;

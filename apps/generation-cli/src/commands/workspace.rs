@@ -230,6 +230,53 @@ enum SecretAvailability {
 }
 
 pub async fn execute(command: WorkspaceCommand) -> anyhow::Result<()> {
+    if std::env::var_os("ENCODER_GYM_PROGRESS").as_deref() != Some(std::ffi::OsStr::new("1")) {
+        return execute_inner(command).await;
+    }
+    let row_observer = std::sync::Arc::new(|name: &str, completed: u64, total: u64| {
+        if name.len() <= 160
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "._- ".contains(c))
+            && total > 0
+        {
+            eprintln!(
+                "ENCODER_GYM_PROGRESS {}",
+                serde_json::json!({
+                    "phase": "verifying_rows", "subject": name,
+                    "completed": completed, "total": total
+                })
+            );
+        }
+    });
+    let observer = std::sync::Arc::new(|name: &str, completed: u64, total: u64| {
+        // No arbitrary output, paths, secrets, or dataset values in telemetry.
+        if name.len() <= 160
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "._- ".contains(c))
+            && total > 0
+        {
+            eprintln!(
+                "ENCODER_GYM_PROGRESS {}",
+                serde_json::json!({
+                    "phase": "verifying_file", "subject": name, "unit": "bytes",
+                    "completed": completed, "total": total
+                })
+            );
+        }
+    });
+    project_workspace_local::progress::with_row_progress(
+        row_observer,
+        project_workspace_local::progress::with_file_progress(
+            observer.clone(),
+            encoder_experiment_nomos::with_file_progress(observer, execute_inner(command)),
+        ),
+    )
+    .await
+}
+
+async fn execute_inner(command: WorkspaceCommand) -> anyhow::Result<()> {
     match command {
         WorkspaceCommand::InspectModel { source } => print(&inspect_model(&source)?),
         WorkspaceCommand::Create {

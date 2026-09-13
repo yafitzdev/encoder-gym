@@ -1,25 +1,13 @@
 import type { NativeProgress, RunActivity } from "./managed-control.js";
 import { spawn } from "node:child_process";
-
-const phases = new Set([
-  "checking_model", "checking_dataset", "checking_evaluation", "checking_runtime",
-  "loading_training_rows", "writing_training_rows", "checking_materialized_project",
-  "loading_evaluation_protocol", "creating_candidate", "creating_experiment",
-  "registering_candidate", "optimization_complete",
-  "checking_files", "checking_training_data", "loading_model", "preparing_batches",
-  "training", "saving_checkpoint", "evaluating_retrieval", "evaluating_agent",
-]);
+import { validateNativeProgress } from "./native-progress.js";
 
 /** Treat subprocess output as untrusted; only this closed, numerical schema reaches the UI. */
 export function parseProgress(line: string): NativeProgress | undefined {
   const prefix = "ENCODER_GYM_PROGRESS ";
   if (!line.startsWith(prefix) || line.length > 1024) return;
   try {
-    const value = JSON.parse(line.slice(prefix.length));
-    if (!value || !phases.has(value.phase) || Object.keys(value).some(key => !["phase", "completed", "total"].includes(key))) return;
-    if (value.completed === undefined && value.total === undefined) return { phase: value.phase };
-    if (!Number.isSafeInteger(value.completed) || !Number.isSafeInteger(value.total) || value.completed < 0 || value.total < 1 || value.total > 1_000_000_000 || value.completed > value.total) return;
-    return { phase: value.phase, completed: value.completed, total: value.total };
+    return validateNativeProgress(JSON.parse(line.slice(prefix.length)));
   } catch { return; }
 }
 
@@ -46,7 +34,7 @@ export class ProgressLines {
 export function executeObservedCommand(executable: string, args: string[], environment: Readonly<Record<string, string>> | undefined, receive: (progress: NativeProgress) => void, cancellationSignal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     if (cancellationSignal?.aborted) { reject(new Error("Run cancelled.")); return; }
-    const child = spawn(executable, args, { windowsHide: true, shell: false, stdio: ["ignore", "pipe", "pipe"], ...(environment ? { env: { ...process.env, ...environment } } : {}) });
+    const child = spawn(executable, args, { windowsHide: true, shell: false, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...environment, ENCODER_GYM_PROGRESS: "1" } });
     let stdout = "", diagnostic = "", tooLarge = false, cancelled = false;
     const stop = (): void => {
       cancelled = true;
@@ -84,5 +72,5 @@ export function recordProgress(activity: RunActivity, progress: NativeProgress, 
     activity.events.push({ phase: progress.phase, at });
     activity.events = activity.events.slice(-20);
   }
-  Object.assign(activity, { ...progress, completed: progress.completed, total: progress.total, updatedAt: at });
+  Object.assign(activity, { ...progress, completed: progress.completed, total: progress.total, subject: progress.subject, unit: progress.unit, updatedAt: at });
 }

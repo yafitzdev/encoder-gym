@@ -105,16 +105,25 @@ async function trackProjectAction<T>(
   const actionId = await backend.startProjectActivity(id, operation, references);
   let pendingProgress: Promise<unknown> = Promise.resolve();
   let progressMarker = "";
+  let latestProgress: NativeProgress | undefined;
+  let flushing = false;
   const progress = (value: NativeProgress): void => {
     const bucket = value.completed !== undefined && value.total !== undefined
       ? Math.floor((value.completed / value.total) * 10)
       : undefined;
-    const marker = `${value.phase}:${bucket ?? "stage"}`;
+    const marker = `${value.phase}:${value.subject ?? ""}:${bucket ?? "stage"}`;
     if (marker === progressMarker) return;
     progressMarker = marker;
-    pendingProgress = pendingProgress
-      .then(() => backend.progressProjectActivity(id, actionId, operation, value.phase, value.completed, value.total))
-      .catch(() => undefined);
+    latestProgress = value;
+    if (flushing) return;
+    flushing = true;
+    pendingProgress = (async () => {
+      while (latestProgress) {
+        const next = latestProgress; latestProgress = undefined;
+        await backend.progressProjectActivity(id, actionId, operation, next.phase, next.completed, next.total, next.subject, next.unit).catch(() => undefined);
+      }
+      flushing = false;
+    })();
   };
   let result: T;
   try {
@@ -218,26 +227,41 @@ ipcMain.handle("encoder-gym:initialize-benchmark", (event, value: unknown, reque
   });
 });
 ipcMain.handle("encoder-gym:optimization-setups", (_event, value: unknown) => backend.optimizationSetup.list(projectId(value)));
-ipcMain.handle("encoder-gym:preview-optimization-setup", (_event, value: unknown, request: unknown) => backend.optimizationSetup.preview(projectId(value), request));
-ipcMain.handle("encoder-gym:save-optimization-setup", (_event, value: unknown, request: unknown) => backend.optimizationSetup.save(projectId(value), request));
+function optimizationProgress(event: Electron.IpcMainInvokeEvent, token: unknown): (value: NativeProgress) => void {
+  if (token !== undefined && (typeof token !== "string" || !/^[0-9a-f-]{36}$/i.test(token))) throw new Error("Invalid progress subscription.");
+  let pending: NativeProgress | undefined, timer: ReturnType<typeof setTimeout> | undefined;
+  const send = (): void => {
+    timer = undefined;
+    if (pending && token && !event.sender.isDestroyed()) event.sender.send("encoder-gym:optimization-progress", token, pending);
+    pending = undefined;
+  };
+  return value => {
+    pending = value;
+    if (!timer) timer = setTimeout(send, 100);
+  };
+}
+ipcMain.handle("encoder-gym:preview-optimization-setup", (event, value: unknown, request: unknown, token: unknown) => backend.optimizationSetup.preview(projectId(value), request, optimizationProgress(event, token)));
+ipcMain.handle("encoder-gym:save-optimization-setup", (event, value: unknown, request: unknown, token: unknown) => backend.optimizationSetup.save(projectId(value), request, optimizationProgress(event, token)));
 ipcMain.handle("encoder-gym:optimization-launches", (_event, value: unknown) => backend.optimizationLaunch.list(projectId(value)));
 ipcMain.handle("encoder-gym:preview-optimization-launch", (_event, value: unknown, setup: unknown) => backend.optimizationLaunch.preview(projectId(value), setup));
 ipcMain.handle("encoder-gym:authorize-optimization-launch", (_event, value: unknown, request: unknown) => backend.optimizationLaunch.authorize(projectId(value), request));
-ipcMain.handle("encoder-gym:start-input-optimization", (_event, value: unknown, setup: unknown) => {
+ipcMain.handle("encoder-gym:start-input-optimization", (event, value: unknown, setup: unknown, token: unknown) => {
   const id = projectId(value);
-  return trackProjectAction(id, "optimization.start", activityReference("setup", setup), () => backend.optimizationLaunch.start(id, setup), result => [
+  const live = optimizationProgress(event, token);
+  return trackProjectAction(id, "optimization.start", activityReference("setup", setup), progress => backend.optimizationLaunch.start(id, setup, value => { live(value); progress(value); }), result => [
     ...activityReference("run", result.run.id),
   ]);
 });
 ipcMain.handle("encoder-gym:input-optimization-run", (_event, value: unknown, run: unknown) => backend.optimizationLaunch.show(projectId(value), run));
 ipcMain.handle("encoder-gym:input-optimization-runs", (_event, value: unknown) => backend.optimizationLaunch.runs(projectId(value)));
-ipcMain.handle("encoder-gym:drive-input-optimization", (_event, value: unknown, run: unknown) => {
+ipcMain.handle("encoder-gym:drive-input-optimization", (event, value: unknown, run: unknown, token: unknown) => {
   const id = projectId(value), phases: Record<InputOptimizationPhase, NativeProgress["phase"]> = {
     checking_inputs: "checking_model", preparing_data: "loading_training_rows", starting: "loading_evaluation_protocol", training: "checking_files",
     saving_candidate: "registering_candidate", evaluating: "checking_evaluation", complete: "optimization_complete",
   };
+  const live = optimizationProgress(event, token);
   return trackProjectAction(id, "optimization.run", activityReference("run", run), progress =>
-    backend.optimizationLaunch.drive(id, run, (phase, native) => progress(native ?? { phase: phases[phase] })), result => [
+    backend.optimizationLaunch.drive(id, run, (phase, native) => { const value = native ?? { phase: phases[phase] }; live(value); progress(value); }), result => [
       ...activityReference("run", result.id), ...activityReference("model", result.finalResult?.modelId ?? result.outcome?.selectedModelId),
     ]);
 });

@@ -137,10 +137,10 @@ test("project optimization history is a typed project-owned read", async () => {
   await assert.rejects(() => new ManagedOptimizationLaunch(ports(f, async () => [foreign])).runs(f.projectId));
 });
 
-test("Stop finishes the in-flight stage without cancellation and Resume keeps the same UUID", async () => {
+test("Stop interrupts the in-flight work without cancelling the run and Resume keeps the same UUID", async () => {
   const f = fixture(), wire = f.run("ready"), calls = [];
   let finish, entered;
-  const waiting = new Promise(resolve => { finish = resolve; });
+  const waiting = new Promise((_resolve, reject) => { finish = () => reject(new Error("Worker interrupted")); });
   const started = new Promise(resolve => { entered = resolve; });
   let first = true;
   const backend = new ManagedOptimizationLaunch({ ...ports(f, async args => {
@@ -148,12 +148,11 @@ test("Stop finishes the in-flight stage without cancellation and Resume keeps th
     if (args[2] === "prepare" && first) { first = false; entered(); await waiting; }
     if (args[2] === "register") wire.state = "baseline_retained";
     return args[2] === "show" ? wire : {};
-  }), abortRun: () => { throw new Error("Stop must not abort a checkpoint write"); } });
+  }), abortRun: (_project, id) => { assert.equal(id, wire.run.id); finish(); } });
   const driving = backend.drive(f.projectId, wire.run.id);
   await started;
   await backend.stop(f.projectId, wire.run.id);
   assert.ok(!calls.some(args => args[2] === "materialize"));
-  finish();
   assert.equal((await driving).state, "ready");
   assert.ok(!calls.some(args => args[2] === "cancel" || args[2] === "execute"));
   assert.equal((await backend.drive(f.projectId, wire.run.id)).state, "baseline_retained");
@@ -168,4 +167,13 @@ test("attached child identity is projected before execution and foreign children
   assert.equal((await backend.show(f.projectId, wire.run.id)).experimentRunId, wire.experiment.experimentRun.id);
   wire.experiment.run = ref();
   await assert.rejects(() => backend.show(f.projectId, wire.run.id), /another run/);
+});
+
+test("Stop during worker startup is not lost before the first command", async () => {
+  const f = fixture(), wire = f.run("queued"), commands = [];
+  const backend = new ManagedOptimizationLaunch(ports(f, async args => { commands.push(args[2]); return wire; }));
+  await backend.stop(f.projectId, wire.run.id);
+  const stopped = await backend.drive(f.projectId, wire.run.id);
+  assert.equal(stopped.id, wire.run.id);
+  assert.deepEqual(commands, ["show", "show"]);
 });

@@ -646,7 +646,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await check("resumed run shows its persisted counter and sidebar spinner", "(()=>{const bar=document.querySelector('.focus-status progress');return bar.value===40 && bar.max===100 && document.querySelector('#nav-overview .spinner')})()");
   await screenshot("managed-project-run-live");
   await textButton("Stop");
-  await until("document.querySelector('.focus-controls')?.textContent.includes('Stopping after current stage')");
+  await until("document.querySelector('.focus-controls')?.textContent.includes('Stopping…')");
   finishInputRun();
   await until("!document.querySelector('#nav-overview .spinner')");
   await check("Stop leaves the same UUID resumable without cancelling it", "(()=>{const row=document.querySelector('[data-run-id=" + JSON.stringify(queued.id) + "]');return row.querySelector('.focus-run-state').textContent.includes('Paused') && [...row.querySelectorAll('button')].some(button=>button.textContent==='Resume')})()");

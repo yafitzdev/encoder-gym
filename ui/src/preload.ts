@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { validateNativeProgress } from "./native-progress.js";
 import type { OptimizationSelection, OptimizationSetup, OptimizationSetupPreview, OptimizationSetupRequest, OptimizationSetupSaved } from "./optimization-setup.js";
 import type { OptimizationLaunchAuthorization, OptimizationLaunchPreview, OptimizationLaunchRequest, OptimizationLaunchSaved } from "./optimization-launch.js";
 import type { DatasetQuery, DatasetQueryResult, DatasetMutation, DatasetMutationResult } from "./dataset-workspace.js";
@@ -11,13 +12,13 @@ import type { InputOptimizationRun, InputOptimizationStarted } from "./input-opt
 
 export interface EncoderGymBridge {
   optimizationSetups(id: string): Promise<OptimizationSetup[]>;
-  previewOptimizationSetup(id: string, request: OptimizationSelection): Promise<OptimizationSetupPreview>;
-  saveOptimizationSetup(id: string, request: OptimizationSetupRequest): Promise<OptimizationSetupSaved>;
+  previewOptimizationSetup(id: string, request: OptimizationSelection, progress?: (value: NativeProgress) => void): Promise<OptimizationSetupPreview>;
+  saveOptimizationSetup(id: string, request: OptimizationSetupRequest, progress?: (value: NativeProgress) => void): Promise<OptimizationSetupSaved>;
   optimizationLaunches(id: string): Promise<OptimizationLaunchAuthorization[]>;
   previewOptimizationLaunch(id: string, setupId: string): Promise<OptimizationLaunchPreview>;
   authorizeOptimizationLaunch(id: string, request: OptimizationLaunchRequest): Promise<OptimizationLaunchSaved>;
-  startInputOptimization(id: string, setupId: string): Promise<InputOptimizationStarted>;
-  driveInputOptimization(id: string, runId: string): Promise<InputOptimizationRun>;
+  startInputOptimization(id: string, setupId: string, progress?: (value: NativeProgress) => void): Promise<InputOptimizationStarted>;
+  driveInputOptimization(id: string, runId: string, progress?: (value: NativeProgress) => void): Promise<InputOptimizationRun>;
   cancelInputOptimization(id: string, runId: string): Promise<InputOptimizationRun>;
   stopInputOptimization(id: string, runId: string): Promise<void>;
   inputOptimizationRun(id: string, runId: string): Promise<InputOptimizationRun>;
@@ -69,13 +70,13 @@ export interface EncoderGymBridge {
 
 const bridge: EncoderGymBridge = {
   optimizationSetups: id => ipcRenderer.invoke("encoder-gym:optimization-setups", id),
-  previewOptimizationSetup: (id, request) => ipcRenderer.invoke("encoder-gym:preview-optimization-setup", id, request),
-  saveOptimizationSetup: (id, request) => ipcRenderer.invoke("encoder-gym:save-optimization-setup", id, request),
+  previewOptimizationSetup: (id, request, progress) => invokeWithProgress("encoder-gym:preview-optimization-setup", id, request, progress),
+  saveOptimizationSetup: (id, request, progress) => invokeWithProgress("encoder-gym:save-optimization-setup", id, request, progress),
   optimizationLaunches: id => ipcRenderer.invoke("encoder-gym:optimization-launches", id),
   previewOptimizationLaunch: (id, setupId) => ipcRenderer.invoke("encoder-gym:preview-optimization-launch", id, setupId),
   authorizeOptimizationLaunch: (id, request) => ipcRenderer.invoke("encoder-gym:authorize-optimization-launch", id, request),
-  startInputOptimization: (id, setupId) => ipcRenderer.invoke("encoder-gym:start-input-optimization", id, setupId),
-  driveInputOptimization: (id, runId) => ipcRenderer.invoke("encoder-gym:drive-input-optimization", id, runId),
+  startInputOptimization: (id, setupId, progress) => invokeWithProgress("encoder-gym:start-input-optimization", id, setupId, progress),
+  driveInputOptimization: (id, runId, progress) => invokeWithProgress("encoder-gym:drive-input-optimization", id, runId, progress),
   cancelInputOptimization: (id, runId) => ipcRenderer.invoke("encoder-gym:cancel-input-optimization", id, runId),
   stopInputOptimization: (id, runId) => ipcRenderer.invoke("encoder-gym:stop-input-optimization", id, runId),
   inputOptimizationRun: (id, runId) => ipcRenderer.invoke("encoder-gym:input-optimization-run", id, runId),
@@ -148,16 +149,14 @@ const bridge: EncoderGymBridge = {
 
 contextBridge.exposeInMainWorld("encoderGym", Object.freeze(bridge));
 
-const nativePhases = new Set<NativeProgress["phase"]>([
-  "checking_files", "checking_training_data", "loading_model", "preparing_batches", "training",
-  "saving_checkpoint", "evaluating_retrieval", "evaluating_agent",
-]);
-function nativeProgress(value: unknown): NativeProgress | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return;
-  const input = value as Record<string, unknown>;
-  if (Object.keys(input).some(key => !["phase", "completed", "total"].includes(key)) || !nativePhases.has(input.phase as NativeProgress["phase"])) return;
-  if (input.completed === undefined && input.total === undefined) return { phase: input.phase as NativeProgress["phase"] };
-  if (!Number.isSafeInteger(input.completed) || !Number.isSafeInteger(input.total)
-    || (input.completed as number) < 0 || (input.total as number) < 1 || (input.completed as number) > (input.total as number)) return;
-  return { phase: input.phase as NativeProgress["phase"], completed: input.completed as number, total: input.total as number };
+const nativeProgress = validateNativeProgress;
+function invokeWithProgress<T>(channel: string, id: string, request: unknown, receive?: (value: NativeProgress) => void): Promise<T> {
+  const token = globalThis.crypto.randomUUID();
+  const listener = (_event: Electron.IpcRendererEvent, receivedToken: unknown, value: unknown): void => {
+    if (receivedToken !== token) return;
+    const progress = nativeProgress(value);
+    if (progress) receive?.(progress);
+  };
+  ipcRenderer.on("encoder-gym:optimization-progress", listener);
+  return ipcRenderer.invoke(channel, id, request, token).finally(() => ipcRenderer.removeListener("encoder-gym:optimization-progress", listener));
 }

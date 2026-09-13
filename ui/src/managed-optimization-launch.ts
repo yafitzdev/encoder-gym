@@ -8,7 +8,7 @@ import type {
   OptimizationLaunchRequest, OptimizationLaunchSaved, OptimizationLaunchScope,
   OptimizationProviderLimits,
 } from "./optimization-launch.js";
-import { parseInputOptimizationRun, parseInputOptimizationRuns, parseInputOptimizationStarted, type InputOptimizationPhase, type InputOptimizationRun, type InputOptimizationStarted } from "./input-optimization.js";
+import { inputOptimizationTerminal, parseInputOptimizationRun, parseInputOptimizationRuns, parseInputOptimizationStarted, type InputOptimizationPhase, type InputOptimizationRun, type InputOptimizationStarted } from "./input-optimization.js";
 import type { NativeProgress } from "./managed-control.js";
 
 interface Ports {
@@ -90,13 +90,25 @@ function same(a: unknown, b: unknown): boolean { return JSON.stringify(a) === JS
 /** Exact one-click authority only. It cannot execute a run or receive credentials. */
 export class ManagedOptimizationLaunch {
   private active = new Map<string, { runId: string; stop: boolean }>();
+  private pendingStops = new Set<string>();
   constructor(private ports: Ports) {}
-  /** Stop at a durable stage boundary; unlike cancel this preserves re-entry. */
+  /** Interrupt this worker without cancelling the durable run or its child identities. */
   async stop(projectId: string, runIdValue: unknown): Promise<void> {
     const runId = uuid(runIdValue);
-    const active = this.active.get(projectId);
-    if (active?.runId === runId) active.stop = true;
-    else await this.show(projectId, runId);
+    let active = this.active.get(projectId);
+    if (active?.runId !== runId) {
+      const run = await this.show(projectId, runId);
+      if (inputOptimizationTerminal(run.state)) return;
+      active = this.active.get(projectId);
+      if (active?.runId !== runId) {
+        this.pendingStops.add(`${projectId}:${runId}`);
+        return;
+      }
+    }
+    if (active?.runId === runId) {
+      active.stop = true;
+      this.ports.abortRun(projectId, runId);
+    }
   }
   async list(projectId: string): Promise<OptimizationLaunchAuthorization[]> {
     const workspace = await this.ports.open(projectId);
@@ -134,11 +146,11 @@ export class ManagedOptimizationLaunch {
     });
   }
 
-  async start(projectId: string, setupIdValue: unknown): Promise<InputOptimizationStarted> {
+  async start(projectId: string, setupIdValue: unknown, progress?: (value: NativeProgress) => void): Promise<InputOptimizationStarted> {
     const setupId = uuid(setupIdValue);
     return this.ports.exclusive(projectId, async () => {
       const workspace = await this.ports.open(projectId);
-      const received = await this.ports.command<unknown>(["optimization-launch", workspace.folder, "preview", "--setup", setupId]);
+      const received = await this.ports.command<unknown>(["optimization-launch", workspace.folder, "preview", "--setup", setupId], undefined, progress);
       const item = record(received, "optimization launch preview", ["scope", "modelName", "datasetRows", "benchmarkNumber"]);
       const resolved = scope(item.scope, workspace.manifest.id), current = workspace.providerCatalog;
       if (resolved.setup.id !== setupId || !current || resolved.providerCatalog.id !== current.id || resolved.providerCatalog.fingerprint !== current.fingerprint) throw new Error("Optimization inputs or providers changed. Refresh the project.");
@@ -146,7 +158,7 @@ export class ManagedOptimizationLaunch {
       const directory = await mkdtemp(join(tmpdir(), "encoder-gym-optimization-run-")), file = join(directory, "launch.json");
       try {
         await writeFile(file, JSON.stringify(request), { flag: "wx", mode: 0o600 });
-        return parseInputOptimizationStarted(await this.ports.command<unknown>(["optimization-run", workspace.folder, "start", "--file", file]), projectId);
+        return parseInputOptimizationStarted(await this.ports.command<unknown>(["optimization-run", workspace.folder, "start", "--file", file], undefined, progress), projectId);
       } finally {
         await unlink(file).catch(error => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; });
         await rmdir(directory);
@@ -178,7 +190,7 @@ export class ManagedOptimizationLaunch {
     const runId = uuid(runIdValue);
     return this.ports.exclusiveRun(projectId, runId, async signal => {
       const workspace = await this.ports.open(projectId);
-      const execution = { runId, stop: false };
+      const execution = { runId, stop: this.pendingStops.delete(`${projectId}:${runId}`) };
       this.active.set(projectId, execution);
       const stage = async (phase: InputOptimizationPhase, command: string, native = false): Promise<void> => {
         if (execution.stop) throw stopped;
@@ -201,7 +213,7 @@ export class ManagedOptimizationLaunch {
         return current;
       } catch (error) {
         const current = parseInputOptimizationRun(await this.ports.command<unknown>(["optimization-run", workspace.folder, "show", runId]), projectId);
-        if (current.state === "cancelled" || error === stopped) return current;
+        if (current.state === "cancelled" || execution.stop || error === stopped) return current;
         throw error;
       } finally {
         this.active.delete(projectId);

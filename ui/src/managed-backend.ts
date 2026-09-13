@@ -137,7 +137,7 @@ export class ManagedBackend {
   constructor(readonly executable: string, private registry: ProjectRegistry, private executor: CommandExecutor = executeCommand, private options: ManagedBackendOptions = {}) {
     this.datasetVersions = new ManagedDatasets({ open: id => this.openRegistered(id), command: args => this.command(args), exclusive: (id, run) => this.exclusiveProject(id, run) });
     this.benchmarks = new ManagedBenchmarks({ open: id => this.openRegistered(id), command: (args, progress) => this.command(args, undefined, progress), exclusive: (id, run) => this.exclusiveProject(id, run) });
-    this.optimizationSetup = new ManagedOptimizationSetup({ open: id => this.openRegistered(id), command: args => this.command(args), exclusive: (id, run) => this.exclusiveProject(id, run) });
+    this.optimizationSetup = new ManagedOptimizationSetup({ open: id => this.openRegistered(id), command: (args, progress) => this.command(args, undefined, progress), exclusive: (id, run) => this.exclusiveProject(id, run) });
     this.optimizationLaunch = new ManagedOptimizationLaunch({
       open: id => this.openRegistered(id),
       command: (args, environment, progress, signal) => this.command(args, environment, progress, signal),
@@ -195,8 +195,9 @@ export class ManagedBackend {
     await this.appendProjectActivity(projectId, { action_id: actionId, operation, source, state: "started", ...(references.length ? { references } : {}), created_at: createdAt });
     return actionId;
   }
-  progressProjectActivity(projectId: string, actionId: string, operation: string, stage: string, completed?: number, total?: number): Promise<ProjectActivityEvent> {
-    return this.appendProjectActivity(projectId, { action_id: actionId, operation, source: "desktop", state: "progress", stage, ...(completed !== undefined && total !== undefined ? { completed, total } : {}), created_at: new Date().toISOString() });
+  progressProjectActivity(projectId: string, actionId: string, operation: string, stage: string, completed?: number, total?: number, subject?: string, unit?: string): Promise<ProjectActivityEvent> {
+    const references = [...(subject ? [{ kind: "progress_subject", id: subject }] : []), ...(unit ? [{ kind: "progress_unit", id: unit }] : [])];
+    return this.appendProjectActivity(projectId, { action_id: actionId, operation, source: "desktop", state: "progress", stage, references, ...(completed !== undefined && total !== undefined ? { completed, total } : {}), created_at: new Date().toISOString() });
   }
   succeedProjectActivity(projectId: string, actionId: string, operation: string, references: ProjectActivityReference[] = []): Promise<ProjectActivityEvent> {
     return this.appendProjectActivity(projectId, { action_id: actionId, operation, source: "desktop", state: "succeeded", ...(references.length ? { references } : {}), created_at: new Date().toISOString() });

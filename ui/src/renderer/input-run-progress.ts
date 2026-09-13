@@ -1,6 +1,7 @@
 import type { NativeProgress } from "../managed-control.js";
 import { inputOptimizationPhase, type InputOptimizationRun } from "../input-optimization.js";
 import { spinner } from "./components.js";
+import { progressCounter } from "../native-progress.js";
 import { h } from "./dom.js";
 import { inputRunStageDetail, inputRunStageLabel, type InputRunActivity, type InputRunStageContext } from "./input-run-activity.js";
 
@@ -20,26 +21,30 @@ export interface InputRunProgressOptions {
   startedAt?: number;
   activity?: InputRunActivity;
   context: InputRunStageContext;
+  liveProgress?: NativeProgress;
+  liveProgressAt?: number;
+  registrationPending?: boolean;
 }
 
-export function pendingInputRunProgress(): HTMLElement {
+export function pendingInputRunProgress(progress?: NativeProgress): HTMLElement {
   return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": "true" },
     h("div", { class: "optimization-progress-state" },
-      h("div", { class: "optimization-progress-title" }, spinner(), h("strong", {}, "Starting run"))),
-    h("p", { class: "optimization-progress-detail" }, "Creating the run record"),
+      h("div", { class: "optimization-progress-title" }, spinner(), h("strong", {}, progress ? inputRunStageLabel(progress.phase) : "Starting run"))),
+    h("p", { class: "optimization-progress-detail" }, progress?.subject ?? "Creating the run record"),
+    progress ? counterBar(progress) : null,
     progressSteps(0, false));
 }
 
 /** The single live-status presentation shared by Optimize and Runs. */
 export function inputRunProgress(options: InputRunProgressOptions): HTMLElement {
   const { run, running, startedAt, activity, context } = options;
-  const phase = inputOptimizationPhase(run.state);
+  const phase = options.registrationPending ? "saving_candidate" : inputOptimizationPhase(run.state);
   const failed = run.state.endsWith("_failed");
-  const result = run.state === "candidate_accepted" ? "Candidate passed"
+  const result = options.registrationPending ? undefined : run.state === "candidate_accepted" ? "Candidate passed"
     : run.state === "candidate_rejected" ? "Candidate did not pass"
     : run.state === "baseline_retained" ? "No improvement"
     : run.state === "cancelled" ? "Cancelled" : undefined;
-  const progress = activity?.progress;
+  const progress = options.registrationPending && !running ? { phase: "registering_candidate" as const } : running ? options.liveProgress ?? activity?.progress : activity?.progress;
   const observed = progress?.phase;
   const visiblePhase = phase === "complete" ? phase : observed && ["evaluating_retrieval", "evaluating_agent"].includes(observed) ? "evaluating"
     : observed === "saving_checkpoint" || observed === "registering_candidate" ? "saving_candidate"
@@ -49,17 +54,23 @@ export function inputRunProgress(options: InputRunProgressOptions): HTMLElement 
   const active = visiblePhase === "complete" ? phases.length : Math.max(0, phases.indexOf(visiblePhase));
   const activeProgress: NativeProgress = progress ?? { phase: fallback[phase] };
   const stage = inputRunStageLabel(activeProgress.phase);
-  const current = result ?? (failed ? `Failed while ${stage.toLocaleLowerCase()}` : stage);
+  const current = result ?? (failed ? `Failed while ${stage.toLocaleLowerCase()}` : running ? stage : `Paused · ${stage}`);
   const detail = result ? "" : inputRunStageDetail(activeProgress, context);
   return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": String(running) },
     h("div", { class: "optimization-progress-state" },
       h("div", { class: "optimization-progress-title" }, running ? spinner() : null, h("strong", {}, current)),
-      running && startedAt ? h("span", { "data-elapsed-start": String(startedAt) }) : null),
+      running && startedAt ? h("span", {}, "Elapsed ", h("span", { "data-elapsed-start": String(startedAt) })) : null),
     detail ? h("p", { class: "optimization-progress-detail" }, detail) : null,
-    progress?.completed !== undefined && progress.total !== undefined ? h("div", { class: "optimization-live-progress" },
-      h("progress", { value: progress.completed, max: progress.total }),
-      h("span", {}, `${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()}`)) : null,
-    progressSteps(active, failed));
+    progress ? counterBar(progress) : null,
+    progressSteps(active, failed),
+    running && (options.liveProgressAt || activity?.updatedAt) ? h("small", { class: "muted", "data-checked-at": String(options.liveProgressAt ?? Date.parse(activity!.updatedAt)) }, "Updated just now") : null);
+}
+
+function counterBar(progress: NativeProgress): HTMLElement | null {
+  const label = progressCounter(progress);
+  return label ? h("div", { class: "optimization-live-progress" },
+    h("progress", { value: progress.completed!, max: progress.total!, "aria-label": progress.subject ?? inputRunStageLabel(progress.phase) }),
+    h("span", {}, label)) : null;
 }
 
 function progressSteps(active: number, failed: boolean): HTMLElement {

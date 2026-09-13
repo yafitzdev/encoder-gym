@@ -10,6 +10,7 @@ mod model_registration;
 pub mod optimization_launch;
 pub mod optimization_runs;
 pub mod optimization_setup;
+pub mod progress;
 
 use std::{fs, path::Path};
 

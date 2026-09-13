@@ -4,7 +4,7 @@ import { inputOptimizationTerminal } from "../input-optimization.js";
 import type { Actions } from "./actions.js";
 import type { InputRunsController } from "./input-runs-controller.js";
 import type { OptimizationSetupController } from "./optimization-setup-controller.js";
-import { button, failureNotice, spinner, workspacePage } from "./components.js";
+import { button, disclosureIndicator, failureNotice, spinner, workspacePage } from "./components.js";
 import { h } from "./dom.js";
 import { dateLabel, metricInfo, score, delta, suiteName } from "./catalog.js";
 import { inputRunProgress, pendingInputRunProgress } from "./input-run-progress.js";
@@ -48,8 +48,15 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
       ...records.map(record => row(record.id, record.name, runLabel(record), record))));
 
   function runBusy(record?: OverviewRecord): boolean { return !!record?.input && (runs.runningId === record.id || setup.running && setup.run?.id === record.id); }
+  function needsRegistration(record: OverviewRecord): boolean {
+    const experimentId = record.input?.experimentRunId ?? record.experiment?.id;
+    return !!record.input?.outcome && !!experimentId && !!workspace.managed?.modelCatalog
+      && (!record.experiment || record.experiment.candidates.some(candidate => candidate.model))
+      && !workspace.managed.modelCatalog.artifacts.some(model => model.producingRun?.id === experimentId);
+  }
   function runLabel(record: OverviewRecord): string {
     if (runBusy(record)) return "Running";
+    if (needsRegistration(record)) return "Paused";
     const decision = reportDecision(record);
     if (decision) return decision;
     if (record.input?.state === "cancelled") return "Cancelled";
@@ -61,13 +68,13 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     const expanded = state.expanded === id, running = runBusy(record) || id === "draft" && busy;
     const availableReport = !!reportDecision(record ?? { id, name, createdAt: "" }) && !!record?.experiment;
     const availableStatus = !!record || busy;
-    let tab = state.tabs.get(id) ?? (availableReport ? "report" : record ? "status" : "setup");
+    let tab = state.tabs.get(id) ?? (record && needsRegistration(record) ? "status" : availableReport ? "report" : record ? "status" : "setup");
     if (tab === "report" && !availableReport || tab === "status" && !availableStatus) tab = "setup";
     const panelId = "overview-panel-" + id;
     return h("article", { class: "focus-run" + (expanded ? " expanded" : ""), "data-run-id": id },
       h("button", { type: "button", id: "overview-run-" + id, class: "focus-run-heading", "aria-expanded": String(expanded), "aria-controls": panelId,
         onClick: () => { state.expanded = expanded ? null : id; actions.render(); } },
-      h("span", { class: "focus-chevron", "aria-hidden": "true" }, expanded ? "⌄" : "›"), h("strong", {}, name),
+      disclosureIndicator(expanded), h("strong", {}, name),
       h("span", { class: "focus-run-state " + (label === "KEEP" ? "success" : ["REJECT", "Failed"].includes(label) ? "danger" : "muted") }, running ? spinner() : null, label),
       record ? h("time", { datetime: record.createdAt }, dateLabel(record.createdAt)) : h("span", {})),
       expanded ? h("div", { id: panelId, class: "focus-run-body" },
@@ -112,22 +119,22 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
   }
   function statusPanel(record?: OverviewRecord): HTMLElement {
     if (!record?.input) {
-      if (!record) return h("div", {}, setup.saving || setup.initializingEvaluation ? h("div", { class: "optimization-progress", role: "status" }, spinner(), setup.phase ?? "Checking inputs", setup.benchmarkProgress?.completed !== undefined ? h("span", {}, ` ${setup.benchmarkProgress.completed} / ${setup.benchmarkProgress.total}`) : null) : pendingInputRunProgress());
+      if (!record) return h("div", { class: "focus-status" }, pendingInputRunProgress(setup.initializingEvaluation ? setup.benchmarkProgress : setup.liveProgress));
       return h("div", {}, h("h2", {}, runLabel(record)), h("ol", { class: "focus-events" }, ...(record.experiment?.activity.slice(-5).reverse().map(event => h("li", {}, h("time", {}, clock(event.at)), event.kind.replaceAll("_", " "))) ?? [])),
         record.managed && !["completed", "cancelled", "failed"].includes(record.managed.state) ? button("Continue", () => actions.navigate({ page: "optimization" }), "primary") : null);
     }
     const run = record.input, setupBusy = setup.running && setup.run?.id === run.id, running = runBusy(record);
     const activity = setupBusy ? setup.activity : runs.activities.get(run.id) ?? (setup.run?.id === run.id ? setup.activity : undefined);
     const context = runContext(run, workspace, setup), stopping = setupBusy ? setup.stopping : runs.stoppingId === run.id;
-    const stop = button(stopping ? "Stopping after current stage…" : "Stop", () => { void (setupBusy ? setup.stop() : runs.stop(run)); }, "secondary");
+    const stop = button(stopping ? "Stopping…" : "Stop", () => { void (setupBusy ? setup.stop() : runs.stop(run)); }, "secondary");
     stop.disabled = stopping;
     const resume = button("Resume", () => { void runs.resume(run); }, "primary"); resume.disabled = busy;
     return h("div", { class: "focus-status" },
       activity?.failure ? h("div", { class: "operation-failure", role: "alert" }, failureNotice(activity.failure.message)) : null,
-      inputRunProgress({ run, running, activity, startedAt: activity ? Date.parse(activity.startedAt) : setup.startedAt, context }),
+      inputRunProgress({ run, running, activity, startedAt: activity ? Date.parse(activity.startedAt) : setup.startedAt, context, liveProgress: setupBusy ? setup.liveProgress : runs.liveProgress, liveProgressAt: setupBusy ? setup.liveProgressAt : runs.liveProgressAt, registrationPending: needsRegistration(record) }),
       h("ol", { class: "focus-events", "aria-label": "Recent activity" }, ...(activity?.events ?? []).slice().reverse().map(event => h("li", {},
         h("time", { datetime: event.at }, clock(event.at)), h("div", {}, h("strong", {}, inputRunStageLabel(event.progress.phase)), h("span", {}, inputRunStageDetail(event.progress, context)))))),
-      h("div", { class: "focus-controls" }, running ? stop : !inputOptimizationTerminal(run.state) ? resume : null));
+      h("div", { class: "focus-controls" }, running ? stop : !inputOptimizationTerminal(run.state) || needsRegistration(record) ? resume : null));
   }
 }
 
