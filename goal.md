@@ -38,10 +38,14 @@ another real run.
 | Capability | Verified level | Still missing |
 | --- | --- | --- |
 | Fixed training and development evaluation | Real Nomos Run 17 | Agent-directed dataset changes |
-| Agent inspection/proposals and concurrent generation | Component-tested | Invocation by the production optimization coordinator |
-| First-iteration input and evidence binding (`6dc5585`) | CLI-integrated and regression-tested | Automatic handoff to Agent execution; later-iteration lineage |
+| Agent → generation → dataset publication | Pre-training CLI-integrated; deterministic process test passed | Full dataset qualification and training/evaluation handoff |
+| First-iteration input and evidence binding (`6dc5585`) | CLI-integrated; invoked automatically by the pre-training route | Later-iteration lineage and full coordinator handoff |
 | Derived candidate report association (`24d61db`) | CLI-tested and read-only verified against Nomos | Full multi-iteration app journey |
 | One-click bounded Agent loop | Not implemented end to end | Composition, recovery and Overview verification |
+
+The pre-training integration and its activity changes are currently uncommitted
+working-tree changes. Preserve them and verify the exact tree before committing;
+do not confuse their focused integration evidence with a released app capability.
 
 - The current Optimize executor performs a fixed one-candidate training and
   evaluation sequence. It does not invoke the configured optimization Agent or
@@ -84,13 +88,32 @@ another real run.
   generation, dataset qualification, training, evaluation and the next Agent
   turn. This integration, rather than another provider-settings redesign, is
   the next priority.
+- The pre-training `optimization-run edit-dataset` route now binds that first
+  iteration, loads exact native development diagnostics and training members,
+  calls the pinned Agent through Pi, invokes the separate generator for accepted
+  additions and publishes an immutable dataset diff. It reuses completed calls
+  and publication on retry. The production-CLI regression demonstrates a real
+  removal/addition through those adapters with deterministic Pi wire responses
+  and a loopback generator; changing project defaults does not change the run's
+  selected models. No native training or new evaluation occurs in this test.
+  The fixture still seeds the root reservation because the full execution guard
+  remains closed. This is **not** the required complete optimization cycle.
+  Successful replay proves reuse of completed work, not recovery from every
+  interruption. Generation-call accounting and its activity records also need
+  reconciliation across a crash between their separate writes. Unknown provider
+  prices must remain unknown; reserved cost is not verified actual spend.
+- The activity projection now includes the Agent and generator's own journal
+  actions, with explicit Agent/Generation attribution. A rendered Overview test
+  verifies inline display; it is separate from the CLI integration test and is
+  not proof that the Optimize button invokes the Agent loop.
 - Commit `6dc5585` gives the first iteration a project-owned immutable input
   record, separate from individual Agent calls. It binds the prepared baseline revision, model,
   dataset, benchmark, provider revision and complete development-report set.
   `optimization-run bind-iteration` builds it from the pinned scientific source;
   `optimization-run iterations` reads it without native execution. Agent-store
   opening and scope admission now require this record. Binding is currently a
-  standalone CLI operation; Prepare and the GUI do not invoke it automatically.
+  CLI operation, also called automatically by `edit-dataset`; Prepare and the
+  GUI do not invoke it automatically.
   This is the first input handoff, not the Agent/generation/training coordinator
   or a working app loop.
   Later iteration completion and selection lineage are still unimplemented.
@@ -120,10 +143,12 @@ another real run.
   The full Rust gates, UI typecheck, all 124 UI tests and both desktop
   smoke/restart journeys passed for this change.
 
-Verification levels are currently distinct: Agent/generation components are
-component-tested; the full agent-driven CLI coordinator is not connected; the
-production app journey is not agent-loop-verified. The report lookup is a
-verified CLI capability, not proof of an Agent invocation.
+Verification levels are currently distinct: Agent/generation through dataset
+publication is pre-training CLI-tested; the full agent-driven CLI coordinator is
+not connected; the production app journey is not agent-loop-verified. The report
+lookup is a verified CLI capability, not proof of an Agent invocation. Earlier
+green checks do not certify subsequent edits; record final validation against
+the exact checkpoint being committed.
 
 Preserve existing projects, runs, model custody, dataset versions, provider
 connections, credentials, navigation and the user's approved Overview design.
@@ -131,11 +156,11 @@ Do not require another real Nomos run to rediscover the known missing executor.
 
 ## Immediate next task: connect the engine
 
-Connect the committed execution components through the production CLI
-before adding more presentation. The next engine checkpoint must connect the
-configured Agent and Data generation
-providers to the real CLI workflow: inspect development failures and training
-rows, propose edits, publish a validated dataset version, train and evaluate.
+Finish the handoff from the existing Agent-generated dataset to qualification,
+training and development evaluation through the production CLI before adding
+more presentation. The next engine checkpoint must complete the whole cycle:
+inspect development failures and training rows, propose edits, generate and
+publish a qualified dataset version, train and evaluate.
 Prove this composition with deterministic adapters before asking the user to
 try another run. Do not spend the next checkpoint on another settings-only
 change, mockup or synthetic Agent message. This checkpoint is not completion:
@@ -152,17 +177,24 @@ bypassing that guard or silently ignoring unsupported settings.
 
 Close these integration gaps in that order:
 
-1. Use the durable first-iteration input binding already implemented. Connect
-   its exact development references and dataset to the existing Agent runner;
-   do not introduce another parallel input/credential mechanism.
-2. Connect Agent inspection and proposals to generation, full dataset
-   qualification, version publication, native training and evaluation through
-   the production CLI. Reuse the existing slice contracts and journals.
+1. Reuse the connected `agent_dataset` path and its durable first-iteration input
+   binding. Do not rebuild inspection, provider selection, generation or dataset
+   publication; the next missing execution handoff starts at its output.
+2. Qualify the complete derived dataset against the pinned task/benchmark and
+   connect it to native training and development evaluation. Record per-iteration
+   materialization, candidate and result receipts; enforce training and quick-
+   test settings through the normal slice contracts. Prove one complete cycle
+   through this same production composition, not a separate test coordinator.
+   The test must reserve and drive its run through normal production entry
+   points; the pre-training fixture's direct reservation seeding is not enough
+   to demonstrate that a user can start this cycle.
 3. Drive subsequent iterations from their persisted predecessors. Extend
    the first-iteration record with completion/selection lineage, not caller-
    supplied replacement datasets or evidence. Recover completed steps without
    repeating provider calls,
    dataset publication or training; account separately for uncertain attempts.
+   Reconcile activity with durable step/call outcomes after interruption so a
+   recovered run cannot show a permanently running action that already ended.
 4. Connect this same execution path to Overview and verify report associations
    across all iterations.
    Provider calls, Agent activity and results must refer to the same run and
