@@ -28,7 +28,20 @@ the Agent is connected. Prove that integration through the production execution
 path with deterministic test adapters first. A successfully rejected candidate
 is a completed experiment; improvement itself is not guaranteed.
 
-## Current state — 14 September 2026
+## Current state — 15 September 2026
+
+The agentic user journey is **not ready yet**. Run 17 demonstrated fixed training
+and evaluation, not Agent-driven optimization. The next action belongs to
+implementation, not to the user: connect and test the engine before asking for
+another real run.
+
+| Capability | Verified level | Still missing |
+| --- | --- | --- |
+| Fixed training and development evaluation | Real Nomos Run 17 | Agent-directed dataset changes |
+| Agent inspection/proposals and concurrent generation | Component-tested | Invocation by the production optimization coordinator |
+| First-iteration input and evidence binding (`6dc5585`) | CLI-integrated and regression-tested | Automatic handoff to Agent execution; later-iteration lineage |
+| Derived candidate report association (`24d61db`) | CLI-tested and read-only verified against Nomos | Full multi-iteration app journey |
+| One-click bounded Agent loop | Not implemented end to end | Composition, recovery and Overview verification |
 
 - The current Optimize executor performs a fixed one-candidate training and
   evaluation sequence. It does not invoke the configured optimization Agent or
@@ -71,13 +84,15 @@ is a completed experiment; improvement itself is not guaranteed.
   generation, dataset qualification, training, evaluation and the next Agent
   turn. This integration, rather than another provider-settings redesign, is
   the next priority.
-- The first iteration now has a project-owned immutable input record, separate
-  from individual Agent calls. It binds the prepared baseline revision, model,
+- Commit `6dc5585` gives the first iteration a project-owned immutable input
+  record, separate from individual Agent calls. It binds the prepared baseline revision, model,
   dataset, benchmark, provider revision and complete development-report set.
   `optimization-run bind-iteration` builds it from the pinned scientific source;
   `optimization-run iterations` reads it without native execution. Agent-store
-  opening and scope admission now require this record. This is the first input
-  handoff, not the Agent/generation/training coordinator or a working app loop.
+  opening and scope admission now require this record. Binding is currently a
+  standalone CLI operation; Prepare and the GUI do not invoke it automatically.
+  This is the first input handoff, not the Agent/generation/training coordinator
+  or a working app loop.
   Later iteration completion and selection lineage are still unimplemented.
   Its production-CLI regression passes: exact retry identity, unchanged native
   database bytes, complete suite coverage, substituted-input rejection,
@@ -184,6 +199,22 @@ full end-to-end acceptance criteria below unchanged until they are satisfied.
 The next implementation checkpoint must demonstrate one complete composed
 cycle, not just another isolated component. Intermediate components may be
 committed when verified, but do not describe them as a working agent loop.
+
+The checkpoint's executable proof must enter through the production coordinator
+with deterministic provider and training adapters. It must load the recorded
+iteration inputs, inspect a saved development failure and relevant training
+rows, persist the Agent's evidence-linked removal/addition proposal, invoke the
+separately pinned generator, qualify and publish the derived dataset, train its
+candidate, and persist development comparisons against the original baseline.
+Assert the resulting linked records and actual Agent/Generation activity, not
+just success messages. Connect these operations inside the coordinator; a test
+that manually calls disconnected components in sequence is not sufficient.
+
+Do not start a new real Nomos run, change its provider assignments or modify its
+historical records to demonstrate this checkpoint. Keep the existing fixed-run
+compatibility and agentic-settings guard until the new route genuinely enforces
+its authorization. After the composed cycle, finish repeated iterations,
+stop/resume and Overview integration before calling the overall goal complete.
 
 ## Required execution
 
