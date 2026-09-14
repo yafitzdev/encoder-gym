@@ -42,6 +42,16 @@ or UI mockups alone do not complete this goal.
   Schema checks and duplicate rejection are implemented components, not proof
   of semantic correctness or complete training-to-benchmark isolation. The
   complete derived dataset still needs qualification before training.
+- Working-tree changes now pin provider credentials by connection UUID and let
+  the desktop retrieve a run's original provider revision through the CLI.
+  Preserve this implementation: changing project defaults must not redirect a
+  resumed run to another key. This is execution infrastructure, not evidence
+  that the Agent or generator participates in Optimize yet.
+- The Agent journal still restricts execution to the first iteration. There is
+  no connected production coordinator that carries an accepted proposal through
+  generation, dataset qualification, training, evaluation and the next Agent
+  turn. This integration, rather than another provider-settings redesign, is
+  the next priority.
 - Run 17's candidate reports exist in the scientific journal but are absent
   from its entry in project benchmark results. Diagnose and repair that result
   association without rewriting historical evidence or weakening comparability.
@@ -62,6 +72,8 @@ try another run. Do not spend the next checkpoint on another settings-only
 change, mockup or synthetic Agent message. This checkpoint is not completion:
 continue through bounded iteration, recovery and the production Overview journey.
 
+Use the existing exact-connection resolver and pinned-provider CLI read in the
+new execution path; do not build a second credential-selection mechanism.
 The immediate integration must resolve the run's pinned credential connection,
 not whichever connection is currently assigned in project settings. Persist the
 Agent proposal, generation attempts and resulting dataset version as resumable
@@ -71,8 +83,8 @@ bypassing that guard or silently ignoring unsupported settings.
 
 Close these integration gaps in that order:
 
-1. Bind the exact selected connections and establish a durable iteration record
-   linking its starting model, dataset and permitted development evidence.
+1. Establish a durable iteration record linking its starting model, dataset,
+   permitted development evidence and already-pinned provider selections.
 2. Connect Agent inspection and proposals to generation, full dataset
    qualification, version publication, native training and evaluation through
    the production CLI. Reuse the existing slice contracts and journals.
@@ -87,6 +99,11 @@ Close these integration gaps in that order:
 Report implementation status separately as component-tested, CLI-integrated,
 and app-verified. Do not call the agentic system fixed until the configured
 providers actually participate in the verified end-to-end journey.
+
+For each checkpoint, report the concrete user-visible capability added, the
+production path exercised, and the remaining integration gaps. Record completed
+foundation work here instead of repeatedly treating it as new work. Keep the
+full end-to-end acceptance criteria below unchanged until they are satisfied.
 
 ## Required execution
 
