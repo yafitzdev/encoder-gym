@@ -906,9 +906,22 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
         .unwrap()
         .parse()
         .unwrap();
-    let in_flight = optimization_runs::begin_preparation(&folder, cancel_id)
-        .await
-        .unwrap();
+    let checked_files = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = checked_files.clone();
+    let in_flight = project_workspace_local::progress::with_file_progress(
+        std::sync::Arc::new(move |name, _, _| captured.lock().unwrap().push(name.to_owned())),
+        optimization_runs::begin_preparation(&folder, cancel_id),
+    )
+    .await
+    .unwrap();
+    assert!(
+        checked_files
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|name| name == "encoder-gym.json"),
+        "journal reservation must not rescan model and dataset contents; execution owns those checks"
+    );
     let cancelled = run(
         root,
         &[

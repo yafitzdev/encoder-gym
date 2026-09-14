@@ -201,6 +201,15 @@ impl NomosBackend {
         let configuration = Self::task_configuration(project)?;
         configuration.validate()?;
         let strategy = NativeCandidateStrategy::parse(&candidate.parameters)?;
+        if configuration.managed_training_dataset.is_some() && strategy.repair_binding().is_none() {
+            return self.verified_managed_training_data(
+                project,
+                candidate,
+                model,
+                &configuration,
+                &strategy,
+            );
+        }
         let binding = strategy.repair_binding().ok_or_else(|| {
             adapter_error("This native model has no supported recorded training snapshot")
         })?;
@@ -270,6 +279,70 @@ impl NomosBackend {
             manifest_bytes: fs::metadata(&manifest_path).map_err(adapter_error)?.len(),
             manifest_fingerprint: prefixed(&sha256_file(&manifest_path)?),
             inputs,
+        })
+    }
+
+    fn verified_managed_training_data(
+        &self,
+        project: &ExternalProjectSnapshot,
+        candidate: &TrainingCandidate,
+        model: &ModelArtifactIdentity,
+        configuration: &TaskConfiguration,
+        strategy: &NativeCandidateStrategy,
+    ) -> Result<VerifiedTrainingData, EncoderTaskAdapterError> {
+        let dataset = configuration
+            .managed_training_dataset
+            .as_ref()
+            .expect("managed branch");
+        if !matches!(strategy, NativeCandidateStrategy::FineTune(_))
+            || self.training_override.as_ref() != Some(dataset)
+            || project
+                .inputs
+                .iter()
+                .filter(|input| input.role == EvidenceRole::Training)
+                .collect::<Vec<_>>()
+                != [&dataset.artifact]
+        {
+            return Err(adapter_error(
+                "Managed checkpoint does not match its training dataset",
+            ));
+        }
+        dataset.verify_in(&self.root)?;
+        let output = self.model_path(model)?;
+        let logical = workspace_relative(&self.root, &self.candidate_output(candidate))?;
+        if model.key != logical {
+            return Err(adapter_error("Checkpoint belongs to a different candidate"));
+        }
+        let manifest =
+            strategy.read_and_validate_manifest(&output, &logical, project, configuration)?;
+        let inputs = manifest
+            .get("inputs")
+            .and_then(Value::as_array)
+            .ok_or_else(|| adapter_error("Managed training manifest omitted its inputs"))?;
+        let counts = normalized_count_map(&manifest, "input_row_counts")?;
+        if inputs.len() != 1
+            || inputs[0].as_str().map(normalized_native_path).as_deref()
+                != Some(dataset.artifact.key.as_str())
+            || counts.len() != 1
+            || counts.get(&dataset.artifact.key) != Some(&dataset.rows)
+        {
+            return Err(adapter_error(
+                "Managed training manifest references a different population",
+            ));
+        }
+        let manifest_path = output.join("nomos_training_manifest.json");
+        Ok(VerifiedTrainingData {
+            snapshot_id: dataset.dataset_version_id,
+            snapshot_fingerprint: dataset.dataset_version_fingerprint.clone(),
+            manifest_bytes: fs::metadata(&manifest_path).map_err(adapter_error)?.len(),
+            manifest_fingerprint: prefixed(&sha256_file(&manifest_path)?),
+            inputs: vec![VerifiedTrainingInput {
+                key: dataset.artifact.key.clone(),
+                path: self.resolve_existing(&dataset.artifact.key)?,
+                bytes: dataset.artifact.bytes,
+                fingerprint: dataset.artifact.fingerprint.clone(),
+                rows: dataset.rows,
+            }],
         })
     }
 }

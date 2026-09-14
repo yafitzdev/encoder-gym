@@ -128,6 +128,21 @@ async fn register_project_output(
             && experiment.scientific_project == materialization.scientific_project,
         "The optimization project snapshot changed."
     );
+    // Registration must reopen the same managed training population as execution,
+    // not the runtime's original training inputs.
+    let native = backend.load_training_dataset(
+        run.run.id,
+        preparation.dataset.id,
+        &preparation.dataset.fingerprint,
+    )?;
+    ensure!(
+        materialization.native_materialization.id
+            == format!("{}:{}", native.run_id, native.dataset_version_id)
+            && materialization.native_materialization.fingerprint == native.fingerprint
+            && materialization.training_artifact == native.artifact,
+        "Native training materialization changed."
+    );
+    let backend = backend.with_training_dataset(native)?;
     backend.verify_current_snapshot(project.clone()).await?;
     let protocol_id: Uuid = experiment.protocol.id.parse()?;
     let protocol = store

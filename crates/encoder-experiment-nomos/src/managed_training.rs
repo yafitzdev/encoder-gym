@@ -756,4 +756,112 @@ mod tests {
             "encoder task adapter failed: Nomos previous candidates are absent from the tool registry"
         );
     }
+
+    #[test]
+    fn managed_candidate_handoff_reopens_exact_dataset_without_repair_or_holdout_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let mut backend = backend(&root);
+        backend.identity.configuration_fingerprint = artifact_core::fingerprint(&json!({
+            "adapter":ADAPTER_NAME,"protocol_version":ADAPTER_PROTOCOL_VERSION,
+            "manifest_schema_version":4,"tree_hash_algorithm":TREE_HASH_ALGORITHM
+        }))
+        .unwrap();
+        let fp = prefixed(&"a".repeat(64));
+        let value = row("managed-training-row");
+        let mut writer = backend
+            .materialize_training_dataset(Uuid::new_v4(), Uuid::new_v4(), &fp, 1)
+            .unwrap();
+        writer
+            .append(&fp, &artifact_core::fingerprint(&value).unwrap(), &value)
+            .unwrap();
+        let dataset = writer.finish().unwrap();
+        let configuration = json!({
+            "adapter_protocol":ADAPTER_PROTOCOL_VERSION,"source_reference":{},"baseline_evidence":{},
+            "training_inputs":[dataset.artifact.key], "managed_training_dataset":dataset,
+            "reference_models":{"reference":{"path":"missing-reference","format":"sentence-transformers","bytes":1,"fingerprint":fp,"provenance":{}}},
+            "agent_evaluation":{"backend":"onnx","chat_model":{"path":"missing-chat","format":"onnxruntime-genai","bytes":1,"fingerprint":fp,"source":{}},
+                "selector_strategy":"multiview","candidate_strategy":"multiview","nomos_top_k":1,"max_attempts":1,
+                "development":{"suite":"development","sessions":1,"pairing":"cycle","condition":"nomos"},
+                "sealed":{"suite":"promotion","sessions":1,"pairing":"cycle","condition":"nomos"}},
+            "suites":{"development":{"path":"missing-development.jsonl","role":"development","fingerprint":fp,"retrieval_fingerprint":fp,"agent_fingerprint":fp}}
+        });
+        let project = ExternalProjectSnapshot::create(
+            "Managed",
+            EncoderTaskKind::RetrievalRanking,
+            "revision",
+            &fp,
+            backend.identity.clone(),
+            vec![
+                dataset.artifact.clone(),
+                ExternalArtifactIdentity::new(
+                    "missing-development.jsonl",
+                    EvidenceRole::Development,
+                    1,
+                    &fp,
+                )
+                .unwrap(),
+                ExternalArtifactIdentity::new(
+                    "missing-sealed.jsonl",
+                    EvidenceRole::SealedAcceptance,
+                    1,
+                    &fp,
+                )
+                .unwrap(),
+            ],
+            ModelArtifactIdentity::new("baseline", "sentence-transformers", 1, &fp).unwrap(),
+            configuration,
+            Utc::now(),
+        )
+        .unwrap();
+        let candidate =
+            NomosBackend::initial_training_candidate_definition(Uuid::new_v4(), &project, 60)
+                .unwrap();
+        let output = backend.candidate_output(&candidate);
+        fs::create_dir_all(&output).unwrap();
+        fs::write(output.join("model.safetensors"), b"immutable model").unwrap();
+        let logical = workspace_relative(&root, &output).unwrap();
+        let mut manifest = json!({"base_model":"baseline","output":logical,
+            "inputs":[dataset.artifact.key],"input_row_counts":{dataset.artifact.key.clone():1}});
+        let manifest_path = output.join("nomos_training_manifest.json");
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let model = || {
+            let (bytes, hash) = tree_identity(&output).unwrap();
+            ModelArtifactIdentity::new(&logical, "sentence-transformers", bytes, prefixed(&hash))
+                .unwrap()
+        };
+        // This was the registration bug: a freshly opened runtime had no override.
+        assert!(
+            backend
+                .verified_training_data(&project, &candidate, &model())
+                .is_err()
+        );
+        let reloaded = backend
+            .load_training_dataset(
+                dataset.run_id,
+                dataset.dataset_version_id,
+                &dataset.dataset_version_fingerprint,
+            )
+            .unwrap();
+        let backend = backend.with_training_dataset(reloaded).unwrap();
+        let result = backend
+            .verified_training_data(&project, &candidate, &model())
+            .unwrap();
+        assert_eq!(result.snapshot_id, dataset.dataset_version_id);
+        assert_eq!(
+            result.snapshot_fingerprint,
+            dataset.dataset_version_fingerprint
+        );
+        assert_eq!(result.inputs.len(), 1);
+        assert_eq!(result.inputs[0].rows, 1);
+        assert_eq!(result.inputs[0].fingerprint, dataset.artifact.fingerprint);
+        // Even a rehashed model cannot claim a different input population.
+        manifest["input_row_counts"][&dataset.artifact.key] = json!(2);
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert!(
+            backend
+                .verified_training_data(&project, &candidate, &model())
+                .is_err()
+        );
+    }
 }

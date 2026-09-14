@@ -129,7 +129,7 @@ pub async fn show(folder: &Path, run_id: Uuid) -> Result<ProjectOptimizationRunV
 /// respect to every stage completion, so an in-flight worker holding an older
 /// journal head cannot publish a result after cancellation wins the race.
 pub async fn cancel(folder: &Path, run_id: Uuid) -> Result<ProjectOptimizationRunView> {
-    let workspace = open_workspace(folder, true).await?;
+    let workspace = open_workspace(folder, false).await?;
     let mut database = connect(Path::new(&workspace.folder), false, false).await?;
     sqlx::migrate!("./migrations").run(&mut database).await?;
     let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
@@ -170,10 +170,12 @@ pub async fn cancel(folder: &Path, run_id: Uuid) -> Result<ProjectOptimizationRu
     Ok(result)
 }
 
-/// Start or recover the no-provider preparation attempt. Duplicate verification
-/// is harmless; completion still uses the exact returned journal head.
+/// Start or recover preparation. Journal transitions validate custody metadata
+/// and receipts; the stage executor verifies file contents before consuming them.
+/// Rehashing the entire workspace here would duplicate that work and prevent
+/// recording a failure when an input file is damaged.
 pub async fn begin_preparation(folder: &Path, run_id: Uuid) -> Result<ProjectOptimizationRunView> {
-    let workspace = open_workspace(folder, true).await?;
+    let workspace = open_workspace(folder, false).await?;
     let mut database = connect(Path::new(&workspace.folder), false, false).await?;
     sqlx::migrate!("./migrations").run(&mut database).await?;
     let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
@@ -235,7 +237,7 @@ async fn record_preparation(
     preparation: Option<ProjectOptimizationPreparation>,
     failure_code: Option<&str>,
 ) -> Result<ProjectOptimizationRunView> {
-    let workspace = open_workspace(folder, true).await?;
+    let workspace = open_workspace(folder, false).await?;
     let mut database = connect(Path::new(&workspace.folder), false, false).await?;
     sqlx::migrate!("./migrations").run(&mut database).await?;
     let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
@@ -352,7 +354,7 @@ pub async fn begin_materialization(
     folder: &Path,
     run_id: Uuid,
 ) -> Result<ProjectOptimizationRunView> {
-    let workspace = open_workspace(folder, true).await?;
+    let workspace = open_workspace(folder, false).await?;
     let mut database = connect(Path::new(&workspace.folder), false, false).await?;
     sqlx::migrate!("./migrations").run(&mut database).await?;
     let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
@@ -422,7 +424,7 @@ async fn record_materialization(
     materialization: Option<ProjectOptimizationMaterialization>,
     failure_code: Option<&str>,
 ) -> Result<ProjectOptimizationRunView> {
-    let workspace = open_workspace(folder, true).await?;
+    let workspace = open_workspace(folder, false).await?;
     let mut database = connect(Path::new(&workspace.folder), false, false).await?;
     sqlx::migrate!("./migrations").run(&mut database).await?;
     let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
@@ -525,7 +527,7 @@ pub async fn begin_experiment_attachment(
     folder: &Path,
     run_id: Uuid,
 ) -> Result<ProjectOptimizationRunView> {
-    let workspace = open_workspace(folder, true).await?;
+    let workspace = open_workspace(folder, false).await?;
     let mut database = connect(Path::new(&workspace.folder), false, false).await?;
     sqlx::migrate!("./migrations").run(&mut database).await?;
     let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
@@ -596,7 +598,7 @@ async fn record_experiment_attachment(
     experiment: Option<ProjectOptimizationExperiment>,
     failure_code: Option<&str>,
 ) -> Result<ProjectOptimizationRunView> {
-    let workspace = open_workspace(folder, true).await?;
+    let workspace = open_workspace(folder, false).await?;
     let mut database = connect(Path::new(&workspace.folder), false, false).await?;
     sqlx::migrate!("./migrations").run(&mut database).await?;
     let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
@@ -681,7 +683,7 @@ async fn record_experiment_attachment(
 /// Start or recover candidate training and shared-benchmark comparison. The
 /// scientific child journal owns the detailed progress and is safe to resume.
 pub async fn begin_execution(folder: &Path, run_id: Uuid) -> Result<ProjectOptimizationRunView> {
-    let workspace = open_workspace(folder, true).await?;
+    let workspace = open_workspace(folder, false).await?;
     let mut database = connect(Path::new(&workspace.folder), false, false).await?;
     sqlx::migrate!("./migrations").run(&mut database).await?;
     let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
@@ -750,7 +752,7 @@ async fn record_execution(
     outcome: Option<ProjectOptimizationOutcome>,
     failure_code: Option<&str>,
 ) -> Result<ProjectOptimizationRunView> {
-    let workspace = open_workspace(folder, true).await?;
+    let workspace = open_workspace(folder, false).await?;
     let mut database = connect(Path::new(&workspace.folder), false, false).await?;
     sqlx::migrate!("./migrations").run(&mut database).await?;
     let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
@@ -842,7 +844,7 @@ pub async fn begin_final_evaluation(
     folder: &Path,
     run_id: Uuid,
 ) -> Result<ProjectOptimizationRunView> {
-    let workspace = open_workspace(folder, true).await?;
+    let workspace = open_workspace(folder, false).await?;
     let mut database = connect(Path::new(&workspace.folder), false, false).await?;
     sqlx::migrate!("./migrations").run(&mut database).await?;
     let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
@@ -912,7 +914,7 @@ async fn record_final_evaluation(
     result: Option<ProjectOptimizationFinalResult>,
     failure_code: Option<&str>,
 ) -> Result<ProjectOptimizationRunView> {
-    let workspace = open_workspace(folder, true).await?;
+    let workspace = open_workspace(folder, false).await?;
     let mut database = connect(Path::new(&workspace.folder), false, false).await?;
     sqlx::migrate!("./migrations").run(&mut database).await?;
     let mut transaction = database.begin_with("BEGIN IMMEDIATE").await?;
