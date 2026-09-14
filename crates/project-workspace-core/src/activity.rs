@@ -26,6 +26,61 @@ pub enum ActivityEventState {
     Failed,
 }
 
+/// A concise, reviewable explanation of an automated choice. This is an
+/// operational summary, never private model chain-of-thought or native row
+/// content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityNarrativeOrigin {
+    Agent,
+    System,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityNarrativeKind {
+    Intent,
+    Reasoning,
+    Action,
+    Observation,
+    Decision,
+    NextStep,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActivityNarrative {
+    pub origin: ActivityNarrativeOrigin,
+    pub kind: ActivityNarrativeKind,
+    pub summary: String,
+}
+
+impl ActivityNarrative {
+    pub fn new(
+        origin: ActivityNarrativeOrigin,
+        kind: ActivityNarrativeKind,
+        summary: impl Into<String>,
+    ) -> Result<Self, Invalid> {
+        let value = Self {
+            origin,
+            kind,
+            summary: summary.into(),
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
+    fn validate(&self) -> Result<(), Invalid> {
+        require(
+            !self.summary.trim().is_empty()
+                && self.summary.trim() == self.summary
+                && self.summary.chars().count() <= 400
+                && !self.summary.chars().any(char::is_control),
+            "Activity narrative must contain 1–400 canonical printable characters.",
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActivityReference {
@@ -95,6 +150,8 @@ pub struct ProjectActivityEvent {
     pub completed: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub narrative: Option<ActivityNarrative>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub references: Vec<ActivityReference>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -116,6 +173,7 @@ impl ProjectActivityEvent {
         stage: Option<String>,
         completed: Option<u64>,
         total: Option<u64>,
+        narrative: Option<ActivityNarrative>,
         references: Vec<ActivityReference>,
         failure: Option<ActivityFailure>,
         created_at: DateTime<Utc>,
@@ -133,6 +191,7 @@ impl ProjectActivityEvent {
             stage,
             completed,
             total,
+            narrative,
             references,
             failure,
             created_at,
@@ -196,7 +255,10 @@ impl ProjectActivityEvent {
         )?;
         match self.state {
             ActivityEventState::Started => require(
-                self.stage.is_none() && self.failure.is_none() && self.completed.is_none(),
+                self.stage.is_none()
+                    && self.failure.is_none()
+                    && self.completed.is_none()
+                    && self.narrative.is_none(),
                 "Started events cannot contain progress or failure.",
             )?,
             ActivityEventState::Progress => {
@@ -205,13 +267,22 @@ impl ProjectActivityEvent {
                     "Progress events require a stage and cannot contain failure.",
                 )?;
                 validate_key(self.stage.as_deref().unwrap_or_default(), "Activity stage")?;
+                if let Some(narrative) = &self.narrative {
+                    narrative.validate()?;
+                }
             }
             ActivityEventState::Succeeded => require(
-                self.stage.is_none() && self.failure.is_none() && self.completed.is_none(),
+                self.stage.is_none()
+                    && self.failure.is_none()
+                    && self.completed.is_none()
+                    && self.narrative.is_none(),
                 "Succeeded events cannot contain progress or failure.",
             )?,
             ActivityEventState::Failed => require(
-                self.stage.is_none() && self.failure.is_some() && self.completed.is_none(),
+                self.stage.is_none()
+                    && self.failure.is_some()
+                    && self.completed.is_none()
+                    && self.narrative.is_none(),
                 "Failed events require a failure and cannot contain progress.",
             )?,
         }
@@ -340,6 +411,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             vec![ActivityReference::new("run", Uuid::new_v4().to_string()).unwrap()],
             None,
             Utc::now(),
@@ -356,6 +428,7 @@ mod tests {
             Some("training".into()),
             Some(2),
             Some(10),
+            None,
             vec![],
             None,
             Utc::now(),
@@ -369,6 +442,7 @@ mod tests {
             "optimization.resume",
             ActivitySource::Desktop,
             ActivityEventState::Succeeded,
+            None,
             None,
             None,
             None,
@@ -401,10 +475,51 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 vec![],
                 None,
                 Utc::now(),
                 None
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn narrative_is_bounded_and_part_of_the_verified_event() {
+        let first = ProjectActivityEvent::create(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            2,
+            "optimization.run",
+            ActivitySource::Desktop,
+            ActivityEventState::Progress,
+            Some("creating_candidate".into()),
+            None,
+            None,
+            Some(
+                ActivityNarrative::new(
+                    ActivityNarrativeOrigin::System,
+                    ActivityNarrativeKind::Reasoning,
+                    "Use one conservative candidate before expanding the search.",
+                )
+                .unwrap(),
+            ),
+            vec![],
+            None,
+            Utc::now(),
+            Some(format!("sha256:{}", "a".repeat(64))),
+        )
+        .unwrap();
+        assert!(first.validate_integrity().is_ok());
+        let mut tampered = first;
+        tampered.narrative.as_mut().unwrap().summary = "Different explanation.".into();
+        assert!(tampered.validate_integrity().is_err());
+        assert!(
+            ActivityNarrative::new(
+                ActivityNarrativeOrigin::Agent,
+                ActivityNarrativeKind::Decision,
+                "contains\na hidden payload"
             )
             .is_err()
         );

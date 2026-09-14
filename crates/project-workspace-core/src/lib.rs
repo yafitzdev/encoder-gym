@@ -33,7 +33,8 @@ pub use optimization_setup::{OptimizationInputs, OptimizationSetup};
 pub use training_data::{ModelDatasetLink, ModelTrainingEvidence, TrainingDatasetInput};
 
 pub use activity::{
-    ActivityEventState, ActivityFailure, ActivityReference, ActivitySource, ProjectAction,
+    ActivityEventState, ActivityFailure, ActivityNarrative, ActivityNarrativeKind,
+    ActivityNarrativeOrigin, ActivityReference, ActivitySource, ProjectAction,
     ProjectActivityEvent, ProjectActivityLog,
 };
 pub use models::{

@@ -50,6 +50,7 @@ pub(super) async fn execute(
                     stage: None,
                     completed: None,
                     total: None,
+                    narrative: None,
                     references: references.clone(),
                     failure,
                     created_at: Utc::now(),

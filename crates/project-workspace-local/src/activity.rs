@@ -3,8 +3,8 @@ use std::{collections::BTreeMap, fs::OpenOptions, io::Write, path::Path};
 use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Utc};
 use project_workspace_core::{
-    ActivityEventState, ActivityFailure, ActivityReference, ActivitySource, ProjectAction,
-    ProjectActivityEvent, ProjectActivityLog,
+    ActivityEventState, ActivityFailure, ActivityNarrative, ActivityReference, ActivitySource,
+    ProjectAction, ProjectActivityEvent, ProjectActivityLog,
 };
 use sqlx::{Connection, Row};
 use uuid::Uuid;
@@ -31,6 +31,8 @@ pub struct AppendActivity {
     pub completed: Option<u64>,
     #[serde(default)]
     pub total: Option<u64>,
+    #[serde(default)]
+    pub narrative: Option<ActivityNarrative>,
     #[serde(default)]
     pub references: Vec<ActivityReference>,
     #[serde(default)]
@@ -120,6 +122,7 @@ pub async fn append_activity(
         request.stage,
         request.completed,
         request.total,
+        request.narrative,
         request.references,
         request.failure,
         request.created_at,

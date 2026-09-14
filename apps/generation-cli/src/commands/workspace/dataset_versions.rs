@@ -94,6 +94,7 @@ async fn adopt_baseline(folder: &Path) -> Result<()> {
         stage: None,
         completed: None,
         total: None,
+        narrative: None,
         references,
         failure,
         created_at: Utc::now(),
@@ -140,6 +141,7 @@ async fn record(
             stage: None,
             completed: None,
             total: None,
+            narrative: None,
             references: vec![
                 ActivityReference::new("dataset", dataset_id.to_string())?,
                 ActivityReference::new("dataset_version", version_id.to_string())?,

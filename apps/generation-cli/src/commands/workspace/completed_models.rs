@@ -31,6 +31,7 @@ pub(super) async fn register_project(folder: &Path, run_id: Uuid) -> anyhow::Res
         stage: None,
         completed: None,
         total: None,
+        narrative: None,
         references,
         failure,
         created_at: Utc::now(),
@@ -335,6 +336,7 @@ pub(super) async fn register(folder: &std::path::Path, run_id: Uuid) -> anyhow::
         stage: None,
         completed: None,
         total: None,
+        narrative: None,
         references: vec![
             ActivityReference::new("run", run_id.to_string()).expect("UUID reference"),
         ],
@@ -513,6 +515,7 @@ pub(super) async fn adopt_datasets(folder: &std::path::Path, run_id: Uuid) -> an
         stage: None,
         completed: None,
         total: None,
+        narrative: None,
         references,
         failure,
         created_at: Utc::now(),

@@ -1,9 +1,10 @@
 use chrono::{TimeZone, Utc};
 use project_workspace_core::{
-    ActivityEventState, ActivityFailure, ActivityReference, ActivitySource, AdapterBinding,
-    BoundIdentity, DatasetPurpose, MANIFEST, ProviderAuthentication, ProviderCatalog,
-    ProviderConfiguration, ProviderKind, ProviderLimits, ProviderRole, RuntimeBinding, RuntimeKind,
-    ScientificBinding, ScientificStoreBinding, SecretReference,
+    ActivityEventState, ActivityFailure, ActivityNarrative, ActivityNarrativeKind,
+    ActivityNarrativeOrigin, ActivityReference, ActivitySource, AdapterBinding, BoundIdentity,
+    DatasetPurpose, MANIFEST, ProviderAuthentication, ProviderCatalog, ProviderConfiguration,
+    ProviderKind, ProviderLimits, ProviderRole, RuntimeBinding, RuntimeKind, ScientificBinding,
+    ScientificStoreBinding, SecretReference,
 };
 use project_workspace_local::{
     AcceptedModelPromotion, AppendActivity, BaselineRestorationRequest, CompletedModelRegistration,
@@ -58,7 +59,7 @@ async fn project_activity_is_append_only_hash_chained_and_exportable_jsonl() {
     let action_id = uuid::Uuid::new_v4();
     let run_id = uuid::Uuid::new_v4();
     let at = Utc.with_ymd_and_hms(2026, 9, 10, 8, 0, 0).unwrap();
-    let request = |state, stage, completed, total, references, failure| AppendActivity {
+    let request = |state, stage, completed, total, narrative, references, failure| AppendActivity {
         action_id,
         operation: "optimization.resume".into(),
         source: ActivitySource::Desktop,
@@ -66,6 +67,7 @@ async fn project_activity_is_append_only_hash_chained_and_exportable_jsonl() {
         stage,
         completed,
         total,
+        narrative,
         references,
         failure,
         created_at: at,
@@ -74,6 +76,7 @@ async fn project_activity_is_append_only_hash_chained_and_exportable_jsonl() {
         &destination,
         request(
             ActivityEventState::Started,
+            None,
             None,
             None,
             None,
@@ -90,6 +93,14 @@ async fn project_activity_is_append_only_hash_chained_and_exportable_jsonl() {
             Some("training".into()),
             Some(2),
             Some(5),
+            Some(
+                ActivityNarrative::new(
+                    ActivityNarrativeOrigin::System,
+                    ActivityNarrativeKind::Reasoning,
+                    "Use the smallest bounded candidate first.",
+                )
+                .unwrap(),
+            ),
             vec![],
             None,
         ),
@@ -100,6 +111,7 @@ async fn project_activity_is_append_only_hash_chained_and_exportable_jsonl() {
         &destination,
         request(
             ActivityEventState::Failed,
+            None,
             None,
             None,
             None,
@@ -124,6 +136,7 @@ async fn project_activity_is_append_only_hash_chained_and_exportable_jsonl() {
                 None,
                 None,
                 None,
+                None,
                 vec![],
                 None
             )
@@ -133,6 +146,10 @@ async fn project_activity_is_append_only_hash_chained_and_exportable_jsonl() {
     );
     let action = read_action(&destination, action_id).await.unwrap();
     assert_eq!(action.state, ActivityEventState::Failed);
+    assert_eq!(
+        action.events[1].narrative.as_ref().unwrap().summary,
+        "Use the smallest bounded candidate first."
+    );
     assert_eq!(action.project_id, workspace.manifest.id);
     assert_eq!(
         read_activity(&destination, 10).await.unwrap().actions.len(),

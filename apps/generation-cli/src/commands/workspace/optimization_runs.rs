@@ -2,7 +2,10 @@ use crate::cli::WorkspaceOptimizationRunCommand;
 use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use encoder_experiment_core::{
-    domain::{EvidenceRole, ExternalProjectSnapshot, ModelArtifactIdentity, OptimizationBudget},
+    domain::{
+        EvidenceRole, ExternalProjectSnapshot, ModelArtifactIdentity, OptimizationBudget,
+        ParameterValue, TrainingCandidate,
+    },
     journal::{ExperimentRunState, FinalDecision},
     ports::{EncoderTaskBackend, ExperimentStore},
 };
@@ -29,6 +32,36 @@ fn emit_progress(phase: &str, completed: Option<u64>, total: Option<u64>) {
         value["total"] = total.into();
     }
     eprintln!("ENCODER_GYM_PROGRESS {value}");
+}
+
+fn emit_narrative(phase: &str, kind: &str, summary: impl Into<String>) {
+    let value = serde_json::json!({
+        "phase": phase,
+        "narrative": {
+            "origin": "system",
+            "kind": kind,
+            "summary": summary.into(),
+        }
+    });
+    eprintln!("ENCODER_GYM_PROGRESS {value}");
+}
+
+fn candidate_reasoning(candidate: &TrainingCandidate) -> Result<String> {
+    let loss = match candidate.parameters.get("loss") {
+        Some(ParameterValue::Text(value)) => value.as_str(),
+        _ => anyhow::bail!("Initial candidate has no readable loss."),
+    };
+    let epochs = match candidate.parameters.get("epochs") {
+        Some(ParameterValue::Number(value)) if value.fract() == 0.0 => *value as u64,
+        _ => anyhow::bail!("Initial candidate has no readable epoch count."),
+    };
+    let learning_rate = match candidate.parameters.get("learning_rate") {
+        Some(ParameterValue::Number(value)) => *value,
+        _ => anyhow::bail!("Initial candidate has no readable learning rate."),
+    };
+    Ok(format!(
+        "Start with one {epochs}-epoch {loss} candidate at learning rate {learning_rate}. This is the task adapter's narrowest bounded first test."
+    ))
 }
 
 pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunCommand) -> Result<()> {
@@ -68,6 +101,7 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunComm
                 stage: None,
                 completed: None,
                 total: None,
+                narrative: None,
                 references,
                 failure,
                 created_at: Utc::now(),
@@ -115,6 +149,7 @@ async fn cancel(folder: &Path, run_id: Uuid) -> Result<()> {
         stage: None,
         completed: None,
         total: None,
+        narrative: None,
         references: references.clone(),
         failure,
         created_at: Utc::now(),
@@ -147,6 +182,7 @@ async fn finalize_candidate(folder: &Path, run_id: Uuid) -> Result<()> {
         stage: None,
         completed: None,
         total: None,
+        narrative: None,
         references: references.clone(),
         failure,
         created_at: Utc::now(),
@@ -163,13 +199,30 @@ async fn finalize_candidate(folder: &Path, run_id: Uuid) -> Result<()> {
         );
         match run_final_evaluation(folder, &started).await {
             Ok(receipt) => {
-                optimization_runs::finish_final_evaluation(
+                let finished = optimization_runs::finish_final_evaluation(
                     folder,
                     run_id,
                     &started.head_fingerprint,
                     receipt,
                 )
-                .await
+                .await?;
+                let result = finished
+                    .final_result
+                    .as_ref()
+                    .context("Final evaluation result was not recorded.")?;
+                emit_narrative(
+                    "final_decision",
+                    "decision",
+                    match result.kind {
+                        ProjectOptimizationFinalResultKind::CandidateAccepted => {
+                            "Candidate 1 passed final acceptance and can be promoted from Models."
+                        }
+                        ProjectOptimizationFinalResultKind::CandidateRejected => {
+                            "Candidate 1 did not pass final acceptance. Keep the current baseline."
+                        }
+                    },
+                );
+                Ok(finished)
             }
             Err(error) => {
                 optimization_runs::fail_final_evaluation(
@@ -360,6 +413,7 @@ async fn execute_candidate(folder: &Path, run_id: Uuid) -> Result<()> {
         stage: None,
         completed: None,
         total: None,
+        narrative: None,
         references: references.clone(),
         failure,
         created_at: Utc::now(),
@@ -376,13 +430,30 @@ async fn execute_candidate(folder: &Path, run_id: Uuid) -> Result<()> {
         );
         match run_attached_candidate(folder, &started).await {
             Ok(receipt) => {
-                optimization_runs::finish_execution(
+                let finished = optimization_runs::finish_execution(
                     folder,
                     run_id,
                     &started.head_fingerprint,
                     receipt,
                 )
-                .await
+                .await?;
+                let outcome = finished
+                    .outcome
+                    .as_ref()
+                    .context("Development decision was not recorded.")?;
+                emit_narrative(
+                    "development_decision",
+                    "decision",
+                    match outcome.kind {
+                        ProjectOptimizationOutcomeKind::CandidateReady => {
+                            "Candidate 1 passed every development gate. Run the single authorized final evaluation next."
+                        }
+                        ProjectOptimizationOutcomeKind::BaselineRetained => {
+                            "Candidate 1 missed at least one development gate. Keep the baseline and skip final evaluation."
+                        }
+                    },
+                );
+                Ok(finished)
             }
             Err(error) => {
                 optimization_runs::fail_execution(
@@ -568,6 +639,7 @@ async fn attach(folder: &Path, run_id: Uuid) -> Result<()> {
         stage: None,
         completed: None,
         total: None,
+        narrative: None,
         references: references.clone(),
         failure,
         created_at: Utc::now(),
@@ -633,6 +705,7 @@ async fn prepare(folder: &Path, run_id: Uuid) -> Result<()> {
         stage: None,
         completed: None,
         total: None,
+        narrative: None,
         references: references.clone(),
         failure,
         created_at: Utc::now(),
@@ -698,6 +771,7 @@ async fn materialize(folder: &Path, run_id: Uuid) -> Result<()> {
         stage: None,
         completed: None,
         total: None,
+        narrative: None,
         references: references.clone(),
         failure,
         created_at: Utc::now(),
@@ -772,7 +846,11 @@ async fn attach_experiment(
         .as_ref()
         .context("Materialize training data before attaching an experiment.")?;
     materialization.validate_for(&view.run, &launch, preparation)?;
-    emit_progress("loading_evaluation_protocol", None, None);
+    emit_narrative(
+        "loading_evaluation_protocol",
+        "intent",
+        "Hold the selected baseline, training dataset, and evaluation fixed while constructing one bounded candidate.",
+    );
     let benchmark_id: Uuid = preparation.benchmark.id.parse()?;
     let benchmark = super::benchmarks::inspect(folder, benchmark_id).await?;
     ensure!(
@@ -885,6 +963,11 @@ async fn attach_experiment(
             maximum_training_seconds,
         )
         .await?;
+    emit_narrative(
+        "creating_candidate",
+        "reasoning",
+        candidate_reasoning(&candidate)?,
+    );
     emit_progress("creating_experiment", None, None);
     let runner = ExperimentRunner::new(&store, &backend);
     let protocol = runner
@@ -908,6 +991,14 @@ async fn attach_experiment(
     let experiment = runner
         .create_run_identified(protocol.id, view.run.child_id("experiment-run", 1)?)
         .await?;
+    emit_narrative(
+        "creating_experiment",
+        "next_step",
+        format!(
+            "Train Candidate 1, then compare it with the baseline on all {} development suites.",
+            preparation.development_suites.len()
+        ),
+    );
     let receipt = ProjectOptimizationExperiment::create(
         &view.run,
         &launch,
