@@ -105,10 +105,11 @@ const executeCommand: CommandExecutor = (executable, args, environment, progress
     return;
   }
   const statusRead = args[3] === "optimize" && args[5] === "status";
-  execFile(executable, args, { windowsHide: true, shell: false, maxBuffer: 16 * 1024 * 1024, ...(statusRead ? { timeout: 15000 } : {}), ...(environment ? { env: { ...process.env, ...environment } } : {}), ...(signal ? { signal } : {}) }, (error, stdout, stderr) => {
+  execFile(executable, args, { windowsHide: true, shell: false, maxBuffer: 64 * 1024 * 1024, ...(statusRead ? { timeout: 15000 } : {}), ...(environment ? { env: { ...process.env, ...environment } } : {}), ...(signal ? { signal } : {}) }, (error, stdout, stderr) => {
     if (error) {
       const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
-      reject(new Error(missing ? "The local workspace backend is missing. Run npm run build:backend in ui, then retry." : statusRead && error.killed ? "Status check timed out. Retrying…" : redactBackendError(stderr) || redactBackendError(error.message)));
+      const overflow = (error as NodeJS.ErrnoException).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+      reject(new Error(missing ? "The local workspace backend is missing. Run npm run build:backend in ui, then retry." : overflow ? "The requested activity history is too large to display at once." : statusRead && error.killed ? "Status check timed out. Retrying…" : redactBackendError(stderr) || redactBackendError(error.message)));
       return;
     }
     resolve(stdout);

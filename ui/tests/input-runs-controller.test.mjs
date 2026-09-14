@@ -19,10 +19,10 @@ test("opening stage history reads the entire selected run, independently of the 
 });
 
 test("run history loads newest first and completes the exact selected run", async () => {
-  const projectId = randomUUID(), first = run(projectId, "queued", "2026-01-01T00:00:00Z"), second = run(projectId, "execution_failed", "2026-01-02T00:00:00Z"), updates = [];
+  const projectId = randomUUID(), first = run(projectId, "queued", "2026-01-01T00:00:00Z"), second = run(projectId, "execution_failed", "2026-01-02T00:00:00Z"), updates = []; let activityReads = 0;
   const bridge = {
     inputOptimizationRuns: async () => [first, second],
-    projectActivity: async () => ({ project_id: projectId, actions: [] }),
+    projectActivity: async () => { activityReads++; return { project_id: projectId, actions: [] }; },
     driveInputOptimization: async (_, id) => ({ ...(id === second.id ? second : first), state: "baseline_retained", outcome: { kind: "baseline_retained" } }),
     inputOptimizationRun: async (_, id) => id === second.id ? second : first,
     cancelInputOptimization: async (_, id) => ({ ...(id === second.id ? second : first), state: "cancelled", failureCode: "user_requested" }),
@@ -30,6 +30,8 @@ test("run history loads newest first and completes the exact selected run", asyn
   };
   const controller = new InputRunsController(projectId, bridge, () => {}, workspace => updates.push(workspace));
   await controller.ensure(); assert.deepEqual(controller.runs.map(value => value.id), [second.id, first.id]);
+  assert.equal(activityReads, 0, "the run collection must not preload the project-wide activity log");
+  await controller.ensureActivity(second.id); assert.equal(activityReads, 1, "activity is loaded only for the expanded run");
   await controller.resume(second);
   assert.equal(controller.runs[0].state, "baseline_retained"); assert.equal(controller.runningId, undefined); assert.equal(updates.length, 1);
 });

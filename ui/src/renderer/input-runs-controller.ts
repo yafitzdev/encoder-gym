@@ -39,14 +39,13 @@ export class InputRunsController {
     finally { this.activityLoading.delete(runId); this.render(); }
   }
   async ensure(): Promise<void> { if (!this.runs && !this.loading && !this.error) await this.load(); }
-  refresh(): void { if (!this.runningId) { this.epoch++; this.runs = undefined; this.error = undefined; this.loading = false; this.activityLoaded.clear(); this.activityErrors.clear(); this.render(); } }
+  refresh(): void { if (!this.runningId) { this.epoch++; this.runs = undefined; this.error = undefined; this.loading = false; this.activities.clear(); this.activityLoaded.clear(); this.activityErrors.clear(); this.render(); } }
   private async load(): Promise<void> {
     const epoch = this.epoch; this.loading = true; this.error = undefined; this.render();
     try {
-      const [runs, log] = await Promise.all([this.bridge.inputOptimizationRuns(this.projectId), this.bridge.projectActivity(this.projectId, 100)]);
+      const runs = await this.bridge.inputOptimizationRuns(this.projectId);
       if (epoch === this.epoch) {
         this.runs = runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-        this.activities = new Map(runs.flatMap(run => { const activity = inputRunActivity(log, run.id); return activity ? [[run.id, activity] as const] : []; }));
       }
     } catch (error) { if (epoch === this.epoch) this.error = error; }
     finally { if (epoch === this.epoch) { this.loading = false; this.render(); } }

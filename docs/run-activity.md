@@ -13,8 +13,11 @@ synth workspace activity <PROJECT> run <RUN_UUID>
 
 This read-only query returns complete verified action chains linked to that run,
 including actions whose run reference was appended at completion. It does not
-apply the recent-project-action limit. The existing project-wide list remains
-bounded. No historical JSON, event fingerprint or scientific record is changed.
+apply the recent-project-action limit. Overview loads this exact history only
+when the run is expanded; its run collection never preloads the project-wide
+audit log. The standalone Activity page reads the 30 most recent project
+actions, while Export still writes the complete verified JSONL record. No
+historical JSON, event fingerprint or scientific record is changed.
 
 The renderer never truncates or mutates the durable activity record. Repeated
 counter ticks for the same uninterrupted task update one projected activity.

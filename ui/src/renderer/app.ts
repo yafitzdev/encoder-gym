@@ -449,7 +449,7 @@ export function mount(): void {
     if (!id || !workspace()?.managed || view.activity.loading) return;
     const state = view.activity;
     state.loading = true; state.error = undefined; render();
-    try { state.log = await bridge.projectActivity(id); }
+    try { state.log = await bridge.projectActivity(id, 30); }
     catch (error) { state.error = message(error); }
     finally { state.loading = false; if (selection.selectedId === id) render(); }
   }
