@@ -33,6 +33,7 @@ pub enum ActivityEventState {
 #[serde(rename_all = "snake_case")]
 pub enum ActivityNarrativeOrigin {
     Agent,
+    Generation,
     System,
 }
 

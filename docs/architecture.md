@@ -101,6 +101,21 @@ normal read-only store. The serialized record excludes the protocol payload
 and sealed scores. Further iterations must extend this contract with recorded
 completion/selection lineage rather than accepting arbitrary scope replacements.
 
+The workspace CLI's `optimization_runs::agent_dataset` composes this first input
+record with the real Agent runner, generator and dataset-publication adapters.
+Its inspection adapter loads the exact native development reports and verifies
+the selected training sources once per invocation, serving bounded in-memory
+pages thereafter. Provider transport is resolved only from the run's pinned
+catalog; no new discovery or mutable role-default lookup occurs. The command
+returns a dataset publication, not training authority. `prepare-candidate`
+continues through iteration-owned native materialization and task-owned
+full-population clearance. The fixed native audit reuses Nomos's validator and
+input renderer and emits only aggregate facts; its request and clearance pin
+the complete dataset and benchmark inputs. This step checks relevant code/data
+identities without rereading model weights. Per-iteration training/evaluation
+receipts remain the next handoff. The unchanged start guard prevents exposing
+this partial route as the full authorized optimization workflow.
+
 `semantic-catalog` owns immutable reusable/dataset-scoped profiles, append-only
 bindings, deterministic layered resolution, and the provider-neutral resolved
 context. It imports only `artifact-core`; it knows no prompt, provider, SQLite,

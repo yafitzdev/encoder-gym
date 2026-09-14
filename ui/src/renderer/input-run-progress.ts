@@ -73,7 +73,7 @@ function activityStream(events: InputRunActivityEntry[], context: InputRunStageC
   const list = h("ol", { class: "focus-events", id: listId, "aria-label": `${labels[selected]} activity`,
     onScroll: (event: Event) => { if (navigation) navigation.view.scroll[selected] = (event.target as HTMLElement).scrollTop; } }, ...visibleEvents.slice().reverse().map((event, index) => {
       const narrative = event.narrative, live = running && index === 0;
-      const actor = narrative?.origin === "agent" ? "Agent" : "System";
+      const actor = narrative ? ({ agent: "Agent", generation: "Generation", system: "System" })[narrative.origin] : "System";
       const narrativeKind = narrative ? ({ intent: "Intent", reasoning: "Reason", action: "Action", observation: "Result", decision: "Decision", next_step: "Next" })[narrative.kind] : undefined;
       const detail = narrative || event.label ? "" : context ? inputRunStageDetail(event.progress, context) : event.progress.subject ?? "";
       return h("li", { "data-key": `${selected}:${visibleEvents.length - index}`, "data-activity-stage": selected, "aria-current": live ? "true" : null,

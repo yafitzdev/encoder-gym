@@ -6,12 +6,14 @@ mod generated_training;
 mod managed_training;
 mod progress;
 mod repair_delta;
+mod training_clearance;
 mod training_data;
 pub use benchmark::NomosBenchmarkPlan;
 pub use development_evidence::NomosDevelopmentEvidence;
 pub use generated_training::NomosGenerationTemplates;
 pub use managed_training::{NomosTrainingDataset, NomosTrainingDatasetWriter};
 pub use progress::{NativePhase, NativeProgress, ProgressObserver, with_file_progress};
+pub use training_clearance::NomosTrainingClearance;
 pub use training_data::{VerifiedTrainingData, VerifiedTrainingInput};
 
 use std::{

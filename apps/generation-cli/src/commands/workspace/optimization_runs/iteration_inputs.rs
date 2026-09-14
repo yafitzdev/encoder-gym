@@ -38,7 +38,7 @@ pub(super) async fn bind(folder: &Path, run_id: Uuid) -> Result<()> {
     super::super::print(&serde_json::json!({"actionId":action_id,"iteration":result?}))
 }
 
-async fn bind_inputs(
+pub(super) async fn bind_inputs(
     folder: &Path,
     run_id: Uuid,
 ) -> Result<project_workspace_core::optimization_iteration::ProjectOptimizationIteration> {

@@ -26,6 +26,7 @@ test = false
 
 [dependencies]
 anyhow.workspace = true
+agent-runtime-core.workspace = true
 advisor-fake.workspace = true
 advisor-openai-compatible.workspace = true
 artifact-core.workspace = true
@@ -50,6 +51,8 @@ encoder-campaign-core.workspace = true
 encoder-experiment-nomos.workspace = true
 encoder-experiment-runner.workspace = true
 encoder-experiment-sqlite.workspace = true
+encoder-optimization-core.workspace = true
+encoder-optimization-runner.workspace = true
 encoder-repair-core.workspace = true
 generation-core.workspace = true
 generation-fake.workspace = true
@@ -89,6 +92,5 @@ tempfile.workspace = true
 workspace = true
 
 [dev-dependencies]
-encoder-optimization-core.workspace = true
 tempfile.workspace = true
 training-transformer = { path = "../../crates/training-transformer", features = ["test-fixtures"] }

@@ -204,6 +204,7 @@ fn normalize_failures(
             // report fields cannot leak through the generic inspection port.
             let content = serde_json::json!({
                 "reportId": report.id, "suite": report.suite_key, "sourceRowId": source_id,
+                "evidenceScope": "retrieval_failure_sample", "sampleLimit": 50,
                 "taskKind": failure.get("task_kind"), "question": failure.get("question"),
                 "expectedCapabilities": failure.get("expected_capabilities"),
                 "predictedCapabilities": failure.get("predicted_capabilities"),
@@ -272,6 +273,11 @@ mod tests {
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].content["sourceRowId"], "dev-1");
         assert_eq!(failures[0].content["expectedRank"], 2);
+        assert_eq!(
+            failures[0].content["evidenceScope"],
+            "retrieval_failure_sample"
+        );
+        assert_eq!(failures[0].content["sampleLimit"], 50);
         assert!(
             !serde_json::to_string(&failures)
                 .unwrap()

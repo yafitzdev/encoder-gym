@@ -12,6 +12,9 @@ use uuid::Uuid;
 #[tokio::main]
 async fn main() -> Result<()> {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
+    if arguments.first().is_some_and(|value| value == "-c") {
+        return native_clearance(&arguments);
+    }
     if arguments.first().is_some_and(|value| value == "-m") {
         return native_evaluation(&arguments);
     }
@@ -75,6 +78,49 @@ async fn main() -> Result<()> {
         serde_json::json!({"folder":folder,"firstRun":first,"changedRun":changed})
     );
     Ok(())
+}
+
+// Deterministic native adapter boundary, not an alternative production path.
+// Python tests separately exercise the embedded complete-population algorithm.
+fn native_clearance(arguments: &[String]) -> Result<()> {
+    ensure!(
+        arguments.get(1).map(String::as_str)
+            == Some(include_str!(
+                "../../../../crates/encoder-experiment-nomos/src/qualify_training.py"
+            )),
+        "Unexpected native audit program"
+    );
+    let path = PathBuf::from(arguments.get(2).context("Missing audit request")?);
+    let request: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+    ensure!(
+        request["protocol"] == "nomos-training-clearance-v1",
+        "Unknown audit protocol"
+    );
+    let training = fs::read_to_string(
+        request["training"]["key"]
+            .as_str()
+            .context("Missing training artifact")?,
+    )?;
+    ensure!(
+        training.lines().count() as u64 == request["rows"].as_u64().unwrap(),
+        "Wrong population"
+    );
+    writeln!(
+        fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("native-invocations.log")?,
+        "encoder_gym.qualify_training"
+    )?;
+    write_json(
+        &path.with_file_name("result.json"),
+        &serde_json::json!({
+            "protocol":request["protocol"], "requestFingerprint":request["fingerprint"],
+            "trainingRows":request["rows"], "benchmarkRows":3,
+            "invalidRows":0, "duplicateRows":0, "overlapRows":0,
+            "missingGroupRows":5, "missingLineageRows":5,
+        }),
+    )
 }
 
 fn native_evaluation(arguments: &[String]) -> Result<()> {

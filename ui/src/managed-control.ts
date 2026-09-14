@@ -120,6 +120,7 @@ export interface NativeProgress {
   runStage?: import("./optimization-stages.js").OptimizationStage;
   phase:
     | "verifying_file" | "verifying_rows"
+    | "agent_analysis" | "data_generation"
     | "checking_model" | "checking_dataset" | "checking_evaluation" | "checking_runtime"
     | "loading_training_rows" | "writing_training_rows" | "checking_materialized_project"
     | "loading_evaluation_protocol" | "creating_candidate" | "creating_experiment"

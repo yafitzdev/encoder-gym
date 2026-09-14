@@ -135,6 +135,18 @@ original verdicts, model links, history and restart against those persisted fact
 
 ## Component loop
 
+The embedded native training-clearance algorithm has additional offline Python
+tests (standard library only):
+
+```text
+python -B crates/encoder-experiment-nomos/tests/test_training_clearance.py
+```
+
+These inject deterministic native validation/rendering functions into the pure
+audit; the production entry point imports the pinned native implementations.
+The CLI process test uses the deterministic native executable instead of
+requiring Python, a Nomos checkout, model downloads or provider access.
+
 For each component:
 
 1. Define the smallest useful public behavior.

@@ -576,7 +576,10 @@ fn canonical_fingerprint(value: &str) -> bool {
     value.strip_prefix("sha256:").is_some_and(raw_sha256)
 }
 
-fn contained_existing(root: &Path, relative: &str) -> Result<PathBuf, EncoderTaskAdapterError> {
+pub(super) fn contained_existing(
+    root: &Path,
+    relative: &str,
+) -> Result<PathBuf, EncoderTaskAdapterError> {
     validate_relative(relative)?;
     let path = root.join(relative).canonicalize().map_err(adapter_error)?;
     if !path.starts_with(root) {
@@ -587,7 +590,7 @@ fn contained_existing(root: &Path, relative: &str) -> Result<PathBuf, EncoderTas
     Ok(path)
 }
 
-fn ensure_output_directory(
+pub(super) fn ensure_output_directory(
     root: &Path,
     components: &[&str],
 ) -> Result<PathBuf, EncoderTaskAdapterError> {

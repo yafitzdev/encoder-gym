@@ -1,6 +1,6 @@
 export type ProjectActivitySource = "desktop" | "cli" | "system";
 export type ProjectActivityState = "started" | "progress" | "succeeded" | "failed";
-export type ProjectActivityNarrativeOrigin = "agent" | "system";
+export type ProjectActivityNarrativeOrigin = "agent" | "generation" | "system";
 export type ProjectActivityNarrativeKind = "intent" | "reasoning" | "action" | "observation" | "decision" | "next_step";
 
 export interface ProjectActivityReference { kind: string; id: string }

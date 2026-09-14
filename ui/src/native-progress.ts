@@ -3,6 +3,7 @@ import type { ProjectActivityNarrative } from "./project-activity.js";
 import { isOptimizationStage } from "./optimization-stages.js";
 
 const phases = new Set([
+  "agent_analysis", "data_generation",
   "checking_model", "checking_dataset", "checking_evaluation", "checking_runtime",
   "loading_training_rows", "writing_training_rows", "checking_materialized_project",
   "loading_evaluation_protocol", "creating_candidate", "creating_experiment",
@@ -40,7 +41,7 @@ function validateNarrative(input: unknown): ProjectActivityNarrative | undefined
   if (!input || typeof input !== "object" || Array.isArray(input)) return;
   const value = input as Record<string, unknown>;
   if (Object.keys(value).some(key => !["origin", "kind", "summary"].includes(key))) return;
-  if (!(["agent", "system"] as unknown[]).includes(value.origin)
+  if (!(["agent", "generation", "system"] as unknown[]).includes(value.origin)
     || !(["intent", "reasoning", "action", "observation", "decision", "next_step"] as unknown[]).includes(value.kind)
     || typeof value.summary !== "string" || !value.summary || value.summary.trim() !== value.summary
     || [...value.summary].length > 400 || /[\u0000-\u001f\u007f]/.test(value.summary)

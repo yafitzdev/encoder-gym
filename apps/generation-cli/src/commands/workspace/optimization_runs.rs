@@ -25,6 +25,7 @@ use project_workspace_local::{
 use std::path::Path;
 use uuid::Uuid;
 
+mod agent_dataset;
 mod iteration_inputs;
 
 fn emit_progress(phase: &str, completed: Option<u64>, total: Option<u64>) {
@@ -69,6 +70,10 @@ fn candidate_reasoning(candidate: &TrainingCandidate) -> Result<String> {
 pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunCommand) -> Result<()> {
     use WorkspaceOptimizationRunCommand::*;
     match command {
+        EditDataset { run_id, runtime } => agent_dataset::execute(folder, run_id, runtime).await,
+        PrepareCandidate { run_id, runtime } => {
+            agent_dataset::prepare_candidate(folder, run_id, runtime).await
+        }
         BindIteration { run_id } => iteration_inputs::bind(folder, run_id).await,
         Iterations { run_id } => super::print(
             &project_workspace_local::optimization_iterations::list(folder, run_id).await?,

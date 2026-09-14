@@ -153,6 +153,24 @@ impl NomosGenerationTemplates {
             let mut row = template.clone();
             row["question"] = question.into();
             row["decision_state_id"] = format!("encoder-gym:{}:{}", task.id, index).into();
+            // Changing a decision ID must not erase the source ancestry used by
+            // the complete-population benchmark firewall. A generated paraphrase
+            // of a protected source is still derived from that source.
+            if row.get("provenance").is_none_or(Value::is_null) {
+                row["provenance"] = json!({});
+            }
+            let provenance = row["provenance"].as_object_mut().ok_or_else(|| {
+                OptimizationError::Validation("Generation template has invalid provenance".into())
+            })?;
+            if provenance
+                .get("source_row_hash")
+                .is_none_or(|value| value.as_str().is_some_and(str::is_empty) || value.is_null())
+            {
+                provenance.insert(
+                    "source_row_hash".into(),
+                    template["decision_state_id"].clone(),
+                );
+            }
             row["encoder_gym_generation"] = json!({"taskId":task.id,"runId":task.run_id,"iteration":task.iteration,"proposalFingerprint":task.proposal_fingerprint,"templateRowId":task.template_row_id,"templateFingerprint":task.template_fingerprint,"rowIndex":index});
             validate_native_training_row(&row).map_err(native_error)?;
             admission.accepted.push(AdmittedGenerationRow {
@@ -206,6 +224,23 @@ mod tests {
     }
     fn tool(id: &str) -> Value {
         json!({"tool_id":id,"tool_family":"search","description":"Find evidence","capabilities":["search"],"input_modalities":["text"],"output_modalities":["text"],"evidence_roles":["primary"],"side_effect_class":"none","argument_schema":{}})
+    }
+
+    #[test]
+    fn generated_question_keeps_original_source_identity_for_benchmark_checks() {
+        let (templates, tasks) = fixture(1);
+        let result = templates
+            .validate_output(
+                &tasks[0],
+                r#"{"rows":[{"question":"An entirely different question"}]}"#,
+            )
+            .unwrap();
+        assert_eq!(result.accepted.len(), 1);
+        assert_eq!(
+            result.accepted[0].content["provenance"]["source_row_hash"],
+            "original"
+        );
+        assert_ne!(result.accepted[0].content["decision_state_id"], "original");
     }
     fn fixture(count: u32) -> (NomosGenerationTemplates, Vec<GenerationTask>) {
         let templates =

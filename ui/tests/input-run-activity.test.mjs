@@ -76,6 +76,26 @@ test("optimization narrative stays inline with compact work across resumed actio
   ]);
 });
 
+test("project Agent and generation journals appear inline without desktop narration", () => {
+  const narrative = { origin: "agent", kind: "reasoning", summary: "Remove the ambiguous row identified by the retrieval failure." };
+  const generation = { origin: "generation", kind: "intent", summary: "Generating the requested training example." };
+  const qualification = { origin: "system", kind: "intent", summary: "Checking the complete candidate dataset." };
+  const action = (id, operation, stage, narrative, time) => ({ action_id: id, operation, source: "cli", state: "succeeded",
+    started_at: time, finished_at: time, references: [{ kind: "run", id: "run" }],
+    events: [{ state: "progress", stage, narrative, created_at: time }] });
+  const activity = inputRunActivity({ actions: [
+    action("clearance", "optimization.qualification", "checking_training_data", qualification, "2026-09-15T12:00:04Z"),
+    action("generator", "optimization.generation", "data_generation", generation, "2026-09-15T12:00:02Z"),
+    action("agent", "optimization.agent", "agent_analysis", narrative, "2026-09-15T12:00:01Z"),
+    { ...action("other", "optimization.agent", "agent_analysis", narrative, "2026-09-15T12:00:03Z"), references: [{kind:"run",id:"another"}] },
+  ] }, "run");
+  assert.equal(activity.actionId, "agent");
+  assert.deepEqual(activity.events.map(event => event.narrative), [narrative, generation, qualification]);
+  assert.deepEqual(activity.events.map(event => event.stage), ["preparing_data", "preparing_data", "preparing_data"]);
+  assert.equal(activity.progress.phase, "checking_training_data");
+  assert.equal(inputRunStageLabel("data_generation"), "Generating training examples");
+});
+
 test("all recorded and live tasks survive every stage and retries beyond old cutoffs", () => {
   const origin = Date.parse("2026-09-14T12:00:00Z");
   const events = optimizationStages.flatMap((stage, index) => Array.from({ length: 140 }, (_, row) => ({

@@ -40,12 +40,14 @@ export function mergedActivity(activity: InputRunActivity | undefined, live: Inp
 /** Project activity is the durable source for desktop orchestration progress. */
 export function inputRunActivity(log: ProjectActivityLog, runId: string): InputRunActivity | undefined {
   const related = log.actions.filter(candidate => candidate.references.some(reference => reference.kind === "run" && reference.id === runId));
-  const actions = related.filter(candidate => candidate.operation === "optimization.run" || candidate.operation === "optimization.start")
+  const actions = related.filter(candidate => ["optimization.run", "optimization.start", "optimization.agent"].includes(candidate.operation))
     .sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at));
-  const action = actions.find(candidate => candidate.operation === "optimization.run") ?? actions[0];
+  const action = actions.find(candidate => candidate.operation === "optimization.run")
+    ?? actions.find(candidate => candidate.operation === "optimization.agent") ?? actions[0];
   if (!action) return undefined;
-  const progressEvents = actions.slice().reverse().flatMap(candidate => candidate.events)
-    .filter(event => event.state === "progress" && event.stage);
+  const progressEvents = related.filter(candidate => ["optimization.run", "optimization.start", "optimization.agent", "optimization.generation", "optimization.qualification"].includes(candidate.operation))
+    .flatMap(candidate => candidate.events).filter(event => event.state === "progress" && event.stage)
+    .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
   const latest = progressEvents.at(-1);
   const progressOf = (event: (typeof progressEvents)[number]): NativeProgress => validateNativeProgress({
     phase: event.stage, completed: event.completed, total: event.total,
@@ -133,6 +135,7 @@ export function presentedActivity(events: InputRunActivityEntry[], keepLiveCheck
 export { optimizationStages, stageLabels, type OptimizationStage } from "../optimization-stages.js";
 
 export const inputRunStageLabel = (stage: string): string => ({
+  agent_analysis: "Analyzing development failures", data_generation: "Generating training examples",
   verifying_file: "Verifying file checksum",
   verifying_rows: "Validating training rows",
   checking_model: "Checking baseline model",
@@ -177,6 +180,8 @@ export function inputRunStageDetail(progress: NativeProgress, context: InputRunS
     ? context.finalSuite
     : context.developmentSuites.join(", ") || context.evaluation;
   return ({
+    agent_analysis: context.evaluation,
+    data_generation: data,
     verifying_file: "File checksum",
     verifying_rows: data,
     checking_model: context.model,

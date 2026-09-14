@@ -101,6 +101,12 @@ app.whenReady().then(async()=>{
     await evaluate(`document.querySelector('#overview-new-root-stage-checking_inputs').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))`);
     await check('stage selection supports keyboard navigation','document.activeElement.id==="overview-new-root-stage-preparing_data" && document.querySelectorAll("[data-activity-stage=preparing_data]").length===140');
     await capture('stage-history-dark');
+    await evaluate(`qa.state.activityViews.get('new-root').stage='preparing_data';qa.setup.activity={...qa.setup.activity,events:[
+      {at:'2026-09-14T12:00:01Z',stage:'preparing_data',progress:{phase:'agent_analysis'},narrative:{origin:'agent',kind:'reasoning',summary:'Replace the ambiguous search row using the recorded failure.'}},
+      {at:'2026-09-14T12:00:02Z',stage:'preparing_data',progress:{phase:'data_generation'},narrative:{origin:'generation',kind:'intent',summary:'Generating the requested search example.'}}
+    ]};qa.render()`);
+    await check('Agent and generator retain their actual origins inline',`[...document.querySelectorAll('.focus-event-kind')].map(node=>node.childNodes[0].textContent).join(',')==='Generation,Agent' && document.querySelector('.focus-events').textContent.includes('recorded failure')`);
+    await capture('agent-generation-dark');
     await evaluate(`qa.setup.activity=window.__priorActivity;qa.state.activityViews.get('new-root').stage=undefined;qa.render()`);
     await evaluate(`qa.setup.liveProgress=undefined;qa.setup.liveProgressAt=undefined;qa.render()`);
     await evaluate('[...document.querySelectorAll(".optimization-status-controls button")].find(button=>button.textContent==="Stop").click()');

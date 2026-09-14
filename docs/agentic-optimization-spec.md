@@ -6,9 +6,56 @@ include a bounded Pi inspection/proposal loop, selected OpenAI-compatible model
 transport, an append-only project Agent-call journal, read-only native
 development-failure inspection, bounded concurrent generation, and recoverable
 publication through ordinary imports and dataset versions. They are not yet
-composed into Optimize: full-population qualification, training/evaluation handoff,
+composed into Optimize: training/evaluation handoff,
 iterative recovery and the production GUI remain outstanding. The fixed-recipe executor
 still explicitly rejects agentic settings; it must not masquerade as an agent run.
+
+The pre-training CLI composition now exists as `workspace optimization-run
+<PROJECT> edit-dataset <RUN_ID>`. It binds the first iteration automatically,
+loads exact saved development diagnostics and the selected training version,
+invokes the pinned Agent through Pi, validates its evidence-linked proposal,
+calls the independently pinned generator and publishes the ordinary dataset
+diff. It acquires the existing local execution lease and reuses completed calls
+and publication receipts. The full start guard remains closed: this command is
+an integration step for already-authorized iteration records, not an alternative
+way to start a complete or quick-test optimization run.
+
+Its production-CLI test uses deterministic Pi wire responses and a loopback
+generator, not paid models. It proves one inspected failure leads to a removal
+and generated addition, changed project defaults do not switch pinned models,
+and retry performs no new provider or native work. A test fixture supplies the
+root reservation while the production start guard remains in place. Complete
+dataset qualification, candidate training/evaluation and repeated iterations
+are not established by this test.
+
+`workspace optimization-run <PROJECT> prepare-candidate <RUN_ID>` extends that
+same composition through native materialization and complete-population
+qualification. The derived version is rendered beneath the iteration's UUID,
+never substituted into the root's preparation or fixed-candidate receipt. A
+fixed embedded program imports the pinned Nomos validator and input renderer,
+checks every training row, and audits exact/normalized native input plus declared
+source, group and lineage identities against every pinned benchmark input.
+Missing optional grouping identities are counted as limitations rather than
+treated as one shared empty identity. Generated questions retain template source
+ancestry. Only aggregate clearance facts leave the process; native diagnostic
+text, stderr and protected rows do not. The request pins code, project, benchmark
+and dataset identities, and a fingerprinted clearance is atomically published.
+Retry validates the same inputs and reuses the clearance without invoking the
+native program again. Invalid, duplicate or overlapping populations cannot
+complete this command. It performs no training or model evaluation yet.
+
+The production-CLI fixture exercises this extended command with a deterministic
+native boundary and checks reuse and altered-receipt rejection. Separate Python
+tests exercise the actual embedded audit algorithm, including five overlap
+identities, invalid rows, duplicates, full-file hash verification and native-error
+redaction. This remains pre-training integration, not the required composed
+training/evaluation cycle or a live Nomos optimization.
+
+Agent and Generation activities are now projected from their own persisted
+actions into the existing activity stream, rather than requiring desktop
+re-emission under `optimization.run`. Generation has an explicit origin and
+per-call action identity. Renderer tests verify inline attribution separately
+from the CLI test; this is not yet a one-click app integration test.
 
 The Agent runner reserves one call before each one-turn Pi session, retains
 completed tool results for continuation, and rejects edits referencing
@@ -26,8 +73,8 @@ The CLI derives it from the benchmark's exact recorded scientific source;
 only development references enter the record, not the source protocol's sealed
 scores. Retries retain the original timestamp and identity. Agent-store opening
 requires this binding and rejects substituted scope evidence. This first-input
-handoff does not yet compose the Agent runner, generation, qualification and
-training, and does not admit later iterations without completion lineage.
+handoff is consumed by the pre-training CLI paths above. It does not yet compose
+training/evaluation or admit later iterations without completion lineage.
 
 Generation uses the generation slice's separate structured-output port, without
 recasting a native retrieval task as classification. The Nomos adapter currently

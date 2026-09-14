@@ -52,6 +52,18 @@ pub enum WorkspaceOptimizationRunCommand {
     Iterations { run_id: Uuid },
     /// Pin the first Agent iteration from already-verified inputs and saved development evidence.
     BindIteration { run_id: Uuid },
+    /// Execute the pinned Agent and generator, publishing its dataset edits without training.
+    EditDataset {
+        run_id: Uuid,
+        #[command(flatten)]
+        runtime: super::ResearchRuntimeArgs,
+    },
+    /// Execute Agent edits, render and qualify the derived dataset without training.
+    PrepareCandidate {
+        run_id: Uuid,
+        #[command(flatten)]
+        runtime: super::ResearchRuntimeArgs,
+    },
     /// Read this run's pinned non-secret provider connections and models.
     Providers { run_id: Uuid },
     /// Authorize exact inputs and idempotently reserve their project run.

@@ -13,15 +13,17 @@ use encoder_optimization_core::{
     ports::{BoxFuture, OptimizationGenerationStore},
 };
 use project_workspace_core::{
-    OptimizationLaunchAuthorization, ProviderConfiguration, ProviderLimits, ProviderRole,
+    ActivityEventState, ActivityFailure, ActivityNarrative, ActivityNarrativeKind,
+    ActivityNarrativeOrigin, ActivityReference, ActivitySource, OptimizationLaunchAuthorization,
+    ProviderConfiguration, ProviderLimits, ProviderRole,
 };
 use sqlx::{Connection, Row, SqliteConnection};
 use sysinfo::{Pid, System};
 use uuid::Uuid;
 
 use crate::{
-    connect, load_provider_catalog_history, open_workspace, optimization_agent,
-    optimization_launch, optimization_runs,
+    AppendActivity, append_activity, connect, load_provider_catalog_history, open_workspace,
+    optimization_agent, optimization_launch, optimization_runs,
 };
 
 pub struct ProjectGenerationStore {
@@ -29,6 +31,7 @@ pub struct ProjectGenerationStore {
     run_id: Uuid,
     launch: OptimizationLaunchAuthorization,
     provider: ProviderConfiguration,
+    record_activity: bool,
 }
 
 impl ProjectGenerationStore {
@@ -64,7 +67,66 @@ impl ProjectGenerationStore {
             run_id,
             launch,
             provider,
+            record_activity: false,
         })
+    }
+
+    /// The caller initializes project activity before opting into live events.
+    pub fn with_activity(mut self) -> Self {
+        self.record_activity = true;
+        self
+    }
+
+    async fn activity(
+        &self,
+        task: &GenerationTask,
+        call: &GenerationReservation,
+        state: ActivityEventState,
+    ) -> Result<()> {
+        if !self.record_activity {
+            return Ok(());
+        }
+        let progress = state == ActivityEventState::Progress;
+        let failed = state == ActivityEventState::Failed;
+        append_activity(
+            &self.folder,
+            AppendActivity {
+                action_id: call.id,
+                operation: "optimization.generation".into(),
+                source: ActivitySource::Cli,
+                state,
+                stage: progress.then(|| "data_generation".into()),
+                completed: None,
+                total: None,
+                narrative: if progress {
+                    Some(ActivityNarrative::new(
+                        ActivityNarrativeOrigin::Generation,
+                        ActivityNarrativeKind::Intent,
+                        "Generating questions for the Agent's selected training context.",
+                    )?)
+                } else {
+                    None
+                },
+                references: vec![
+                    ActivityReference::new("run", task.run_id.to_string())?,
+                    ActivityReference::new("iteration", task.iteration.to_string())?,
+                    ActivityReference::new("provider_call", call.id.to_string())?,
+                    ActivityReference::new("generation_task", task.id.to_string())?,
+                    ActivityReference::new("training_row", task.template_row_id.clone())?,
+                ],
+                failure: if failed {
+                    Some(ActivityFailure::new(
+                        "generation_interrupted",
+                        "Generation did not finish; its reserved usage remains charged.",
+                    )?)
+                } else {
+                    None
+                },
+                created_at: Utc::now(),
+            },
+        )
+        .await?;
+        Ok(())
     }
 
     pub fn provider(&self) -> &ProviderConfiguration {
@@ -171,6 +233,12 @@ impl OptimizationGenerationStore for ProjectGenerationStore {
             .map_err(adapter)?;
             transaction.commit().await.map_err(adapter)?;
             database.close().await.map_err(adapter)?;
+            self.activity(&task, &call, ActivityEventState::Started)
+                .await
+                .map_err(adapter)?;
+            self.activity(&task, &call, ActivityEventState::Progress)
+                .await
+                .map_err(adapter)?;
             Ok(())
         })
     }
@@ -188,6 +256,17 @@ impl OptimizationGenerationStore for ProjectGenerationStore {
                 .map_err(adapter)?;
             transaction.commit().await.map_err(adapter)?;
             database.close().await.map_err(adapter)?;
+            self.activity(
+                &task,
+                &outcome.reservation,
+                if outcome.interrupted {
+                    ActivityEventState::Failed
+                } else {
+                    ActivityEventState::Succeeded
+                },
+            )
+            .await
+            .map_err(adapter)?;
             Ok(())
         })
     }

@@ -3416,6 +3416,7 @@ version = "0.1.0"
 dependencies = [
  "advisor-fake",
  "advisor-openai-compatible",
+ "agent-runtime-core",
  "analysis-core",
  "anyhow",
  "artifact-core",
@@ -3439,6 +3440,7 @@ dependencies = [
  "encoder-experiment-runner",
  "encoder-experiment-sqlite",
  "encoder-optimization-core",
+ "encoder-optimization-runner",
  "encoder-repair-core",
  "evaluation-core",
  "generation-supervisor-core",
