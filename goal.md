@@ -31,11 +31,17 @@ or UI mockups alone do not complete this goal.
   The fixed-recipe executor explicitly rejects agentic settings.
 - In-progress code now contains a selected-model Pi transport, bounded
   development/training inspection tools, validated edit proposals, an
-  append-only Agent-call journal and a native development-diagnostic reader.
-  These are foundations, not a connected optimization engine. They still need
-  integration and end-to-end verification; their existence must not be reported
-  as a working Optimize journey. Preserve and finish this work rather than
-  rebuilding it or replacing it with another fixed recipe.
+  append-only Agent-call journal, a native development-diagnostic reader,
+  bounded concurrent generation with durable call accounting, and recoverable
+  publication through ordinary imports and dataset versions. These are
+  foundations, not a connected optimization engine. Component tests do not
+  establish that the application invokes them. Preserve and connect this work
+  rather than rebuilding it or replacing it with another fixed recipe.
+- Native generation currently creates questions from inspected training
+  templates while preserving their labels, tool registry and router state.
+  Schema checks and duplicate rejection are implemented components, not proof
+  of semantic correctness or complete training-to-benchmark isolation. The
+  complete derived dataset still needs qualification before training.
 - Run 17's candidate reports exist in the scientific journal but are absent
   from its entry in project benchmark results. Diagnose and repair that result
   association without rewriting historical evidence or weakening comparability.
@@ -62,6 +68,25 @@ Agent proposal, generation attempts and resulting dataset version as resumable
 steps of the same run. Remove the fixed-executor rejection only when the new
 path actually enforces the authorized settings. Do not unblock the UI by
 bypassing that guard or silently ignoring unsupported settings.
+
+Close these integration gaps in that order:
+
+1. Bind the exact selected connections and establish a durable iteration record
+   linking its starting model, dataset and permitted development evidence.
+2. Connect Agent inspection and proposals to generation, full dataset
+   qualification, version publication, native training and evaluation through
+   the production CLI. Reuse the existing slice contracts and journals.
+3. Drive subsequent iterations from their persisted predecessors. Extend
+   first-iteration-only scope checks using recorded lineage, not caller-supplied
+   replacements. Recover completed steps without repeating provider calls,
+   dataset publication or training; account separately for uncertain attempts.
+4. Connect this same execution path to Overview and repair report associations.
+   Provider calls, Agent activity and results must refer to the same run and
+   iteration; the UI must not maintain a separate imitation of the workflow.
+
+Report implementation status separately as component-tested, CLI-integrated,
+and app-verified. Do not call the agentic system fixed until the configured
+providers actually participate in the verified end-to-end journey.
 
 ## Required execution
 
