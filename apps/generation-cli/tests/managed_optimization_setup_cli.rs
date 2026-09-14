@@ -212,6 +212,136 @@ async fn configure_fake_providers(
 }
 
 #[tokio::test]
+async fn agent_settings_preview_and_authority_are_immutable_and_cannot_run_as_a_fixed_recipe() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let (folder, model, data, benchmark) = prepared(root).await;
+    configure_fake_providers(&folder, None).await;
+    let choice = preview(root, &model, &data, &benchmark);
+    request(root, &choice, Uuid::new_v4());
+    let setup = save(root)["setup"].clone();
+    let before = fs::read(folder.join("project.sqlite")).unwrap();
+    let preview = run(
+        root,
+        &[
+            "optimization-launch",
+            "project",
+            "preview",
+            "--setup",
+            setup["id"].as_str().unwrap(),
+            "--quick-test",
+        ],
+    );
+    assert_eq!(before, fs::read(folder.join("project.sqlite")).unwrap());
+    assert_eq!(preview["scope"]["agentic"]["mode"], "quick_test");
+    assert_eq!(preview["scope"]["agentic"]["generationConcurrency"], 1);
+    assert_eq!(preview["scope"]["limits"]["maximumIterations"], 1);
+    assert_eq!(preview["scope"]["limits"]["maximumTrainingSeconds"], 120);
+    assert_eq!(preview["scope"]["finalEvaluation"], "development_only");
+    assert_eq!(preview["scope"]["limits"]["maximumFinalEvaluations"], 0);
+    let request = json!({"id":Uuid::new_v4(), "scope":preview["scope"]});
+    fs::write(
+        root.join("agentic-launch.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+    let saved = run(
+        root,
+        &[
+            "optimization-launch",
+            "project",
+            "authorize",
+            "--file",
+            "agentic-launch.json",
+        ],
+    );
+    assert_eq!(saved["authorization"]["scope"], preview["scope"]);
+    let retry = run(
+        root,
+        &[
+            "optimization-launch",
+            "project",
+            "authorize",
+            "--file",
+            "agentic-launch.json",
+        ],
+    );
+    assert_eq!(retry["authorization"], saved["authorization"]);
+    let rejected = invoke(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "start",
+            "--file",
+            "agentic-launch.json",
+        ],
+    );
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("fixed-recipe executor cannot honor")
+    );
+    assert_eq!(
+        run(root, &["optimization-run", "project", "list"]),
+        json!([])
+    );
+    let settings = project_workspace_core::OptimizationAgentSettings {
+        maximum_iterations: 2,
+        generation_concurrency: 4,
+        objective: "Improve routing without generic regression.".into(),
+        ..Default::default()
+    };
+    fs::write(
+        root.join("agent-settings.json"),
+        serde_json::to_vec(&settings).unwrap(),
+    )
+    .unwrap();
+    let custom = run(
+        root,
+        &[
+            "optimization-launch",
+            "project",
+            "preview",
+            "--setup",
+            setup["id"].as_str().unwrap(),
+            "--settings-file",
+            "agent-settings.json",
+        ],
+    );
+    assert_eq!(custom["scope"]["agentic"]["generationConcurrency"], 4);
+    assert_eq!(custom["scope"]["limits"]["maximumModels"], 2);
+    assert_eq!(
+        custom["scope"]["limits"]["maximumDevelopmentEvaluations"],
+        2
+    );
+    let mut invalid = serde_json::to_value(settings).unwrap();
+    invalid["generationConcurrency"] = 0.into();
+    fs::write(
+        root.join("agent-settings.json"),
+        serde_json::to_vec(&invalid).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        !invoke(
+            root,
+            &[
+                "optimization-launch",
+                "project",
+                "preview",
+                "--setup",
+                setup["id"].as_str().unwrap(),
+                "--settings-file",
+                "agent-settings.json"
+            ]
+        )
+        .status
+        .success()
+    );
+    let history = run(root, &["optimization-launch", "project", "list"]);
+    assert_eq!(history, json!([saved["authorization"]]));
+}
+
+#[tokio::test]
 async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_secret_or_row_data() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();

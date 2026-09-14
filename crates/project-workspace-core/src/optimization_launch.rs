@@ -4,8 +4,8 @@
 //! neither contains credentials nor performs agent, generation, training, or
 //! evaluation work.
 use crate::{
-    BoundIdentity, Invalid, OptimizationSetup, ProjectBenchmarkVersion, ProviderCatalog,
-    ProviderLimits, ProviderRole, require, validate_name,
+    BoundIdentity, Invalid, OptimizationAgentSettings, OptimizationSetup, ProjectBenchmarkVersion,
+    ProviderCatalog, ProviderLimits, ProviderRole, require, validate_name,
 };
 use chrono::{DateTime, Utc};
 use encoder_experiment_core::domain::EvidenceRole;
@@ -56,7 +56,7 @@ impl OptimizationExecutionLimits {
                         .maximum_models
                         .checked_mul(development_suites)
                         .unwrap_or(0)
-                && self.maximum_final_evaluations == 1,
+                && self.maximum_final_evaluations <= 1,
             "Optimization limits must match the finite default execution envelope.",
         )
     }
@@ -66,6 +66,7 @@ impl OptimizationExecutionLimits {
 #[serde(rename_all = "snake_case")]
 pub enum FinalEvaluationAuthorization {
     SelectedCandidateOnce,
+    DevelopmentOnly,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,6 +79,8 @@ pub struct OptimizationLaunchScope {
     pub generation: ProviderLimits,
     pub advisor: ProviderLimits,
     pub final_evaluation: FinalEvaluationAuthorization,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agentic: Option<OptimizationAgentSettings>,
     pub fingerprint: String,
 }
 
@@ -140,6 +143,7 @@ impl OptimizationLaunchScope {
             generation,
             advisor,
             final_evaluation: FinalEvaluationAuthorization::SelectedCandidateOnce,
+            agentic: None,
             fingerprint: String::new(),
         };
         value.fingerprint = value.reproduce()?;
@@ -148,13 +152,18 @@ impl OptimizationLaunchScope {
     }
 
     pub fn reproduce(&self) -> Result<String, Invalid> {
-        artifact_core::fingerprint(&serde_json::json!({
+        let mut value = serde_json::json!({
             "projectId":self.project_id,"setup":self.setup,
             "providerCatalog":self.provider_catalog,"limits":self.limits,
             "generation":self.generation,"advisor":self.advisor,
             "finalEvaluation":self.final_evaluation,
-        }))
-        .map_err(|error| Invalid(error.to_string()))
+        });
+        // Omitted for old authorities: historical fingerprints must not change.
+        if let Some(settings) = &self.agentic {
+            value["agentic"] =
+                serde_json::to_value(settings).map_err(|error| Invalid(error.to_string()))?;
+        }
+        artifact_core::fingerprint(&value).map_err(|error| Invalid(error.to_string()))
     }
 
     pub fn validate_identity(&self) -> Result<(), Invalid> {
@@ -171,12 +180,25 @@ impl OptimizationLaunchScope {
         let development_suites =
             self.limits.maximum_development_evaluations / self.limits.maximum_models;
         require(
-            development_suites > 0
-                && self.final_evaluation == FinalEvaluationAuthorization::SelectedCandidateOnce
-                && self.reproduce()? == self.fingerprint,
+            development_suites > 0 && self.reproduce()? == self.fingerprint,
             "Optimization launch scope changed or is invalid.",
         )?;
-        self.limits.validate(development_suites)
+        self.limits.validate(development_suites)?;
+        match &self.agentic {
+            Some(settings) => {
+                settings.validate()?;
+                require(
+                    self.limits == settings.execution_limits(development_suites)?
+                        && self.final_evaluation == settings.final_authorization(),
+                    "Execution limits do not match the pinned agent settings.",
+                )
+            }
+            None => require(
+                self.final_evaluation == FinalEvaluationAuthorization::SelectedCandidateOnce
+                    && self.limits.maximum_final_evaluations == 1,
+                "Legacy launches require their original final-evaluation policy.",
+            ),
+        }
     }
 
     pub fn validate(
@@ -226,10 +248,54 @@ impl OptimizationLaunchScope {
                     .filter(|suite| suite.role == EvidenceRole::SealedAcceptance)
                     .count()
                     == 1
-                && self.final_evaluation == FinalEvaluationAuthorization::SelectedCandidateOnce
                 && self.reproduce()? == self.fingerprint,
             "Optimization launch scope changed or does not match its exact inputs.",
         )
+    }
+
+    /// Bind settings into a new immutable authority without changing old runs.
+    pub fn with_agentic_settings(
+        mut self,
+        settings: OptimizationAgentSettings,
+    ) -> Result<Self, Invalid> {
+        self.validate_identity()?;
+        settings.validate()?;
+        let development_suites =
+            self.limits.maximum_development_evaluations / self.limits.maximum_models;
+        self.limits = settings.execution_limits(development_suites)?;
+        self.final_evaluation = settings.final_authorization();
+        self.agentic = Some(settings);
+        self.fingerprint = self.reproduce()?;
+        self.validate_identity()?;
+        Ok(self)
+    }
+}
+
+impl OptimizationAgentSettings {
+    fn execution_limits(
+        &self,
+        development_suites: u32,
+    ) -> Result<OptimizationExecutionLimits, Invalid> {
+        Ok(OptimizationExecutionLimits {
+            maximum_iterations: self.maximum_iterations,
+            maximum_models: self.maximum_iterations,
+            maximum_dataset_row_changes: u64::from(self.maximum_row_changes),
+            maximum_training_seconds: u64::from(self.training.maximum_seconds_per_iteration)
+                * u64::from(self.maximum_iterations),
+            maximum_development_evaluations: self
+                .maximum_iterations
+                .checked_mul(development_suites)
+                .ok_or_else(|| Invalid("Evaluation limit overflow.".into()))?,
+            maximum_final_evaluations: u32::from(self.permits_final_evaluation()),
+        })
+    }
+
+    fn final_authorization(&self) -> FinalEvaluationAuthorization {
+        if self.permits_final_evaluation() {
+            FinalEvaluationAuthorization::SelectedCandidateOnce
+        } else {
+            FinalEvaluationAuthorization::DevelopmentOnly
+        }
     }
 }
 
@@ -458,6 +524,49 @@ mod tests {
         )
         .unwrap();
         (setup, providers, benchmark)
+    }
+
+    #[test]
+    fn agent_settings_bind_limits_without_rewriting_legacy_fingerprints() {
+        let (setup, providers, benchmark) = fixture();
+        let legacy = OptimizationLaunchScope::bind(&setup, &providers, &benchmark).unwrap();
+        let json = serde_json::to_value(&legacy).unwrap();
+        assert!(json.get("agentic").is_none());
+        assert_eq!(
+            serde_json::from_value::<OptimizationLaunchScope>(json)
+                .unwrap()
+                .reproduce()
+                .unwrap(),
+            legacy.fingerprint
+        );
+        let settings = OptimizationAgentSettings::quick_test();
+        let quick = legacy.clone().with_agentic_settings(settings).unwrap();
+        quick.validate(&setup, &providers, &benchmark).unwrap();
+        assert_eq!(quick.limits.maximum_iterations, 1);
+        assert_eq!(quick.limits.maximum_training_seconds, 120);
+        assert_eq!(quick.limits.maximum_development_evaluations, 2);
+        assert_eq!(quick.limits.maximum_final_evaluations, 0);
+        assert_eq!(
+            quick.final_evaluation,
+            FinalEvaluationAuthorization::DevelopmentOnly
+        );
+        assert_ne!(quick.fingerprint, legacy.fingerprint);
+        let mut forged = quick.clone();
+        forged.limits.maximum_iterations = 2;
+        forged.fingerprint = forged.reproduce().unwrap();
+        assert!(forged.validate_identity().is_err());
+        forged = quick;
+        forged.final_evaluation = FinalEvaluationAuthorization::SelectedCandidateOnce;
+        forged.limits.maximum_final_evaluations = 1;
+        forged.fingerprint = forged.reproduce().unwrap();
+        assert!(forged.validate_identity().is_err());
+        let mut invalid = legacy;
+        invalid.limits.maximum_models = 0;
+        assert!(
+            invalid
+                .with_agentic_settings(OptimizationAgentSettings::default())
+                .is_err()
+        );
     }
 
     #[test]

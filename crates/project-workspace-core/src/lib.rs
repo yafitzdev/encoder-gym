@@ -12,6 +12,7 @@ pub mod benchmark_results;
 mod models;
 mod optimization_launch;
 mod optimization_run;
+mod optimization_settings;
 mod optimization_setup;
 mod providers;
 mod readiness;
@@ -28,6 +29,9 @@ pub use optimization_run::{
     ProjectOptimizationMaterialization, ProjectOptimizationOutcome, ProjectOptimizationOutcomeKind,
     ProjectOptimizationPreparation, ProjectOptimizationRun, ProjectOptimizationRunState,
     ProjectOptimizationRunView, replay_project_optimization,
+};
+pub use optimization_settings::{
+    OptimizationAgentSettings, OptimizationDevice, OptimizationMode, OptimizationTrainingSettings,
 };
 pub use optimization_setup::{OptimizationInputs, OptimizationSetup};
 pub use training_data::{ModelDatasetLink, ModelTrainingEvidence, TrainingDatasetInput};

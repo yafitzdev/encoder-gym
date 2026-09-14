@@ -24,6 +24,12 @@ pub async fn start(
     request: optimization_launch::LaunchRequest,
     authorized_by: &str,
 ) -> Result<ProjectOptimizationRunView> {
+    // Do not silently execute a one-candidate recipe under multi-iteration or
+    // quick-test authority. Removed only when the agent-loop executor lands.
+    ensure!(
+        request.scope.agentic.is_none(),
+        "Agent-loop execution is not connected yet. Advanced settings can be previewed, but the fixed-recipe executor cannot honor them."
+    );
     // Authorization and reservation are separately idempotent. If the process
     // stops between them, the same request finishes the missing reservation.
     let authorization = optimization_launch::authorize(folder, request, authorized_by).await?;

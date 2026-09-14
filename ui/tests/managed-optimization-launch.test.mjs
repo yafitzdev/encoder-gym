@@ -43,6 +43,35 @@ test("optimization launch preview and history are exact project-owned reads", as
   await assert.rejects(() => new ManagedOptimizationLaunch(ports(f, async () => changed)).preview(f.projectId, f.setupId));
 });
 
+test("agent settings history preserves strict quick-test limits and legacy launch shapes", async () => {
+  const f = fixture(), legacy = f.authorization(randomUUID()), quick = structuredClone(legacy);
+  quick.id = randomUUID();
+  quick.scope.agentic = {
+    mode: "quick_test", objective: "Inspect development gaps.\nKeep the benchmark unchanged.",
+    maximumIterations: 1, maximumAgentTurnsPerIteration: 4, generationConcurrency: 1, maximumRowChanges: 8,
+    training: { device: "auto", maximumEpochs: 1, batchSize: 8, learningRateNanos: 3_000, maximumSecondsPerIteration: 120, maximumTrainingRows: 64 },
+  };
+  quick.scope.limits = { maximumIterations: 1, maximumModels: 1, maximumDatasetRowChanges: 8, maximumTrainingSeconds: 120, maximumDevelopmentEvaluations: 2, maximumFinalEvaluations: 0 };
+  quick.scope.finalEvaluation = "development_only";
+  const backend = new ManagedOptimizationLaunch(ports(f, async () => [legacy, quick]));
+  assert.deepEqual(await backend.list(f.projectId), [legacy, quick]);
+  for (const alter of [
+    value => value.scope.agentic.generationConcurrency = 0,
+    value => value.scope.agentic.generationConcurrency = 17,
+    value => value.scope.agentic.maximumIterations = 2,
+    value => value.scope.agentic.training.maximumTrainingRows = null,
+    value => value.scope.agentic.training.maximumSecondsPerIteration = 7_200,
+    value => value.scope.agentic.training.apiKey = "forbidden",
+    value => value.scope.agentic.objective = "x".repeat(4_001),
+    value => value.scope.limits.maximumIterations = 3,
+    value => value.scope.limits.maximumFinalEvaluations = 1,
+    value => value.scope.finalEvaluation = "selected_candidate_once",
+  ]) {
+    const invalid = structuredClone(quick); alter(invalid);
+    await assert.rejects(() => new ManagedOptimizationLaunch(ports(f, async () => [invalid])).list(f.projectId));
+  }
+});
+
 test("one-click authorization preserves its retry, removes temp files and rejects injected execution data", async () => {
   const f = fixture(), id = randomUUID(), request = { id, scope: f.scope }, writes = [], files = [];
   const backend = new ManagedOptimizationLaunch(ports(f, async args => {

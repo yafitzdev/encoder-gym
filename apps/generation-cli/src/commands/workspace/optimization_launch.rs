@@ -17,7 +17,34 @@ pub(super) async fn execute(
     use WorkspaceOptimizationLaunchCommand::*;
     match command {
         List => super::print(&optimization_launch::list(folder).await?),
-        Preview { setup } => super::print(&optimization_launch::preview(folder, setup).await?),
+        Preview {
+            setup,
+            settings_file,
+            quick_test,
+        } => {
+            let settings = if let Some(file) = settings_file {
+                ensure!(
+                    std::fs::metadata(&file)?.len() <= 32_768,
+                    "Agent settings exceed 32 KiB."
+                );
+                Some(
+                    serde_json::from_slice::<project_workspace_core::OptimizationAgentSettings>(
+                        &std::fs::read(file)?,
+                    )
+                    .context("Invalid agent settings.")?,
+                )
+            } else if quick_test {
+                Some(project_workspace_core::OptimizationAgentSettings::quick_test())
+            } else {
+                None
+            };
+            let preview = if let Some(settings) = settings {
+                optimization_launch::preview_agentic(folder, setup, settings).await?
+            } else {
+                optimization_launch::preview(folder, setup).await?
+            };
+            super::print(&preview)
+        }
         Authorize {
             file,
             authorized_by,

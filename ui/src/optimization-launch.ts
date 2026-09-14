@@ -1,4 +1,5 @@
 import type { BoundIdentity } from "./managed-workspace.js";
+import type { OptimizationAgentSettings } from "./optimization-agent-settings.js";
 
 export interface OptimizationExecutionLimits {
   maximumIterations: number;
@@ -23,7 +24,8 @@ export interface OptimizationLaunchScope {
   limits: OptimizationExecutionLimits;
   generation: OptimizationProviderLimits;
   advisor: OptimizationProviderLimits;
-  finalEvaluation: "selected_candidate_once";
+  finalEvaluation: "selected_candidate_once" | "development_only";
+  agentic?: OptimizationAgentSettings;
   fingerprint: string;
 }
 

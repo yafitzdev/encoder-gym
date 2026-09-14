@@ -1,5 +1,10 @@
 # Project optimization launch
 
+The follow-on [agentic loop specification](agentic-optimization-spec.md) defines
+user-tunable bounds, quick testing, generation concurrency and iteration-aware
+presentation. The fixed-recipe executor described below is still the current
+production path; settings preview is not evidence that the loop is connected.
+
 Implements the input-first Optimize contract in `encoder-workspace-product.md`.
 The user selects the active baseline model, an exact training dataset version,
 and an exact shared benchmark version. A training recipe is an execution detail,

@@ -10,6 +10,7 @@ import type {
 } from "./optimization-launch.js";
 import { inputOptimizationTerminal, parseInputOptimizationRun, parseInputOptimizationRuns, parseInputOptimizationStarted, type InputOptimizationPhase, type InputOptimizationRun, type InputOptimizationStarted } from "./input-optimization.js";
 import type { NativeProgress } from "./managed-control.js";
+import { parseOptimizationAgentSettings, type OptimizationAgentSettings } from "./optimization-agent-settings.js";
 
 interface Ports {
   open(projectId: string): Promise<ManagedWorkspace>;
@@ -52,7 +53,7 @@ function providerLimits(value: unknown): OptimizationProviderLimits {
     maximumCostMicrousd: integer(limits.maximumCostMicrousd, "provider cost limit", true),
   };
 }
-function executionLimits(value: unknown): OptimizationExecutionLimits {
+function executionLimits(value: unknown, settings?: OptimizationAgentSettings): OptimizationExecutionLimits {
   const limits = record(value, "execution limits", ["maximumIterations", "maximumModels", "maximumDatasetRowChanges", "maximumTrainingSeconds", "maximumDevelopmentEvaluations", "maximumFinalEvaluations"]);
   const result = {
     maximumIterations: integer(limits.maximumIterations, "iteration limit"),
@@ -60,23 +61,28 @@ function executionLimits(value: unknown): OptimizationExecutionLimits {
     maximumDatasetRowChanges: integer(limits.maximumDatasetRowChanges, "dataset-change limit"),
     maximumTrainingSeconds: integer(limits.maximumTrainingSeconds, "training limit"),
     maximumDevelopmentEvaluations: integer(limits.maximumDevelopmentEvaluations, "development-evaluation limit"),
-    maximumFinalEvaluations: integer(limits.maximumFinalEvaluations, "final-evaluation limit"),
+    maximumFinalEvaluations: integer(limits.maximumFinalEvaluations, "final-evaluation limit", true),
   };
-  if (result.maximumIterations !== 3 || result.maximumModels !== 3 || result.maximumDatasetRowChanges !== 5_000 || result.maximumTrainingSeconds !== 21_600 || result.maximumFinalEvaluations !== 1 || result.maximumDevelopmentEvaluations % result.maximumModels !== 0) throw new Error("Optimization limits do not match the application envelope.");
+  const iterations = settings?.maximumIterations ?? 3;
+  const final = settings && (settings.mode === "quick_test" || settings.training.maximumTrainingRows !== null) ? 0 : 1;
+  if (result.maximumIterations !== iterations || result.maximumModels !== iterations || result.maximumDatasetRowChanges !== (settings?.maximumRowChanges ?? 5_000) || result.maximumTrainingSeconds !== (settings ? iterations * settings.training.maximumSecondsPerIteration : 21_600) || result.maximumFinalEvaluations !== final || result.maximumDevelopmentEvaluations % result.maximumModels !== 0) throw new Error("Optimization limits do not match the application envelope.");
   return result;
 }
 function scope(value: unknown, projectId: string): OptimizationLaunchScope {
-  const item = record(value, "optimization launch", ["projectId", "setup", "providerCatalog", "limits", "generation", "advisor", "finalEvaluation", "fingerprint"]);
-  if (uuid(item.projectId) !== projectId || item.finalEvaluation !== "selected_candidate_once") throw new Error("Optimization launch belongs to another project or final-evaluation policy.");
+  const item = record(value, "optimization launch", ["projectId", "setup", "providerCatalog", "limits", "generation", "advisor", "finalEvaluation", "fingerprint", "agentic"]);
+  const settings = item.agentic === undefined ? undefined : parseOptimizationAgentSettings(item.agentic);
+  const finalEvaluation = settings && (settings.mode === "quick_test" || settings.training.maximumTrainingRows !== null) ? "development_only" : "selected_candidate_once";
+  if (uuid(item.projectId) !== projectId || item.finalEvaluation !== finalEvaluation) throw new Error("Optimization launch belongs to another project or final-evaluation policy.");
   return {
     projectId,
     setup: bound(item.setup),
     providerCatalog: bound(item.providerCatalog),
-    limits: executionLimits(item.limits),
+    limits: executionLimits(item.limits, settings),
     generation: providerLimits(item.generation),
     advisor: providerLimits(item.advisor),
-    finalEvaluation: "selected_candidate_once",
+    finalEvaluation,
     fingerprint: fingerprint(item.fingerprint),
+    ...(settings ? { agentic: settings } : {}),
   };
 }
 function authorization(value: unknown, projectId: string): OptimizationLaunchAuthorization {

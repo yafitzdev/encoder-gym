@@ -5,7 +5,8 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use project_workspace_core::{
-    OptimizationLaunchAuthorization, OptimizationLaunchScope, OptimizationSetup, ProviderCatalog,
+    OptimizationAgentSettings, OptimizationLaunchAuthorization, OptimizationLaunchScope,
+    OptimizationSetup, ProviderCatalog,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{Connection, Row, SqliteConnection};
@@ -40,6 +41,18 @@ pub async fn preview(folder: &Path, setup_id: Uuid) -> Result<LaunchPreview> {
     let preview = resolved_preview(&workspace, &mut database, setup, providers).await?;
     database.close().await?;
     Ok(preview)
+}
+
+/// Read-only preview of new bounded agent-loop settings. Does not dispatch work.
+pub async fn preview_agentic(
+    folder: &Path,
+    setup_id: Uuid,
+    settings: OptimizationAgentSettings,
+) -> Result<LaunchPreview> {
+    settings.validate()?;
+    let mut value = preview(folder, setup_id).await?;
+    value.scope = value.scope.with_agentic_settings(settings)?;
+    Ok(value)
 }
 
 pub async fn list(folder: &Path) -> Result<Vec<OptimizationLaunchAuthorization>> {
@@ -103,9 +116,12 @@ pub async fn authorize(
         active_baseline == setup.inputs.baseline_revision.id,
         "Baseline changed. Review Optimize inputs again."
     );
-    let expected = resolved_preview(&verified, &mut transaction, setup, provider)
+    let mut expected = resolved_preview(&verified, &mut transaction, setup, provider)
         .await?
         .scope;
+    if let Some(settings) = &request.scope.agentic {
+        expected = expected.with_agentic_settings(settings.clone())?;
+    }
     ensure!(
         expected == request.scope,
         "Optimization launch changed since preview. Review it again."

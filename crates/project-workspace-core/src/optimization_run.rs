@@ -1909,6 +1909,7 @@ mod tests {
             generation: provider.clone(),
             advisor: provider,
             final_evaluation: FinalEvaluationAuthorization::SelectedCandidateOnce,
+            agentic: None,
             fingerprint: String::new(),
         };
         scope.fingerprint = scope.reproduce().unwrap();

@@ -28,6 +28,12 @@ pub enum WorkspaceOptimizationLaunchCommand {
     Preview {
         #[arg(long)]
         setup: Uuid,
+        /// Preview bounded agent settings from strict JSON; does not execute.
+        #[arg(long, conflicts_with = "quick_test")]
+        settings_file: Option<PathBuf>,
+        /// Preview a single small diagnostic iteration with no final holdout.
+        #[arg(long)]
+        quick_test: bool,
     },
     /// Authorize the exact previewed inputs and finite execution envelope.
     Authorize {
