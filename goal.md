@@ -38,7 +38,8 @@ verify the connected engine before asking the user to try another real run.
 | --- | --- | --- |
 | Fixed training and development evaluation | Real Nomos Run 17 | This path is not Agent-driven |
 | Agent → generation → dataset publication → native clearance | Committed in `18fc85b`; deterministic production-CLI tests | Preserve and reuse this path |
-| One Agent-directed cycle through training and development evaluation | CLI-integrated; complete-cycle/recovery tests and all required Rust gates pass | Candidate/result viewer links and root-run completion |
+| One Agent-directed cycle through training and development evaluation | Committed in `a8bb5c4`; complete-cycle/recovery tests and required Rust gates passed at that checkpoint | Candidate/result viewer links and root-run completion |
+| Candidate registration and exact training-dataset links | Partially implemented in the working tree; not yet a verified checkpoint | Complete regression coverage, report associations and ordinary viewer integration |
 | Repeated iterations and complete recovery | Not implemented end to end | Completion/selection lineage, finite coordinator and interruption tests |
 | One-click agentic Overview journey | Not connected end to end | Wire the same coordinator, model/report links and iteration activity |
 
@@ -72,7 +73,7 @@ lint and full test gates. Its nine native-clearance Python tests, 125 UI tests
 and rendered Overview checks also passed. Those rendered checks use fixtures;
 they do not prove that Optimize invokes an Agent loop.
 
-### Verified single-cycle CLI checkpoint
+### Verified single-cycle CLI checkpoint — `a8bb5c4`
 
 The `optimization-run complete-iteration` route extends that same
 production composition through:
@@ -109,7 +110,7 @@ persistence, leaving the original journal unchanged on rejection.
 UI typecheck, all 125 UI tests and rendered Overview interaction checks pass.
 The rendered checks use fixture activities, not a connected Optimize button.
 All four Rust gates (`cargo fmt-check`, `cargo check-all`, `cargo lint`,
-`cargo test-all`) pass for this executable checkpoint, as do the nine native
+`cargo test-all`) passed for `a8bb5c4`, as did the nine native
 clearance Python tests. The full run includes the complete-cycle recovery and
 zero-holdout regressions. These checks prove the tested mechanics, not real
 Nomos improvement or an end-to-end agentic desktop journey.
@@ -122,11 +123,37 @@ This work still does **not** provide:
 
 - A second iteration driven by the first result, or a durable no-change outcome.
 - A complete root-run lifecycle, final selection or separately authorized holdout.
-- Candidate registration and ordinary Models/dataset/report viewer links for
-  the new iteration path.
+- Verified candidate registration and ordinary Models/dataset/report viewer
+  links for the new iteration path.
 - The production Overview button invoking this coordinator.
 - Proven Stop/restart recovery at every boundary or reconciliation of uncertain
   provider outcomes and separately persisted activity/accounting.
+
+### In-progress working tree — preserve and finish
+
+The next component is already partially implemented; do not start it again:
+
+- Materialized training evidence identifies the exact dataset version and
+  ordered contents used by the trainer, including Quick test subsets.
+- Local model/dataset linking is being extended to verify native training files
+  against that version without replacing its original row IDs and ancestry.
+- The CLI cycle is being connected to ordinary candidate registration and
+  returns the registered model and dataset link alongside its development result.
+- UI evidence types and the deterministic native fixture have corresponding
+  compatibility changes. This is not production Overview integration.
+
+These changes are uncommitted and are **not covered by the green `a8bb5c4`
+validation claim**. Inspect their current state, finish targeted tests and then
+run the required gates before treating this component as complete. Preserve
+all existing work; do not reset the worktree or assume incomplete code is ready
+for a live Nomos run.
+
+The immediate checkpoint must prove that a trained candidate appears in Models
+even when development rejects it; its dataset viewer opens the exact full or
+sampled version actually trained; original row identities survive; reports
+follow explicit iteration receipts; and retries reuse the same artifacts.
+Neither the baseline role nor an imported model's unknown training history may
+be silently changed to make registration succeed.
 
 ### What Run 17 actually established
 
@@ -162,7 +189,7 @@ verified. Finish result ownership, iteration, recovery and app integration:
    original-baseline comparisons, no adaptive holdout access and recovery after
    native completion but before iteration-result persistence. Do not rebuild
    this chain or claim it already implements the whole loop.
-2. **Finish iteration ownership and result links.** Register every trained
+2. **Finish the in-progress candidate links, then iteration ownership.** Register every trained
    candidate, including rejected candidates, with its actual training dataset.
    Persist no-change/stop outcomes and root-run progress. Link candidate reports
    through explicit iteration receipts so Models, Evaluation and Overview agree.
@@ -349,6 +376,8 @@ dependency directions, preserve unrelated edits and commit verified components.
 Use real Nomos state read-only during development. Do not launch paid calls,
 real training or holdout evaluation without explicit execution authorization.
 Updating this goal file does not itself authorize any such execution.
+An instruction to update `goal.md` is a documentation task, not an instruction
+to continue implementation or start an optimization run in that same turn.
 
 Keep implementation checkpoints bounded and communicate concrete progress.
 When the user asks for status or says stop, pause implementation and answer
