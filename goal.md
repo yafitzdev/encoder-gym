@@ -9,7 +9,24 @@ it, and uses that result to decide the next bounded iteration.
 
 The next deliverable is a working end-to-end optimization cycle, followed by
 verified iteration and recovery. More settings, system narration, documentation,
-or UI mockups alone do not complete this goal.
+or UI mockups alone do not complete this goal. The approved GUI is the interface
+to this engine; it is not a separate workflow to redesign.
+
+## What the user must be able to do
+
+Open Nomos → Overview → New run, select the five inputs, optionally adjust
+Advanced settings or enable Quick test, and press Optimize once. Watch the Agent
+investigate development failures, explain its proposed dataset changes, request
+generation, and follow the resulting candidate through training and evaluation.
+Inspect the dataset diff and the candidate's comparison against the original
+baseline. Stop, close the app and resume the same run without losing completed
+work. No manual sequence of CLI commands or repeated stage-confirmation buttons
+should be required for work already covered by the run's authorization.
+
+The user should not have to start another real run merely to find out whether
+the Agent is connected. Prove that integration through the production execution
+path with deterministic test adapters first. A successfully rejected candidate
+is a completed experiment; improvement itself is not guaranteed.
 
 ## Current state — 14 September 2026
 
@@ -58,8 +75,8 @@ or UI mockups alone do not complete this goal.
   though they existed in the scientific journal. The lookup searched only the
   original scientific project, while Optimize recorded its candidate under a
   derived project for the selected dataset.
-- The report-association fix follows the optimization run's recorded
-  preparation, materialization and child-experiment receipts. It preserves the
+- Commit `24d61db` fixes report association by following the optimization run's
+  recorded preparation, materialization and child-experiment receipts. It preserves the
   original baseline context and does not scan arbitrary scientific projects.
   The CLI regression now verifies linked reports, original verdicts after a
   baseline change, forged-link rejection, holdout exclusion and unchanged
@@ -82,7 +99,7 @@ Preserve existing projects, runs, model custody, dataset versions, provider
 connections, credentials, navigation and the user's approved Overview design.
 Do not require another real Nomos run to rediscover the known missing executor.
 
-## Immediate next task
+## Immediate next task: connect the engine
 
 Connect the committed execution components through the production CLI
 before adding more presentation. The next engine checkpoint must connect the
@@ -119,6 +136,25 @@ Close these integration gaps in that order:
    Provider calls, Agent activity and results must refer to the same run and
    iteration; the UI must not maintain a separate imitation of the workflow.
 
+Use the existing components as the implementation starting points:
+
+- `encoder-optimization-core` and `encoder-optimization-runner`: bounded Agent
+  inspection/proposals, generation and provider-neutral execution contracts.
+- `project-workspace-local`: persisted Agent/generation calls, exact provider
+  pins and immutable dataset publication. Add verified iteration lineage here;
+  do not relax the first-iteration restriction to accept arbitrary datasets.
+- `encoder-experiment-nomos`: native development diagnostics, training-row
+  inspection, generation admission and training/evaluation adapters. Complete
+  derived-population qualification before handing data to training.
+- The workspace optimization CLI: compose these components into the production
+  run path, then have the desktop invoke that same coordinator.
+
+Keep the original root setup and preparation immutable. Generated dataset
+versions and later candidates belong to their own iteration records; do not
+overwrite the initial dataset or reuse a single-candidate receipt as if it
+represented every iteration. The existing report fix must continue to work for
+historical fixed-recipe runs as well as new iteration-linked results.
+
 Report implementation status separately as component-tested, CLI-integrated,
 and app-verified. Do not call the agentic system fixed until the configured
 providers actually participate in the verified end-to-end journey.
@@ -127,6 +163,10 @@ For each checkpoint, report the concrete user-visible capability added, the
 production path exercised, and the remaining integration gaps. Record completed
 foundation work here instead of repeatedly treating it as new work. Keep the
 full end-to-end acceptance criteria below unchanged until they are satisfied.
+
+The next implementation checkpoint must demonstrate one complete composed
+cycle, not just another isolated component. Intermediate components may be
+committed when verified, but do not describe them as a working agent loop.
 
 ## Required execution
 
@@ -152,6 +192,10 @@ full end-to-end acceptance criteria below unchanged until they are satisfied.
    Models and Evaluation.
 7. Give the next iteration the previous development result and explicit lineage
    of its starting dataset/model. Preserve the original comparison baseline.
+   Use the best eligible dataset so far, falling back to the original starting
+   dataset when no derived candidate is eligible. Failed candidate evidence
+   still informs the next proposal. Record the actual training starting model
+   explicitly; do not confuse it with the fixed comparison baseline.
    Stop on the configured ceilings or an explicit no-change/stop decision.
    Do not force unnecessary edits merely to demonstrate agent activity.
 8. After adaptive work ends, select the best eligible candidate deterministically.
@@ -260,6 +304,39 @@ UI checks and actual rendered interaction tests for executable changes. Check
 dependency directions, preserve unrelated edits and commit verified components.
 Use real Nomos state read-only during development. Do not launch paid calls,
 real training or holdout evaluation without explicit execution authorization.
+Updating this goal file does not itself authorize any such execution.
+
+Keep implementation checkpoints bounded and communicate concrete progress.
+When the user asks for status or says stop, pause implementation and answer
+immediately. A passing component test, another documentation update or a build
+is not a substitute for completing the missing production connection.
+
+### Acceptance checklist
+
+Keep these unchecked until the corresponding production-path evidence exists:
+
+- [ ] One Optimize action invokes the pinned Agent and, when additions are
+  proposed, the independently pinned generator through the real coordinator.
+- [ ] A deterministic end-to-end test traces inspected failure evidence to an
+  actual public Agent explanation, removal, generated addition, qualified
+  dataset version, trained model and development comparison.
+- [ ] A second iteration consumes the first result and produces an
+  evidence-dependent next proposal while preserving the original baseline and
+  benchmark. Explicit no-change decisions end the loop without invented edits.
+- [ ] Every exposed advanced setting is enforced, including cumulative budgets
+  and concurrency, and Quick test exercises this same engine with its limits.
+- [ ] Stop/restart tests verify recovery at each boundary, stable identities,
+  reuse of completed work and conservative accounting for uncertain calls.
+- [ ] Complete derived datasets pass the native admission and
+  training-to-benchmark isolation checks; invalid generated rows cannot train.
+- [ ] The rendered Overview shows real Agent/Generation activity, independently
+  browsable iteration/stage histories, responsive controls and stable spinners.
+- [ ] Candidates, dataset diffs and benchmark reports open correctly from the
+  same run, including rejected candidates and multiple iterations.
+- [ ] Sealed evidence never reaches adaptive steps; final holdout is separately
+  authorized, used at most once after iteration ends, and promotion stays manual.
+- [ ] Required Rust gates, relevant UI checks and rendered journey tests pass;
+  the handoff distinguishes test evidence from separately authorized live work.
 
 The goal is complete only when Optimize invokes the chosen providers, produces
 traceable agent-directed work, honors settings, resumes correctly, and exposes
