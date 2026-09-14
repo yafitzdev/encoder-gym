@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
-import { appendLiveActivity, inputRunActivity, inputRunStageDetail, inputRunStageLabel, mergedActivity, stagedActivity, optimizationStages } from "../dist/evidence/input-run-activity.js";
+import { appendLiveActivity, inputRunActivity, inputRunStageDetail, inputRunStageLabel, mergedActivity, presentedActivity, stagedActivity, optimizationStages } from "../dist/evidence/input-run-activity.js";
 
 test("activity keeps recorded timestamps on redraw and compacts live file counters", () => {
   const at = "2026-09-14T10:00:00.000Z";
@@ -92,6 +92,22 @@ test("all recorded and live tasks survive every stage and retries beyond old cut
   assert.equal(combined.length, 990);
   for (const stage of optimizationStages) assert.equal(combined.filter(event => event.stage === stage).length, stage === "checking_inputs" ? 290 : 140);
   assert.equal(combined[0].progress.subject, "file-0.json");
+});
+
+test("checksum telemetry stays durable but completed bursts become one visible system activity", () => {
+  const checksum = (second, subject) => ({ at: `2026-09-14T12:00:0${second}Z`, stage: "training", progress: { phase: "verifying_file", subject } });
+  const events = [
+    checksum(1, "config.json"), checksum(2, "model.safetensors"),
+    { at: "2026-09-14T12:00:03Z", stage: "training", progress: { phase: "loading_model" } },
+    checksum(4, "modules.json"), checksum(5, "tokenizer.json"),
+  ];
+  assert.equal(events.length, 5, "the immutable source is not compacted");
+  assert.deepEqual(presentedActivity(events, false), [
+    { at: "2026-09-14T12:00:02Z", stage: "training", progress: { phase: "verifying_file" }, label: "Verified required files" },
+    events[2],
+    { at: "2026-09-14T12:00:05Z", stage: "training", progress: { phase: "verifying_file" }, label: "Verified required files" },
+  ]);
+  assert.deepEqual(presentedActivity(events, true).at(-1), events.at(-1), "only the current file remains visible while hashing");
 });
 
 test("legacy checksums use CLI stage intervals and retain native substages", () => {

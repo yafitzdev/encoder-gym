@@ -2,7 +2,7 @@ import type { NativeProgress } from "../managed-control.js";
 import { inputOptimizationPhase, type InputOptimizationRun } from "../input-optimization.js";
 import { spinner } from "./components.js";
 import { h } from "./dom.js";
-import { inputRunStageDetail, inputRunStageLabel, mergedActivity, stagedActivity, type InputRunActivity, type InputRunActivityEntry, type InputRunStageContext } from "./input-run-activity.js";
+import { inputRunStageDetail, inputRunStageLabel, mergedActivity, presentedActivity, stagedActivity, type InputRunActivity, type InputRunActivityEntry, type InputRunStageContext } from "./input-run-activity.js";
 import { optimizationStages, stageLabels, taskStage, type OptimizationStage } from "../optimization-stages.js";
 
 const phases = optimizationStages, labels = stageLabels;
@@ -69,14 +69,17 @@ export function inputRunProgress(options: InputRunProgressOptions): HTMLElement 
 
 function activityStream(events: InputRunActivityEntry[], context: InputRunStageContext | undefined, running: boolean, selected: OptimizationStage, navigation?: ActivityNavigation, controls?: HTMLElement, status?: string): HTMLElement {
   const listId = navigation ? `${navigation.key}-events` : undefined;
+  const visibleEvents = presentedActivity(events, running);
   const list = h("ol", { class: "focus-events", id: listId, "aria-label": `${labels[selected]} activity`,
-    onScroll: (event: Event) => { if (navigation) navigation.view.scroll[selected] = (event.target as HTMLElement).scrollTop; } }, ...events.slice().reverse().map((event, index) => {
+    onScroll: (event: Event) => { if (navigation) navigation.view.scroll[selected] = (event.target as HTMLElement).scrollTop; } }, ...visibleEvents.slice().reverse().map((event, index) => {
       const narrative = event.narrative, live = running && index === 0;
+      const actor = narrative?.origin === "agent" ? "Agent" : "System";
+      const narrativeKind = narrative ? ({ intent: "Intent", reasoning: "Reason", action: "Action", observation: "Result", decision: "Decision", next_step: "Next" })[narrative.kind] : undefined;
       const detail = narrative || event.label ? "" : context ? inputRunStageDetail(event.progress, context) : event.progress.subject ?? "";
-      return h("li", { "data-key": `${selected}:${events.length - index}`, "data-activity-stage": selected, class: `focus-event ${narrative ? `narrative ${narrative.origin} ${narrative.kind}` : "work"}${live ? " current" : ""}` },
+      return h("li", { "data-key": `${selected}:${visibleEvents.length - index}`, "data-activity-stage": selected, "aria-current": live ? "true" : null,
+        class: `focus-event ${narrative ? `narrative ${narrative.origin} ${narrative.kind}` : "work system"}${live ? " current" : ""}` },
         h("time", { datetime: event.at }, new Date(event.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })),
-        h("span", { class: "focus-event-kind" }, narrative ? ({ intent: "Intent", reasoning: "Reason", action: "Action", observation: "Result", decision: "Decision", next_step: "Next" })[narrative.kind] : live ? "Now" : "Work",
-          narrative ? h("small", {}, narrative.origin === "agent" ? "Agent" : "System") : null),
+        h("span", { class: "focus-event-kind" }, actor, narrativeKind ? h("small", {}, narrativeKind) : null),
         h("div", { class: "focus-event-copy" }, h("strong", {}, event.label ?? narrative?.summary ?? inputRunStageLabel(event.progress.phase)),
           detail ? h("span", {}, detail) : null,
           index === 0 ? counterBar(event.progress) : null));
@@ -93,7 +96,7 @@ function activityStream(events: InputRunActivityEntry[], context: InputRunStageC
       h("div", { class: "activity-actions" },
         navigation?.view.stage ? h("button", { type: "button", class: "button ghost small", "data-key": "follow-latest", onClick: () => navigation.change() }, "Latest") : null, controls)),
     status ? h("div", { class: "optimization-progress-title muted" }, h("strong", {}, status)) : null,
-    events.length ? list : h("p", { class: "muted activity-empty" }, "No recorded activity"));
+    visibleEvents.length ? list : h("p", { class: "muted activity-empty" }, "No recorded activity"));
 }
 
 function counterBar(progress: NativeProgress): HTMLElement | null {

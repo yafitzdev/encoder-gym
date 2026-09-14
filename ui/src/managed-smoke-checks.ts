@@ -653,7 +653,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await until("document.querySelector('.focus-status .optimization-progress-steps li.active')?.textContent === 'Training'");
   await check("resumed run shows its persisted counter and sidebar spinner", "(()=>{const bar=document.querySelector('.focus-status progress');return bar.value===40 && bar.max===100 && document.querySelector('#nav-overview .spinner')})()");
   await until("document.querySelector('.focus-event.narrative.agent')?.textContent.includes('Use the smallest candidate')");
-  await check("agent reasoning is an inline durable activity entry", "(()=>{const event=document.querySelector('.focus-event.narrative.agent');return event.querySelector('.focus-event-kind').textContent.includes('Reason') && event.querySelector('.focus-event-kind small').textContent==='Agent' && event.querySelector('.focus-event-copy strong').textContent.includes('current development evidence')})()");
+  await check("agent reasoning is an inline durable activity entry", "(()=>{const event=document.querySelector('.focus-event.narrative.agent');return event.querySelector('.focus-event-kind').childNodes[0].textContent==='Agent' && event.querySelector('.focus-event-kind small').textContent==='Reason' && event.querySelector('.focus-event-copy strong').textContent.includes('current development evidence')})()");
   await screenshot("managed-project-run-live");
   await textButton("Stop");
   await until("document.querySelector('.optimization-status-controls')?.textContent.includes('Stopping…')");

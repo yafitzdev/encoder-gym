@@ -16,10 +16,26 @@ including actions whose run reference was appended at completion. It does not
 apply the recent-project-action limit. The existing project-wide list remains
 bounded. No historical JSON, event fingerprint or scientific record is changed.
 
-The renderer no longer truncates history to 30 recorded or 100 merged entries.
-Repeated counter ticks for the same uninterrupted task update one activity row;
-different files, tasks, stages, narratives and retries remain available.
-Stage-specific streams retain all these rows rather than a recent tail.
+The renderer never truncates or mutates the durable activity record. Repeated
+counter ticks for the same uninterrupted task update one projected activity.
+The visible stream also rolls a contiguous burst of per-file checksum telemetry
+into one `System · Verified required files` activity. While a checksum pass is
+running, its latest filename and progress meter remain visible; after it
+finishes, the filenames remain in the immutable audit log instead of crowding
+out meaningful work. Tasks, stages, narratives and retries remain available.
+
+Activity labels identify the actor, not the row's recency. Persisted narratives
+are `Agent` or `System`; ordinary executor progress is `System`. The current row
+is shown by its live highlight, so ambiguous `Now` and `Work` labels are not
+used. Narrative type (`Reason`, `Decision`, `Intent`, and so on) is secondary to
+the actor.
+
+The current Nomos input-first executor does not invoke the configured LLM
+advisor or data generator. Its persisted rationale entries are deterministic
+`System` explanations, so runs such as Run 14 truthfully contain no `Agent`
+activities. An `Agent` label is displayed only when an actual persisted event
+has `narrative.origin = agent`; concise rationale summaries are operational
+records, never private model chain-of-thought.
 
 New progress events carry a `run_stage` reference. The native executor's training,
 checkpoint-saving and evaluation substages refine the parent command stage.

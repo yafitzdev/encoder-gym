@@ -102,6 +102,34 @@ export function stagedActivity(events: InputRunActivityEntry[]): InputRunActivit
     return { ...event, stage };
   });
 }
+
+/**
+ * Keep the durable activity record complete while turning checksum telemetry
+ * into one user-level System activity. The actively changing file remains
+ * visible until its checksum pass finishes; completed file bursts do not
+ * overwhelm the stage history.
+ */
+export function presentedActivity(events: InputRunActivityEntry[], keepLiveChecksum = false): InputRunActivityEntry[] {
+  const presented: InputRunActivityEntry[] = [];
+  let checksums: InputRunActivityEntry[] = [];
+  const flushChecksums = (atEnd: boolean): void => {
+    if (!checksums.length) return;
+    const latest = checksums.at(-1)!;
+    presented.push(keepLiveChecksum && atEnd ? latest : {
+      at: latest.at,
+      stage: latest.stage,
+      progress: { phase: "verifying_file" },
+      label: "Verified required files",
+    });
+    checksums = [];
+  };
+  for (const event of events) {
+    if (event.progress.phase === "verifying_file" && !event.narrative && !event.label) checksums.push(event);
+    else { flushChecksums(false); presented.push(event); }
+  }
+  flushChecksums(true);
+  return presented;
+}
 export { optimizationStages, stageLabels, type OptimizationStage } from "../optimization-stages.js";
 
 export const inputRunStageLabel = (stage: string): string => ({
