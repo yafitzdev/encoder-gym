@@ -195,8 +195,9 @@ export class ManagedBackend {
     await this.appendProjectActivity(projectId, { action_id: actionId, operation, source, state: "started", ...(references.length ? { references } : {}), created_at: createdAt });
     return actionId;
   }
-  progressProjectActivity(projectId: string, actionId: string, operation: string, stage: string, completed?: number, total?: number, subject?: string, unit?: string, narrative?: ProjectActivityNarrative): Promise<ProjectActivityEvent> {
+  progressProjectActivity(projectId: string, actionId: string, operation: string, stage: string, completed?: number, total?: number, subject?: string, unit?: string, narrative?: ProjectActivityNarrative, runStage?: NativeProgress["runStage"]): Promise<ProjectActivityEvent> {
     const references = [...(subject ? [{ kind: "progress_subject", id: subject }] : []), ...(unit ? [{ kind: "progress_unit", id: unit }] : [])];
+    if (runStage) references.push({ kind: "run_stage", id: runStage });
     return this.appendProjectActivity(projectId, { action_id: actionId, operation, source: "desktop", state: "progress", stage, references, ...(completed !== undefined && total !== undefined ? { completed, total } : {}), ...(narrative ? { narrative } : {}), created_at: new Date().toISOString() });
   }
   succeedProjectActivity(projectId: string, actionId: string, operation: string, references: ProjectActivityReference[] = []): Promise<ProjectActivityEvent> {
@@ -207,10 +208,11 @@ export class ManagedBackend {
     const message = (redactBackendError(raw).replace(/[\u0000-\u001f]+/g, " ").trim() || "Operation failed.").slice(0, 1000);
     return this.appendProjectActivity(projectId, { action_id: actionId, operation, source: "desktop", state: "failed", failure: { code: "operation_failed", message }, created_at: new Date().toISOString() });
   }
-  async projectActivity(projectId: string, limit = 100): Promise<ProjectActivityLog> {
+  async projectActivity(projectId: string, limit = 100, runId?: string): Promise<ProjectActivityLog> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("Activity limit must be between 1 and 1000.");
     await this.ensureActivity(projectId);
-    const log = await this.command<ProjectActivityLog>(["activity", this.activityFolder(projectId), "list", "--limit", String(limit)]);
+    if (runId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)) throw new Error("Invalid run identity.");
+    const log = await this.command<ProjectActivityLog>(["activity", this.activityFolder(projectId), ...(runId ? ["run", runId] : ["list", "--limit", String(limit)])]);
     if (log.project_id !== projectId) throw new Error("The activity journal belongs to a different project.");
     return log;
   }

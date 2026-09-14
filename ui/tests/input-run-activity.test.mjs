@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
-import { appendLiveActivity, inputRunActivity, inputRunStageDetail, inputRunStageLabel, mergedActivity } from "../dist/evidence/input-run-activity.js";
+import { appendLiveActivity, inputRunActivity, inputRunStageDetail, inputRunStageLabel, mergedActivity, stagedActivity, optimizationStages } from "../dist/evidence/input-run-activity.js";
 
 test("activity keeps recorded timestamps on redraw and compacts live file counters", () => {
   const at = "2026-09-14T10:00:00.000Z";
@@ -71,7 +71,42 @@ test("optimization narrative stays inline with compact work across resumed actio
   assert.equal(activity.actionId, "new");
   assert.equal(activity.failure, undefined, "an older failed attempt must not override the active attempt");
   assert.deepEqual(activity.events, [
-    { at: "2026-01-01T00:00:01Z", progress: { phase: "creating_candidate", narrative }, narrative },
-    { at: "2026-01-01T00:10:02Z", progress: { phase: "training", completed: 4, total: 10 } },
+    { at: "2026-01-01T00:00:01Z", stage: "starting", progress: { phase: "creating_candidate", narrative }, narrative },
+    { at: "2026-01-01T00:10:02Z", stage: "training", progress: { phase: "training", completed: 4, total: 10 } },
   ]);
+});
+
+test("all recorded and live tasks survive every stage and retries beyond old cutoffs", () => {
+  const origin = Date.parse("2026-09-14T12:00:00Z");
+  const events = optimizationStages.flatMap((stage, index) => Array.from({ length: 140 }, (_, row) => ({
+    state: "progress", stage: "verifying_file", created_at: new Date(origin + (index * 140 + row) * 1000).toISOString(),
+    references: [{ kind: "run_stage", id: stage }, { kind: "progress_subject", id: `file-${row}.json` }],
+  })));
+  const action = { action_id: "run-action", operation: "optimization.run", state: "succeeded", started_at: new Date(origin).toISOString(),
+    references: [{ kind: "run", id: "run" }], events };
+  const activity = inputRunActivity({ actions: [action] }, "run");
+  assert.equal(activity.events.length, 840);
+  const live = [];
+  for (let row = 0; row < 150; row++) appendLiveActivity(live, { phase: "verifying_file", subject: `retry-${row}.json`, runStage: "checking_inputs" }, origin + (900 + row) * 1000);
+  const combined = stagedActivity(mergedActivity(activity, live));
+  assert.equal(combined.length, 990);
+  for (const stage of optimizationStages) assert.equal(combined.filter(event => event.stage === stage).length, stage === "checking_inputs" ? 290 : 140);
+  assert.equal(combined[0].progress.subject, "file-0.json");
+});
+
+test("legacy checksums use CLI stage intervals and retain native substages", () => {
+  const ref = [{ kind: "run", id: "run" }];
+  const at = seconds => new Date(Date.parse("2026-09-14T12:00:00Z") + seconds * 1000).toISOString();
+  const activity = inputRunActivity({ actions: [
+    { action_id: "drive", operation: "optimization.run", state: "succeeded", started_at: at(0), references: ref, events: [
+      { state: "progress", stage: "verifying_file", created_at: at(2) },
+      { state: "progress", stage: "loading_model", created_at: at(6) },
+      { state: "progress", stage: "saving_checkpoint", created_at: at(7) },
+      { state: "progress", stage: "verifying_file", created_at: at(8) },
+      { state: "progress", stage: "evaluating_agent", created_at: at(9) },
+    ] },
+    { action_id: "attach", operation: "optimization.attach_experiment", source: "cli", started_at: at(1), finished_at: at(4), references: ref, events: [] },
+    { action_id: "execute", operation: "optimization.execute", source: "cli", started_at: at(5), finished_at: at(10), references: ref, events: [] },
+  ] }, "run");
+  assert.deepEqual(activity.events.map(event => event.stage), ["starting", "training", "saving_candidate", "saving_candidate", "evaluating"]);
 });

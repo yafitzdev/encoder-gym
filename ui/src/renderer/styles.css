@@ -816,6 +816,12 @@ dialog::backdrop { background: #0008; }
 .optimization-progress-steps li.complete { border-color: var(--success); color: var(--muted); }
 .optimization-progress-steps li.active { border-color: var(--accent); color: var(--text); }
 .optimization-progress-steps li.failed { border-color: var(--danger); color: var(--danger); }
+.optimization-progress-steps button { display: block; width: 100%; text-align: left; padding: 8px 5px; margin-top: -5px; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.optimization-progress-steps button:hover { background: var(--accent-soft); }
+.optimization-progress-steps button[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); box-shadow: inset 0 -2px var(--accent); }
+.optimization-progress-steps button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.activity-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.activity-empty { padding-block: 20px; }
 .recorded-run-steps { grid-template-columns: repeat(4, 1fr); margin: -8px 0 34px; }
 .input-run-view > .optimization-progress { max-width: none; }
 .input-run-actions { display: flex; align-items: center; gap: 10px; margin: 16px 0 28px; }

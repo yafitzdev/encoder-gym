@@ -7,7 +7,8 @@ import type { OptimizationSetupController } from "./optimization-setup-controlle
 import { button, disclosureIndicator, failureNotice, spinner, workspacePage } from "./components.js";
 import { h } from "./dom.js";
 import { dateLabel, metricInfo, score, delta, suiteName } from "./catalog.js";
-import { inputRunProgress, pendingInputRunProgress } from "./input-run-progress.js";
+import { inputRunProgress, pendingInputRunProgress, type ActivityView } from "./input-run-progress.js";
+import type { OptimizationStage } from "../optimization-stages.js";
 import { runContext } from "./workspace-pages.js";
 import { comparisonTone, overviewRecords, reportDecision, type OverviewRecord } from "./overview-records.js";
 import { failureReason } from "../presentation-errors.js";
@@ -17,8 +18,8 @@ import { failureReason } from "../presentation-errors.js";
 export { replaceView } from "./dom.js";
 
 type Stage = "setup" | "status" | "report";
-export interface OverviewState { expanded?: string | null; tabs: Map<string, Stage>; draft: boolean; launching: boolean }
-export const newOverviewState = (): OverviewState => ({ tabs: new Map(), draft: false, launching: false });
+export interface OverviewState { expanded?: string | null; tabs: Map<string, Stage>; activityViews: Map<string, ActivityView>; draft: boolean; launching: boolean }
+export const newOverviewState = (): OverviewState => ({ tabs: new Map(), activityViews: new Map(), draft: false, launching: false });
 
 export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewState, setup: OptimizationSetupController, runs: InputRunsController, actions: Actions, managed?: ManagedRunStatus): HTMLElement {
   const roots = [...(runs.runs ?? [])];
@@ -128,29 +129,35 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
       !historical ? h("div", { class: "focus-controls" }, start) : null);
   }
   function statusPanel(record?: OverviewRecord): HTMLElement {
+    const key = record?.id ?? "draft";
+    let view = state.activityViews.get(key);
+    if (!view) { view = { scroll: {} }; state.activityViews.set(key, view); }
+    const navigation = { key: `overview-${key}`, view, change: (stage?: OptimizationStage) => { view.stage = stage; actions.render(); } };
     if (!record?.input) {
       if (!record) {
         const stop = button(setup.stopping ? "Stopping…" : "Stop", () => { void setup.stop(); }, "secondary");
         stop.disabled = setup.stopping;
         return h("div", { class: "focus-status" }, pendingInputRunProgress(setup.initializingEvaluation ? setup.benchmarkProgress : setup.liveProgress,
-          "overview-draft-progress", setup.liveEvents, busy ? stop : undefined, busy));
+          "overview-draft-progress", setup.liveEvents, busy ? stop : undefined, busy, navigation));
       }
       return h("div", {}, h("h2", {}, runLabel(record)), h("ol", { class: "focus-events" }, ...(record.experiment?.activity.slice(-5).reverse().map(event => h("li", {}, h("time", {}, clock(event.at)), event.kind.replaceAll("_", " "))) ?? [])),
         record.managed && !["completed", "cancelled", "failed"].includes(record.managed.state) ? button("Continue", () => actions.navigate({ page: "optimization" }), "primary") : null);
     }
     const run = record.input, setupBusy = setup.running && setup.run?.id === run.id, running = runBusy(record);
+    if (!running) void runs.ensureActivity(run.id);
     const activity = setupBusy ? setup.activity : runs.activities.get(run.id) ?? (setup.run?.id === run.id ? setup.activity : undefined);
     const context = runContext(run, workspace, setup), stopping = setupBusy ? setup.stopping : runs.stoppingId === run.id;
     const stop = button(stopping ? "Stopping…" : "Stop", () => { void (setupBusy ? setup.stop() : runs.stop(run)); }, "secondary");
     stop.disabled = stopping;
     const resume = button("Resume", () => { void runs.resume(run); }, "primary"); resume.disabled = busy;
     return h("div", { class: "focus-status" },
+      runs.activityErrors.has(run.id) ? failureNotice(runs.activityErrors.get(run.id)) : null,
       activity?.failure ? h("div", { class: "operation-failure", role: "alert" }, failureNotice(activity.failure.message)) : null,
       inputRunProgress({ run, running, activity, startedAt: activity ? Date.parse(activity.startedAt) : setup.startedAt, context,
         liveProgress: setupBusy ? setup.liveProgress : runs.runningId === run.id ? runs.liveProgress : undefined,
         liveProgressAt: setupBusy ? setup.liveProgressAt : runs.runningId === run.id ? runs.liveProgressAt : undefined,
         liveEvents: setupBusy ? setup.liveEvents : runs.runningId === run.id ? runs.liveEvents : [],
-        registrationPending: needsRegistration(record), animationKey: `overview-progress:${run.id}`,
+        registrationPending: needsRegistration(record), animationKey: `overview-progress:${run.id}`, navigation,
         controls: running ? stop : !inputOptimizationTerminal(run.state) || needsRegistration(record) ? resume : undefined }));
   }
 }

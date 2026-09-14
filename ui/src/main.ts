@@ -17,6 +17,7 @@ import type { NativeProgress } from "./managed-control.js";
 import type { ProjectActivityReference } from "./project-activity.js";
 import type { InputOptimizationPhase } from "./input-optimization.js";
 import { OptimizationPreparation } from "./optimization-preparation.js";
+import { taskStage, type OptimizationStage } from "./optimization-stages.js";
 
 const inputPreparation = new OptimizationPreparation();
 
@@ -108,22 +109,24 @@ async function trackProjectAction<T>(
   const actionId = await backend.startProjectActivity(id, operation, references);
   let pendingProgress: Promise<unknown> = Promise.resolve();
   let progressMarker = "";
-  let latestProgress: NativeProgress | undefined;
+  const progressQueue: NativeProgress[] = [];
   let flushing = false;
   const progress = (value: NativeProgress): void => {
     const bucket = value.completed !== undefined && value.total !== undefined
       ? Math.floor((value.completed / value.total) * 10)
       : undefined;
-    const marker = `${value.phase}:${value.subject ?? ""}:${bucket ?? "stage"}:${value.narrative?.kind ?? ""}:${value.narrative?.summary ?? ""}`;
+    const marker = `${value.runStage ?? ""}:${value.phase}:${value.subject ?? ""}:${bucket ?? "stage"}:${value.narrative?.kind ?? ""}:${value.narrative?.summary ?? ""}`;
     if (marker === progressMarker) return;
     progressMarker = marker;
-    latestProgress = value;
+    const last = progressQueue.at(-1);
+    if (last && last.runStage === value.runStage && last.phase === value.phase && last.subject === value.subject && !last.narrative && !value.narrative) progressQueue[progressQueue.length - 1] = value;
+    else progressQueue.push(value);
     if (flushing) return;
     flushing = true;
     pendingProgress = (async () => {
-      while (latestProgress) {
-        const next = latestProgress; latestProgress = undefined;
-        await backend.progressProjectActivity(id, actionId, operation, next.phase, next.completed, next.total, next.subject, next.unit, next.narrative).catch(() => undefined);
+      while (progressQueue.length) {
+        const next = progressQueue.shift()!;
+        await backend.progressProjectActivity(id, actionId, operation, next.phase, next.completed, next.total, next.subject, next.unit, next.narrative, next.runStage).catch(() => undefined);
       }
       flushing = false;
     })();
@@ -271,8 +274,12 @@ ipcMain.handle("encoder-gym:drive-input-optimization", (event, value: unknown, r
     saving_candidate: "registering_candidate", evaluating: "checking_evaluation", complete: "optimization_complete",
   };
   const live = optimizationProgress(event, token);
+  let currentStage: OptimizationStage = "checking_inputs";
   return trackProjectAction(id, "optimization.run", activityReference("run", run), progress =>
-    backend.optimizationLaunch.drive(id, run, (phase, native) => { const value = native ?? { phase: phases[phase] }; live(value); progress(value); }), result => [
+    backend.optimizationLaunch.drive(id, run, (phase, native) => {
+      if (phase !== "complete") currentStage = native && phase === "training" ? taskStage(native.phase) ?? currentStage : phase;
+      const value = { ...(native ?? { phase: phases[phase] }), runStage: currentStage }; live(value); progress(value);
+    }), result => [
       ...activityReference("run", result.id), ...activityReference("model", result.finalResult?.modelId ?? result.outcome?.selectedModelId),
     ]);
 });
@@ -405,10 +412,10 @@ ipcMain.handle("encoder-gym:bind-nomos", async (_event, value: unknown, previewT
   }, result => result.content.state === "ready" ? activityReference("scientific_binding", result.content.workspace.managed?.scientificBinding?.id) : []);
 });
 
-ipcMain.handle("encoder-gym:project-activity", (_event, value: unknown, limit: unknown) => {
+ipcMain.handle("encoder-gym:project-activity", (_event, value: unknown, limit: unknown, runId?: string) => {
   const parsed = limit === undefined ? 100 : limit;
   if (typeof parsed !== "number") throw new Error("Invalid activity limit.");
-  return backend.projectActivity(projectId(value), parsed);
+  return backend.projectActivity(projectId(value), parsed, runId);
 });
 ipcMain.handle("encoder-gym:export-project-activity", async (_event, value: unknown) => {
   const id = projectId(value), project = registry.get(id);

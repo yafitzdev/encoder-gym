@@ -1,8 +1,9 @@
 import type { NativeProgress } from "../managed-control.js";
 import type { ProjectActivityAction, ProjectActivityFailure, ProjectActivityLog, ProjectActivityNarrative } from "../project-activity.js";
 import { validateNativeProgress } from "../native-progress.js";
+import { isOptimizationStage, operationStages, stageLabels, taskStage, type OptimizationStage } from "../optimization-stages.js";
 
-export interface InputRunActivityEntry { at: string; progress: NativeProgress; narrative?: ProjectActivityNarrative }
+export interface InputRunActivityEntry { at: string; progress: NativeProgress; stage?: OptimizationStage; label?: string; narrative?: ProjectActivityNarrative }
 export interface InputRunActivity {
   actionId: string;
   state: ProjectActivityAction["state"];
@@ -18,17 +19,16 @@ export interface InputRunActivity {
 export function appendLiveActivity(events: InputRunActivityEntry[], progress: NativeProgress, at = Date.now()): void {
   const entry = { at: new Date(at).toISOString(), progress, ...(progress.narrative ? { narrative: progress.narrative } : {}) };
   const previous = events.at(-1);
-  if (previous && previous.progress.phase === progress.phase && previous.progress.subject === progress.subject
+  if (previous && !previous.label && previous.progress.runStage === progress.runStage && previous.progress.phase === progress.phase && previous.progress.subject === progress.subject
     && JSON.stringify(previous.narrative) === JSON.stringify(progress.narrative)) events[events.length - 1] = entry;
   else events.push(entry);
-  if (events.length > 100) events.splice(0, events.length - 100);
 }
 
 export function mergedActivity(activity: InputRunActivity | undefined, live: InputRunActivityEntry[], progress?: NativeProgress, at?: number): InputRunActivityEntry[] {
   const events = [...(activity?.events ?? [])];
-  const since = live[0]?.at;
-  const merged: InputRunActivityEntry[] = [];
-  for (const entry of [...events.filter(event => !since || event.at < since), ...live]) {
+  const latest = events.at(-1)?.at;
+  const merged: InputRunActivityEntry[] = [...events];
+  for (const entry of live.filter(event => !latest || Date.parse(event.at) > Date.parse(latest))) {
     appendLiveActivity(merged, entry.progress, Date.parse(entry.at));
   }
   if (progress && (!merged.length || (at !== undefined && at > Date.parse(merged.at(-1)!.at)))) {
@@ -39,9 +39,10 @@ export function mergedActivity(activity: InputRunActivity | undefined, live: Inp
 
 /** Project activity is the durable source for desktop orchestration progress. */
 export function inputRunActivity(log: ProjectActivityLog, runId: string): InputRunActivity | undefined {
-  const actions = log.actions.filter(candidate => candidate.operation === "optimization.run"
-    && candidate.references.some(reference => reference.kind === "run" && reference.id === runId));
-  const action = actions[0];
+  const related = log.actions.filter(candidate => candidate.references.some(reference => reference.kind === "run" && reference.id === runId));
+  const actions = related.filter(candidate => candidate.operation === "optimization.run" || candidate.operation === "optimization.start")
+    .sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at));
+  const action = actions.find(candidate => candidate.operation === "optimization.run") ?? actions[0];
   if (!action) return undefined;
   const progressEvents = actions.slice().reverse().flatMap(candidate => candidate.events)
     .filter(event => event.state === "progress" && event.stage);
@@ -51,16 +52,36 @@ export function inputRunActivity(log: ProjectActivityLog, runId: string): InputR
     subject: event.references?.find(item => item.kind === "progress_subject")?.id,
     unit: event.references?.find(item => item.kind === "progress_unit")?.id,
     narrative: event.narrative,
+    runStage: event.references?.find(item => item.kind === "run_stage")?.id,
   }) ?? { phase: "checking_files" };
   const failure = action.events.findLast(event => event.state === "failed")?.failure;
+  // Older records predate explicit stage references. Their CLI action intervals
+  // still identify each command exactly, including retries and reused outputs.
+  const spans = related.filter(item => operationStages[item.operation] && item.source === "cli");
+  let currentStage: OptimizationStage = "checking_inputs";
+  let previousSpan: string | undefined;
   const events = progressEvents.reduce<NonNullable<InputRunActivity["events"]>>((result, event) => {
     const projected = { at: event.created_at, progress: progressOf(event), ...(event.narrative ? { narrative: event.narrative } : {}) };
+    const at = Date.parse(event.created_at);
+    const span = spans.find(item => Date.parse(item.started_at) <= at && (!item.finished_at || at <= Date.parse(item.finished_at)));
+    const command = span ? operationStages[span.operation] : undefined;
+    if (span && span.action_id !== previousSpan) { currentStage = command!; previousSpan = span.action_id; }
+    const explicit = projected.progress.runStage;
+    currentStage = explicit ?? (command && command !== "training" ? command : taskStage(projected.progress.phase) ?? currentStage);
     const previous = result.at(-1);
     if (!projected.narrative && !previous?.narrative && previous?.progress.phase === projected.progress.phase
-      && previous.progress.subject === projected.progress.subject) result[result.length - 1] = projected;
-    else result.push(projected);
+      && previous.progress.subject === projected.progress.subject && previous.stage === currentStage) result[result.length - 1] = { ...projected, stage: currentStage };
+    else result.push({ ...projected, stage: currentStage });
     return result;
-  }, []).slice(-30);
+  }, []);
+  for (const span of spans) {
+    const stage = operationStages[span.operation]!;
+    for (const event of span.events.filter(event => event.state !== "progress")) {
+      events.push({ at: event.created_at, stage, progress: { phase: "checking_files" },
+        label: `${stageLabels[stage]} · ${event.state === "started" ? "Started" : event.state === "succeeded" ? "Complete" : "Failed"}` });
+    }
+  }
+  events.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   return {
     actionId: action.action_id,
     state: action.state,
@@ -72,6 +93,16 @@ export function inputRunActivity(log: ProjectActivityLog, runId: string): InputR
     events,
   };
 }
+
+/** Group live and historical steps without mistaking a checksum for a new stage. */
+export function stagedActivity(events: InputRunActivityEntry[]): InputRunActivityEntry[] {
+  let stage: OptimizationStage = "checking_inputs";
+  return events.map(event => {
+    stage = event.stage ?? (isOptimizationStage(event.progress.runStage) ? event.progress.runStage : taskStage(event.progress.phase) ?? stage);
+    return { ...event, stage };
+  });
+}
+export { optimizationStages, stageLabels, type OptimizationStage } from "../optimization-stages.js";
 
 export const inputRunStageLabel = (stage: string): string => ({
   verifying_file: "Verifying file checksum",

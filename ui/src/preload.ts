@@ -55,7 +55,7 @@ export interface EncoderGymBridge {
   previewNomosBinding(id: string, runtimeToken: string, pythonToken: string, historyToken?: string): Promise<NomosBindingPreview>;
   prepareNomosPython(id: string, previewToken: string): Promise<void>;
   bindNomos(id: string, previewToken: string): Promise<OpenedProject>;
-  projectActivity(id: string, limit?: number): Promise<ProjectActivityLog>;
+  projectActivity(id: string, limit?: number, runId?: string): Promise<ProjectActivityLog>;
   exportProjectActivity(id: string): Promise<ProjectActivityExport | null>;
   getProjects(): Promise<ProjectCollection>;
   addProjectFolder(): Promise<ProjectCollection | null>;
@@ -125,7 +125,7 @@ const bridge: EncoderGymBridge = {
   previewNomosBinding: (id, runtimeToken, pythonToken, historyToken) => ipcRenderer.invoke("encoder-gym:preview-nomos-binding", id, runtimeToken, pythonToken, historyToken),
   prepareNomosPython: (id, previewToken) => ipcRenderer.invoke("encoder-gym:prepare-nomos-python", id, previewToken),
   bindNomos: (id, previewToken) => ipcRenderer.invoke("encoder-gym:bind-nomos", id, previewToken),
-  projectActivity: (id, limit) => ipcRenderer.invoke("encoder-gym:project-activity", id, limit),
+  projectActivity: (id, limit, runId) => ipcRenderer.invoke("encoder-gym:project-activity", id, limit, runId),
   exportProjectActivity: id => ipcRenderer.invoke("encoder-gym:export-project-activity", id),
   getProjects: () => ipcRenderer.invoke("encoder-gym:get-projects"),
   addProjectFolder: () => ipcRenderer.invoke("encoder-gym:add-project-folder"),

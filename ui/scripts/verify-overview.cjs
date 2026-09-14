@@ -52,6 +52,19 @@ app.whenReady().then(async()=>{
     await check('checksum step does not move the stage backwards','document.querySelector(".optimization-progress-steps li.active").textContent==="Training"');
     await check('run stages precede and outweigh the current-step meter','document.querySelector(".optimization-progress-steps").compareDocumentPosition(document.querySelector(".optimization-live-progress")) & Node.DOCUMENT_POSITION_FOLLOWING && parseFloat(getComputedStyle(document.querySelector(".optimization-progress-steps li.active")).borderTopWidth) > parseFloat(getComputedStyle(document.querySelector(".optimization-live-progress progress")).height)');
     await capture('file-progress-dark');
+    await evaluate(`window.__priorActivity=qa.setup.activity;qa.setup.liveProgress=undefined;qa.setup.liveProgressAt=undefined;
+      qa.setup.activity={...qa.setup.activity,events:['checking_inputs','preparing_data','starting','training','saving_candidate','evaluating'].flatMap((stage,index)=>Array.from({length:140},(_,row)=>({at:new Date(Date.parse('2026-09-14T12:00:00Z')+(index*140+row)*1000).toISOString(),stage,progress:{phase:'verifying_file',subject:stage+'-'+row+'.json',completed:1,total:2}})))};qa.render()`);
+    for(const stage of ['checking_inputs','preparing_data','starting','training','saving_candidate','evaluating']) {
+      await click('#overview-new-root-stage-'+stage);
+      await check('all 140 activities remain selectable in '+stage,`document.querySelectorAll('.focus-events li').length===140 && [...document.querySelectorAll('.focus-events li')].every(row=>row.dataset.activityStage==='${stage}') && document.querySelector('.focus-events li:last-child').textContent.includes('${stage}-0.json')`);
+    }
+    await click('#overview-new-root-stage-checking_inputs');
+    await evaluate(`document.querySelector('.focus-events').scrollTop=400;document.querySelector('.focus-events').dispatchEvent(new Event('scroll'));qa.render()`);
+    await check('polling retains the selected historical stage and its scroll','document.querySelector("#overview-new-root-stage-checking_inputs").getAttribute("aria-pressed")==="true" && document.querySelector(".focus-events").scrollTop===400 && !document.querySelector(".focus-event.current")');
+    await evaluate(`document.querySelector('#overview-new-root-stage-checking_inputs').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))`);
+    await check('stage selection supports keyboard navigation','document.activeElement.id==="overview-new-root-stage-preparing_data" && document.querySelectorAll("[data-activity-stage=preparing_data]").length===140');
+    await capture('stage-history-dark');
+    await evaluate(`qa.setup.activity=window.__priorActivity;qa.state.activityViews.get('new-root').stage=undefined;qa.render()`);
     await evaluate(`qa.setup.liveProgress=undefined;qa.setup.liveProgressAt=undefined;qa.render()`);
     await evaluate('[...document.querySelectorAll(".optimization-status-controls button")].find(button=>button.textContent==="Stop").click()');
     await evaluate('new Promise(resolve=>setTimeout(resolve,50))');

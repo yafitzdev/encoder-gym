@@ -8,6 +8,16 @@ const run = (projectId, state = "queued", createdAt = new Date().toISOString()) 
   executionAttempt: 0, finalAttempt: 0, lastSequence: 1, updatedAt: createdAt,
 });
 
+test("opening stage history reads the entire selected run, independently of the recent feed", async () => {
+  const projectId = randomUUID(), value = run(projectId); let reads = 0;
+  const controller = new InputRunsController(projectId, {
+    projectActivity: async (id, _limit, runId) => { reads++; assert.equal(id, projectId); assert.equal(runId, value.id); return { actions: [] }; },
+  }, () => {});
+  await Promise.all([controller.ensureActivity(value.id), controller.ensureActivity(value.id)]);
+  await controller.ensureActivity(value.id);
+  assert.equal(reads, 1);
+});
+
 test("run history loads newest first and completes the exact selected run", async () => {
   const projectId = randomUUID(), first = run(projectId, "queued", "2026-01-01T00:00:00Z"), second = run(projectId, "execution_failed", "2026-01-02T00:00:00Z"), updates = [];
   const bridge = {

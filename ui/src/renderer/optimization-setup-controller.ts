@@ -175,7 +175,7 @@ export class OptimizationSetupController {
       const poll = (): void => {
         timer = setTimeout(() => {
           if (settled || epoch !== this.epoch || !this.run) return;
-          void Promise.all([this.bridge.inputOptimizationRun(this.projectId, this.run.id), this.bridge.projectActivity(this.projectId, 30)]).then(([run, log]) => {
+          void Promise.all([this.bridge.inputOptimizationRun(this.projectId, this.run.id), this.bridge.projectActivity(this.projectId, 30, this.run.id)]).then(([run, log]) => {
             if (!settled && epoch === this.epoch) {
               this.run = run;
               const observed = inputRunActivity(log, run.id);
@@ -189,7 +189,7 @@ export class OptimizationSetupController {
       try { this.run = await this.bridge.driveInputOptimization(this.projectId, this.run.id, progress); }
       finally { settled = true; if (timer) clearTimeout(timer); }
       if (epoch !== this.epoch) return;
-      this.activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30), this.run.id);
+      this.activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30, this.run.id), this.run.id);
       const opened = await this.bridge.selectProject(this.projectId);
       if (epoch !== this.epoch) return;
       if (opened.content.state === "ready" && opened.content.workspace.managed) {
@@ -203,7 +203,7 @@ export class OptimizationSetupController {
         if (this.run) {
           const existing = this.run;
           this.run = await this.bridge.inputOptimizationRun(this.projectId, existing.id).catch(() => existing);
-          this.activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30).catch(() => ({ project_id: this.projectId, actions: [] })), existing.id) ?? this.activity;
+          this.activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30, existing.id).catch(() => ({ project_id: this.projectId, actions: [] })), existing.id) ?? this.activity;
         }
       }
     } finally {
@@ -243,7 +243,7 @@ export class OptimizationSetupController {
     try {
       this.run = await this.bridge.cancelInputOptimization(this.projectId, run.id);
       this.render();
-      this.activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30), run.id) ?? this.activity;
+      this.activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30, run.id), run.id) ?? this.activity;
     } catch (error) { this.error = error; }
     finally { this.cancelling = false; this.render(); }
   }
