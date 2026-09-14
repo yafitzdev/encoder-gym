@@ -809,6 +809,13 @@ adapter to normalize evaluation settings without opening native test files.
 Catalog versions do not replace benchmark generations, qualification, exposure
 or run authorization. See `project-benchmark-spec.md`.
 
+Result projection also follows project-owned optimization receipts into derived
+scientific projects created by dataset materialization. The CLI loads only the
+exact linked child; the workspace core verifies its original setup, runtime,
+baseline, benchmark, protocol and journal binding before using the common
+development-only projector. It does not create a replacement scientific binding,
+search arbitrary co-located projects, or rewrite the baseline context.
+
 The project-owned optimization setup separately pins the active baseline
 revision/model, a dataset-core version reference and a shared benchmark version.
 The local adapter stores compare-and-append setup history; the CLI previews and

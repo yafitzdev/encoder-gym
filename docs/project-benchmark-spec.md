@@ -111,6 +111,19 @@ development assessment retains its exact baseline revision and producing run.
 The projection validates registered outputs against their training receipt (or
 the terminal head used by older accepted imports), not just matching file hashes.
 
+Input-first optimization may materialize a new scientific project for the selected
+dataset. Results also follow each project run's exact preparation, materialization
+and attached experiment receipts into that derived project. They verify the pinned
+setup, launch, benchmark, original runtime/baseline, protocol, candidate and journal
+head before projecting its development reports. They never discover unrelated
+projects merely because they share a store, model name or benchmark definition.
+The result context identifies the derived scientific project while retaining the
+original runtime binding and baseline revision. This is a read-only association:
+historical reports and journals are not rewritten or reevaluated.
+Materialization may assign a new scientific UUID to the same baseline bytes;
+use the owning model artifact's content-equivalence contract (format, byte count
+and fingerprint), not UUID equality. The managed baseline revision stays pinned.
+
 Suite support is the normalized evaluation report's support, not necessarily
 the number of source rows or the support of every individual metric. Surfaces
 must not label this value as a test-set row count.

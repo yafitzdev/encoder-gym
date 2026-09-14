@@ -1,6 +1,8 @@
 //! Safe model-inventory projection of exactly comparable development reports.
 use crate::{
-    BenchmarkSource, BoundIdentity, Invalid, ModelCatalog, ProjectBenchmarkVersion,
+    BenchmarkSource, BoundIdentity, Invalid, ModelCatalog, OptimizationLaunchAuthorization,
+    OptimizationSetup, ProjectBenchmarkVersion, ProjectOptimizationExperiment,
+    ProjectOptimizationMaterialization, ProjectOptimizationPreparation, ProjectOptimizationRun,
     ScientificBinding, require,
 };
 use encoder_experiment_core::{
@@ -20,6 +22,18 @@ pub struct BenchmarkRunEvidence<'a> {
     pub protocol: &'a ExperimentProtocol,
     pub definition: &'a BenchmarkDefinition,
     pub events: &'a [ExperimentEvent],
+}
+
+/// Verified project-run custody connects a derived scientific project to its
+/// original runtime. It does not fabricate a new runtime/baseline binding.
+pub struct OptimizationResultLineage<'a> {
+    pub run: &'a ProjectOptimizationRun,
+    pub launch: &'a OptimizationLaunchAuthorization,
+    pub setup: &'a OptimizationSetup,
+    pub preparation: &'a ProjectOptimizationPreparation,
+    pub materialization: &'a ProjectOptimizationMaterialization,
+    pub experiment: &'a ProjectOptimizationExperiment,
+    pub runtime_project: &'a ExternalProjectSnapshot,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -94,9 +108,8 @@ impl ProjectBenchmarkResults {
         let BenchmarkRunEvidence {
             binding,
             project,
-            protocol,
             definition,
-            events,
+            ..
         } = evidence;
         catalog.validate()?;
         binding.validate()?;
@@ -113,6 +126,99 @@ impl ProjectBenchmarkResults {
                     == project.backend.configuration_fingerprint,
             "Result source does not match this project's benchmark.",
         )?;
+        self.include_verified_run(catalog, evidence)
+    }
+
+    pub fn include_optimization_run(
+        &mut self,
+        catalog: &ModelCatalog,
+        evidence: BenchmarkRunEvidence<'_>,
+        lineage: OptimizationResultLineage<'_>,
+    ) -> Result<(), Invalid> {
+        let OptimizationResultLineage {
+            run,
+            launch,
+            setup,
+            preparation,
+            materialization,
+            experiment,
+            runtime_project,
+        } = lineage;
+        let BenchmarkRunEvidence {
+            binding,
+            project,
+            protocol,
+            definition,
+            events,
+        } = &evidence;
+        catalog.validate()?;
+        binding.validate()?;
+        runtime_project.validate_integrity().map_err(invalid)?;
+        definition.validate_integrity().map_err(invalid)?;
+        preparation.validate_for(run, launch, setup)?;
+        experiment.validate_for(run, launch, preparation, materialization)?;
+        let identity = |id: Uuid, fingerprint: &str| BoundIdentity {
+            id: id.to_string(),
+            fingerprint: fingerprint.into(),
+        };
+        let baseline = catalog
+            .baseline_revisions
+            .iter()
+            .find(|value| value.id.to_string() == setup.inputs.baseline_revision.id)
+            .ok_or_else(|| {
+                Invalid("The optimization's original baseline revision is missing.".into())
+            })?;
+        let first = events
+            .first()
+            .ok_or_else(|| Invalid("Optimization experiment journal is missing.".into()))?;
+        require(
+            run.project_id == catalog.project_id
+                && catalog.project_id == self.version.project_id
+                && binding.project_id == catalog.project_id
+                && preparation.execution_binding == identity(binding.id, &binding.fingerprint)
+                && preparation.runtime_project == binding.runtime.project_snapshot
+                && binding.runtime.project_snapshot
+                    == identity(runtime_project.id, &runtime_project.fingerprint)
+                && binding.baseline_revision_id == baseline.id
+                && setup.inputs.model.id == baseline.model_artifact_id.to_string()
+                && setup.inputs.baseline_revision.fingerprint == baseline.fingerprint
+                && preparation.benchmark == identity(self.version.id, &self.version.fingerprint)
+                && experiment.source_protocol == self.version.source.protocol
+                && materialization.scientific_project == identity(project.id, &project.fingerprint)
+                && project
+                    .baseline_model
+                    .has_same_content(&runtime_project.baseline_model)
+                && binding.adapter.key == project.backend.name
+                && binding.adapter.protocol == project.backend.protocol_version
+                && binding.adapter.configuration_fingerprint
+                    == project.backend.configuration_fingerprint
+                && *definition == &self.version.definition
+                && experiment.protocol == identity(protocol.id, &protocol.fingerprint)
+                && experiment.experiment_run.id == first.run_id.to_string()
+                && events
+                    .iter()
+                    .any(|event| event.fingerprint == experiment.experiment_run.fingerprint)
+                && protocol.candidates.len() == 1
+                && protocol.candidates.first().is_some_and(|candidate| {
+                    experiment.candidate == identity(candidate.id, &candidate.fingerprint)
+                }),
+            "Optimization result does not match its recorded project, inputs or child experiment.",
+        )?;
+        self.include_verified_run(catalog, evidence)
+    }
+
+    fn include_verified_run(
+        &mut self,
+        catalog: &ModelCatalog,
+        evidence: BenchmarkRunEvidence<'_>,
+    ) -> Result<(), Invalid> {
+        let BenchmarkRunEvidence {
+            binding,
+            project,
+            protocol,
+            definition,
+            events,
+        } = evidence;
         let baseline = catalog
             .baseline_revisions
             .iter()
@@ -125,7 +231,10 @@ impl ProjectBenchmarkResults {
                     id: binding.id.to_string(),
                     fingerprint: binding.fingerprint.clone(),
                 },
-                project_snapshot: binding.runtime.project_snapshot.clone(),
+                project_snapshot: BoundIdentity {
+                    id: project.id.to_string(),
+                    fingerprint: project.fingerprint.clone(),
+                },
                 protocol: BoundIdentity {
                     id: protocol.id.to_string(),
                     fingerprint: protocol.fingerprint.clone(),

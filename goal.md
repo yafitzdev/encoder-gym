@@ -54,22 +54,29 @@ or UI mockups alone do not complete this goal.
   generation, dataset qualification, training, evaluation and the next Agent
   turn. This integration, rather than another provider-settings redesign, is
   the next priority.
-- Run 17's candidate reports exist in the scientific journal but are absent
-  from its entry in project benchmark results. The cause is identified: the
-  lookup searches the original scientific project, while Optimize records its
-  candidate under a derived project for the selected dataset.
-- An uncommitted report-association fix follows the optimization run's recorded
+- Run 17's candidate reports were missing from project benchmark results even
+  though they existed in the scientific journal. The lookup searched only the
+  original scientific project, while Optimize recorded its candidate under a
+  derived project for the selected dataset.
+- The report-association fix follows the optimization run's recorded
   preparation, materialization and child-experiment receipts. It preserves the
   original baseline context and does not scan arbitrary scientific projects.
-  Formatting, compilation and lint passed. The focused CLI regression reaches
-  the expected linked report, but fails its scientific-database byte-preservation
-  assertion. Investigate that failure before committing or claiming the fix is
-  verified. Real Run 17 results have not yet been checked through the new lookup.
+  The CLI regression now verifies linked reports, original verdicts after a
+  baseline change, forged-link rejection, holdout exclusion and unchanged
+  database/WAL bytes. The fixture explicitly completes its own WAL checkpoint
+  before the standalone-file comparison. Native materialization's fresh baseline
+  UUID is handled through the existing exact-content-equivalence contract.
+  Read-only verification against real Nomos now returns Run 17's two candidate
+  reports (`generic_holdout`, `retired_post_scaling`) with their original failed
+  verdicts and baseline revision. Both database hashes remained unchanged; no
+  training or evaluation was rerun.
+  The full Rust gates, UI typecheck, all 124 UI tests and both desktop
+  smoke/restart journeys passed for this change.
 
 Verification levels are currently distinct: Agent/generation components are
 component-tested; the full agent-driven CLI coordinator is not connected; the
 production app journey is not agent-loop-verified. The report lookup is a
-separate, unfinished CLI integration change, not proof of an Agent invocation.
+verified CLI capability, not proof of an Agent invocation.
 
 Preserve existing projects, runs, model custody, dataset versions, provider
 connections, credentials, navigation and the user's approved Overview design.
@@ -77,14 +84,7 @@ Do not require another real Nomos run to rediscover the known missing executor.
 
 ## Immediate next task
 
-First finish validation of the existing report-association change: resolve the
-read-only database test failure without weakening the assertion or provenance
-checks, run the required gates, then inspect Run 17's results read-only. Confirm
-that its recorded candidate reports appear against the original baseline and
-benchmark, without rerunning training or evaluation. Commit that coherent fix
-separately. This repair is supporting work, not completion of the engine.
-
-Then connect the committed execution components through the production CLI
+Connect the committed execution components through the production CLI
 before adding more presentation. The next engine checkpoint must connect the
 configured Agent and Data generation
 providers to the real CLI workflow: inspect development failures and training

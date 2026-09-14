@@ -165,6 +165,8 @@ async fn initialize(folder: &Path, expected_parent: Option<Uuid>) -> Result<()> 
     super::print(&serde_json::json!({"actionId":action_id,"version":version}))
 }
 
+mod optimization_results;
+
 async fn results(
     folder: &Path,
     version_id: Uuid,
@@ -219,6 +221,7 @@ async fn results(
         }
         store.pool().close().await;
     }
+    optimization_results::include(folder, catalog, &mut results).await?;
     Ok(results)
 }
 
