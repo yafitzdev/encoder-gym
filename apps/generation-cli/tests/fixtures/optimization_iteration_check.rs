@@ -3,9 +3,9 @@
 use super::*;
 use encoder_optimization_core::{agent::AgentCallReservation, ports::OptimizationAgentStore};
 use project_workspace_core::{
-    DatasetPurpose, OptimizationAgentSettings, ProjectOptimizationEvent,
-    ProjectOptimizationPreparation, ProjectOptimizationRun, ProviderAuthentication,
-    ProviderCatalog, ProviderConfiguration, ProviderKind, ProviderLimits, ProviderRole,
+    DatasetPurpose, OptimizationAgentSettings, ProjectOptimizationPreparation,
+    ProviderAuthentication, ProviderCatalog, ProviderConfiguration, ProviderKind, ProviderLimits,
+    ProviderRole,
     optimization_iteration::{IterationDevelopmentEvidence, ProjectOptimizationIteration},
 };
 use project_workspace_local::{
@@ -117,30 +117,15 @@ async fn iteration_binding_is_replayable_exact_and_required_before_agent_dispatc
         id: Uuid::new_v4(),
         scope,
     };
-    // The production fixed executor must still reject settings it cannot honor.
-    assert!(
-        optimization_runs::start(&folder, request.clone(), "fixture")
-            .await
-            .is_err()
-    );
+    // Reservation accepts Agent authority, but the old executor cannot use it.
+    let reserved = optimization_runs::start(&folder, request.clone(), "fixture")
+        .await
+        .unwrap()
+        .run;
     let launch = optimization_launch::authorize(&folder, request, "fixture")
         .await
         .unwrap();
-    let reserved = ProjectOptimizationRun::reserve(Uuid::new_v4(), &launch, Utc::now()).unwrap();
-    let event =
-        ProjectOptimizationEvent::reserved(Uuid::new_v4(), &reserved, reserved.created_at).unwrap();
     let url = format!("sqlite://{}", folder.join("project.sqlite").display());
-    let mut database = SqliteConnection::connect(&url).await.unwrap();
-    sqlx::query("INSERT INTO project_optimization_runs(id,project_id,launch_id,launch_fingerprint,setup_id,fingerprint,metadata_json,created_at) VALUES (?,?,?,?,?,?,?,?)")
-        .bind(reserved.id.to_string()).bind(reserved.project_id.to_string()).bind(&reserved.launch.id)
-        .bind(&reserved.launch.fingerprint).bind(&reserved.setup.id).bind(&reserved.fingerprint)
-        .bind(serde_json::to_string(&reserved).unwrap()).bind(reserved.created_at.to_rfc3339())
-        .execute(&mut database).await.unwrap();
-    sqlx::query("INSERT INTO project_optimization_events(id,run_id,sequence,previous_event_fingerprint,kind,fingerprint,metadata_json,created_at) VALUES (?,?,1,NULL,'reserved',?,?,?)")
-        .bind(event.id.to_string()).bind(reserved.id.to_string()).bind(&event.fingerprint)
-        .bind(serde_json::to_string(&event).unwrap()).bind(event.created_at.to_rfc3339())
-        .execute(&mut database).await.unwrap();
-    database.close().await.unwrap();
     let run_id = reserved.id.to_string();
     assert_eq!(
         run(

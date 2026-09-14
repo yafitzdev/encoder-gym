@@ -74,6 +74,9 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunComm
         PrepareCandidate { run_id, runtime } => {
             agent_dataset::prepare_candidate(folder, run_id, runtime).await
         }
+        CompleteIteration { run_id, runtime } => {
+            agent_dataset::complete_iteration(folder, run_id, runtime).await
+        }
         BindIteration { run_id } => iteration_inputs::bind(folder, run_id).await,
         Iterations { run_id } => super::print(
             &project_workspace_local::optimization_iterations::list(folder, run_id).await?,
@@ -706,6 +709,14 @@ async fn attach(folder: &Path, run_id: Uuid) -> Result<()> {
 }
 
 async fn prepare(folder: &Path, run_id: Uuid) -> Result<()> {
+    let (action_id, run) = prepare_inputs(folder, run_id).await?;
+    super::print(&serde_json::json!({"actionId":action_id,"run":run}))
+}
+
+async fn prepare_inputs(
+    folder: &Path,
+    run_id: Uuid,
+) -> Result<(Uuid, project_workspace_core::ProjectOptimizationRunView)> {
     initialize_activity(folder).await?;
     let action_id = Uuid::new_v4();
     let references = vec![ActivityReference::new("run", run_id.to_string())?];
@@ -768,7 +779,7 @@ async fn prepare(folder: &Path, run_id: Uuid) -> Result<()> {
         )
     };
     append_activity(folder, terminal).await?;
-    super::print(&serde_json::json!({"actionId":action_id,"run":outcome?}))
+    Ok((action_id, outcome?))
 }
 
 async fn materialize(folder: &Path, run_id: Uuid) -> Result<()> {

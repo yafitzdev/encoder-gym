@@ -38,7 +38,7 @@ verify the connected engine before asking the user to try another real run.
 | --- | --- | --- |
 | Fixed training and development evaluation | Real Nomos Run 17 | This path is not Agent-driven |
 | Agent → generation → dataset publication → native clearance | Committed in `18fc85b`; deterministic production-CLI tests | Preserve and reuse this path |
-| One Agent-directed cycle through training and development evaluation | Implemented in the working tree; focused CLI tests passed for an earlier revision of these changes | Validate the latest changes and commit the coherent checkpoint |
+| One Agent-directed cycle through training and development evaluation | CLI-integrated; complete-cycle/recovery tests and all required Rust gates pass | Candidate/result viewer links and root-run completion |
 | Repeated iterations and complete recovery | Not implemented end to end | Completion/selection lineage, finite coordinator and interruption tests |
 | One-click agentic Overview journey | Not connected end to end | Wire the same coordinator, model/report links and iteration activity |
 
@@ -72,9 +72,9 @@ lint and full test gates. Its nine native-clearance Python tests, 125 UI tests
 and rendered Overview checks also passed. Those rendered checks use fixtures;
 they do not prove that Optimize invokes an Agent loop.
 
-### In-progress single-cycle connection — preserve these changes
+### Verified single-cycle CLI checkpoint
 
-The uncommitted `optimization-run complete-iteration` route extends that same
+The `optimization-run complete-iteration` route extends that same
 production composition through:
 
 1. Normal run reservation and input preparation; no manually seeded reservation
@@ -99,12 +99,20 @@ qualify, train the exact sample, evaluate both suites, and reuse completed work
 on retry without additional provider or native calls. It also verifies that
 changing project provider defaults does not change the run's selected models.
 
-Further edits subsequently added publication-lineage/device checks, saved-model
-verification, a failure/recovery test at iteration-result persistence, and a
-zero-holdout authorization regression. Their final test outcome is not confirmed
-in this handoff. Re-run the focused tests and all required Rust gates against
-the exact final tree before committing or claiming this checkpoint verified.
-The earlier passing test does not certify these later edits.
+The latest focused suites pass: nine managed benchmark tests, six optimization
+setup tests, and the zero-holdout runner regression. These include publication
+lineage/device checks, saved-model verification and injected failure at iteration
+result persistence. The holdout regression exposed an invalid authorization
+being appended before rejection; the runner now validates that transition before
+persistence, leaving the original journal unchanged on rejection.
+
+UI typecheck, all 125 UI tests and rendered Overview interaction checks pass.
+The rendered checks use fixture activities, not a connected Optimize button.
+All four Rust gates (`cargo fmt-check`, `cargo check-all`, `cargo lint`,
+`cargo test-all`) pass for this executable checkpoint, as do the nine native
+clearance Python tests. The full run includes the complete-cycle recovery and
+zero-holdout regressions. These checks prove the tested mechanics, not real
+Nomos improvement or an end-to-end agentic desktop journey.
 
 Run reservation now accepts an authorized agentic request. The legacy
 fixed-recipe materialization path remains guarded; the new coordinator is the
@@ -145,20 +153,23 @@ The target is one executable chain:
 `Optimize → Agent proposal → dataset diff → clearance → training → evaluation → report`
 
 Do not rebuild the committed Agent, generator, provider resolver or clearance.
-Do not redesign the approved Overview. Complete the working-tree connection,
-then finish iteration, recovery and app integration in this order:
+Do not redesign the approved Overview. The first-cycle CLI checkpoint is now
+verified. Finish result ownership, iteration, recovery and app integration:
 
-1. **Verify and commit the single-cycle checkpoint.** Run the production-CLI
-   regression through normal reservation and the same coordinator that the
-   desktop will invoke. Confirm exact dataset/sample lineage, enforced training
-   settings, original-baseline comparisons, no adaptive holdout access, and
-   recovery after native work completes but before the iteration result saves.
-   Review dependencies and run all required gates. Commit only verified work;
-   a documentation commit does not certify outstanding executable changes.
+1. **Preserve the verified single-cycle checkpoint.** The production-CLI test
+   uses normal reservation and the coordinator the desktop must invoke. It
+   covers exact dataset/sample lineage, enforced training settings,
+   original-baseline comparisons, no adaptive holdout access and recovery after
+   native completion but before iteration-result persistence. Do not rebuild
+   this chain or claim it already implements the whole loop.
 2. **Finish iteration ownership and result links.** Register every trained
    candidate, including rejected candidates, with its actual training dataset.
    Persist no-change/stop outcomes and root-run progress. Link candidate reports
    through explicit iteration receipts so Models, Evaluation and Overview agree.
+   The existing model/dataset link assumes whole imported files; materialized
+   subsets need an exact verified mapping that preserves the original version
+   and row identities. Do not invent the imported baseline's training history
+   or relabel a new flattened import as the selected training version.
 3. **Implement bounded repeated iterations.** Feed persisted development results
    and eligible dataset lineage into the next Agent scope. Preserve the original
    comparison baseline and benchmark. Enforce cumulative row/request/token/spend,

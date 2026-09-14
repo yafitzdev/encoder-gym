@@ -135,6 +135,32 @@ fn native_evaluation(arguments: &[String]) -> Result<()> {
         "{module}"
     )?;
     match module.as_str() {
+        "tools.train_dense_triplet_router" => {
+            let input = argument(arguments, "--input")?;
+            let count = fs::read_to_string(input)?.lines().count();
+            let output = PathBuf::from(argument(arguments, "--output")?);
+            fs::create_dir_all(&output)?;
+            fs::write(
+                output.join("model.safetensors"),
+                b"offline-trained-candidate",
+            )?;
+            write_json(
+                &output.join("nomos_training_manifest.json"),
+                &serde_json::json!({
+                    "output":output.to_string_lossy(), "base_model":argument(arguments,"--base-model")?,
+                    "inputs":[input], "input_row_counts":{input:count}, "trainable_row_counts":{input:count},
+                    "unique_trainable_rows":count, "training_triplets":count,
+                    "epochs":argument(arguments,"--epochs")?.parse::<f64>()?,
+                    "batch_size":argument(arguments,"--batch-size")?.parse::<u64>()?,
+                    "learning_rate":argument(arguments,"--learning-rate")?.parse::<f64>()?,
+                    "device":argument(arguments,"--device")?, "seed":argument(arguments,"--seed")?.parse::<u64>()?,
+                    "margin":argument(arguments,"--margin")?.parse::<f64>()?,
+                    "query_strategy":argument(arguments,"--query-strategy")?,
+                    "positive_strategy":argument(arguments,"--positive-strategy")?,
+                    "training_script":"tools.train_dense_triplet_router.v2"
+                }),
+            )?;
+        }
         "tools.evaluate_dense_router" => {
             let input = argument(arguments, "--input")?;
             let output = PathBuf::from(argument(arguments, "--output")?);

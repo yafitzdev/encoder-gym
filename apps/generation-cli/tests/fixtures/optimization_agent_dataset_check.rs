@@ -3,8 +3,7 @@
 //! exist in the production command.
 use super::*;
 use project_workspace_core::{
-    DatasetPurpose, OptimizationAgentSettings, ProjectOptimizationEvent,
-    ProjectOptimizationPreparation, ProjectOptimizationRun, ProviderAuthentication,
+    DatasetPurpose, OptimizationAgentSettings, ProjectOptimizationRun, ProviderAuthentication,
     ProviderCatalog, ProviderConfiguration, ProviderKind, ProviderLimits, ProviderRole,
 };
 use project_workspace_local::{
@@ -21,6 +20,15 @@ fn native_row(id: &str, question: &str) -> Value {
 
 #[tokio::test]
 async fn cli_agent_inspects_generates_qualifies_and_replays_exact_dataset_without_training() {
+    scenario(false).await;
+}
+
+#[tokio::test]
+async fn cli_agent_edits_qualified_data_trains_exact_sample_evaluates_and_replays() {
+    scenario(true).await;
+}
+
+async fn scenario(complete: bool) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let (folder, project) = initial_benchmark_fixture(
@@ -109,6 +117,7 @@ async fn cli_agent_inspects_generates_qualifies_and_replays_exact_dataset_withou
                 Err(error) => panic!("{error}"),
             }
         };
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(std::time::Duration::from_secs(5)))
             .unwrap();
@@ -188,71 +197,43 @@ async fn cli_agent_inspects_generates_qualifies_and_replays_exact_dataset_withou
     )
     .await
     .unwrap();
-    let scope = optimization_launch::preview_agentic(
-        &folder,
-        setup.id,
-        OptimizationAgentSettings::quick_test(),
-    )
-    .await
-    .unwrap()
-    .scope;
-    let launch = optimization_launch::authorize(
-        &folder,
-        optimization_launch::LaunchRequest {
-            id: Uuid::new_v4(),
-            scope,
-        },
-        "fixture",
-    )
-    .await
-    .unwrap();
-    // Seed only the not-yet-connected root reservation. The production guard
-    // remains closed until the full training/evaluation loop honors settings.
-    let reserved = ProjectOptimizationRun::reserve(Uuid::new_v4(), &launch, Utc::now()).unwrap();
-    let event =
-        ProjectOptimizationEvent::reserved(Uuid::new_v4(), &reserved, reserved.created_at).unwrap();
-    let mut db = SqliteConnection::connect(&format!(
-        "sqlite://{}",
-        folder.join("project.sqlite").display()
-    ))
-    .await
-    .unwrap();
-    sqlx::query("INSERT INTO project_optimization_runs(id,project_id,launch_id,launch_fingerprint,setup_id,fingerprint,metadata_json,created_at) VALUES (?,?,?,?,?,?,?,?)")
-        .bind(reserved.id.to_string()).bind(reserved.project_id.to_string()).bind(&reserved.launch.id).bind(&reserved.launch.fingerprint).bind(&reserved.setup.id).bind(&reserved.fingerprint).bind(serde_json::to_string(&reserved).unwrap()).bind(reserved.created_at.to_rfc3339()).execute(&mut db).await.unwrap();
-    sqlx::query("INSERT INTO project_optimization_events(id,run_id,sequence,previous_event_fingerprint,kind,fingerprint,metadata_json,created_at) VALUES (?,?,1,NULL,'reserved',?,?,?)")
-        .bind(event.id.to_string()).bind(reserved.id.to_string()).bind(&event.fingerprint).bind(serde_json::to_string(&event).unwrap()).bind(event.created_at.to_rfc3339()).execute(&mut db).await.unwrap();
-    db.close().await.unwrap();
-    let binding = workspace.scientific_binding.as_ref().unwrap();
-    let preparing = optimization_runs::begin_preparation(&folder, reserved.id)
+    let mut settings = OptimizationAgentSettings::quick_test();
+    settings.training.device = project_workspace_core::OptimizationDevice::Cpu;
+    settings.training.maximum_training_rows = Some(1);
+    let scope = optimization_launch::preview_agentic(&folder, setup.id, settings)
         .await
-        .unwrap();
-    let preparation = ProjectOptimizationPreparation::create(
-        &reserved,
-        &launch,
-        &setup,
-        BoundIdentity {
-            id: binding.id.to_string(),
-            fingerprint: binding.fingerprint.clone(),
-        },
-        binding.runtime.project_snapshot.clone(),
-        BoundIdentity {
-            id: "nomos:nomos-ranking-v3".into(),
-            fingerprint: binding.adapter.configuration_fingerprint.clone(),
-        },
-        2,
-        vec!["development".into(), "regression".into()],
-        "holdout".into(),
-        Utc::now(),
+        .unwrap()
+        .scope;
+    // Reserve through the normal production command. The coordinator performs
+    // real preparation; no SQL-seeded run or fabricated input receipt.
+    let request = optimization_launch::LaunchRequest {
+        id: Uuid::new_v4(),
+        scope,
+    };
+    fs::write(
+        root.join("launch.json"),
+        serde_json::to_vec(&request).unwrap(),
     )
     .unwrap();
-    optimization_runs::finish_preparation(
-        &folder,
-        reserved.id,
-        &preparing.head_fingerprint,
-        preparation,
-    )
-    .await
-    .unwrap();
+    let reserved_result = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "start",
+            "--file",
+            "launch.json",
+        ],
+    );
+    let reserved: ProjectOptimizationRun =
+        serde_json::from_value(reserved_result["run"]["run"].clone()).unwrap();
+    assert!(
+        optimization_runs::show(&folder, reserved.id)
+            .await
+            .unwrap()
+            .preparation
+            .is_none()
+    );
     // A changed default must not redirect this already-authorized run.
     let replacement = ProviderCatalog::create(
         Uuid::new_v4(),
@@ -274,8 +255,8 @@ async fn cli_agent_inspects_generates_qualifies_and_replays_exact_dataset_withou
     let calls = root.join("agent-calls.jsonl");
     let sidecar =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/optimization_agent_sidecar.mjs");
-    let execute = || {
-        let output = Command::new(env!("CARGO_BIN_EXE_synth"))
+    let invoke_iteration = || {
+        Command::new(env!("CARGO_BIN_EXE_synth"))
             .current_dir(root)
             .env("AGENT_FIXTURE_CALLS", &calls)
             .args([
@@ -284,13 +265,20 @@ async fn cli_agent_inspects_generates_qualifies_and_replays_exact_dataset_withou
                 "workspace",
                 "optimization-run",
                 "project",
-                "prepare-candidate",
+                if complete {
+                    "complete-iteration"
+                } else {
+                    "prepare-candidate"
+                },
                 &reserved.id.to_string(),
                 "--pi-sidecar",
             ])
             .arg(&sidecar)
             .output()
-            .unwrap();
+            .unwrap()
+    };
+    let execute = || {
+        let output = invoke_iteration();
         assert!(
             output.status.success(),
             "{}",
@@ -299,6 +287,36 @@ async fn cli_agent_inspects_generates_qualifies_and_replays_exact_dataset_withou
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
     let before_native = fs::read(root.join("runtime/native-invocations.log")).unwrap();
+    if complete {
+        let mut db = SqliteConnection::connect(&format!(
+            "sqlite://{}",
+            folder.join("project.sqlite").display()
+        ))
+        .await
+        .unwrap();
+        sqlx::query("CREATE TRIGGER interrupt_iteration_result BEFORE INSERT ON optimization_iteration_results BEGIN SELECT RAISE(ABORT, 'injected iteration result interruption'); END")
+            .execute(&mut db).await.unwrap();
+        db.close().await.unwrap();
+        let interrupted = invoke_iteration();
+        assert!(!interrupted.status.success());
+        assert!(
+            String::from_utf8_lossy(&interrupted.stderr)
+                .contains("injected iteration result interruption"),
+            "{}",
+            String::from_utf8_lossy(&interrupted.stderr)
+        );
+        let mut db = SqliteConnection::connect(&format!(
+            "sqlite://{}",
+            folder.join("project.sqlite").display()
+        ))
+        .await
+        .unwrap();
+        sqlx::query("DROP TRIGGER interrupt_iteration_result")
+            .execute(&mut db)
+            .await
+            .unwrap();
+        db.close().await.unwrap();
+    }
     let first = execute();
     generator.join().unwrap();
     assert_eq!(
@@ -314,13 +332,66 @@ async fn cli_agent_inspects_generates_qualifies_and_replays_exact_dataset_withou
         reserved.id.to_string()
     );
     let after_native = fs::read(root.join("runtime/native-invocations.log")).unwrap();
-    assert_eq!(
-        String::from_utf8_lossy(&after_native),
-        format!(
-            "{}encoder_gym.qualify_training\n",
-            String::from_utf8_lossy(&before_native)
+    let added = String::from_utf8_lossy(&after_native[before_native.len()..]);
+    if complete {
+        assert_eq!(
+            added.lines().collect::<Vec<_>>(),
+            vec![
+                "encoder_gym.qualify_training",
+                "tools.train_dense_triplet_router",
+                "tools.evaluate_dense_router",
+                "tools.evaluate_real_agent_sessions",
+                "tools.evaluate_dense_router",
+                "tools.evaluate_real_agent_sessions"
+            ]
+        );
+        let result: project_workspace_core::optimization_iteration_execution::IterationDevelopmentResult =
+            serde_json::from_value(first["datasetStep"]["development"].clone()).unwrap();
+        assert_eq!(result.reports.len(), 2);
+        assert_eq!(result.assessments.len(), 2);
+        assert!(!first["datasetStep"].to_string().contains("99999.125"));
+        let binding = project_workspace_local::optimization_iteration_execution::training(
+            &folder,
+            reserved.id,
+            first["datasetStep"]["iterationId"]
+                .as_str()
+                .unwrap()
+                .parse()
+                .unwrap(),
         )
-    );
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(binding.training_rows, 1);
+        assert_ne!(binding.training_dataset, binding.qualified_dataset);
+        assert_eq!(binding.resolved_device, "cpu");
+        assert_eq!(result.training_binding_fingerprint, binding.fingerprint);
+        assert_eq!(result.output.metadata["native_manifest"]["batch_size"], 8);
+        assert_eq!(
+            result.output.metadata["native_manifest"]["unique_trainable_rows"],
+            1
+        );
+        let store = SqliteExperimentStore::connect_read_only(&format!(
+            "sqlite://{}",
+            folder.join("runs/scientific.sqlite").display()
+        ))
+        .await
+        .unwrap();
+        let protocol = store
+            .get_protocol(binding.protocol.id.parse().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(protocol.budget.maximum_sealed_evaluations, 0);
+        assert_eq!(protocol.candidates[0].maximum_training_seconds, 120);
+        assert_ne!(
+            binding.candidate.id,
+            reserved.child_id("candidate", 1).unwrap().to_string()
+        );
+        store.pool().close().await;
+    } else {
+        assert_eq!(added, "encoder_gym.qualify_training\n");
+    }
     let published: project_workspace_local::optimization_dataset::OptimizationDatasetPublication =
         serde_json::from_value(first["datasetStep"]["publication"].clone()).unwrap();
     assert_eq!(published.parent, dataset.reference());
@@ -380,7 +451,11 @@ async fn cli_agent_inspects_generates_qualifies_and_replays_exact_dataset_withou
             "workspace",
             "optimization-run",
             "project",
-            "prepare-candidate",
+            if complete {
+                "complete-iteration"
+            } else {
+                "prepare-candidate"
+            },
             &reserved.id.to_string(),
             "--pi-sidecar",
         ])

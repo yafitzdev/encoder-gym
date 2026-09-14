@@ -1,5 +1,6 @@
 //! Compiled adapter for the isolated Nomos retrieval-ranking production pilot.
 
+mod agent_training;
 mod benchmark;
 mod development_evidence;
 mod generated_training;
@@ -7,6 +8,7 @@ mod managed_training;
 mod progress;
 mod repair_delta;
 mod training_clearance;
+pub use agent_training::NomosFineTuneSettings;
 mod training_data;
 pub use benchmark::NomosBenchmarkPlan;
 pub use development_evidence::NomosDevelopmentEvidence;
@@ -2800,6 +2802,13 @@ impl NativeCandidateStrategy {
                         configuration,
                     )?;
                 }
+                if parameters.receipt_protocol == "managed-settings-v1" {
+                    NomosBackend::verify_configured_training_manifest(
+                        configuration,
+                        parameters,
+                        &native_manifest,
+                    )?;
+                }
             }
             Self::LinearInterpolation {
                 reference_model,
@@ -2848,6 +2857,7 @@ struct NativeTrainingParameters {
     positive_strategy: String,
     seed: u64,
     device: String,
+    receipt_protocol: String,
     repair: Option<NativeRepairTrainingBinding>,
 }
 
@@ -3064,6 +3074,7 @@ impl NativeTrainingParameters {
             "positive_strategy",
             "seed",
             "device",
+            "receipt_protocol",
             REPAIR_SNAPSHOT_ID_PARAMETER,
             REPAIR_SNAPSHOT_FINGERPRINT_PARAMETER,
             REPAIR_SNAPSHOT_SPECIFICATION_PARAMETER,
@@ -3094,6 +3105,7 @@ impl NativeTrainingParameters {
             positive_strategy: text_parameter(values, "positive_strategy", "best")?,
             seed: integer_parameter(values, "seed", 20_260_902)?,
             device: text_parameter(values, "device", "cuda")?,
+            receipt_protocol: text_parameter(values, "receipt_protocol", "legacy")?,
             repair: NativeRepairTrainingBinding::parse(values)?,
         };
         if text_parameter(values, "strategy", "fine_tune")? != "fine_tune"
@@ -3106,6 +3118,9 @@ impl NativeTrainingParameters {
             || !["full", "question"].contains(&result.query_strategy.as_str())
             || !["all", "best"].contains(&result.positive_strategy.as_str())
             || !["cpu", "cuda"].contains(&result.device.as_str())
+            || !["legacy", "managed-settings-v1"].contains(&result.receipt_protocol.as_str())
+            || result.receipt_protocol == "managed-settings-v1"
+                && (result.loss != "triplet" || result.repair.is_some())
             || result.repair.is_some() && result.loss != "triplet"
         {
             return Err(adapter_error(

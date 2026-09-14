@@ -4,6 +4,7 @@
 mod inspection;
 mod providers;
 mod qualification;
+mod training;
 
 use std::{collections::BTreeSet, path::Path, sync::Arc};
 
@@ -33,6 +34,10 @@ struct DatasetStepResult {
     publication: Option<optimization_dataset::OptimizationDatasetPublication>,
     #[serde(skip_serializing_if = "Option::is_none")]
     qualification: Option<qualification::QualifiedDataset>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    development: Option<
+        project_workspace_core::optimization_iteration_execution::IterationDevelopmentResult,
+    >,
 }
 
 pub(super) async fn execute(
@@ -40,7 +45,7 @@ pub(super) async fn execute(
     run_id: Uuid,
     runtime: crate::cli::ResearchRuntimeArgs,
 ) -> Result<()> {
-    execute_step(folder, run_id, runtime, false).await
+    execute_step(folder, run_id, runtime, false, false).await
 }
 
 pub(super) async fn prepare_candidate(
@@ -48,7 +53,15 @@ pub(super) async fn prepare_candidate(
     run_id: Uuid,
     runtime: crate::cli::ResearchRuntimeArgs,
 ) -> Result<()> {
-    execute_step(folder, run_id, runtime, true).await
+    execute_step(folder, run_id, runtime, true, false).await
+}
+
+pub(super) async fn complete_iteration(
+    folder: &Path,
+    run_id: Uuid,
+    runtime: crate::cli::ResearchRuntimeArgs,
+) -> Result<()> {
+    execute_step(folder, run_id, runtime, true, true).await
 }
 
 async fn execute_step(
@@ -56,6 +69,7 @@ async fn execute_step(
     run_id: Uuid,
     runtime: crate::cli::ResearchRuntimeArgs,
     qualify: bool,
+    train: bool,
 ) -> Result<()> {
     let database_url = format!("sqlite://{}", folder.join("project.sqlite").display());
     let _lease = crate::commands::encoder_optimize::OptimizationExecutionLease::acquire(
@@ -82,11 +96,23 @@ async fn execute_step(
     };
     append_activity(folder, event(ActivityEventState::Started, None)).await?;
     let result: Result<_> = async {
+        if optimization_runs::show(folder, run_id)
+            .await?
+            .preparation
+            .is_none()
+        {
+            super::prepare_inputs(folder, run_id).await?;
+        }
         let mut result = drive(folder, run_id, action_id, runtime).await?;
         if qualify {
             if let Some(publication) = &result.publication {
                 result.qualification =
                     Some(qualification::prepare(folder, run_id, publication).await?);
+            }
+        }
+        if train {
+            if let Some(qualified) = &result.qualification {
+                result.development = Some(training::complete(folder, run_id, qualified).await?);
             }
         }
         Ok(result)
@@ -99,7 +125,7 @@ async fn execute_step(
             ActivityEventState::Failed,
             Some(ActivityFailure::new(
                 "agent_dataset_failed",
-                "Agent dataset preparation stopped before training; recorded calls and completed edits are retained.",
+                "Agent iteration stopped; inspect its recorded calls, dataset and scientific journal before resuming.",
             )?),
         )
     };
@@ -162,6 +188,7 @@ async fn drive(
             proposal,
             publication: None,
             qualification: None,
+            development: None,
         });
     }
     let history = agent_store.history(iteration.scope.clone()).await?;
@@ -208,5 +235,6 @@ async fn drive(
         proposal,
         publication: Some(publication),
         qualification: None,
+        development: None,
     })
 }

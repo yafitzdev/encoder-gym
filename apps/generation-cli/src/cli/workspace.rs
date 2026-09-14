@@ -64,6 +64,12 @@ pub enum WorkspaceOptimizationRunCommand {
         #[command(flatten)]
         runtime: super::ResearchRuntimeArgs,
     },
+    /// Compose Agent edits, qualified data, bounded training and development.
+    CompleteIteration {
+        run_id: Uuid,
+        #[command(flatten)]
+        runtime: super::ResearchRuntimeArgs,
+    },
     /// Read this run's pinned non-secret provider connections and models.
     Providers { run_id: Uuid },
     /// Authorize exact inputs and idempotently reserve their project run.

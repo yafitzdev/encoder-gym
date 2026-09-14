@@ -6,8 +6,8 @@ include a bounded Pi inspection/proposal loop, selected OpenAI-compatible model
 transport, an append-only project Agent-call journal, read-only native
 development-failure inspection, bounded concurrent generation, and recoverable
 publication through ordinary imports and dataset versions. They are not yet
-composed into Optimize: training/evaluation handoff,
-iterative recovery and the production GUI remain outstanding. The fixed-recipe executor
+composed into Optimize: repeated iteration,
+complete recovery and the production GUI remain outstanding. The fixed-recipe executor
 still explicitly rejects agentic settings; it must not masquerade as an agent run.
 
 The pre-training CLI composition now exists as `workspace optimization-run
@@ -16,17 +16,16 @@ loads exact saved development diagnostics and the selected training version,
 invokes the pinned Agent through Pi, validates its evidence-linked proposal,
 calls the independently pinned generator and publishes the ordinary dataset
 diff. It acquires the existing local execution lease and reuses completed calls
-and publication receipts. The full start guard remains closed: this command is
-an integration step for already-authorized iteration records, not an alternative
-way to start a complete or quick-test optimization run.
+and publication receipts. Normal `start` now reserves Agent authority without
+executing it; legacy fixed-recipe materialization remains guarded. This command
+only performs dataset edits, not a complete optimization run.
 
 Its production-CLI test uses deterministic Pi wire responses and a loopback
 generator, not paid models. It proves one inspected failure leads to a removal
 and generated addition, changed project defaults do not switch pinned models,
-and retry performs no new provider or native work. A test fixture supplies the
-root reservation while the production start guard remains in place. Complete
-dataset qualification, candidate training/evaluation and repeated iterations
-are not established by this test.
+and retry performs no new provider or native work. The fixture now enters
+through normal production reservation and input preparation. Repeated
+iterations and the Overview journey are not established by this test.
 
 `workspace optimization-run <PROJECT> prepare-candidate <RUN_ID>` extends that
 same composition through native materialization and complete-population
@@ -51,6 +50,27 @@ identities, invalid rows, duplicates, full-file hash verification and native-err
 redaction. This remains pre-training integration, not the required composed
 training/evaluation cycle or a live Nomos optimization.
 
+`workspace optimization-run <PROJECT> complete-iteration <RUN_ID>` extends the
+same composition through native training and development evaluation. An
+append-only training binding pins the full qualified dataset, actual trainer
+version/count, native artifact, resolved device, scientific project, candidate,
+protocol and experiment. Quick test samples stable source identities only after
+full-population clearance. A versioned native receipt verifies the exact input,
+epochs, batch size, learning rate and device; old native receipts remain readable
+only by their legacy recipes. Auto probes local CUDA availability once before
+protocol reservation and retries reuse its resolved choice.
+
+Each iteration protocol has zero sealed allowance. Its immutable result is
+derived by replaying the ordinary scientific journal, requiring complete
+development-suite coverage and no sealed authorization or report. A failed
+scientific gate remains a completed development result, not an execution error.
+The process regression uses deterministic native adapters, checks both suites
+and exact sample membership, and injects failure after native work but before
+result persistence; replay must not repeat provider, training or evaluation work.
+This is one CLI-integrated cycle, not a working multi-iteration app loop. Model
+catalog registration, result-view links, no-change completion, later-iteration
+lineage and complete interruption recovery remain outstanding.
+
 Agent and Generation activities are now projected from their own persisted
 actions into the existing activity stream, rather than requiring desktop
 re-emission under `optimization.run`. Generation has an explicit origin and
@@ -73,8 +93,8 @@ The CLI derives it from the benchmark's exact recorded scientific source;
 only development references enter the record, not the source protocol's sealed
 scores. Retries retain the original timestamp and identity. Agent-store opening
 requires this binding and rejects substituted scope evidence. This first-input
-handoff is consumed by the pre-training CLI paths above. It does not yet compose
-training/evaluation or admit later iterations without completion lineage.
+handoff is consumed by the CLI paths above. It does not yet admit later
+iterations without completion/selection lineage.
 
 Generation uses the generation slice's separate structured-output port, without
 recasting a native retrieval task as classification. The Nomos adapter currently
@@ -91,8 +111,9 @@ edits or native rows. Custom-endpoint cost remains unknown without pinned pricin
 The read-only CLI supports `workspace optimization-launch <PROJECT> preview
 --setup <ID> --quick-test` or `--settings-file <STRICT_JSON>`. Omitting both
 preserves the legacy preview byte shape. Authorization persists the exact
-settings and their derived bounds; legacy `optimization-run start` rejects
-those authorities before reserving a run until an executor can honor them.
+settings and their derived bounds. `optimization-run start` only reserves the
+authority; the legacy fixed-recipe `materialize` rejects Agent settings so they
+cannot silently enter an executor that ignores them.
 
 This specification extends the fixed-recipe execution in
 `optimization-launch-spec.md`. It is explicitly authorized by the September 14,

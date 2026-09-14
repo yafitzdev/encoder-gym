@@ -518,6 +518,7 @@ fn apply_event(
         } => {
             if view.state != ExperimentRunState::AwaitingSealedAuthorization
                 || view.selected_candidate_id != Some(*candidate_id)
+                || protocol.budget.maximum_sealed_evaluations == 0
             {
                 return illegal_event("sealed authorization does not match the selected candidate");
             }

@@ -24,12 +24,8 @@ pub async fn start(
     request: optimization_launch::LaunchRequest,
     authorized_by: &str,
 ) -> Result<ProjectOptimizationRunView> {
-    // Do not silently execute a one-candidate recipe under multi-iteration or
-    // quick-test authority. Removed only when the agent-loop executor lands.
-    ensure!(
-        request.scope.agentic.is_none(),
-        "Agent-loop execution is not connected yet. Advanced settings can be previewed, but the fixed-recipe executor cannot honor them."
-    );
+    // Reservation grants no fixed-recipe execution. Agent authorities are
+    // consumed by the iteration coordinator; legacy materialization is fenced.
     // Authorization and reservation are separately idempotent. If the process
     // stops between them, the same request finishes the missing reservation.
     let authorization = optimization_launch::authorize(folder, request, authorized_by).await?;
@@ -391,6 +387,16 @@ pub async fn begin_materialization(
     folder: &Path,
     run_id: Uuid,
 ) -> Result<ProjectOptimizationRunView> {
+    let reserved = show(folder, run_id).await?;
+    let launch = optimization_launch::list(folder)
+        .await?
+        .into_iter()
+        .find(|value| value.id.to_string() == reserved.run.launch.id)
+        .context("Launch is missing")?;
+    ensure!(
+        launch.scope.agentic.is_none(),
+        "The fixed-recipe executor cannot honor Agent settings; use the Agent iteration coordinator."
+    );
     let workspace = open_workspace(folder, false).await?;
     let mut database = connect(Path::new(&workspace.folder), false, false).await?;
     sqlx::migrate!("./migrations").run(&mut database).await?;

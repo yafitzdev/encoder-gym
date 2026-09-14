@@ -166,6 +166,11 @@ pub async fn initial_benchmark_fixture(
 
     let baseline = runtime.join("baseline");
     training_transformer::fixture::write_tiny_bert_bundle(&baseline).unwrap();
+    fs::write(
+        baseline.join("modules.json"),
+        r#"[{"idx":0,"path":"","type":"sentence_transformers.models.Transformer"}]"#,
+    )
+    .unwrap();
     for (directory, file) in [
         ("onnx", "encoder.onnx"),
         ("reference", "model.bin"),

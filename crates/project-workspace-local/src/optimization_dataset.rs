@@ -49,6 +49,28 @@ pub struct OptimizationDatasetPublication {
     pub cross_batch_duplicates: u64,
 }
 
+/// Read the exact published edit result without generating or publishing work.
+pub async fn publication(
+    folder: &Path,
+    run_id: Uuid,
+    iteration: u32,
+) -> Result<OptimizationDatasetPublication> {
+    let mut database = connect(folder, true, false).await?;
+    let row = sqlx::query("SELECT metadata_json,fingerprint,version_id FROM optimization_dataset_publications WHERE run_id=? AND iteration=?")
+        .bind(run_id.to_string()).bind(i64::from(iteration)).fetch_one(&mut database).await?;
+    database.close().await?;
+    let value: OptimizationDatasetPublication =
+        serde_json::from_str(&row.get::<String, _>("metadata_json"))?;
+    ensure!(
+        value.run_id == run_id
+            && value.iteration == iteration
+            && value.version.id.to_string() == row.get::<String, _>("version_id")
+            && fingerprint(&value)? == row.get::<String, _>("fingerprint"),
+        "Published dataset record changed"
+    );
+    Ok(value)
+}
+
 pub async fn publish(
     folder: &Path,
     run_id: Uuid,

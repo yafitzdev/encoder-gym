@@ -574,7 +574,7 @@ where
         authorized_by: impl Into<String>,
     ) -> Result<ExperimentView, ExperimentRunnerError> {
         let authorized_by = authorized_by.into();
-        let (_, protocol, events) = self.context(run_id).await?;
+        let (_, protocol, mut events) = self.context(run_id).await?;
         let project = self.project(protocol.project_snapshot_id).await?;
         let view = replay_experiment(&project, &protocol, &events)?;
         if let Some(original) = &view.sealed_authorized_by {
@@ -591,15 +591,19 @@ where
                 "experiment has no development-selected candidate".into(),
             )
         })?;
-        self.append(
+        let event = view.next_event(
             &protocol,
-            &view,
             ExperimentEventKind::SealedAuthorized {
                 candidate_id,
                 authorized_by,
             },
-        )
-        .await?;
+            Utc::now().max(view.updated_at),
+        )?;
+        // Validate the prospective transition before persistence. A rejected
+        // authorization must not poison an otherwise valid development journal.
+        events.push(event.clone());
+        replay_experiment(&project, &protocol, &events)?;
+        self.store.append_event(event).await?;
         self.status(run_id).await
     }
 

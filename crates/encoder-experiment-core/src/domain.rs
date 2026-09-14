@@ -437,10 +437,10 @@ impl OptimizationBudget {
         if self.maximum_candidates == 0
             || self.maximum_training_seconds == 0
             || self.maximum_development_evaluations < self.maximum_candidates
-            || self.maximum_sealed_evaluations != 1
+            || self.maximum_sealed_evaluations > 1
         {
             return Err(EncoderExperimentError::Validation(
-                "optimization budget must be finite, cover every candidate development evaluation, and permit exactly one sealed evaluation".into(),
+                "optimization budget must be finite, cover every candidate development evaluation, and permit at most one sealed evaluation".into(),
             ));
         }
         Ok(())

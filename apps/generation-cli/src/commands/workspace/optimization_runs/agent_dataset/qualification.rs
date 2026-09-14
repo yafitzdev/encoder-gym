@@ -18,8 +18,8 @@ use uuid::Uuid;
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct QualifiedDataset {
-    native_dataset: NomosTrainingDataset,
-    clearance: NomosTrainingClearance,
+    pub(super) native_dataset: NomosTrainingDataset,
+    pub(super) clearance: NomosTrainingClearance,
 }
 
 pub(super) async fn prepare(

@@ -147,6 +147,22 @@ audit; the production entry point imports the pinned native implementations.
 The CLI process test uses the deterministic native executable instead of
 requiring Python, a Nomos checkout, model downloads or provider access.
 
+The managed benchmark process suite also exercises `complete-iteration` through
+production `synth`: normal reservation/preparation, evidence-driven Agent edits,
+separate generation, native full-population clearance, exact Quick-test sampling,
+training and both development suites. A persistence interruption after native
+completion must recover without additional provider or native invocations.
+The native trainer fixture records effective settings and produces its receipt;
+it is test-only and cannot prove live model quality. Run this integration with:
+
+```text
+cargo test -p synthetic-data-cli --features test-fixtures --test managed_benchmark_cli
+```
+
+The runner's `development_only_iteration_cannot_authorize_or_execute_holdout`
+regression separately proves zero-allowance adaptive protocols cannot acquire
+sealed authorization even when a candidate passes development.
+
 For each component:
 
 1. Define the smallest useful public behavior.

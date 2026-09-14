@@ -327,7 +327,7 @@ async fn agent_settings_preview_and_authority_are_immutable_and_cannot_run_as_a_
         ],
     );
     assert_eq!(retry["authorization"], saved["authorization"]);
-    let rejected = invoke(
+    let reserved = run(
         root,
         &[
             "optimization-run",
@@ -337,13 +337,26 @@ async fn agent_settings_preview_and_authority_are_immutable_and_cannot_run_as_a_
             "agentic-launch.json",
         ],
     );
+    assert_eq!(reserved["run"]["state"], "queued");
+    let rejected = invoke(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "materialize",
+            reserved["run"]["run"]["id"].as_str().unwrap(),
+        ],
+    );
     assert!(!rejected.status.success());
     assert!(
         String::from_utf8_lossy(&rejected.stderr).contains("fixed-recipe executor cannot honor")
     );
     assert_eq!(
-        run(root, &["optimization-run", "project", "list"]),
-        json!([])
+        run(root, &["optimization-run", "project", "list"])
+            .as_array()
+            .unwrap()
+            .len(),
+        1
     );
     let settings = project_workspace_core::OptimizationAgentSettings {
         maximum_iterations: 2,

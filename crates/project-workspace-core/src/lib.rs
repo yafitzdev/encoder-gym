@@ -11,6 +11,7 @@ mod benchmark;
 pub mod benchmark_results;
 mod models;
 pub mod optimization_iteration;
+pub mod optimization_iteration_execution;
 mod optimization_launch;
 mod optimization_run;
 mod optimization_settings;

@@ -20,7 +20,8 @@ use encoder_experiment_core::{
         MetricGateCondition,
     },
     ports::{
-        AdapterInspection, BoxFuture, EncoderTaskAdapterError, EncoderTaskBackend, TrainOutput,
+        AdapterInspection, BoxFuture, EncoderTaskAdapterError, EncoderTaskBackend, ExperimentStore,
+        TrainOutput,
     },
 };
 use encoder_experiment_runner::ExperimentRunner;
@@ -90,6 +91,44 @@ async fn sealed_authorization_retries_preserve_the_original_actor_and_journal() 
             .is_err()
     );
     assert_eq!(runner.status(run_id).await.unwrap(), authorized);
+    assert_eq!(
+        backend
+            .selected_candidate_sealed_calls
+            .load(Ordering::SeqCst),
+        0
+    );
+}
+
+#[tokio::test]
+async fn development_only_iteration_cannot_authorize_or_execute_holdout() {
+    let store = SqliteExperimentStore::connect("sqlite::memory:")
+        .await
+        .unwrap();
+    let backend = FakeRankingBackend::new();
+    let original = development_selected_run(&store, &backend).await;
+    let runner = ExperimentRunner::new(&store, &backend);
+    let original_view = runner.status(original).await.unwrap();
+    let mut protocol = store
+        .get_protocol(original_view.protocol_id)
+        .await
+        .unwrap()
+        .unwrap();
+    protocol.id = uuid::Uuid::new_v4();
+    protocol.budget.maximum_sealed_evaluations = 0;
+    protocol.fingerprint = protocol.reproduce_fingerprint().unwrap();
+    store.create_protocol(protocol.clone()).await.unwrap();
+    let run = runner.create_run(protocol.id).await.unwrap();
+    let completed = runner.run_development(run.run_id).await.unwrap();
+    assert!(completed.selected_model().is_some());
+    let before = store.load_events(run.run_id).await.unwrap();
+    assert!(
+        runner
+            .authorize_sealed(run.run_id, "operator")
+            .await
+            .is_err()
+    );
+    assert!(runner.run_sealed(run.run_id).await.is_err());
+    assert_eq!(store.load_events(run.run_id).await.unwrap(), before);
     assert_eq!(
         backend
             .selected_candidate_sealed_calls

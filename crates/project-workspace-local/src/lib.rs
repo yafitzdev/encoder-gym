@@ -10,6 +10,7 @@ mod model_registration;
 pub mod optimization_agent;
 pub mod optimization_dataset;
 pub mod optimization_generation;
+pub mod optimization_iteration_execution;
 pub mod optimization_iterations;
 pub mod optimization_launch;
 pub mod optimization_runs;

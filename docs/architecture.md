@@ -112,9 +112,15 @@ continues through iteration-owned native materialization and task-owned
 full-population clearance. The fixed native audit reuses Nomos's validator and
 input renderer and emits only aggregate facts; its request and clearance pin
 the complete dataset and benchmark inputs. This step checks relevant code/data
-identities without rereading model weights. Per-iteration training/evaluation
-receipts remain the next handoff. The unchanged start guard prevents exposing
-this partial route as the full authorized optimization workflow.
+identities without rereading model weights. `complete-iteration` continues this
+same composition through native training and all development suites. The
+workspace core owns immutable training and journal-derived result bindings;
+the local adapter checks publication lineage, exact sample membership and
+append-only persistence. Quick-test sampling follows full-population clearance,
+and the native adapter verifies effective training settings in its receipt.
+Each adaptive protocol has zero sealed allowance. Reservation accepts Agent
+authority, but legacy materialization still rejects it. This first-cycle CLI
+path is not yet a repeated loop or the production Overview executor.
 
 `semantic-catalog` owns immutable reusable/dataset-scoped profiles, append-only
 bindings, deterministic layered resolution, and the provider-neutral resolved
