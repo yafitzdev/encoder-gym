@@ -37,6 +37,17 @@ Preserve existing projects, runs, model custody, dataset versions, provider
 connections, credentials, navigation and the user's approved Overview design.
 Do not require another real Nomos run to rediscover the known missing executor.
 
+## Immediate next task
+
+Continue from the existing settings contracts and implement the missing executor.
+The first checkpoint must connect the configured Agent and Data generation
+providers to the real CLI workflow: inspect development failures and training
+rows, propose edits, publish a validated dataset version, train and evaluate.
+Prove this composition with deterministic adapters before asking the user to
+try another run. Do not spend the next checkpoint on another settings-only
+change, mockup or synthetic Agent message. This checkpoint is not completion:
+continue through bounded iteration, recovery and the production Overview journey.
+
 ## Required execution
 
 1. Pin the exact baseline, starting dataset version, benchmark version, provider
@@ -44,6 +55,9 @@ Do not require another real Nomos run to rediscover the known missing executor.
 2. Give the configured Agent permitted development metrics/diagnostics and
    bounded training-data inspection tools. Persist its actual public explanation
    and explicit edit proposal, with the evidence and row identities it used.
+   Consume persisted development predictions and errors through the analysis
+   contracts; do not substitute aggregate scores or repeated file checks for
+   investigating concrete failure cases. Make missing evidence explicit.
 3. Apply justified removals and request targeted additions from the separately
    selected Data generation model. Validate native row semantics, membership,
    duplication and contamination through the owning slice/task contracts.
@@ -103,6 +117,10 @@ candidate for promotion. Setting normal iterations to one is not quick mode.
 - Record actual model-produced public rationales and tool decisions as Agent
   activity. Do not relabel system templates as agent reasoning, expose private
   chain-of-thought, or display fabricated messages as live execution.
+- Pin each role to the selected connection and model for the run. Changing
+  project defaults later must not silently switch a resumed run's provider,
+  model or credential connection. Resolve secrets outside logs and the renderer;
+  if a pinned connection is unavailable, pause with a specific actionable error.
 - Show separate Agent and Data generation token usage. Show cost only when
   reported reliably or derived from pinned rates; otherwise mark it unknown.
   Credentials and protected evidence must never enter logs or the renderer.
@@ -164,3 +182,10 @@ truthful iteration activity and linked results through the real app journey.
 Tests may prove mechanics without claiming a real model improvement. State
 exactly what passed, what ran for real and what remains; configuration or a
 successful fixed-recipe training run is not completion of this goal.
+
+Completion evidence must let the user follow one run from its selected providers
+to actual Agent decisions, generated additions and removals, the resulting
+dataset version, trained candidate and benchmark comparison. Include a
+two-iteration test showing how the first result changed the next proposal, and a
+stop/restart test showing which completed work was reused. Clearly distinguish
+deterministic test evidence from any separately authorized live run.
