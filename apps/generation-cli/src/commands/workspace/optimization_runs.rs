@@ -67,6 +67,7 @@ fn candidate_reasoning(candidate: &TrainingCandidate) -> Result<String> {
 pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunCommand) -> Result<()> {
     use WorkspaceOptimizationRunCommand::*;
     match command {
+        Providers { run_id } => super::print(&optimization_runs::providers(folder, run_id).await?),
         List => super::print(&optimization_runs::list(folder).await?),
         Show { run_id } => super::print(&optimization_runs::show(folder, run_id).await?),
         Cancel { run_id } => cancel(folder, run_id).await,

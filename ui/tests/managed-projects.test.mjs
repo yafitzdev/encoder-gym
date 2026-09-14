@@ -349,6 +349,32 @@ test("backend diagnostics redact bearer, key, and token shaped credentials", () 
   assert.equal(redacted.includes("hidden-value"), false);
 });
 
+test("project run execution loads its pinned catalog instead of current provider defaults", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gym-run-provider-pin-")), folder = join(root, "project"); mkdirSync(folder);
+  const id = randomUUID(), runId = randomUUID(), connectionId = randomUUID(), currentId = randomUUID();
+  const fingerprint = "sha256:" + "e".repeat(64), createdAt = new Date().toISOString();
+  const provider = connection => ({ role: "advisor", kind: "openai-compatible", model: "test", authentication: "bearer", endpoint: "https://provider.example.test", secret: { id: `${id}:connection:${connection}` } });
+  const workspace = { folder, verified: true, manifest: { version: 1, id, name: "Pin fixture", createdAt, baseline: {}, task: null }, datasets: [], providerCatalog: { projectId: id, providers: [provider(currentId)] } };
+  const registry = new ProjectRegistry(join(root, "profile", "projects.json")); registry.addManaged(workspace);
+  const ref = () => ({ id: randomUUID(), fingerprint });
+  const wire = { run: { id: runId, projectId: id, launch: ref(), setup: ref(), createdAt, fingerprint }, state: "baseline_retained", attempt: 1, materializationAttempt: 1, experimentAttempt: 1, executionAttempt: 1, finalAttempt: 0, lastSequence: 8, headFingerprint: fingerprint, updatedAt: createdAt };
+  const seen = [], resolved = [];
+  let keyAvailable = true;
+  const backend = new ManagedBackend("owned-synth", registry, async (_exe, args, environment) => {
+    seen.push({ args, environment });
+    if (args[3] === "open") return JSON.stringify(workspace);
+    if (args[3] === "optimization-run" && args[5] === "providers") { assert.equal(args[6], runId); return JSON.stringify({ projectId: id, providers: [provider(connectionId)] }); }
+    if (args[3] === "optimization-run" && args[5] === "show") return JSON.stringify(wire);
+    return "{}";
+  }, { resolveCredential: (reference, fallback) => { resolved.push({ reference, fallback }); return keyAvailable ? "pinned-test-secret" : undefined; } });
+  await backend.optimizationLaunch.drive(id, runId);
+  assert.deepEqual(resolved, [{ reference: `${id}:connection:${connectionId}`, fallback: undefined }]);
+  assert.deepEqual(seen.find(call => call.args[5] === "execute").environment, { [`ENCODER_GYM_CONNECTION_${connectionId.replaceAll("-", "").toUpperCase()}_API_KEY`]: "pinned-test-secret" });
+  keyAvailable = false; seen.length = 0;
+  await assert.rejects(() => backend.optimizationLaunch.drive(id, runId), /pinned advisor connection is unavailable/);
+  assert.equal(seen.some(call => call.args[5] === "execute"), false);
+});
+
 test("provider configuration serializes only validated non-secret settings to a temporary file", async () => {
   const root = mkdtempSync(join(tmpdir(), "gym-managed-providers-")), folder = join(root, "project"); mkdirSync(folder);
   const id = randomUUID(), baseline = { source: folder, format: "safetensors-encoder", architecture: "bert", files: [], bytes: 10, fingerprint: "sha256:" + "c".repeat(64), execution: "not-configured" };
@@ -376,8 +402,15 @@ test("provider configuration serializes only validated non-secret settings to a 
   assert.equal(parsed.generation.environment_fallback, "SYNTH_OPENAI_API_KEY");
   assert.equal(parsed.advisor.environment_fallback, "SYNTH_ADVISOR_API_KEY");
   assert.equal(existsSync(temporary), false);
+  const connectionId = randomUUID();
+  const pinned = { ...generation, connectionId, environmentFallback: undefined };
+  await backend.configureProviders(id, { version: 1, generation: pinned, advisor: pinned });
+  assert.equal(JSON.parse(serialized).generation.connection_id, connectionId);
+  assert.equal(JSON.parse(serialized).advisor.connection_id, connectionId);
+  assert.equal(JSON.parse(serialized).generation.environment_fallback, undefined);
+  await assert.rejects(() => backend.configureProviders(id, { version: 1, generation: { ...pinned, environmentFallback: "SYNTH_OPENAI_API_KEY" }, advisor: pinned }), /Invalid generation provider/);
   await backend.providerStatus(id);
-  assert.equal(calls.filter(args => args[3] === "open").length, 2);
+  assert.equal(calls.filter(args => args[3] === "open").length, 3);
   assert.equal(calls.some(args => args[3] === "providers" && args[5] === "show"), false, "desktop status must not launch a second workspace scan");
 });
 

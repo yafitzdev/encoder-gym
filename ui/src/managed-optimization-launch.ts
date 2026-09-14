@@ -15,7 +15,7 @@ import { parseOptimizationAgentSettings, type OptimizationAgentSettings } from "
 interface Ports {
   open(projectId: string): Promise<ManagedWorkspace>;
   command<T>(args: string[], environment?: Readonly<Record<string, string>>, progress?: (value: NativeProgress) => void, signal?: AbortSignal): Promise<T>;
-  environment?(projectId: string, workspace: ManagedWorkspace): Readonly<Record<string, string>>;
+  environment?(projectId: string, workspace: ManagedWorkspace, runId: string): Promise<Readonly<Record<string, string>>> | Readonly<Record<string, string>>;
   exclusive<T>(projectId: string, run: () => Promise<T>): Promise<T>;
   exclusiveRun<T>(projectId: string, runId: string, run: (signal: AbortSignal) => Promise<T>): Promise<T>;
   abortRun(projectId: string, runId: string): void;
@@ -201,7 +201,7 @@ export class ManagedOptimizationLaunch {
       const stage = async (phase: InputOptimizationPhase, command: string, native = false): Promise<void> => {
         if (execution.stop) throw stopped;
         progress?.(phase);
-        await this.ports.command<unknown>(["optimization-run", workspace.folder, command, runId], native ? this.ports.environment?.(projectId, workspace) : undefined,
+        await this.ports.command<unknown>(["optimization-run", workspace.folder, command, runId], native ? await this.ports.environment?.(projectId, workspace, runId) : undefined,
           value => progress?.(phase, value), signal);
       };
       try {

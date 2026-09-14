@@ -1,0 +1,62 @@
+import { createModels, createProvider, type Model } from "@earendil-works/pi-ai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+
+import type { PiRunRequest } from "./protocol.js";
+
+/** Use the selected project model verbatim, never a built-in catalog substitute. */
+export function projectProvider(request: PiRunRequest) {
+  const configuration = request.openaiCompatible;
+  if (!configuration) throw new Error("Project provider configuration is missing");
+  const url = new URL(configuration.baseUrl);
+  if (
+    !["http:", "https:"].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error("Project provider URL must not contain credentials, a query or a fragment");
+  }
+  if (
+    !Number.isSafeInteger(configuration.maximumOutputTokens) ||
+    configuration.maximumOutputTokens < 1 ||
+    configuration.maximumOutputTokens > 65536
+  ) {
+    throw new Error("Project provider output-token ceiling must be between 1 and 65536");
+  }
+  const key = request.apiKeyEnv ? process.env[request.apiKeyEnv] : undefined;
+  if (request.apiKeyEnv && !key?.trim()) {
+    throw new Error("The selected project connection has no available API key");
+  }
+  const model: Model<"openai-completions"> = {
+    id: request.model,
+    name: request.model,
+    api: "openai-completions",
+    provider: request.provider,
+    baseUrl: url.toString().replace(/\/$/, ""),
+    reasoning: false,
+    input: ["text"],
+    // The host reports unknown cost unless it has an independent pinned rate.
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 131072,
+    maxTokens: configuration.maximumOutputTokens,
+    compat: { maxTokensField: "max_tokens", supportsStore: false },
+  };
+  const models = createModels();
+  models.setProvider(
+    createProvider({
+      id: request.provider,
+      name: request.provider,
+      baseUrl: model.baseUrl,
+      auth: {
+        apiKey: {
+          name: request.provider,
+          resolve: async () => ({ auth: key ? { apiKey: key } : {} }),
+        },
+      },
+      models: [model],
+      api: openAICompletionsApi(),
+    }),
+  );
+  return { models, model };
+}

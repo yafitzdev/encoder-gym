@@ -1,5 +1,7 @@
 //! OpenAI-compatible implementation of the core generation-backend port.
 
+mod structured;
+
 use std::time::Duration;
 
 use generation_core::{
@@ -97,8 +99,19 @@ impl OpenAICompatibleBackend {
         let endpoint = Url::parse(&format!("{base_url}/chat/completions")).map_err(|error| {
             GenerationBackendError::Configuration(format!("invalid base URL: {error}"))
         })?;
+        if !matches!(endpoint.scheme(), "http" | "https")
+            || !endpoint.username().is_empty()
+            || endpoint.password().is_some()
+            || endpoint.query().is_some()
+            || endpoint.fragment().is_some()
+        {
+            return Err(GenerationBackendError::Configuration(
+                "Base URL must be HTTP(S), without credentials, query or fragment".into(),
+            ));
+        }
         let client = Client::builder()
             .timeout(Duration::from_secs(120))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|error| GenerationBackendError::Configuration(error.to_string()))?;
         let api_key = api_key.filter(|key| !key.trim().is_empty());

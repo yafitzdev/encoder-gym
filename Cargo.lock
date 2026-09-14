@@ -949,10 +949,12 @@ dependencies = [
  "artifact-core",
  "chrono",
  "encoder-experiment-core",
+ "encoder-optimization-core",
  "encoder-repair-core",
  "serde",
  "serde_json",
  "sha2",
+ "synthetic-data-core",
  "tempfile",
  "tokio",
  "uuid",
@@ -990,6 +992,31 @@ dependencies = [
  "tokio",
  "uuid",
  "workflow-core",
+]
+
+[[package]]
+name = "encoder-optimization-core"
+version = "0.1.0"
+dependencies = [
+ "artifact-core",
+ "serde",
+ "serde_json",
+ "synthetic-data-core",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "encoder-optimization-runner"
+version = "0.1.0"
+dependencies = [
+ "agent-runtime-core",
+ "encoder-optimization-core",
+ "serde",
+ "serde_json",
+ "synthetic-data-core",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2358,12 +2385,14 @@ dependencies = [
  "chrono",
  "dataset-core",
  "encoder-experiment-core",
+ "encoder-optimization-core",
  "project-workspace-core",
  "safetensors",
  "serde",
  "serde_json",
  "sha2",
  "sqlx",
+ "sysinfo",
  "tempfile",
  "tokio",
  "training-transformer",

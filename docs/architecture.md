@@ -75,6 +75,24 @@ the Pi sidecar owns the corresponding tool schemas while each product runner
 still validates and executes every request. The generic contract grants no tool
 by itself and contains no research, planning, persistence, or Pi types.
 
+`encoder-optimization-core` owns the bounded input-first Agent inspection and
+edit-proposal contracts. `encoder-optimization-runner` hosts one reserved Pi
+turn at a time through `agent-runtime-core`; it validates inspected evidence and
+row references rather than trusting model output. `project-workspace-local`
+implements its append-only call journal and cumulative reservation accounting.
+The Nomos adapter owns development-only saved diagnostic inspection and compact
+native training-row projection. Native validation, dataset publication, training
+and deterministic benchmark decisions remain with their existing slice owners.
+The generation slice also owns a narrow structured-output transport port for
+task-native schemas. Its existing OpenAI-compatible adapter implements one
+bounded request without hidden retries; Nomos owns prompt construction and
+native admission. The optimization runner reserves and dispatches bounded
+concurrent batches through that port. The project adapter journals attempts,
+usage and admission outcomes, then composes ordinary imports and dataset
+fork/revision operations into a replayable publication receipt. It does not
+reinterpret native labels or grant training qualification. These components are
+not yet the complete iterative CLI composition.
+
 `semantic-catalog` owns immutable reusable/dataset-scoped profiles, append-only
 bindings, deterministic layered resolution, and the provider-neutral resolved
 context. It imports only `artifact-core`; it knows no prompt, provider, SQLite,

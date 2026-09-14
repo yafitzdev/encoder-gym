@@ -214,7 +214,7 @@ export type ProviderRole = "generation" | "advisor" | "evaluator";
 export interface ProviderLimitsInput { maximumRequests: number; maximumInputTokens: number; maximumOutputTokens: number; maximumCostMicrousd: number }
 export interface ProviderInput {
   kind: "fake" | "openai-compatible"; endpoint?: string; model: string; authentication: "none" | "bearer";
-  environmentFallback?: string; limits: ProviderLimitsInput;
+  environmentFallback?: string; connectionId?: string; limits: ProviderLimitsInput;
 }
 export interface ProviderSettingsRequest { version: 1; generation: ProviderInput; advisor: ProviderInput; evaluator?: ProviderInput; actor?: string; reason?: string }
 export interface CredentialAvailability { role: ProviderRole; authentication: "none" | "bearer"; availability: "available" | "missing" | "unavailable"; source?: "credential_store" | "environment" | "not_required" }

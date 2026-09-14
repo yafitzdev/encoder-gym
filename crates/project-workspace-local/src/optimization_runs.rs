@@ -123,6 +123,37 @@ pub async fn list(folder: &Path) -> Result<Vec<ProjectOptimizationRunView>> {
     Ok(runs)
 }
 
+/// Read the exact non-secret provider revision authorized by this run, never
+/// the current project defaults. Safe for launchers before credential lookup.
+pub async fn providers(
+    folder: &Path,
+    run_id: Uuid,
+) -> Result<project_workspace_core::ProviderCatalog> {
+    let run = show(folder, run_id).await?;
+    let launch = optimization_launch::list(folder)
+        .await?
+        .into_iter()
+        .find(|value| value.id.to_string() == run.run.launch.id)
+        .context("Run launch was not found")?;
+    ensure!(
+        launch.fingerprint == run.run.launch.fingerprint,
+        "Run launch fingerprint changed"
+    );
+    let workspace = open_workspace(folder, false).await?;
+    let mut database = connect(Path::new(&workspace.folder), true, false).await?;
+    let catalogs = load_provider_catalog_history(&mut database, &workspace.manifest).await?;
+    database.close().await?;
+    let catalog = catalogs
+        .into_iter()
+        .find(|value| value.id.to_string() == launch.scope.provider_catalog.id)
+        .context("The run's pinned provider catalog is missing")?;
+    ensure!(
+        catalog.fingerprint == launch.scope.provider_catalog.fingerprint,
+        "Pinned provider catalog fingerprint changed"
+    );
+    Ok(catalog)
+}
+
 pub async fn show(folder: &Path, run_id: Uuid) -> Result<ProjectOptimizationRunView> {
     list(folder)
         .await?

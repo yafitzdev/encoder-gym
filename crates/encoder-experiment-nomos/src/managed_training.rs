@@ -382,13 +382,22 @@ fn verify_existing_materialization(
     stored.verify_in(root)
 }
 
-fn validate_native_training_row(value: &Value) -> Result<String, EncoderTaskAdapterError> {
+pub(crate) fn validate_native_training_row(
+    value: &Value,
+) -> Result<String, EncoderTaskAdapterError> {
     let row = value
         .as_object()
         .ok_or_else(|| adapter_error("Nomos training row must be a JSON object"))?;
     if row.get("schema_version").and_then(Value::as_str) != Some("decision-state.v2")
         || row.get("evaluation_partition").and_then(Value::as_str) != Some("train")
         || row.get("accepted").and_then(Value::as_bool) != Some(true)
+        || row
+            .get("sealed")
+            .is_some_and(|value| value != &Value::Bool(false))
+        || ["split", "partition"].into_iter().any(|key| {
+            row.get(key)
+                .is_some_and(|value| !matches!(value.as_str(), Some("train" | "training")))
+        })
         || row.get("task_kind").and_then(Value::as_str) == Some("verify")
     {
         return Err(adapter_error(

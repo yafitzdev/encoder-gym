@@ -51,11 +51,18 @@ export const SUPERVISOR_TOOL_NAMES = [
 ] as const;
 
 export type SupervisorToolName = (typeof SUPERVISOR_TOOL_NAMES)[number];
+export const ENCODER_OPTIMIZATION_TOOL_NAMES = [
+  "inspect_development_failures",
+  "inspect_training_rows",
+  "propose_dataset_edits",
+] as const;
+export type EncoderOptimizationToolName = (typeof ENCODER_OPTIMIZATION_TOOL_NAMES)[number];
 export type AgentToolName =
   | ResearchToolName
   | ArchitectToolName
   | BenchmarkArchitectToolName
-  | SupervisorToolName;
+  | SupervisorToolName
+  | EncoderOptimizationToolName;
 
 export interface ToolExecutionRequest {
   runId: string;
@@ -90,7 +97,8 @@ export interface PiRunRequest {
     | "authenticity_research_v1"
     | "dataset_architect_v1"
     | "benchmark_architect_v1"
-    | "generation_quality_supervisor_v1";
+    | "generation_quality_supervisor_v1"
+    | "encoder_optimization_v1";
   runId: string;
   runSpecificationFingerprint: string;
   provider: string;
@@ -100,6 +108,10 @@ export interface PiRunRequest {
   initialPrompt: string;
   maxModelTurns: number;
   scriptedTurns?: ScriptedTurn[];
+  openaiCompatible?: {
+    baseUrl: string;
+    maximumOutputTokens: number;
+  };
 }
 
 export type PiRunEvent =

@@ -15,4 +15,5 @@ pub mod planning;
 pub mod ports;
 pub mod prompting;
 pub mod strategy;
+pub mod structured;
 pub mod validation;

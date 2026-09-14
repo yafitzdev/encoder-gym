@@ -12,6 +12,7 @@ import { runManagedSmokeChecks } from "./managed-smoke-checks.js";
 import { checkCurrentManaged } from "./current-managed-check.js";
 import { ManagedBackend, datasetPurpose, managedSnapshot } from "./managed-backend.js";
 import { CredentialStore } from "./credential-store.js";
+import { ProjectCredentials, providerCredentialBinding } from "./provider-credentials.js";
 import type { ManagedProviderStatus, ManagedReadiness, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
 import type { NativeProgress } from "./managed-control.js";
 import { discoverProviderModels, ProviderConnectionStore, providerConnectionSecretId, type ProjectProviderConnections, type ProviderAssignmentRequest } from "./provider-connections.js";
@@ -35,14 +36,12 @@ const credentials = new CredentialStore(join(app.getPath("userData"), "credentia
   decrypt: value => safeStorage.decryptString(value),
 });
 const providerConnections = new ProviderConnectionStore(join(app.getPath("userData"), "provider-connections.json"));
+const projectCredentials = new ProjectCredentials(credentials, providerConnections);
 const backend = new ManagedBackend(
   app.isPackaged ? join(process.resourcesPath, "synth" + (process.platform === "win32" ? ".exe" : "")) : join(directory, "..", "..", "target", "debug", "synth" + (process.platform === "win32" ? ".exe" : "")),
   registry,
   undefined,
-  { resolveCredential: (id, environmentFallback) => {
-    const connectionSecret = providerConnections.secretForRole(id);
-    return connectionSecret ? credentials.resolve(connectionSecret) : credentials.resolve(id, environmentFallback);
-  } },
+  { resolveCredential: (id, environmentFallback) => projectCredentials.resolve(id, environmentFallback) },
 );
 let smokeFolderChoice: string | undefined;
 async function pickFolder(title: string, defaultPath?: string): Promise<string | undefined> {
@@ -73,10 +72,10 @@ function desktopProviderStatus(status: ManagedProviderStatus): ManagedProviderSt
     ...status,
     credentialAvailability: status.catalog?.providers.map(provider => {
       if (provider.authentication === "none") return { role: provider.role, authentication: provider.authentication, availability: "available", source: "not_required" };
-      const reference = provider.secret;
-      if (!reference || reference.id !== `${status.projectId}:${provider.role}`) return { role: provider.role, authentication: provider.authentication, availability: "unavailable" };
-      const connectionSecret = providerConnections.secretForRole(reference.id);
-      return { role: provider.role, authentication: provider.authentication, ...(connectionSecret ? credentials.status(connectionSecret) : credentials.status(reference.id, reference.environmentFallback)) };
+      try {
+        const binding = providerCredentialBinding(status.projectId, provider);
+        return { role: provider.role, authentication: provider.authentication, ...projectCredentials.status(binding.id, binding.connectionId ? undefined : binding.environment) };
+      } catch { return { role: provider.role, authentication: provider.authentication, availability: "unavailable" }; }
     }) ?? [],
   };
 }
@@ -102,7 +101,7 @@ function assignmentSettings(projectId: string, request: ProviderAssignmentReques
       : { maximumRequests: 100, maximumInputTokens: 1_000_000, maximumOutputTokens: 200_000, maximumCostMicrousd: 5_000_000 });
     return {
       kind: "openai-compatible" as const, endpoint: connection.endpoint, model: selected.model, authentication: "bearer" as const,
-      environmentFallback: role === "advisor" ? "SYNTH_ADVISOR_API_KEY" : "SYNTH_OPENAI_API_KEY", limits,
+      connectionId: connection.id, limits,
     };
   };
   return { version: 1, advisor: resolve("advisor"), generation: resolve("generation"), actor: "local-operator", reason: "Assign discovered project models to optimization roles" };

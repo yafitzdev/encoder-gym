@@ -157,11 +157,4 @@ export class ProviderConnectionStore {
     for (const role of roles) if (value[role]) assignments[role] = assignment(value[role], project, role);
     project.assignments = assignments; this.write(file);
   }
-  secretForRole(roleSecretId: string): string | undefined {
-    const match = /^([0-9a-f-]{36}):(advisor|generation)$/i.exec(roleSecretId);
-    if (!match) return undefined;
-    const project = this.get(match[1]);
-    const selected = project.assignments[match[2] as AssignableProviderRole];
-    return selected ? providerConnectionSecretId(project.projectId, selected.connectionId) : undefined;
-  }
 }

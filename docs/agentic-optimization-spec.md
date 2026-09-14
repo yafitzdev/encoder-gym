@@ -1,9 +1,35 @@
 # Input-first agentic optimization
 
 Implementation status: settings contracts, strict CLI preview/authorization and
-desktop history compatibility are implemented. The iterative executor and
-iteration-aware GUI remain outstanding. The fixed-recipe executor explicitly
-rejects agentic settings; it must not masquerade as an agent run.
+desktop history compatibility are implemented. The new execution components now
+include a bounded Pi inspection/proposal loop, selected OpenAI-compatible model
+transport, an append-only project Agent-call journal, read-only native
+development-failure inspection, bounded concurrent generation, and recoverable
+publication through ordinary imports and dataset versions. They are not yet
+composed into Optimize: full-population qualification, training/evaluation handoff,
+iterative recovery and the production GUI remain outstanding. The fixed-recipe executor
+still explicitly rejects agentic settings; it must not masquerade as an agent run.
+
+The Agent runner reserves one call before each one-turn Pi session, retains
+completed tool results for continuation, and rejects edits referencing
+uninspected rows or development evidence. The project adapter accounts for all
+pending and interrupted reservations and recovers only after checking the exact
+worker PID/start time. Native diagnostic inspection reads existing retrieval
+reports without running an evaluator; the historical evaluator's fifty-failure
+sample is explicitly labeled as a sample. These component tests do not prove a
+completed application/CLI cycle or a real Nomos improvement.
+
+Generation uses the generation slice's separate structured-output port, without
+recasting a native retrieval task as classification. The Nomos adapter currently
+generates questions for inspected templates, preserving their registry, label,
+router state and training partition. It rejects authority-field injection,
+invalid native rows and duplicate questions; publication deterministically
+excludes cross-batch duplicates and records each surviving row's call/slot source.
+This is not semantic qualification or a substitute for the complete derived
+population's training-to-benchmark firewall. Generation reservations enforce
+separate cumulative request/token/spend allowances and in-flight concurrency.
+Unknown outcomes retain their reservations, and reported overruns cannot authorize
+edits or native rows. Custom-endpoint cost remains unknown without pinned pricing.
 
 The read-only CLI supports `workspace optimization-launch <PROJECT> preview
 --setup <ID> --quick-test` or `--settings-file <STRICT_JSON>`. Omitting both
@@ -32,6 +58,16 @@ is one model call inside that iteration. Both have independent finite limits.
 Defaults are three iterations, eight agent turns per iteration, 192 total row
 changes and one generation request in flight. Concurrency is configurable from
 one to sixteen. It does not bypass cumulative provider request/token/cost limits.
+
+Desktop model assignments now persist the exact project connection UUID in the
+non-secret provider revision. `workspace optimization-run <PROJECT> providers
+<RUN_ID>` returns the run's original verified revision, not current defaults.
+Connection-backed secrets use connection-specific child environment slots; they
+never fall back to a mutable role assignment or its environment variable. Missing
+connections/keys stop dispatch with an actionable error. Legacy role references
+remain readable and may use their explicit legacy key/environment, but are not
+aliases for newly assigned connections. Existing saved assignments without a
+connection pin must be saved again before they can use connection-backed keys.
 
 Quick test uses one iteration, four agent turns, eight edits, a deterministic
 sample of at most 64 training rows and at most two minutes of training. It still

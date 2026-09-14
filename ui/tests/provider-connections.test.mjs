@@ -18,7 +18,7 @@ test("one project can keep many discovered connections and assign their models i
   assert.equal(store.get(projectId).connections.length, 2);
   assert.equal(assigned.advisor.model, "deepseek-flash");
   assert.equal(assigned.generation.model, "deepseek-pro");
-  assert.equal(store.secretForRole(`${projectId}:advisor`), providerConnectionSecretId(projectId, deepseek.id));
+  assert.equal(store.get(projectId).assignments.advisor.connectionId, deepseek.id);
   assert.throws(() => store.remove(projectId, deepseek.id), /Assign another model/);
   store.update(projectId, deepseek.id, ["deepseek-pro"]);
   assert.equal(store.get(projectId).assignments.advisor, undefined, "a removed provider model cannot remain assigned");

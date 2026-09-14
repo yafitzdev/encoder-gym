@@ -184,6 +184,8 @@ struct ProviderInput {
     authentication: ProviderAuthentication,
     #[serde(default)]
     environment_fallback: Option<String>,
+    #[serde(default)]
+    connection_id: Option<Uuid>,
     limits: ProviderLimits,
 }
 
@@ -194,14 +196,19 @@ impl ProviderInput {
         role: ProviderRole,
     ) -> anyhow::Result<ProviderConfiguration> {
         let secret = match self.authentication {
-            ProviderAuthentication::Bearer => Some(SecretReference::for_role(
-                project_id,
-                role,
-                self.environment_fallback,
-            )?),
+            ProviderAuthentication::Bearer => Some(match self.connection_id {
+                Some(connection) => {
+                    anyhow::ensure!(
+                        self.environment_fallback.is_none(),
+                        "Pinned connections cannot fall back to a role credential."
+                    );
+                    SecretReference::for_connection(project_id, connection)?
+                }
+                None => SecretReference::for_role(project_id, role, self.environment_fallback)?,
+            }),
             ProviderAuthentication::None => {
                 anyhow::ensure!(
-                    self.environment_fallback.is_none(),
+                    self.environment_fallback.is_none() && self.connection_id.is_none(),
                     "Unauthenticated providers cannot configure a credential fallback."
                 );
                 None

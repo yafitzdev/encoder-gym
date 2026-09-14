@@ -48,6 +48,8 @@ pub enum WorkspaceOptimizationLaunchCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum WorkspaceOptimizationRunCommand {
+    /// Read this run's pinned non-secret provider connections and models.
+    Providers { run_id: Uuid },
     /// Authorize exact inputs and idempotently reserve their project run.
     Start {
         #[arg(long)]

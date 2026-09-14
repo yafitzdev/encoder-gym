@@ -42,15 +42,17 @@ They are labelled Legacy and are not silently converted into managed projects.
   lists every run; one expanded run contains Setup → Status → Report. New run
   opens five fields: active baseline, starting dataset version, current project
   benchmark, configured advisor, and configured generator. Credentials remain in
-  Project settings. The current provider contract has one configuration per role,
-  not a selectable library of credential profiles. Baseline changes remain in Models.
+  Project settings contains a library of connections and their discovered models;
+  Agent and Data generation can select different models from the same connection
+  or use separate connections. Each new assignment pins that connection's UUID
+  in the provider revision. Baseline changes remain in Models.
   Historical fields are read-only and never substitute today's inputs or providers.
   Status displays the persisted native task, artifact context, real counters and
   recent timestamped events. No percentage or checkpoint is invented when the
-  backend supplies none. Stop requests a pause after the current CLI stage finishes;
+  backend supplies none. Stop interrupts the active local worker;
   Resume re-enters the same run UUID and ordinary idempotent stage contracts.
-  Terminal cancellation remains a separate legacy/CLI action. This is stage-level
-  recovery, not a promise of mid-batch training checkpoint recovery.
+  Terminal cancellation remains a separate legacy/CLI action. Recovery reuses
+  completed work, without promising mid-batch training checkpoint recovery.
   Report shows the recorded KEEP/REJECT decision with development comparisons;
   candidate values and signed deltas use each metric's direction. Green numbers
   cannot override a recorded rejection. Sealed scores remain outside this projection.
@@ -159,12 +161,15 @@ copied and content-addressed. Same-content imports with matching purpose and
 provenance are idempotent; conflicting purpose/provenance is rejected.
 
 Project settings also configures separate generation and advisor authorities.
-Their endpoint, model, environment fallback, and finite request/token/cost
+Their endpoint, model, credential connection reference, and finite request/token/cost
 limits are append-only project records. Submitted keys are encrypted by the
 operating system in the Electron profile and are never returned to the
-renderer. `SYNTH_OPENAI_API_KEY` and `SYNTH_ADVISOR_API_KEY` remain explicit
-fallbacks when desktop credential encryption is unavailable or intentionally
-not used. Availability checks are offline and make no provider request.
+renderer. New runs pin exact connections and model selections. Resume reads the
+run's original provider revision, never today's role assignments. A missing
+pinned connection or key prevents dispatch. Legacy role references retain their
+explicit `SYNTH_OPENAI_API_KEY` and `SYNTH_ADVISOR_API_KEY` fallbacks; they never
+redirect to newly assigned connections. Older assignments need one save to pin
+their connection. Availability checks are offline and make no provider request.
 
 Scientific runtime setup also stays behind native picker tokens. The desktop
 first previews the isolated checkout and Python executable through the fixed

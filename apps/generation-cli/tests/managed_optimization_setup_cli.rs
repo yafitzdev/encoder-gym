@@ -212,6 +212,66 @@ async fn configure_fake_providers(
 }
 
 #[tokio::test]
+async fn provider_connections_are_pinned_by_the_real_cli_without_credential_values() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let (folder, _, _, _) = prepared(root).await;
+    let project = open_workspace(&folder, false).await.unwrap().manifest.id;
+    let connection = Uuid::new_v4();
+    let provider = |model| {
+        json!({"kind":"openai-compatible", "endpoint":"https://provider.example.test/v1", "model":model, "authentication":"bearer", "connection_id":connection,
+        "limits":{"maximumRequests":5,"maximumInputTokens":10000,"maximumOutputTokens":1000,"maximumCostMicrousd":100000}})
+    };
+    let settings = json!({"version":1, "generation":provider("generation-model"), "advisor":provider("agent-model")});
+    fs::write(
+        root.join("connections.json"),
+        serde_json::to_vec(&settings).unwrap(),
+    )
+    .unwrap();
+    let saved = run(
+        root,
+        &[
+            "providers",
+            "project",
+            "configure",
+            "--file",
+            "connections.json",
+        ],
+    );
+    let expected = format!("{project}:connection:{connection}");
+    for item in saved["catalog"]["providers"].as_array().unwrap() {
+        assert_eq!(item["secret"]["id"], expected);
+        assert!(item["secret"].get("environmentFallback").is_none());
+    }
+    let reloaded = run(root, &["providers", "project", "show"]);
+    assert_eq!(saved["catalog"], reloaded["catalog"]);
+    let mut invalid = settings;
+    invalid["advisor"]["environment_fallback"] = "SYNTH_ADVISOR_API_KEY".into();
+    fs::write(
+        root.join("connections.json"),
+        serde_json::to_vec(&invalid).unwrap(),
+    )
+    .unwrap();
+    let refused = invoke(
+        root,
+        &[
+            "providers",
+            "project",
+            "configure",
+            "--expected-revision-id",
+            saved["catalog"]["id"].as_str().unwrap(),
+            "--file",
+            "connections.json",
+        ],
+    );
+    assert!(!refused.status.success());
+    assert_eq!(
+        run(root, &["providers", "project", "show"])["catalog"],
+        saved["catalog"]
+    );
+}
+
+#[tokio::test]
 async fn agent_settings_preview_and_authority_are_immutable_and_cannot_run_as_a_fixed_recipe() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
@@ -1121,6 +1181,19 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
     // A provider revision made after preview invalidates a new authorization.
     let updated = configure_fake_providers(&folder, Some(&providers)).await;
     assert_ne!(updated.fingerprint, providers.fingerprint);
+    assert_eq!(
+        run(
+            root,
+            &[
+                "optimization-run",
+                "project",
+                "providers",
+                started["run"]["run"]["id"].as_str().unwrap()
+            ]
+        ),
+        serde_json::to_value(&providers).unwrap(),
+        "execution resolves the original provider revision after defaults change"
+    );
     assert_eq!(
         run(
             root,

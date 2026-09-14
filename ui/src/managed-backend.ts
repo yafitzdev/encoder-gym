@@ -14,6 +14,7 @@ import { ManagedDatasets } from "./managed-datasets.js";
 import { ManagedBenchmarks } from "./managed-benchmarks.js";
 import { ManagedOptimizationSetup } from "./managed-optimization-setup.js";
 import { ManagedOptimizationLaunch } from "./managed-optimization-launch.js";
+import { providerCredentialBinding } from "./provider-credentials.js";
 import type { AppendProjectActivity, ProjectActivityEvent, ProjectActivityExport, ProjectActivityLog, ProjectActivityNarrative, ProjectActivityReference, ProjectActivitySource } from "./project-activity.js";
 
 const purposes = new Set<DatasetPurpose>(["unassigned", "training", "development", "sealed"]);
@@ -41,13 +42,14 @@ function integer(value: unknown, label: string, allowZero = false, maximum = Num
 }
 function providerInput(value: unknown, role: "generation" | "advisor" | "evaluator"): ProviderInput {
   const label = `${role} provider`;
-  const provider = object(value, label, ["kind", "endpoint", "model", "authentication", "environmentFallback", "limits"]);
+  const provider = object(value, label, ["kind", "endpoint", "model", "authentication", "environmentFallback", "connectionId", "limits"]);
   if (!(["fake", "openai-compatible"] as unknown[]).includes(provider.kind) || !(["none", "bearer"] as unknown[]).includes(provider.authentication)) throw new Error(`Invalid ${label}.`);
   const endpoint = provider.endpoint === undefined ? undefined : text(provider.endpoint, `${label} endpoint`, 2048);
   const environmentFallback = provider.environmentFallback === undefined ? undefined : text(provider.environmentFallback, `${label} environment fallback`, 128);
+  const connectionId = provider.connectionId === undefined ? undefined : uuid(provider.connectionId, `${label} connection`);
   const expectedFallback = role === "generation" ? "SYNTH_OPENAI_API_KEY" : role === "advisor" ? "SYNTH_ADVISOR_API_KEY" : "SYNTH_EVALUATOR_API_KEY";
-  if (provider.kind === "fake" && (endpoint !== undefined || provider.authentication !== "none" || environmentFallback !== undefined)) throw new Error(`Invalid ${label}.`);
-  if (provider.kind === "openai-compatible" && (!endpoint || provider.authentication !== "bearer" || environmentFallback !== expectedFallback)) throw new Error(`Invalid ${label}.`);
+  if (provider.kind === "fake" && (endpoint !== undefined || provider.authentication !== "none" || environmentFallback !== undefined || connectionId !== undefined)) throw new Error(`Invalid ${label}.`);
+  if (provider.kind === "openai-compatible" && (!endpoint || provider.authentication !== "bearer" || (connectionId ? environmentFallback !== undefined : environmentFallback !== expectedFallback))) throw new Error(`Invalid ${label}.`);
   const limits = object(provider.limits, `${label} limits`, ["maximumRequests", "maximumInputTokens", "maximumOutputTokens", "maximumCostMicrousd"]);
   const parsedLimits = {
     maximumRequests: integer(limits.maximumRequests, `${label} request limit`, false, 1_000_000),
@@ -58,7 +60,7 @@ function providerInput(value: unknown, role: "generation" | "advisor" | "evaluat
   if (provider.kind === "fake" && parsedLimits.maximumCostMicrousd !== 0) throw new Error(`Invalid ${label}.`);
   return {
     kind: provider.kind as ProviderInput["kind"], endpoint, model: text(provider.model, `${label} model`), authentication: provider.authentication as ProviderInput["authentication"], environmentFallback,
-    limits: parsedLimits,
+    connectionId, limits: parsedLimits,
   };
 }
 function providerSettings(value: unknown): ProviderSettingsRequest {
@@ -75,6 +77,7 @@ function providerFile(settings: ProviderSettingsRequest): object {
   const encode = (provider: ProviderInput) => ({
     kind: provider.kind, ...(provider.endpoint ? { endpoint: provider.endpoint } : {}), model: provider.model, authentication: provider.authentication,
     ...(provider.environmentFallback ? { environment_fallback: provider.environmentFallback } : {}), limits: provider.limits,
+    ...(provider.connectionId ? { connection_id: provider.connectionId } : {}),
   });
   return { version: 1, generation: encode(settings.generation), advisor: encode(settings.advisor), ...(settings.evaluator ? { evaluator: encode(settings.evaluator) } : {}) };
 }
@@ -142,7 +145,11 @@ export class ManagedBackend {
     this.optimizationLaunch = new ManagedOptimizationLaunch({
       open: id => this.openRegistered(id),
       command: (args, environment, progress, signal) => this.command(args, environment, progress, signal),
-      environment: (id, workspace) => this.providerEnvironment(id, workspace),
+      environment: async (id, workspace, runId) => {
+        const catalog = await this.command<NonNullable<ManagedWorkspace["providerCatalog"]>>(["optimization-run", workspace.folder, "providers", runId]);
+        if (catalog.projectId !== id || !Array.isArray(catalog.providers)) throw new Error("Pinned provider catalog belongs to another project.");
+        return this.providerEnvironment(id, { ...workspace, providerCatalog: catalog });
+      },
       exclusive: (id, run) => this.exclusiveProject(id, run),
       exclusiveRun: (id, runId, run) => this.exclusiveOptimizationRun(id, runId, run),
       abortRun: (id, runId) => this.abortOptimizationRun(id, runId),
@@ -401,14 +408,10 @@ export class ManagedBackend {
     const environment: Record<string, string> = {};
     for (const provider of workspace.providerCatalog.providers) {
       if (provider.authentication !== "bearer") continue;
-      const reference = provider.secret;
-      const expectedId = `${projectId}:${provider.role}`;
-      const expectedEnvironment = provider.role === "generation" ? "SYNTH_OPENAI_API_KEY" : provider.role === "advisor" ? "SYNTH_ADVISOR_API_KEY" : "SYNTH_EVALUATOR_API_KEY";
-      if (!reference || reference.id !== expectedId || reference.environmentFallback !== expectedEnvironment) {
-        throw new Error(`The ${provider.role} credential reference is not safe for desktop execution. Reconfigure project providers.`);
-      }
-      const secret = resolveCredential(reference.id, reference.environmentFallback);
-      if (secret) environment[expectedEnvironment] = secret;
+      const binding = providerCredentialBinding(projectId, provider);
+      const secret = resolveCredential(binding.id, binding.connectionId ? undefined : binding.environment);
+      if (!secret && binding.connectionId) throw new Error(`The pinned ${provider.role} connection is unavailable. Restore its key in Project settings before resuming.`);
+      if (secret && binding.environment) environment[binding.environment] = secret;
     }
     return environment;
   }

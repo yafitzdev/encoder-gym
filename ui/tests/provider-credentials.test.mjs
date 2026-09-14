@@ -1,0 +1,31 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { CredentialStore } from "../dist/evidence/credential-store.js";
+import { ProviderConnectionStore, providerConnectionSecretId } from "../dist/evidence/provider-connections.js";
+import { ProjectCredentials, providerCredentialBinding } from "../dist/evidence/provider-credentials.js";
+
+test("a pinned connection survives assignment changes and never falls back when missing", () => {
+  const root = mkdtempSync(join(tmpdir(), "gym-pinned-credentials-")), project = randomUUID();
+  const connections = new ProviderConnectionStore(join(root, "connections.json"));
+  const credentials = new CredentialStore(join(root, "credentials.json"), { available: () => true, encrypt: value => Buffer.from(value), decrypt: value => value.toString() }, { SYNTH_ADVISOR_API_KEY: "unrelated-environment-key" });
+  const resolver = new ProjectCredentials(credentials, connections);
+  const first = connections.add(project, "https://first.example.test", ["a"]), second = connections.add(project, "https://second.example.test", ["b"]);
+  const firstId = providerConnectionSecretId(project, first.id), secondId = providerConnectionSecretId(project, second.id);
+  credentials.set(firstId, "original-test-key"); credentials.set(secondId, "replacement-test-key");
+  const assign = (connection, model) => connections.assign(project, { advisor: { connectionId: connection.id, model }, generation: { connectionId: connection.id, model } });
+  assign(first, "a");
+  const binding = providerCredentialBinding(project, { role: "advisor", secret: { id: firstId } });
+  assign(second, "b");
+  assert.equal(resolver.resolve(binding.id, "SYNTH_ADVISOR_API_KEY"), "original-test-key");
+  assert.equal(binding.environment, `ENCODER_GYM_CONNECTION_${first.id.replaceAll("-", "").toUpperCase()}_API_KEY`);
+  assert.equal(resolver.resolve(`${project}:generation`), undefined, "legacy roles never alias new assignments");
+  connections.remove(project, first.id);
+  assert.equal(resolver.resolve(firstId, "SYNTH_ADVISOR_API_KEY"), undefined, "even an orphan key cannot reactivate a removed connection");
+  assert.equal(resolver.status(firstId).availability, "missing");
+  assert.throws(() => providerCredentialBinding(randomUUID(), { role: "advisor", secret: { id: firstId } }), /not safe/);
+  assert.throws(() => providerCredentialBinding(project, { role: "advisor", secret: { id: firstId, environmentFallback: "SYNTH_ADVISOR_API_KEY" } }), /not safe/);
+});

@@ -25,6 +25,15 @@ pub struct PiProcessRuntime {
     sidecar_script: PathBuf,
     scripted_turns: Option<Value>,
     startup_timeout: Duration,
+    openai_compatible: Option<ProjectProvider>,
+}
+
+/// Non-secret transport configuration pinned by the calling application's run.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectProvider {
+    pub base_url: String,
+    pub maximum_output_tokens: u32,
 }
 
 impl PiProcessRuntime {
@@ -34,11 +43,17 @@ impl PiProcessRuntime {
             sidecar_script,
             scripted_turns: None,
             startup_timeout: Duration::from_secs(15),
+            openai_compatible: None,
         }
     }
 
     pub fn with_scripted_turns(mut self, scripted_turns: Value) -> Self {
         self.scripted_turns = Some(scripted_turns);
+        self
+    }
+
+    pub fn with_project_provider(mut self, provider: ProjectProvider) -> Self {
+        self.openai_compatible = Some(provider);
         self
     }
 }
@@ -116,6 +131,7 @@ impl ResearchAgentRuntime for PiProcessRuntime {
                         initial_prompt: request.initial_prompt,
                         max_model_turns: request.max_model_turns,
                         scripted_turns: runtime.scripted_turns,
+                        openai_compatible: runtime.openai_compatible,
                     },
                 })
                 .await?;
@@ -300,6 +316,8 @@ struct StartRequest {
     max_model_turns: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     scripted_turns: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    openai_compatible: Option<ProjectProvider>,
 }
 
 #[derive(Debug, Serialize)]
@@ -522,6 +540,7 @@ mod tests {
                 initial_prompt: "start".into(),
                 max_model_turns: 4,
                 scripted_turns: None,
+                openai_compatible: None,
             },
         })
         .expect("serialize start");

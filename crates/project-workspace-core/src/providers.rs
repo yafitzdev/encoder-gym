@@ -51,6 +51,42 @@ pub struct SecretReference {
 }
 
 impl SecretReference {
+    pub fn for_connection(project_id: Uuid, connection_id: Uuid) -> Result<Self, Invalid> {
+        require(
+            !project_id.is_nil() && !connection_id.is_nil(),
+            "Invalid credential connection identity.",
+        )?;
+        Ok(Self {
+            id: format!("{project_id}:connection:{connection_id}"),
+            environment_fallback: None,
+        })
+    }
+
+    pub fn connection_id(&self, project_id: Uuid) -> Option<Uuid> {
+        let raw = self.id.strip_prefix(&format!("{project_id}:connection:"))?;
+        let id = Uuid::parse_str(raw).ok()?;
+        (!id.is_nil() && id.to_string() == raw).then_some(id)
+    }
+
+    /// A connection uses its own process environment slot, never a mutable role
+    /// default. This is a variable name only, not a credential value.
+    pub fn execution_environment(
+        &self,
+        project_id: Uuid,
+        role: ProviderRole,
+    ) -> Result<Option<String>, Invalid> {
+        self.validate(project_id, role)?;
+        Ok(self
+            .connection_id(project_id)
+            .map(|id| {
+                format!(
+                    "ENCODER_GYM_CONNECTION_{}_API_KEY",
+                    id.simple().to_string().to_uppercase()
+                )
+            })
+            .or_else(|| self.environment_fallback.clone()))
+    }
+
     pub fn for_role(
         project_id: Uuid,
         role: ProviderRole,
@@ -65,9 +101,14 @@ impl SecretReference {
     }
 
     pub fn validate(&self, project_id: Uuid, role: ProviderRole) -> Result<(), Invalid> {
+        let connection = self.connection_id(project_id);
         require(
-            self.id == format!("{project_id}:{}", role.key()),
+            self.id == format!("{project_id}:{}", role.key()) || connection.is_some(),
             "Secret reference does not match its project and provider role.",
+        )?;
+        require(
+            connection.is_none() || self.environment_fallback.is_none(),
+            "Pinned connections cannot fall back to a role credential.",
         )?;
         if let Some(name) = &self.environment_fallback {
             require(
@@ -271,6 +312,34 @@ fn valid_endpoint(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_connections_are_project_bound_and_cannot_fall_back_to_role_defaults() {
+        let project = Uuid::new_v4();
+        let connection = Uuid::new_v4();
+        let mut reference = SecretReference::for_connection(project, connection).unwrap();
+        reference.validate(project, ProviderRole::Advisor).unwrap();
+        reference
+            .validate(project, ProviderRole::Generation)
+            .unwrap();
+        assert!(
+            reference
+                .validate(Uuid::new_v4(), ProviderRole::Advisor)
+                .is_err()
+        );
+        assert_eq!(
+            reference
+                .execution_environment(project, ProviderRole::Advisor)
+                .unwrap(),
+            Some(format!(
+                "ENCODER_GYM_CONNECTION_{}_API_KEY",
+                connection.simple().to_string().to_uppercase()
+            ))
+        );
+        reference.environment_fallback = Some("SYNTH_ADVISOR_API_KEY".into());
+        assert!(reference.validate(project, ProviderRole::Advisor).is_err());
+        assert!(SecretReference::for_connection(project, Uuid::nil()).is_err());
+    }
 
     fn provider(project_id: Uuid, role: ProviderRole, environment: &str) -> ProviderConfiguration {
         ProviderConfiguration {
