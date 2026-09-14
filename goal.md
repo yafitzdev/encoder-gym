@@ -29,20 +29,22 @@ or UI mockups alone do not complete this goal.
   immutable CLI preview/history and desktop parsing compatibility. It does not
   implement the agent loop or expose working advanced controls in production.
   The fixed-recipe executor explicitly rejects agentic settings.
-- In-progress code now contains a selected-model Pi transport, bounded
+- Commit `bb96421` contains a selected-model Pi transport, bounded
   development/training inspection tools, validated edit proposals, an
   append-only Agent-call journal, a native development-diagnostic reader,
   bounded concurrent generation with durable call accounting, and recoverable
   publication through ordinary imports and dataset versions. These are
-  foundations, not a connected optimization engine. Component tests do not
-  establish that the application invokes them. Preserve and connect this work
-  rather than rebuilding it or replacing it with another fixed recipe.
+  foundations, not a connected optimization engine. The full Rust checks and
+  desktop smoke/restart journeys passed for this checkpoint; they do not
+  establish that Optimize invokes these components. Preserve and connect this
+  committed work rather than rebuilding it or replacing it with another fixed
+  recipe.
 - Native generation currently creates questions from inspected training
   templates while preserving their labels, tool registry and router state.
   Schema checks and duplicate rejection are implemented components, not proof
   of semantic correctness or complete training-to-benchmark isolation. The
   complete derived dataset still needs qualification before training.
-- Working-tree changes now pin provider credentials by connection UUID and let
+- The same commit pins provider credentials by connection UUID and lets
   the desktop retrieve a run's original provider revision through the CLI.
   Preserve this implementation: changing project defaults must not redirect a
   resumed run to another key. This is execution infrastructure, not evidence
@@ -53,8 +55,21 @@ or UI mockups alone do not complete this goal.
   turn. This integration, rather than another provider-settings redesign, is
   the next priority.
 - Run 17's candidate reports exist in the scientific journal but are absent
-  from its entry in project benchmark results. Diagnose and repair that result
-  association without rewriting historical evidence or weakening comparability.
+  from its entry in project benchmark results. The cause is identified: the
+  lookup searches the original scientific project, while Optimize records its
+  candidate under a derived project for the selected dataset.
+- An uncommitted report-association fix follows the optimization run's recorded
+  preparation, materialization and child-experiment receipts. It preserves the
+  original baseline context and does not scan arbitrary scientific projects.
+  Formatting, compilation and lint passed. The focused CLI regression reaches
+  the expected linked report, but fails its scientific-database byte-preservation
+  assertion. Investigate that failure before committing or claiming the fix is
+  verified. Real Run 17 results have not yet been checked through the new lookup.
+
+Verification levels are currently distinct: Agent/generation components are
+component-tested; the full agent-driven CLI coordinator is not connected; the
+production app journey is not agent-loop-verified. The report lookup is a
+separate, unfinished CLI integration change, not proof of an Agent invocation.
 
 Preserve existing projects, runs, model custody, dataset versions, provider
 connections, credentials, navigation and the user's approved Overview design.
@@ -62,9 +77,16 @@ Do not require another real Nomos run to rediscover the known missing executor.
 
 ## Immediate next task
 
-Continue from the existing settings and in-progress execution components; connect
-them through the production CLI before adding more presentation. The first
-checkpoint must connect the configured Agent and Data generation
+First finish validation of the existing report-association change: resolve the
+read-only database test failure without weakening the assertion or provenance
+checks, run the required gates, then inspect Run 17's results read-only. Confirm
+that its recorded candidate reports appear against the original baseline and
+benchmark, without rerunning training or evaluation. Commit that coherent fix
+separately. This repair is supporting work, not completion of the engine.
+
+Then connect the committed execution components through the production CLI
+before adding more presentation. The next engine checkpoint must connect the
+configured Agent and Data generation
 providers to the real CLI workflow: inspect development failures and training
 rows, propose edits, publish a validated dataset version, train and evaluate.
 Prove this composition with deterministic adapters before asking the user to
@@ -92,7 +114,8 @@ Close these integration gaps in that order:
    first-iteration-only scope checks using recorded lineage, not caller-supplied
    replacements. Recover completed steps without repeating provider calls,
    dataset publication or training; account separately for uncertain attempts.
-4. Connect this same execution path to Overview and repair report associations.
+4. Connect this same execution path to Overview and verify report associations
+   across all iterations.
    Provider calls, Agent activity and results must refer to the same run and
    iteration; the UI must not maintain a separate imitation of the workflow.
 
