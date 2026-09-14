@@ -43,7 +43,8 @@ test("managed project identity survives independent profiles, move, rename, forg
 test("desktop activity records immutable action and event UUIDs and exports verified JSONL", async () => {
   const f = fixture(), id = await create(f, "Activity project"), runId = randomUUID();
   const actionId = await f.backend.startProjectActivity(id, "optimization.resume", [{ kind: "run", id: runId }]);
-  await f.backend.progressProjectActivity(id, actionId, "optimization.resume", "training", 4, 10);
+  const narrative = { origin: "agent", kind: "decision", summary: "Prefer the bounded candidate supported by development evidence." };
+  await f.backend.progressProjectActivity(id, actionId, "optimization.resume", "training", 4, 10, undefined, undefined, narrative);
   await f.backend.succeedProjectActivity(id, actionId, "optimization.resume", [{ kind: "candidate", id: randomUUID() }]);
   const log = await f.backend.projectActivity(id);
   assert.equal(log.project_id, id);
@@ -52,6 +53,7 @@ test("desktop activity records immutable action and event UUIDs and exports veri
   assert.equal(log.actions[0].state, "succeeded");
   assert.equal(log.actions[0].events.length, 3);
   assert.equal(new Set(log.actions[0].events.map(event => event.id)).size, 3);
+  assert.deepEqual(log.actions[0].events[1].narrative, narrative);
   assert.equal(log.actions[0].events[1].previous_event_fingerprint, log.actions[0].events[0].fingerprint);
   const output = join(f.root, "activity.jsonl");
   const exported = await f.backend.exportProjectActivity(id, output);

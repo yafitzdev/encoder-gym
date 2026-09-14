@@ -143,8 +143,17 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     return h("div", { class: "focus-status" },
       activity?.failure ? h("div", { class: "operation-failure", role: "alert" }, failureNotice(activity.failure.message)) : null,
       inputRunProgress({ run, running, activity, startedAt: activity ? Date.parse(activity.startedAt) : setup.startedAt, context, liveProgress: setupBusy ? setup.liveProgress : runs.liveProgress, liveProgressAt: setupBusy ? setup.liveProgressAt : runs.liveProgressAt, registrationPending: needsRegistration(record), animationKey: `overview-progress:${run.id}` }),
-      h("ol", { class: "focus-events", "aria-label": "Recent activity" }, ...(activity?.events ?? []).slice().reverse().map(event => h("li", {},
-        h("time", { datetime: event.at }, clock(event.at)), h("div", {}, h("strong", {}, inputRunStageLabel(event.progress.phase)), h("span", {}, inputRunStageDetail(event.progress, context)))))),
+      h("h3", { class: "focus-activity-title" }, "Activity"),
+      h("ol", { class: "focus-events", "aria-label": "Run activity" }, ...(activity?.events ?? []).slice().reverse().map(event => {
+        const narrative = event.narrative;
+        return h("li", { class: narrative ? `focus-event narrative ${narrative.origin} ${narrative.kind}` : "focus-event work" },
+          h("time", { datetime: event.at }, clock(event.at)),
+          h("span", { class: "focus-event-kind" }, narrative ? narrativeKindLabel(narrative.kind) : "Work",
+            narrative ? h("small", {}, narrative.origin === "agent" ? "Agent" : "System") : null),
+          h("div", { class: "focus-event-copy" },
+            h("strong", {}, narrative?.summary ?? inputRunStageLabel(event.progress.phase)),
+            h("span", {}, narrative ? inputRunStageLabel(event.progress.phase) : inputRunStageDetail(event.progress, context))));
+      })),
       h("div", { class: "focus-controls" }, running ? stop : !inputOptimizationTerminal(run.state) || needsRegistration(record) ? resume : null));
   }
 }
@@ -164,4 +173,7 @@ function reportPanel(record: OverviewRecord): HTMLElement {
         }))))))));
 }
 function clock(value: string): string { return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }); }
+function narrativeKindLabel(kind: "intent" | "reasoning" | "action" | "observation" | "decision" | "next_step"): string {
+  return ({ intent: "Intent", reasoning: "Reason", action: "Action", observation: "Result", decision: "Decision", next_step: "Next" })[kind];
+}
 function providerName(endpoint: string): string { try { const host = new URL(endpoint).hostname; return host === "api.deepseek.com" ? "DeepSeek" : host === "yan.tail85512d.ts.net" ? "Yan" : host; } catch { return "Configured provider"; } }

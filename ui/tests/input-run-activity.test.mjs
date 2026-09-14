@@ -35,5 +35,29 @@ test("optimization activity resolves the exact run and latest durable counter", 
   assert.equal(inputRunStageDetail(activity.progress, {
     model: "Nomos baseline", dataset: "Candidate dataset · v2", datasetRows: 6992,
     evaluation: "Evaluation · Version 1", developmentSuites: ["generic holdout", "agent holdout"], finalEvaluation: false,
-  }), "Candidate 1 · 40 / 100 steps");
+  }), "Candidate 1");
+});
+
+test("optimization narrative stays inline with compact work across resumed actions", () => {
+  const projectId = randomUUID(), runId = randomUUID();
+  const narrative = { origin: "system", kind: "reasoning", summary: "Use one conservative candidate before expanding the search." };
+  const log = { project_id: projectId, actions: [
+    { action_id: "new", operation: "optimization.run", state: "progress", started_at: "2026-01-01T00:10:00Z", references: [{ kind: "run", id: runId }], events: [
+      { state: "started", created_at: "2026-01-01T00:10:00Z" },
+      { state: "progress", stage: "training", completed: 1, total: 10, created_at: "2026-01-01T00:10:01Z" },
+      { state: "progress", stage: "training", completed: 4, total: 10, created_at: "2026-01-01T00:10:02Z" },
+    ] },
+    { action_id: "old", operation: "optimization.run", state: "failed", started_at: "2026-01-01T00:00:00Z", references: [{ kind: "run", id: runId }], events: [
+      { state: "started", created_at: "2026-01-01T00:00:00Z" },
+      { state: "progress", stage: "creating_candidate", narrative, created_at: "2026-01-01T00:00:01Z" },
+      { state: "failed", failure: { code: "interrupted", message: "Stopped." }, created_at: "2026-01-01T00:00:02Z" },
+    ] },
+  ] };
+  const activity = inputRunActivity(log, runId);
+  assert.equal(activity.actionId, "new");
+  assert.equal(activity.failure, undefined, "an older failed attempt must not override the active attempt");
+  assert.deepEqual(activity.events, [
+    { at: "2026-01-01T00:00:01Z", progress: { phase: "creating_candidate", narrative }, narrative },
+    { at: "2026-01-01T00:10:02Z", progress: { phase: "training", completed: 4, total: 10 } },
+  ]);
 });

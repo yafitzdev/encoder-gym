@@ -72,5 +72,5 @@ export function recordProgress(activity: RunActivity, progress: NativeProgress, 
     activity.events.push({ phase: progress.phase, at });
     activity.events = activity.events.slice(-20);
   }
-  Object.assign(activity, { ...progress, completed: progress.completed, total: progress.total, subject: progress.subject, unit: progress.unit, updatedAt: at });
+  Object.assign(activity, { ...progress, completed: progress.completed, total: progress.total, subject: progress.subject, unit: progress.unit, narrative: progress.narrative, updatedAt: at });
 }

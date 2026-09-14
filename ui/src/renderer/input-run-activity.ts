@@ -1,5 +1,5 @@
 import type { NativeProgress } from "../managed-control.js";
-import type { ProjectActivityAction, ProjectActivityFailure, ProjectActivityLog } from "../project-activity.js";
+import type { ProjectActivityAction, ProjectActivityFailure, ProjectActivityLog, ProjectActivityNarrative } from "../project-activity.js";
 import { validateNativeProgress } from "../native-progress.js";
 
 export interface InputRunActivity {
@@ -10,22 +10,33 @@ export interface InputRunActivity {
   progress?: NativeProgress;
   failure?: ProjectActivityFailure;
   stages: string[];
-  events?: { at: string; progress: NativeProgress }[];
+  events?: { at: string; progress: NativeProgress; narrative?: ProjectActivityNarrative }[];
 }
 
 /** Project activity is the durable source for desktop orchestration progress. */
 export function inputRunActivity(log: ProjectActivityLog, runId: string): InputRunActivity | undefined {
-  const action = log.actions.find(candidate => candidate.operation === "optimization.run"
+  const actions = log.actions.filter(candidate => candidate.operation === "optimization.run"
     && candidate.references.some(reference => reference.kind === "run" && reference.id === runId));
+  const action = actions[0];
   if (!action) return undefined;
-  const progressEvents = action.events.filter(event => event.state === "progress" && event.stage);
+  const progressEvents = actions.slice().reverse().flatMap(candidate => candidate.events)
+    .filter(event => event.state === "progress" && event.stage);
   const latest = progressEvents.at(-1);
   const progressOf = (event: (typeof progressEvents)[number]): NativeProgress => validateNativeProgress({
     phase: event.stage, completed: event.completed, total: event.total,
     subject: event.references?.find(item => item.kind === "progress_subject")?.id,
     unit: event.references?.find(item => item.kind === "progress_unit")?.id,
+    narrative: event.narrative,
   }) ?? { phase: "checking_files" };
   const failure = action.events.findLast(event => event.state === "failed")?.failure;
+  const events = progressEvents.reduce<NonNullable<InputRunActivity["events"]>>((result, event) => {
+    const projected = { at: event.created_at, progress: progressOf(event), ...(event.narrative ? { narrative: event.narrative } : {}) };
+    const previous = result.at(-1);
+    if (!projected.narrative && !previous?.narrative && previous?.progress.phase === projected.progress.phase
+      && previous.progress.subject === projected.progress.subject) result[result.length - 1] = projected;
+    else result.push(projected);
+    return result;
+  }, []).slice(-30);
   return {
     actionId: action.action_id,
     state: action.state,
@@ -34,7 +45,7 @@ export function inputRunActivity(log: ProjectActivityLog, runId: string): InputR
     ...(latest ? { progress: progressOf(latest) } : {}),
     ...(failure ? { failure } : {}),
     stages: [...new Set(progressEvents.map(event => event.stage!))],
-    events: progressEvents.slice(-5).map(event => ({ at: event.created_at, progress: progressOf(event) })),
+    events,
   };
 }
 
@@ -52,6 +63,8 @@ export const inputRunStageLabel = (stage: string): string => ({
   creating_candidate: "Creating candidate",
   creating_experiment: "Creating optimization run",
   registering_candidate: "Adding candidate to Models",
+  development_decision: "Development decision",
+  final_decision: "Final decision",
   optimization_complete: "Complete",
   checking_files: "Checking model files",
   checking_training_data: "Checking training data",
@@ -94,6 +107,8 @@ export function inputRunStageDetail(progress: NativeProgress, context: InputRunS
     creating_candidate: `${context.model} → Candidate 1`,
     creating_experiment: `${context.evaluation} · ${context.developmentSuites.length} development suites`,
     registering_candidate: "Candidate 1",
+    development_decision: "",
+    final_decision: "",
     optimization_complete: "",
     checking_files: context.model,
     checking_training_data: data,

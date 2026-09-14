@@ -14,7 +14,7 @@ import { ManagedDatasets } from "./managed-datasets.js";
 import { ManagedBenchmarks } from "./managed-benchmarks.js";
 import { ManagedOptimizationSetup } from "./managed-optimization-setup.js";
 import { ManagedOptimizationLaunch } from "./managed-optimization-launch.js";
-import type { AppendProjectActivity, ProjectActivityEvent, ProjectActivityExport, ProjectActivityLog, ProjectActivityReference, ProjectActivitySource } from "./project-activity.js";
+import type { AppendProjectActivity, ProjectActivityEvent, ProjectActivityExport, ProjectActivityLog, ProjectActivityNarrative, ProjectActivityReference, ProjectActivitySource } from "./project-activity.js";
 
 const purposes = new Set<DatasetPurpose>(["unassigned", "training", "development", "sealed"]);
 export function datasetPurpose(value: unknown): DatasetPurpose {
@@ -195,9 +195,9 @@ export class ManagedBackend {
     await this.appendProjectActivity(projectId, { action_id: actionId, operation, source, state: "started", ...(references.length ? { references } : {}), created_at: createdAt });
     return actionId;
   }
-  progressProjectActivity(projectId: string, actionId: string, operation: string, stage: string, completed?: number, total?: number, subject?: string, unit?: string): Promise<ProjectActivityEvent> {
+  progressProjectActivity(projectId: string, actionId: string, operation: string, stage: string, completed?: number, total?: number, subject?: string, unit?: string, narrative?: ProjectActivityNarrative): Promise<ProjectActivityEvent> {
     const references = [...(subject ? [{ kind: "progress_subject", id: subject }] : []), ...(unit ? [{ kind: "progress_unit", id: unit }] : [])];
-    return this.appendProjectActivity(projectId, { action_id: actionId, operation, source: "desktop", state: "progress", stage, references, ...(completed !== undefined && total !== undefined ? { completed, total } : {}), created_at: new Date().toISOString() });
+    return this.appendProjectActivity(projectId, { action_id: actionId, operation, source: "desktop", state: "progress", stage, references, ...(completed !== undefined && total !== undefined ? { completed, total } : {}), ...(narrative ? { narrative } : {}), created_at: new Date().toISOString() });
   }
   succeedProjectActivity(projectId: string, actionId: string, operation: string, references: ProjectActivityReference[] = []): Promise<ProjectActivityEvent> {
     return this.appendProjectActivity(projectId, { action_id: actionId, operation, source: "desktop", state: "succeeded", ...(references.length ? { references } : {}), created_at: new Date().toISOString() });

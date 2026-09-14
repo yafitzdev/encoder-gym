@@ -111,7 +111,7 @@ async function trackProjectAction<T>(
     const bucket = value.completed !== undefined && value.total !== undefined
       ? Math.floor((value.completed / value.total) * 10)
       : undefined;
-    const marker = `${value.phase}:${value.subject ?? ""}:${bucket ?? "stage"}`;
+    const marker = `${value.phase}:${value.subject ?? ""}:${bucket ?? "stage"}:${value.narrative?.kind ?? ""}:${value.narrative?.summary ?? ""}`;
     if (marker === progressMarker) return;
     progressMarker = marker;
     latestProgress = value;
@@ -120,7 +120,7 @@ async function trackProjectAction<T>(
     pendingProgress = (async () => {
       while (latestProgress) {
         const next = latestProgress; latestProgress = undefined;
-        await backend.progressProjectActivity(id, actionId, operation, next.phase, next.completed, next.total, next.subject, next.unit).catch(() => undefined);
+        await backend.progressProjectActivity(id, actionId, operation, next.phase, next.completed, next.total, next.subject, next.unit, next.narrative).catch(() => undefined);
       }
       flushing = false;
     })();

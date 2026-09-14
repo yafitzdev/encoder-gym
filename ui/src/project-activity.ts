@@ -1,8 +1,15 @@
 export type ProjectActivitySource = "desktop" | "cli" | "system";
 export type ProjectActivityState = "started" | "progress" | "succeeded" | "failed";
+export type ProjectActivityNarrativeOrigin = "agent" | "system";
+export type ProjectActivityNarrativeKind = "intent" | "reasoning" | "action" | "observation" | "decision" | "next_step";
 
 export interface ProjectActivityReference { kind: string; id: string }
 export interface ProjectActivityFailure { code: string; message: string }
+export interface ProjectActivityNarrative {
+  origin: ProjectActivityNarrativeOrigin;
+  kind: ProjectActivityNarrativeKind;
+  summary: string;
+}
 export interface ProjectActivityEvent {
   schema_version: 1;
   id: string;
@@ -15,6 +22,7 @@ export interface ProjectActivityEvent {
   stage?: string;
   completed?: number;
   total?: number;
+  narrative?: ProjectActivityNarrative;
   references?: ProjectActivityReference[];
   failure?: ProjectActivityFailure;
   created_at: string;
@@ -45,6 +53,7 @@ export interface AppendProjectActivity {
   stage?: string;
   completed?: number;
   total?: number;
+  narrative?: ProjectActivityNarrative;
   references?: ProjectActivityReference[];
   failure?: ProjectActivityFailure;
   created_at: string;

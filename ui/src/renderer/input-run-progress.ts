@@ -47,7 +47,7 @@ export function inputRunProgress(options: InputRunProgressOptions): HTMLElement 
     : run.state === "cancelled" ? "Cancelled" : undefined;
   const progress = options.registrationPending && !running ? { phase: "registering_candidate" as const } : running ? options.liveProgress ?? activity?.progress : activity?.progress;
   const observed = progress?.phase;
-  const visiblePhase = phase === "complete" ? phase : observed && ["evaluating_retrieval", "evaluating_agent"].includes(observed) ? "evaluating"
+  const visiblePhase = phase === "complete" ? phase : observed && ["evaluating_retrieval", "evaluating_agent", "development_decision", "final_decision"].includes(observed) ? "evaluating"
     : observed === "saving_checkpoint" || observed === "registering_candidate" ? "saving_candidate"
     : observed && ["checking_training_data", "loading_model", "preparing_batches", "training"].includes(observed) ? "training"
     : observed && ["loading_training_rows", "writing_training_rows", "checking_materialized_project"].includes(observed) ? "preparing_data"
@@ -57,7 +57,7 @@ export function inputRunProgress(options: InputRunProgressOptions): HTMLElement 
   const stage = inputRunStageLabel(activeProgress.phase);
   const phaseLabel = phase === "complete" ? "Complete" : labels[phase];
   const current = result ?? (failed ? `${phaseLabel} failed` : running ? stage : `Paused · ${stage}`);
-  const detail = result ? "" : inputRunStageDetail(activeProgress, context);
+  const detail = result ? "" : activeProgress.narrative?.summary ?? inputRunStageDetail(activeProgress, context);
   return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": String(running) },
     progressSteps(active, failed),
     h("div", { class: "optimization-current-work" },

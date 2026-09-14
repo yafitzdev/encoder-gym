@@ -24,11 +24,18 @@
 .focus-controls { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
 .focus-status .optimization-progress { margin: 0; border: 0; padding: 0; background: transparent; width: 100%; max-width: none; }
 .focus-status .optimization-progress-steps { margin-top: 0; }
-.focus-events { list-style: none; margin: 24px 0 0; padding: 0; max-height: 230px; overflow-y: auto; scrollbar-gutter: stable; }
-.focus-events li { display: grid; grid-template-columns: 85px minmax(0,1fr); gap: 20px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
+.focus-activity-title { margin: 28px 0 0; font-size: 14px; letter-spacing: .02em; }
+.focus-events { list-style: none; margin: 10px 0 0; padding: 0; max-height: 270px; overflow-y: auto; scrollbar-gutter: stable; border-top: 1px solid var(--line-soft); }
+.focus-events li { display: grid; grid-template-columns: 85px 78px minmax(0,1fr); gap: 18px; align-items: start; padding: 13px 8px; border-bottom: 1px solid var(--line-soft); }
 .focus-events time { color: var(--muted); font: 12px/1.7 var(--mono); }
 .focus-events li div { display: grid; gap: 3px; }
 .focus-events li span { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.focus-events .focus-event-kind { padding-top: 3px; color: var(--subtle); font-size: 10px; font-weight: 650; letter-spacing: .1em; text-transform: uppercase; }
+.focus-events .focus-event-kind small { display: block; margin-top: 4px; color: var(--subtle); font-size: 9px; font-weight: 500; letter-spacing: .08em; }
+.focus-events .focus-event-copy strong { font-size: 13px; line-height: 1.45; }
+.focus-events .focus-event.narrative { background: color-mix(in srgb, var(--accent-soft) 38%, transparent); box-shadow: inset 2px 0 var(--accent); }
+.focus-events .focus-event.narrative .focus-event-kind { color: var(--accent); }
+.focus-events .focus-event.narrative.system .focus-event-kind { color: var(--success); }
 .focus-status .optimization-progress-detail { color: var(--text); font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
 .focus-status .optimization-progress-title { font-size: 16px; }
 .focus-status .optimization-live-progress { width: 100%; }
@@ -55,7 +62,7 @@
   .focus-stages { gap: 4px; }
   .focus-stages button { gap: 6px; padding: 10px 4px; }
   .focus-stage-number { display: none; }
-  .focus-events li { grid-template-columns: 65px minmax(0,1fr); gap: 10px; }
+  .focus-events li { grid-template-columns: 65px 60px minmax(0,1fr); gap: 10px; }
 }
 :root {
   color-scheme: dark;

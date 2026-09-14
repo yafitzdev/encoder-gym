@@ -1,3 +1,5 @@
+import type { ProjectActivityNarrative } from "./project-activity.js";
+
 export type ReadinessCategory = "workspace" | "models" | "scientific" | "data" | "evaluation" | "optimization" | "providers" | "recovery";
 export type ReadinessState = "ready" | "action_required" | "blocked" | "stale" | "unavailable";
 
@@ -120,13 +122,14 @@ export interface NativeProgress {
     | "checking_model" | "checking_dataset" | "checking_evaluation" | "checking_runtime"
     | "loading_training_rows" | "writing_training_rows" | "checking_materialized_project"
     | "loading_evaluation_protocol" | "creating_candidate" | "creating_experiment"
-    | "registering_candidate" | "optimization_complete"
+    | "registering_candidate" | "development_decision" | "final_decision" | "optimization_complete"
     | "checking_files" | "checking_training_data" | "loading_model" | "preparing_batches"
     | "training" | "saving_checkpoint" | "evaluating_retrieval" | "evaluating_agent";
   completed?: number;
   total?: number;
   subject?: string;
   unit?: "bytes";
+  narrative?: ProjectActivityNarrative;
 }
 export interface RunActivity extends NativeProgress {
   running: boolean;
