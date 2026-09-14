@@ -4,11 +4,31 @@ import { randomUUID } from "node:crypto";
 import { OptimizationSetupController } from "../dist/evidence/optimization-setup-controller.js";
 import { setupFixture } from "./optimization-setup-fixture.mjs";
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+
+test("Stop during input preview interrupts preparation and never starts a run", async () => {
+  const f = fixture(), pending = deferred(); let token;
+  f.bridge.previewOptimizationSetup = async (_id, _inputs, receive, id) => {
+    token = id; receive({ phase: "verifying_file", subject: "model.safetensors", completed: 1, total: 10 });
+    return pending.promise;
+  };
+  f.bridge.stopInputPreparation = async (_id, id) => { assert.equal(id, token); pending.reject(new Error("Run cancelled.")); };
+  await f.controller.ensure();
+  const work = f.controller.optimize();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(f.controller.preparationId);
+  assert.equal(f.controller.run, undefined);
+  await f.controller.stop(); await work;
+  assert.equal(f.writes.length, 0); assert.equal(f.runs.length, 0);
+  assert.equal(f.controller.error, undefined); assert.equal(f.controller.stopping, false);
+  assert.equal(f.controller.preparationId, undefined);
+  assert.equal(f.controller.liveEvents[0].progress.subject, "model.safetensors");
+});
 function fixture(overrides = {}) {
   const f = setupFixture(), history = [], writes = [], runs = [];
   const run = (state = "queued") => ({ id: randomUUID(), projectId: f.projectId, createdAt: new Date().toISOString(), state, attempt: 0, materializationAttempt: 0, experimentAttempt: 0, executionAttempt: 0, finalAttempt: 0, lastSequence: 1, updatedAt: new Date().toISOString() });
   const bridge = { queryDatasets: async () => ({ kind: "list", entries: f.datasets }), queryBenchmarks: async () => ({ kind: "list", versions: f.workspace.benchmarkVersions }),
     optimizationSetups: async () => [...history], optimizationLaunches: async () => [], previewOptimizationSetup: async () => f.preview,
+    finishInputPreparation: async () => {}, stopInputPreparation: async () => {},
     saveOptimizationSetup: async (_, request) => { writes.push(structuredClone(request)); const result = f.saved(request); history.push(result.setup); return result; },
     startInputOptimization: async () => { const value = run(); runs.push(value); return { actionId: randomUUID(), run: value }; },
     driveInputOptimization: async (_, id) => ({ ...runs.find(value => value.id === id), state: "baseline_retained", outcome: { kind: "baseline_retained" } }),

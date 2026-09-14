@@ -8,14 +8,13 @@ import { button, disclosureIndicator, failureNotice, spinner, workspacePage } fr
 import { h } from "./dom.js";
 import { dateLabel, metricInfo, score, delta, suiteName } from "./catalog.js";
 import { inputRunProgress, pendingInputRunProgress } from "./input-run-progress.js";
-import { inputRunStageDetail, inputRunStageLabel } from "./input-run-activity.js";
 import { runContext } from "./workspace-pages.js";
 import { comparisonTone, overviewRecords, reportDecision, type OverviewRecord } from "./overview-records.js";
 import { failureReason } from "../presentation-errors.js";
 
 // The standalone renderer verification uses the same keyed replacement rule
 // as the full application shell.
-export { preserveKeyedNodes } from "./dom.js";
+export { replaceView } from "./dom.js";
 
 type Stage = "setup" | "status" | "report";
 export interface OverviewState { expanded?: string | null; tabs: Map<string, Stage>; draft: boolean; launching: boolean }
@@ -33,7 +32,7 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     if (state.expanded === "draft") state.expanded = setup.run.id;
     state.tabs.set(setup.run.id, "status"); state.launching = false; state.draft = false;
   }
-  const busy = setup.running || setup.saving || setup.initializingEvaluation || !!runs.runningId;
+  const busy = !!setup.preparationId || setup.running || setup.saving || setup.initializingEvaluation || !!runs.runningId;
   if (state.expanded === undefined && runs.runs && setup.data) {
     state.draft = !records.length;
     state.expanded = records[0]?.id ?? "draft";
@@ -130,7 +129,12 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
   }
   function statusPanel(record?: OverviewRecord): HTMLElement {
     if (!record?.input) {
-      if (!record) return h("div", { class: "focus-status" }, pendingInputRunProgress(setup.initializingEvaluation ? setup.benchmarkProgress : setup.liveProgress, "overview-draft-progress"));
+      if (!record) {
+        const stop = button(setup.stopping ? "Stopping…" : "Stop", () => { void setup.stop(); }, "secondary");
+        stop.disabled = setup.stopping;
+        return h("div", { class: "focus-status" }, pendingInputRunProgress(setup.initializingEvaluation ? setup.benchmarkProgress : setup.liveProgress,
+          "overview-draft-progress", setup.liveEvents, busy ? stop : undefined, busy));
+      }
       return h("div", {}, h("h2", {}, runLabel(record)), h("ol", { class: "focus-events" }, ...(record.experiment?.activity.slice(-5).reverse().map(event => h("li", {}, h("time", {}, clock(event.at)), event.kind.replaceAll("_", " "))) ?? [])),
         record.managed && !["completed", "cancelled", "failed"].includes(record.managed.state) ? button("Continue", () => actions.navigate({ page: "optimization" }), "primary") : null);
     }
@@ -142,19 +146,12 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     const resume = button("Resume", () => { void runs.resume(run); }, "primary"); resume.disabled = busy;
     return h("div", { class: "focus-status" },
       activity?.failure ? h("div", { class: "operation-failure", role: "alert" }, failureNotice(activity.failure.message)) : null,
-      inputRunProgress({ run, running, activity, startedAt: activity ? Date.parse(activity.startedAt) : setup.startedAt, context, liveProgress: setupBusy ? setup.liveProgress : runs.liveProgress, liveProgressAt: setupBusy ? setup.liveProgressAt : runs.liveProgressAt, registrationPending: needsRegistration(record), animationKey: `overview-progress:${run.id}` }),
-      h("h3", { class: "focus-activity-title" }, "Activity"),
-      h("ol", { class: "focus-events", "aria-label": "Run activity" }, ...(activity?.events ?? []).slice().reverse().map(event => {
-        const narrative = event.narrative;
-        return h("li", { class: narrative ? `focus-event narrative ${narrative.origin} ${narrative.kind}` : "focus-event work" },
-          h("time", { datetime: event.at }, clock(event.at)),
-          h("span", { class: "focus-event-kind" }, narrative ? narrativeKindLabel(narrative.kind) : "Work",
-            narrative ? h("small", {}, narrative.origin === "agent" ? "Agent" : "System") : null),
-          h("div", { class: "focus-event-copy" },
-            h("strong", {}, narrative?.summary ?? inputRunStageLabel(event.progress.phase)),
-            h("span", {}, narrative ? inputRunStageLabel(event.progress.phase) : inputRunStageDetail(event.progress, context))));
-      })),
-      h("div", { class: "focus-controls" }, running ? stop : !inputOptimizationTerminal(run.state) || needsRegistration(record) ? resume : null));
+      inputRunProgress({ run, running, activity, startedAt: activity ? Date.parse(activity.startedAt) : setup.startedAt, context,
+        liveProgress: setupBusy ? setup.liveProgress : runs.runningId === run.id ? runs.liveProgress : undefined,
+        liveProgressAt: setupBusy ? setup.liveProgressAt : runs.runningId === run.id ? runs.liveProgressAt : undefined,
+        liveEvents: setupBusy ? setup.liveEvents : runs.runningId === run.id ? runs.liveEvents : [],
+        registrationPending: needsRegistration(record), animationKey: `overview-progress:${run.id}`,
+        controls: running ? stop : !inputOptimizationTerminal(run.state) || needsRegistration(record) ? resume : undefined }));
   }
 }
 
@@ -173,7 +170,4 @@ function reportPanel(record: OverviewRecord): HTMLElement {
         }))))))));
 }
 function clock(value: string): string { return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }); }
-function narrativeKindLabel(kind: "intent" | "reasoning" | "action" | "observation" | "decision" | "next_step"): string {
-  return ({ intent: "Intent", reasoning: "Reason", action: "Action", observation: "Result", decision: "Decision", next_step: "Next" })[kind];
-}
 function providerName(endpoint: string): string { try { const host = new URL(endpoint).hostname; return host === "api.deepseek.com" ? "DeepSeek" : host === "yan.tail85512d.ts.net" ? "Yan" : host; } catch { return "Configured provider"; } }

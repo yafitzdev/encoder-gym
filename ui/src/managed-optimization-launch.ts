@@ -146,11 +146,11 @@ export class ManagedOptimizationLaunch {
     });
   }
 
-  async start(projectId: string, setupIdValue: unknown, progress?: (value: NativeProgress) => void): Promise<InputOptimizationStarted> {
+  async start(projectId: string, setupIdValue: unknown, progress?: (value: NativeProgress) => void, signal?: AbortSignal): Promise<InputOptimizationStarted> {
     const setupId = uuid(setupIdValue);
     return this.ports.exclusive(projectId, async () => {
       const workspace = await this.ports.open(projectId);
-      const received = await this.ports.command<unknown>(["optimization-launch", workspace.folder, "preview", "--setup", setupId], undefined, progress);
+      const received = await this.ports.command<unknown>(["optimization-launch", workspace.folder, "preview", "--setup", setupId], undefined, progress, signal);
       const item = record(received, "optimization launch preview", ["scope", "modelName", "datasetRows", "benchmarkNumber"]);
       const resolved = scope(item.scope, workspace.manifest.id), current = workspace.providerCatalog;
       if (resolved.setup.id !== setupId || !current || resolved.providerCatalog.id !== current.id || resolved.providerCatalog.fingerprint !== current.fingerprint) throw new Error("Optimization inputs or providers changed. Refresh the project.");
@@ -158,7 +158,7 @@ export class ManagedOptimizationLaunch {
       const directory = await mkdtemp(join(tmpdir(), "encoder-gym-optimization-run-")), file = join(directory, "launch.json");
       try {
         await writeFile(file, JSON.stringify(request), { flag: "wx", mode: 0o600 });
-        return parseInputOptimizationStarted(await this.ports.command<unknown>(["optimization-run", workspace.folder, "start", "--file", file], undefined, progress), projectId);
+        return parseInputOptimizationStarted(await this.ports.command<unknown>(["optimization-run", workspace.folder, "start", "--file", file], undefined, progress, signal), projectId);
       } finally {
         await unlink(file).catch(error => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; });
         await rmdir(directory);

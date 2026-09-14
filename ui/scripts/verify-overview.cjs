@@ -40,17 +40,22 @@ app.whenReady().then(async()=>{
     await evaluate('window.__stableRunSpinner=document.querySelector(".optimization-progress .spinner")');
     await evaluate(`qa.setup.activity={startedAt:'2026-09-14T12:00:00Z',updatedAt:'2026-09-14T12:01:00Z',progress:{phase:'training',completed:40,total:100},events:[{at:'2026-09-14T12:01:00Z',progress:{phase:'training',completed:40,total:100}}]};qa.render()`);
     await check('live status exposes exact work and an unlabeled meter','document.querySelector("progress").value===40 && document.querySelector("progress").max===100 && !document.querySelector(".focus-status").textContent.includes("40 / 100") && document.querySelector(".optimization-progress .spinner")');
-    await check('live progress preserves one continuously animated spinner','window.__stableRunSpinner===document.querySelector(".optimization-progress .spinner")');
+    await check('live progress preserves one continuously animated spinner','window.__stableRunSpinner===document.querySelector(".optimization-progress .spinner") && window.__stableRunSpinner.getAnimations()[0].startTime===0');
+    await evaluate('window.__spinTime=window.__stableRunSpinner.getAnimations()[0].currentTime');
+    await evaluate('new Promise(resolve=>setTimeout(resolve,120))');
+    await evaluate('qa.render()');
+    await check('spinner time advances across replacement instead of restarting','window.__stableRunSpinner.getAnimations()[0].currentTime>window.__spinTime+80');
     await check('stage tracker follows the native task','document.querySelector(".optimization-progress-steps li.active").textContent==="Training"');
     await capture('status-dark');
-    await evaluate(`qa.setup.liveProgress={phase:'verifying_file',subject:'model.safetensors',completed:8388608,total:16777216,unit:'bytes'};qa.render()`);
-    await check('native filename and an unlabeled file meter are visible immediately','document.querySelector(".optimization-progress-detail").textContent==="model.safetensors" && document.querySelector(".optimization-live-progress").textContent.trim()===""');
+    await evaluate(`qa.setup.liveProgress={phase:'verifying_file',subject:'model.safetensors',completed:8388608,total:16777216,unit:'bytes'};qa.setup.liveProgressAt=Date.parse('2026-09-14T12:02:00Z');qa.render()`);
+    await check('native filename and meter live in Activity only','document.querySelector(".focus-events li .focus-event-copy").textContent.includes("model.safetensors") && !document.querySelector(".optimization-progress-detail") && document.querySelector(".optimization-live-progress").textContent.trim()===""');
+    await check('checksum step does not move the stage backwards','document.querySelector(".optimization-progress-steps li.active").textContent==="Training"');
     await check('run stages precede and outweigh the current-step meter','document.querySelector(".optimization-progress-steps").compareDocumentPosition(document.querySelector(".optimization-live-progress")) & Node.DOCUMENT_POSITION_FOLLOWING && parseFloat(getComputedStyle(document.querySelector(".optimization-progress-steps li.active")).borderTopWidth) > parseFloat(getComputedStyle(document.querySelector(".optimization-live-progress progress")).height)');
     await capture('file-progress-dark');
-    await evaluate(`qa.setup.liveProgress=undefined;qa.render()`);
-    await evaluate('[...document.querySelectorAll(".focus-controls button")].find(button=>button.textContent==="Stop").click()');
+    await evaluate(`qa.setup.liveProgress=undefined;qa.setup.liveProgressAt=undefined;qa.render()`);
+    await evaluate('[...document.querySelectorAll(".optimization-status-controls button")].find(button=>button.textContent==="Stop").click()');
     await evaluate('new Promise(resolve=>setTimeout(resolve,50))');
-    await check('stop preserves a resumable run','!qa.setup.running && [...document.querySelectorAll(".focus-controls button")].some(button=>button.textContent==="Resume")');
+    await check('stop preserves a resumable run','!qa.setup.running && [...document.querySelectorAll(".optimization-status-controls button")].some(button=>button.textContent==="Resume")');
     await evaluate(`qa.setup.run.state='materialization_failed';qa.setup.error=new Error('encoder task adapter failed: invalid training row');qa.setup.activity={startedAt:'2026-09-14T12:00:00Z',updatedAt:'2026-09-14T12:01:00Z',progress:{phase:'verifying_file',subject:'encoder-gym.json',completed:2400,total:2400,unit:'bytes'},failure:{code:'adapter',message:'encoder task adapter failed: invalid training row'},events:[{at:'2026-09-14T12:01:00Z',progress:{phase:'verifying_file',subject:'encoder-gym.json',completed:2400,total:2400,unit:'bytes'}}]};qa.render()`);
     await check('a run failure appears once and names the failed stage','document.querySelectorAll(".operation-failure").length===1 && document.querySelector(".optimization-progress-title strong").textContent==="Preparing data failed"');
     for(const width of [1040,760,390]){
@@ -61,7 +66,14 @@ app.whenReady().then(async()=>{
     await evaluate('document.documentElement.dataset.theme="light";qa.state.expanded="root";qa.state.tabs.set("root","report");qa.render()');await capture('report-light');
     await check('report green remains green under a rejected decision','document.querySelector(".focus-report h2").textContent==="REJECT" && document.querySelector("td.success")');
     await evaluate(`qa.runs.runs.find(run=>run.id==='root').outcome={kind:'baseline_retained'};qa.workspace.runs[0].candidates[0].model={key:'candidate'};qa.state.tabs.set('root','status');qa.render()`);
-    await check('stopped candidate registration remains resumable after a decision','document.querySelector("[data-run-id=root] .optimization-progress").textContent.includes("Paused · Adding candidate to Models") && [...document.querySelectorAll("[data-run-id=root] .focus-controls button")].some(button=>button.textContent==="Resume")');
+    await check('stopped candidate registration remains resumable after a decision','document.querySelector("[data-run-id=root] .optimization-progress").textContent.includes("Paused · Saving candidate") && [...document.querySelectorAll("[data-run-id=root] .optimization-status-controls button")].some(button=>button.textContent==="Resume")');
+    await evaluate(`startFixture(${JSON.stringify({workspace,datasets:f.datasets,benchmark:f.benchmark,saved,roots:[root],holdPreparation:true})})`);
+    await click('#overview-new-run'); await click('#optimization-start');
+    await evaluate('new Promise(resolve=>setTimeout(resolve,50))');
+    await check('Stop is visible while checking files before a run exists','!qa.setup.run && !!qa.setup.preparationId && [...document.querySelectorAll(".optimization-progress button")].some(button=>button.textContent==="Stop") && document.querySelector(".focus-events").textContent.includes("model.safetensors")');
+    await evaluate('[...document.querySelectorAll(".optimization-progress button")].find(button=>button.textContent==="Stop").click()');
+    await evaluate('new Promise(resolve=>setTimeout(resolve,50))');
+    await check('early Stop returns to editable setup without a run or error','!qa.setup.run && !qa.setup.preparationId && !qa.setup.error && !document.querySelector(".focus-run .spinner") && !document.getElementById("optimization-start").disabled');
     console.log('Overview renderer verification complete.');
   }finally{window.destroy();app.quit()}
 }).catch(error=>{console.error(error);app.exit(1)});

@@ -7,7 +7,7 @@ import type { OptimizationInputs, OptimizationSetup, OptimizationSetupPreview, O
 
 interface Ports {
   open(projectId: string): Promise<ManagedWorkspace>;
-  command<T>(args: string[], progress?: (value: NativeProgress) => void): Promise<T>;
+  command<T>(args: string[], progress?: (value: NativeProgress) => void, signal?: AbortSignal): Promise<T>;
   exclusive<T>(projectId: string, run: () => Promise<T>): Promise<T>;
 }
 function record(value: unknown, keys: string[]): Record<string, unknown> {
@@ -45,11 +45,11 @@ export class ManagedOptimizationSetup {
     for (const setup of history) inputs(setup.inputs, workspace.manifest.id);
     return history;
   }
-  async preview(projectId: string, value: unknown, progress?: (value: NativeProgress) => void): Promise<OptimizationSetupPreview> {
+  async preview(projectId: string, value: unknown, progress?: (value: NativeProgress) => void, signal?: AbortSignal): Promise<OptimizationSetupPreview> {
     const selection = record(value, ["modelId", "datasetVersionId", "benchmarkVersionId"]);
     const modelId = uuid(selection.modelId), datasetId = uuid(selection.datasetVersionId), benchmarkId = uuid(selection.benchmarkVersionId);
     const workspace = await this.ports.open(projectId);
-    const preview = await this.ports.command<OptimizationSetupPreview>(["optimization-setup", workspace.folder, "preview", "--model", modelId, "--dataset-version", datasetId, "--benchmark-version", benchmarkId], progress);
+    const preview = await this.ports.command<OptimizationSetupPreview>(["optimization-setup", workspace.folder, "preview", "--model", modelId, "--dataset-version", datasetId, "--benchmark-version", benchmarkId], progress, signal);
     const resolved = inputs(preview.inputs, workspace.manifest.id);
     const catalog = workspace.modelCatalog;
     const baseline = catalog?.baselineRevisions.find(revision => revision.id === catalog.activeBaselineRevisionId);
@@ -60,7 +60,7 @@ export class ManagedOptimizationSetup {
       || resolved.model.fingerprint !== model?.fingerprint || resolved.benchmark.fingerprint !== benchmark?.fingerprint) throw new Error("Optimization inputs changed. Refresh the project.");
     return { ...preview, inputs: resolved };
   }
-  async save(projectId: string, value: unknown, progress?: (value: NativeProgress) => void): Promise<OptimizationSetupSaved> {
+  async save(projectId: string, value: unknown, progress?: (value: NativeProgress) => void, signal?: AbortSignal): Promise<OptimizationSetupSaved> {
     const input = record(value, ["id", "expectedParent", "inputs"]);
     const request: OptimizationSetupRequest = { id: uuid(input.id), expectedParent: input.expectedParent === null ? null : uuid(input.expectedParent), inputs: inputs(input.inputs, projectId) };
     return this.ports.exclusive(projectId, async () => {
@@ -69,7 +69,7 @@ export class ManagedOptimizationSetup {
       const directory = await mkdtemp(join(tmpdir(), "encoder-gym-optimization-setup-")), file = join(directory, "inputs.json");
       try {
         await writeFile(file, JSON.stringify(request), { flag: "wx", mode: 0o600 });
-        const saved = await this.ports.command<OptimizationSetupSaved>(["optimization-setup", workspace.folder, "save", "--file", file], progress);
+        const saved = await this.ports.command<OptimizationSetupSaved>(["optimization-setup", workspace.folder, "save", "--file", file], progress, signal);
         const resolved = inputs(saved.setup.inputs, projectId);
         if (saved.setup.id !== request.id || (saved.setup.parent?.id ?? null) !== request.expectedParent || JSON.stringify(resolved) !== JSON.stringify(request.inputs)) throw new Error("Saved optimization inputs do not match the request.");
         return saved;

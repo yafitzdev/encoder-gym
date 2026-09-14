@@ -5,7 +5,7 @@ import type { Actions, Location, Page, ProjectActions } from "./actions.js";
 import { candidateName, candidateRows, dateLabel, initialFilter, metricInfo, runName, setupId } from "./catalog.js";
 import { button, disclosureIndicator, failureNotice, icon, spinner, tag } from "./components.js";
 import { renderCompare, renderRun, type DetailState } from "./detail-pages.js";
-import { h, preserveKeyedNodes } from "./dom.js";
+import { h, replaceView } from "./dom.js";
 import { renderModels, type ModelPageState } from "./models-page.js";
 import { renderModel } from "./model-view.js";
 import { findModel, modelInventory } from "./model-inventory.js";
@@ -517,7 +517,7 @@ export function mount(): void {
     const runCount = projectRunIds.size + (data?.runs.filter(run => !run.optimizationId || !projectRunIds.has(run.optimizationId)).length ?? 0)
       + (view.optimization.run && !linkedOptimizationIds.has(view.optimization.run.run_id) && !projectRunIds.has(view.optimization.run.run_id) ? 1 : 0);
     const activePage = data?.managed && ["overview", "runs", "run", "optimization"].includes(current.page) ? "overview" : ["model", "candidate", "baseline", "compare"].includes(current.page) ? "models" : current.page === "run" ? "runs" : current.page === "dataset" ? "datasets" : current.page;
-    const projectRunActive = !!view.setup?.running || !!view.setup?.saving || !!view.setup?.initializingEvaluation || !!view.inputRuns?.runningId;
+    const projectRunActive = !!view.setup?.preparationId || !!view.setup?.running || !!view.setup?.saving || !!view.setup?.initializingEvaluation || !!view.inputRuns?.runningId;
     const focus = document.activeElement, focusId = focus?.id;
     const caret = focus instanceof HTMLInputElement && ["text", "search"].includes(focus.type) ? [focus.selectionStart, focus.selectionEnd] : undefined;
     const scroll = main.scrollTop;
@@ -528,7 +528,7 @@ export function mount(): void {
     const nextProjectNav = document.createDocumentFragment();
     nextProjectNav.append(...collection.projects.map(p => {
       const expanded = p.id === project?.id && !collapsedProjects.has(p.id);
-      const projectView = views.get(p.id), backgroundActive = !!projectView?.setup?.running || !!projectView?.setup?.saving || !!projectView?.setup?.initializingEvaluation || !!projectView?.inputRuns?.runningId;
+      const projectView = views.get(p.id), backgroundActive = !!projectView?.setup?.preparationId || !!projectView?.setup?.running || !!projectView?.setup?.saving || !!projectView?.setup?.initializingEvaluation || !!projectView?.inputRuns?.runningId;
       return h("section", { class: "project-folder" + (p.id === project?.id ? " selected-project" : "") + (expanded ? " expanded-project" : "") },
       h("button", { type: "button", id: "project-" + p.id, disabled: collectionBusy, class: "project-folder-button", title: p.source.kind === "folder" ? p.source.path : "Recorded example", "data-project-id": p.id, "aria-expanded": String(expanded), onClick: () => {
         if (p.id === selection.selectedId) { collapsedProjects.has(p.id) ? collapsedProjects.delete(p.id) : collapsedProjects.add(p.id); render(); }
@@ -537,8 +537,7 @@ export function mount(): void {
       expanded ? h("div", { class: "project-pages" }, ...pages.filter(([page]) => page === "runs" ? !(p.source.kind === "folder" && p.source.workspaceId) : !["datasets", "activity", "overview"].includes(page) || (p.source.kind === "folder" && p.source.workspaceId)).map(([page, label, symbol]) => h("button", { type: "button", id: "nav-" + page, disabled: collectionBusy, class: "nav-item" + (page === activePage ? " active" : ""), "aria-current": page === activePage ? "page" : null, "data-page": page, onClick: () => navigate({ page }) }, icon(symbol), label,
         page === "overview" && projectRunActive ? h("span", { class: "nav-meta", role: "status", "aria-label": "Optimization running" }, spinner(`overview-nav:${p.id}`)) : data && ["models", "runs"].includes(page) ? h("span", { class: "nav-meta" }, h("span", { class: "nav-count" }, page === "models" ? modelInventory(data).length : runCount)) : null))) : null);
     }));
-    preserveKeyedNodes(projectNav, nextProjectNav);
-    projectNav.replaceChildren(nextProjectNav);
+    replaceView(projectNav, nextProjectNav);
     const candidate = data ? candidateRows(data).find(r => r.candidate.id === current.id)?.candidate : undefined;
     const run = data?.runs.find(r => r.id === current.id);
     const projectRun = inputRunById(view.inputRuns, view.setup, current.id);
@@ -579,8 +578,7 @@ export function mount(): void {
     const nextMain = document.createDocumentFragment();
     if (loading || collectionBusy) nextMain.append(h("div", { class: "workspace-progress", role: "status" }, loadingMessage));
     nextMain.append(content);
-    preserveKeyedNodes(main, nextMain);
-    main.replaceChildren(nextMain); main.scrollTop = scroll;
+    replaceView(main, nextMain); main.scrollTop = scroll;
     main.dataset.disclosurePage = disclosurePage;
     for (const disclosure of main.querySelectorAll<HTMLDetailsElement>("details")) {
       if (openDisclosures.has(disclosure.querySelector("summary")?.textContent)) disclosure.open = true;

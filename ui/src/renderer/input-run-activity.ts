@@ -2,6 +2,7 @@ import type { NativeProgress } from "../managed-control.js";
 import type { ProjectActivityAction, ProjectActivityFailure, ProjectActivityLog, ProjectActivityNarrative } from "../project-activity.js";
 import { validateNativeProgress } from "../native-progress.js";
 
+export interface InputRunActivityEntry { at: string; progress: NativeProgress; narrative?: ProjectActivityNarrative }
 export interface InputRunActivity {
   actionId: string;
   state: ProjectActivityAction["state"];
@@ -10,7 +11,30 @@ export interface InputRunActivity {
   progress?: NativeProgress;
   failure?: ProjectActivityFailure;
   stages: string[];
-  events?: { at: string; progress: NativeProgress; narrative?: ProjectActivityNarrative }[];
+  events?: InputRunActivityEntry[];
+}
+
+/** Keep each task in the live feed; counter updates replace that task's row. */
+export function appendLiveActivity(events: InputRunActivityEntry[], progress: NativeProgress, at = Date.now()): void {
+  const entry = { at: new Date(at).toISOString(), progress, ...(progress.narrative ? { narrative: progress.narrative } : {}) };
+  const previous = events.at(-1);
+  if (previous && previous.progress.phase === progress.phase && previous.progress.subject === progress.subject
+    && JSON.stringify(previous.narrative) === JSON.stringify(progress.narrative)) events[events.length - 1] = entry;
+  else events.push(entry);
+  if (events.length > 100) events.splice(0, events.length - 100);
+}
+
+export function mergedActivity(activity: InputRunActivity | undefined, live: InputRunActivityEntry[], progress?: NativeProgress, at?: number): InputRunActivityEntry[] {
+  const events = [...(activity?.events ?? [])];
+  const since = live[0]?.at;
+  const merged: InputRunActivityEntry[] = [];
+  for (const entry of [...events.filter(event => !since || event.at < since), ...live]) {
+    appendLiveActivity(merged, entry.progress, Date.parse(entry.at));
+  }
+  if (progress && (!merged.length || (at !== undefined && at > Date.parse(merged.at(-1)!.at)))) {
+    appendLiveActivity(merged, progress, at ?? (activity ? Date.parse(activity.updatedAt) : undefined));
+  }
+  return merged;
 }
 
 /** Project activity is the durable source for desktop orchestration progress. */

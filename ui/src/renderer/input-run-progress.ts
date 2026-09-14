@@ -2,7 +2,7 @@ import type { NativeProgress } from "../managed-control.js";
 import { inputOptimizationPhase, type InputOptimizationRun } from "../input-optimization.js";
 import { spinner } from "./components.js";
 import { h } from "./dom.js";
-import { inputRunStageDetail, inputRunStageLabel, type InputRunActivity, type InputRunStageContext } from "./input-run-activity.js";
+import { inputRunStageDetail, inputRunStageLabel, mergedActivity, type InputRunActivity, type InputRunActivityEntry, type InputRunStageContext } from "./input-run-activity.js";
 
 const phases = ["checking_inputs", "preparing_data", "starting", "training", "saving_candidate", "evaluating"] as const;
 const labels = {
@@ -24,16 +24,17 @@ export interface InputRunProgressOptions {
   liveProgressAt?: number;
   registrationPending?: boolean;
   animationKey?: string;
+  liveEvents?: InputRunActivityEntry[];
+  controls?: HTMLElement;
 }
 
-export function pendingInputRunProgress(progress?: NativeProgress, animationKey = "pending-run"): HTMLElement {
-  return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": "true" },
+export function pendingInputRunProgress(progress?: NativeProgress, animationKey = "pending-run", events: InputRunActivityEntry[] = [], controls?: HTMLElement, running = true): HTMLElement {
+  return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": String(running) },
     progressSteps(0, false),
     h("div", { class: "optimization-current-work" },
       h("div", { class: "optimization-progress-state" },
-        h("div", { class: "optimization-progress-title" }, spinner(animationKey), h("strong", {}, progress ? inputRunStageLabel(progress.phase) : "Starting run"))),
-      h("p", { class: "optimization-progress-detail" }, progress?.subject ?? "Creating the run record"),
-      progress ? counterBar(progress) : null));
+        h("div", { class: "optimization-progress-title" }, running ? spinner(animationKey) : null, h("strong", {}, running ? "Checking inputs" : "Paused")), controls)),
+    activityStream(mergedActivity(undefined, events, progress), undefined, running));
 }
 
 /** The single live-status presentation shared by Optimize and Runs. */
@@ -47,26 +48,46 @@ export function inputRunProgress(options: InputRunProgressOptions): HTMLElement 
     : run.state === "cancelled" ? "Cancelled" : undefined;
   const progress = options.registrationPending && !running ? { phase: "registering_candidate" as const } : running ? options.liveProgress ?? activity?.progress : activity?.progress;
   const observed = progress?.phase;
-  const visiblePhase = phase === "complete" ? phase : observed && ["evaluating_retrieval", "evaluating_agent", "development_decision", "final_decision"].includes(observed) ? "evaluating"
-    : observed === "saving_checkpoint" || observed === "registering_candidate" ? "saving_candidate"
-    : observed && ["checking_training_data", "loading_model", "preparing_batches", "training"].includes(observed) ? "training"
-    : observed && ["loading_training_rows", "writing_training_rows", "checking_materialized_project"].includes(observed) ? "preparing_data"
-    : observed && ["loading_evaluation_protocol", "creating_candidate", "creating_experiment"].includes(observed) ? "starting" : phase;
+  const events = mergedActivity(activity, options.liveEvents ?? [], progress, options.liveProgressAt);
+  // Checksums are steps within the current stage, never a reason to jump back.
+  const tasks = [...(activity?.stages ?? []), ...events.map(event => event.progress.phase), ...(observed ? [observed] : [])];
+  const stagePhase = tasks.reverse().map(taskPhase).find(value => value !== undefined);
+  const visiblePhase = options.registrationPending ? "saving_candidate" : phase === "complete" ? phase : stagePhase ?? phase;
   const active = visiblePhase === "complete" ? phases.length : Math.max(0, phases.indexOf(visiblePhase));
   const activeProgress: NativeProgress = progress ?? { phase: fallback[phase] };
-  const stage = inputRunStageLabel(activeProgress.phase);
-  const phaseLabel = phase === "complete" ? "Complete" : labels[phase];
-  const current = result ?? (failed ? `${phaseLabel} failed` : running ? stage : `Paused · ${stage}`);
-  const detail = result ? "" : activeProgress.narrative?.summary ?? inputRunStageDetail(activeProgress, context);
+  const phaseLabel = visiblePhase === "complete" ? "Complete" : labels[visiblePhase];
+  const current = result ?? (failed ? `${labels[phase as keyof typeof labels] ?? phaseLabel} failed` : running ? phaseLabel : `Paused · ${phaseLabel}`);
   return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": String(running) },
     progressSteps(active, failed),
     h("div", { class: "optimization-current-work" },
       h("div", { class: "optimization-progress-state" },
         h("div", { class: "optimization-progress-title" }, running ? spinner(options.animationKey ?? `run-progress:${run.id}`) : null, h("strong", {}, current)),
-        running && startedAt ? h("span", {}, "Elapsed ", h("span", { "data-elapsed-start": String(startedAt) })) : null),
-      detail ? h("p", { class: "optimization-progress-detail" }, detail) : null,
-      !result && progress ? counterBar(progress) : null,
-      running && (options.liveProgressAt || activity?.updatedAt) ? h("small", { class: "optimization-progress-updated muted", "data-checked-at": String(options.liveProgressAt ?? Date.parse(activity!.updatedAt)) }, "Updated just now") : null));
+        h("div", { class: "optimization-status-controls" }, running && startedAt ? h("span", { class: "muted" }, "Elapsed ", h("span", { "data-elapsed-start": String(startedAt) })) : null, options.controls))),
+    activityStream(events.length ? events : [{ at: activity?.updatedAt ?? new Date().toISOString(), progress: activeProgress }], context, running));
+}
+
+function taskPhase(task: string): (typeof phases)[number] | undefined {
+  if (["evaluating_retrieval", "evaluating_agent", "development_decision", "final_decision"].includes(task)) return "evaluating";
+  if (["saving_checkpoint", "registering_candidate"].includes(task)) return "saving_candidate";
+  if (["checking_training_data", "loading_model", "preparing_batches", "training"].includes(task)) return "training";
+  if (["loading_training_rows", "writing_training_rows", "checking_materialized_project"].includes(task)) return "preparing_data";
+  if (["loading_evaluation_protocol", "creating_candidate", "creating_experiment"].includes(task)) return "starting";
+  return undefined;
+}
+
+function activityStream(events: InputRunActivityEntry[], context: InputRunStageContext | undefined, running: boolean): HTMLElement {
+  return h("div", { class: "optimization-activity" }, h("h3", { class: "focus-activity-title" }, "Activity"),
+    h("ol", { class: "focus-events", "aria-label": "Run activity" }, ...events.slice().reverse().map((event, index) => {
+      const narrative = event.narrative, live = running && index === 0;
+      const detail = narrative ? "" : context ? inputRunStageDetail(event.progress, context) : event.progress.subject ?? "";
+      return h("li", { class: `focus-event ${narrative ? `narrative ${narrative.origin} ${narrative.kind}` : "work"}${live ? " current" : ""}` },
+        h("time", { datetime: event.at }, new Date(event.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })),
+        h("span", { class: "focus-event-kind" }, narrative ? ({ intent: "Intent", reasoning: "Reason", action: "Action", observation: "Result", decision: "Decision", next_step: "Next" })[narrative.kind] : live ? "Now" : "Work",
+          narrative ? h("small", {}, narrative.origin === "agent" ? "Agent" : "System") : null),
+        h("div", { class: "focus-event-copy" }, h("strong", {}, narrative?.summary ?? inputRunStageLabel(event.progress.phase)),
+          detail ? h("span", {}, detail) : null,
+          index === 0 ? counterBar(event.progress) : null));
+    })));
 }
 
 function counterBar(progress: NativeProgress): HTMLElement | null {

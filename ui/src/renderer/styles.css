@@ -800,6 +800,10 @@ dialog::backdrop { background: #0008; }
 .optimization-progress-state strong { font-size: 16px; }
 .optimization-progress-state > span { color: var(--muted); font: 11px var(--mono); }
 .optimization-progress-title .spinner { color: var(--accent); width: 16px; height: 16px; }
+.optimization-status-controls { display: flex; align-items: center; gap: 18px; flex-shrink: 0; font-size: 12px; }
+.optimization-activity { margin-top: 24px; }
+.focus-event.current { background: var(--accent-soft); border-left: 2px solid var(--accent); }
+.focus-event-copy .optimization-live-progress { margin-top: 12px; }
 .optimization-progress-detail { margin-top: 7px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .optimization-live-progress { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; margin-top: 13px; color: var(--muted); font: 11px var(--mono); }
 .optimization-live-progress.meter-only { grid-template-columns: minmax(0, 1fr); }

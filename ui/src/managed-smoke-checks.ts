@@ -624,7 +624,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await check("Overview names current work and shows activity spinners", "document.querySelector('.optimization-progress').textContent.includes('Variant · v1') && !document.querySelector('.optimization-progress').textContent.includes('1 / 1') && document.querySelector('.optimization-progress').getAttribute('aria-busy') === 'true' && document.querySelector('#nav-overview .spinner')");
   await evaluate("window.__stableOptimizationSpinner=document.querySelector('.optimization-progress .spinner')");
   emitOptimizationProgress?.("preparing_data", { phase: "writing_training_rows", completed: 1, total: 1, subject: "data.jsonl" });
-  await until("document.querySelector('.optimization-progress-detail')?.textContent === 'data.jsonl'");
+  await until("document.querySelector('.focus-events .focus-event-copy')?.textContent.includes('data.jsonl')");
   await check("progress updates preserve one continuously animated spinner", "window.__stableOptimizationSpinner===document.querySelector('.optimization-progress .spinner')");
   await screenshot("managed-optimization-live");
   await nav("models"); await nav("overview");
@@ -650,13 +650,13 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await check("optimization keeps its stable name and saved progress while paused", "document.querySelector('.focus-run.expanded .focus-run-heading strong').textContent.startsWith('Run ') && document.querySelector('.focus-status').textContent.includes('Building training dataset') && document.querySelectorAll('.optimization-progress-steps li').length===6");
   await check("Overview does not expose repair recipes as the workflow", "!document.querySelector('.focus-runs').textContent.toLowerCase().includes('repair')");
   await textButton("Resume");
-  await until("document.querySelector('.focus-status .optimization-progress')?.textContent.includes('Training candidate')");
+  await until("document.querySelector('.focus-status .optimization-progress-title')?.textContent === 'Training'");
   await check("resumed run shows its persisted counter and sidebar spinner", "(()=>{const bar=document.querySelector('.focus-status progress');return bar.value===40 && bar.max===100 && document.querySelector('#nav-overview .spinner')})()");
   await until("document.querySelector('.focus-event.narrative.agent')?.textContent.includes('Use the smallest candidate')");
   await check("agent reasoning is an inline durable activity entry", "(()=>{const event=document.querySelector('.focus-event.narrative.agent');return event.querySelector('.focus-event-kind').textContent.includes('Reason') && event.querySelector('.focus-event-kind small').textContent==='Agent' && event.querySelector('.focus-event-copy strong').textContent.includes('current development evidence')})()");
   await screenshot("managed-project-run-live");
   await textButton("Stop");
-  await until("document.querySelector('.focus-controls')?.textContent.includes('Stopping…')");
+  await until("document.querySelector('.optimization-status-controls')?.textContent.includes('Stopping…')");
   finishInputRun();
   await until("!document.querySelector('#nav-overview .spinner')");
   await check("Stop leaves the same UUID resumable without cancelling it", "(()=>{const row=document.querySelector('[data-run-id=" + JSON.stringify(queued.id) + "]');return row.querySelector('.focus-run-state').textContent.includes('Paused') && [...row.querySelectorAll('button')].some(button=>button.textContent==='Resume')})()");

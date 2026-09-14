@@ -4,7 +4,7 @@ import type { ManagedWorkspace } from "./managed-workspace.js";
 
 interface Ports {
   open(projectId: string): Promise<ManagedWorkspace>;
-  command<T>(args: string[], progress?: (value: NativeProgress) => void): Promise<T>;
+  command<T>(args: string[], progress?: (value: NativeProgress) => void, signal?: AbortSignal): Promise<T>;
   exclusive<T>(projectId: string, run: () => Promise<T>): Promise<T>;
 }
 function uuid(value: unknown): string {
@@ -14,14 +14,14 @@ function uuid(value: unknown): string {
 /** Fixed project-bound CLI grammar; the renderer supplies no paths or report contents. */
 export class ManagedBenchmarks {
   constructor(private ports: Ports) {}
-  async initialize(projectId: string, progress?: (value: NativeProgress) => void): Promise<BenchmarkInitializationResult> {
+  async initialize(projectId: string, progress?: (value: NativeProgress) => void, signal?: AbortSignal): Promise<BenchmarkInitializationResult> {
     return this.ports.exclusive(projectId, async () => {
       const workspace = await this.ports.open(projectId);
       if (!workspace.scientificBinding) throw new Error("Connect the project evaluation runtime first.");
       const parent = workspace.benchmarkVersions?.at(-1)?.id;
       const result = await this.ports.command<BenchmarkInitializationResult>([
         "benchmark", workspace.folder, "initialize", ...(parent ? ["--expected-parent", parent] : []),
-      ], progress);
+      ], progress, signal);
       const actionId = uuid(result.actionId), versionId = uuid(result.version.id);
       const current = await this.ports.open(projectId);
       const recorded = current.benchmarkVersions?.find(version => version.id === versionId);

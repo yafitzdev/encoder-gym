@@ -1,14 +1,16 @@
 <!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../dist/renderer/styles.css"><style>body{display:block;overflow:auto}main{max-width:1200px;margin:auto}.page-content{padding:32px}</style></head><body><main id="page"></main><script type="module">
-import { renderOverview, newOverviewState, preserveKeyedNodes } from '../dist/renderer/overview-page.js';
+import { renderOverview, newOverviewState, replaceView } from '../dist/renderer/overview-page.js';
 import { OptimizationSetupController } from '../dist/evidence/optimization-setup-controller.js';
 import { InputRunsController } from '../dist/evidence/input-runs-controller.js';
 window.fixtureReady = true;
 window.startFixture = initial => {
   const { workspace, datasets, benchmark, saved, roots } = initial;
-  let finish;
+  let finish, stopPreparation;
   const bridge = {
     queryDatasets: async () => ({kind:'list',entries:datasets}), queryBenchmarks:async()=>({kind:'list',versions:[benchmark]}),
     optimizationSetups:async()=>[saved], optimizationLaunches:async()=>[],
+    finishInputPreparation:async()=>{},stopInputPreparation:async()=>stopPreparation?.(),
+    previewOptimizationSetup:async(_id,_selection,receive)=>{receive({phase:'verifying_file',subject:'model.safetensors',completed:1,total:10});return new Promise((_resolve,reject)=>{stopPreparation=()=>reject(new Error('Run cancelled.'))})},
     inputOptimizationRuns:async()=>roots, projectActivity:async()=>({project_id:saved.inputs.projectId,actions:[]}),
     startInputOptimization:async()=>({run:{...roots[0],id:'new-root',experimentRunId:undefined,setupId:saved.id,state:'queued',createdAt:'2026-09-14T12:00:00Z',lastSequence:1}}),
     driveInputOptimization:async(_project,id)=>new Promise(resolve=>{finish=()=>resolve({...roots[0],id,experimentRunId:undefined,createdAt:'2026-09-14T12:00:00Z',state:'ready',lastSequence:2})}),
@@ -18,10 +20,10 @@ window.startFixture = initial => {
   const state = newOverviewState();
   const setup = new OptimizationSetupController(saved.inputs.projectId, workspace.managed, bridge, render);
   const runs = new InputRunsController(saved.inputs.projectId, bridge, render);
-  setup.data={datasets,benchmarks:[benchmark],history:[saved]}; setup.datasetId=saved.inputs.dataset.id;setup.benchmarkId=benchmark.id;
+  setup.data={datasets,benchmarks:[benchmark],history:initial.holdPreparation?[]:[saved]}; setup.datasetId=saved.inputs.dataset.id;setup.benchmarkId=benchmark.id;
   runs.runs=roots;
   const actions={render,navigate:location=>window.lastNavigation=location};
-  function render(){const page=document.getElementById('page'),next=document.createDocumentFragment();next.append(renderOverview(workspace,state,setup,runs,actions));preserveKeyedNodes(page,next);page.replaceChildren(next)}
+  function render(){const page=document.getElementById('page'),next=document.createDocumentFragment();next.append(renderOverview(workspace,state,setup,runs,actions));replaceView(page,next)}
   window.qa={state,setup,runs,workspace,render,finish:()=>finish?.()}; render();
 };
 </script></body></html>

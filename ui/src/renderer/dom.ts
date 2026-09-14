@@ -59,3 +59,15 @@ export function preserveKeyedNodes(current: ParentNode, replacement: ParentNode)
     }
   }
 }
+
+/** Reconnecting even the SAME element restarts CSS animations in Chromium.
+ * Anchor each spinner to the document clock after insertion, before paint.
+ * Its phase then stays continuous through file updates and page navigation.
+ */
+export function replaceView(current: HTMLElement, replacement: Node): void {
+  preserveKeyedNodes(current, replacement as ParentNode);
+  current.replaceChildren(replacement);
+  for (const spinner of current.querySelectorAll<HTMLElement>(".spinner")) {
+    for (const animation of spinner.getAnimations()) animation.startTime = 0;
+  }
+}

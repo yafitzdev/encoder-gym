@@ -136,8 +136,8 @@ export class ManagedBackend {
   readonly optimizationLaunch: ManagedOptimizationLaunch;
   constructor(readonly executable: string, private registry: ProjectRegistry, private executor: CommandExecutor = executeCommand, private options: ManagedBackendOptions = {}) {
     this.datasetVersions = new ManagedDatasets({ open: id => this.openRegistered(id), command: args => this.command(args), exclusive: (id, run) => this.exclusiveProject(id, run) });
-    this.benchmarks = new ManagedBenchmarks({ open: id => this.openRegistered(id), command: (args, progress) => this.command(args, undefined, progress), exclusive: (id, run) => this.exclusiveProject(id, run) });
-    this.optimizationSetup = new ManagedOptimizationSetup({ open: id => this.openRegistered(id), command: (args, progress) => this.command(args, undefined, progress), exclusive: (id, run) => this.exclusiveProject(id, run) });
+    this.benchmarks = new ManagedBenchmarks({ open: id => this.openRegistered(id), command: (args, progress, signal) => this.command(args, undefined, progress, signal), exclusive: (id, run) => this.exclusiveProject(id, run) });
+    this.optimizationSetup = new ManagedOptimizationSetup({ open: id => this.openRegistered(id), command: (args, progress, signal) => this.command(args, undefined, progress, signal), exclusive: (id, run) => this.exclusiveProject(id, run) });
     this.optimizationLaunch = new ManagedOptimizationLaunch({
       open: id => this.openRegistered(id),
       command: (args, environment, progress, signal) => this.command(args, environment, progress, signal),

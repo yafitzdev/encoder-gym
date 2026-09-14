@@ -3,7 +3,7 @@ import type { InputOptimizationRun } from "../input-optimization.js";
 import type { ManagedWorkspace } from "../managed-workspace.js";
 import type { WorkspaceSnapshot } from "../workspace.js";
 import type { NativeProgress } from "../managed-control.js";
-import { inputRunActivity, type InputRunActivity } from "./input-run-activity.js";
+import { appendLiveActivity, inputRunActivity, type InputRunActivity, type InputRunActivityEntry } from "./input-run-activity.js";
 
 export class InputRunsController {
   runs?: InputOptimizationRun[];
@@ -13,6 +13,7 @@ export class InputRunsController {
   cancellingId?: string;
   stoppingId?: string;
   liveProgress?: NativeProgress;
+  liveEvents: InputRunActivityEntry[] = [];
   liveProgressAt?: number;
   error?: unknown;
   private epoch = 0;
@@ -39,7 +40,7 @@ export class InputRunsController {
   }
   async resume(run: InputOptimizationRun): Promise<void> {
     if (this.runningId || run.projectId !== this.projectId) return;
-    const epoch = this.epoch; this.runningId = run.id; this.error = undefined; this.liveProgress = undefined; this.replace(run); this.render();
+    const epoch = this.epoch; this.runningId = run.id; this.error = undefined; this.liveProgress = undefined; this.liveEvents = []; this.replace(run); this.render();
     let timer: ReturnType<typeof setTimeout> | undefined, settled = false;
     const poll = (): void => {
       timer = setTimeout(() => {
@@ -51,7 +52,7 @@ export class InputRunsController {
     };
     try {
       poll(); this.replace(await this.bridge.driveInputOptimization(this.projectId, run.id, value => {
-        if (!settled && epoch === this.epoch) { this.liveProgress = value; this.liveProgressAt = Date.now(); this.render(); }
+        if (!settled && epoch === this.epoch) { this.liveProgress = value; this.liveProgressAt = Date.now(); appendLiveActivity(this.liveEvents, value, this.liveProgressAt); this.render(); }
       })); settled = true;
       const opened = await this.bridge.selectProject(this.projectId);
       if (epoch === this.epoch && opened.content.state === "ready" && opened.content.workspace.managed) this.updated?.(opened.content.workspace.managed, opened.content.workspace);

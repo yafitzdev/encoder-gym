@@ -9,6 +9,7 @@ export function previewBridge(): EncoderGymBridge {
   return {
     optimizationSetups: unavailable, previewOptimizationSetup: unavailable, saveOptimizationSetup: unavailable,
     optimizationLaunches: unavailable, previewOptimizationLaunch: unavailable, authorizeOptimizationLaunch: unavailable,
+    stopInputPreparation: unavailable, finishInputPreparation: unavailable,
     startInputOptimization: unavailable, driveInputOptimization: unavailable, cancelInputOptimization: unavailable, stopInputOptimization: unavailable, inputOptimizationRun: unavailable, inputOptimizationRuns: unavailable,
     queryBenchmarks: unavailable, initializeBenchmark: unavailable, previewBenchmark: unavailable, adoptBenchmark: unavailable,
     queryDatasets: unavailable, mutateDataset: unavailable,

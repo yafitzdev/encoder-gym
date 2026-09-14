@@ -7,7 +7,7 @@ import type { OptimizationLaunchAuthorization } from "../optimization-launch.js"
 import type { NativeProgress } from "../managed-control.js";
 import type { OptimizationInputs, OptimizationSetup, OptimizationSetupRequest } from "../optimization-setup.js";
 import { inputOptimizationPhase, inputOptimizationTerminal, type InputOptimizationPhase, type InputOptimizationRun } from "../input-optimization.js";
-import { inputRunActivity, inputRunStageLabel, type InputRunActivity } from "./input-run-activity.js";
+import { appendLiveActivity, inputRunActivity, inputRunStageLabel, type InputRunActivity, type InputRunActivityEntry } from "./input-run-activity.js";
 
 /** Per-project input selection. Running experiments have a separate controller. */
 export class OptimizationSetupController {
@@ -26,6 +26,8 @@ export class OptimizationSetupController {
   phase?: string;
   benchmarkProgress?: NativeProgress;
   liveProgress?: NativeProgress;
+  liveEvents: InputRunActivityEntry[] = [];
+  preparationId?: string;
   liveProgressAt?: number;
   startedAt?: number;
   error?: unknown;
@@ -33,13 +35,16 @@ export class OptimizationSetupController {
   private retry?: OptimizationSetupRequest;
   constructor(readonly projectId: string, public workspace: ManagedWorkspace, private bridge: EncoderGymBridge, private render: () => void, private updated?: (workspace: ManagedWorkspace, snapshot?: WorkspaceSnapshot) => void) {}
   newDraft(): void {
-    if (this.running || this.saving || this.initializingEvaluation) return;
+    if (this.preparationId || this.running || this.saving || this.initializingEvaluation) return;
     this.run = undefined; this.activity = undefined; this.error = undefined; this.liveProgress = undefined;
   }
   async stop(): Promise<void> {
-    if (!this.running || !this.run || this.stopping) return;
+    if ((!this.preparationId && (!this.running || !this.run)) || this.stopping) return;
     this.stopping = true; this.render();
-    try { await this.bridge.stopInputOptimization(this.projectId, this.run.id); }
+    try {
+      if (this.preparationId) await this.bridge.stopInputPreparation(this.projectId, this.preparationId);
+      if (this.running && this.run) await this.bridge.stopInputOptimization(this.projectId, this.run.id);
+    }
     catch (error) { this.error = error; this.stopping = false; this.render(); }
   }
   get baseline() { const catalog = this.workspace.modelCatalog; return catalog?.baselineRevisions.find(revision => revision.id === catalog.activeBaselineRevisionId); }
@@ -61,14 +66,14 @@ export class OptimizationSetupController {
   get canSave(): boolean { return !!this.selected && !this.saved && !this.saving && !this.loading && !this.running && !this.initializingEvaluation; }
   get canOptimize(): boolean {
     const canCreateInputs = this.canInitializeBenchmark && !!this.model && !!this.dataset?.version.rows;
-    return (!!this.selected || canCreateInputs) && !this.loading && !this.saving && !this.running && !this.initializingEvaluation;
+    return (!!this.selected || canCreateInputs) && !this.preparationId && !this.loading && !this.saving && !this.running && !this.initializingEvaluation;
   }
   get canCancel(): boolean { return this.running && !!this.run && !inputOptimizationTerminal(this.run.state) && !this.cancelling; }
   get runPhase(): InputOptimizationPhase | undefined { return this.run ? inputOptimizationPhase(this.run.state) : undefined; }
   sync(workspace: ManagedWorkspace): void {
     // A read-only page refresh must not invalidate observation of an active
     // drive. Its completion reloads the exact project before releasing busy.
-    if (this.running || this.initializingEvaluation) return;
+    if (this.preparationId || this.running || this.initializingEvaluation) return;
     if (workspace !== this.workspace) { this.workspace = workspace; this.invalidate(); }
   }
   private invalidate(): void { this.epoch++; this.loading = false; this.error = undefined; this.data = undefined; this.retry = undefined; }
@@ -105,34 +110,49 @@ export class OptimizationSetupController {
     if (!this.canSave) return;
     const selected = this.selected!, epoch = this.epoch;
     this.saving = true; this.error = undefined; this.phase = this.retry ? "Verifying files and saving…" : "Checking inputs…"; this.startedAt = Date.now(); this.render();
-    const progress = (value: NativeProgress): void => { if (epoch === this.epoch && this.saving) { this.liveProgress = value; this.liveProgressAt = Date.now(); this.render(); } };
+    const progress = (value: NativeProgress): void => { if (epoch === this.epoch && this.saving) { this.observe(value); this.render(); } };
     try {
       if (!this.retry) {
-        const preview = await this.bridge.previewOptimizationSetup(this.projectId, { modelId: selected.model.id, datasetVersionId: selected.dataset.id, benchmarkVersionId: selected.benchmark.id }, progress);
+        const preview = await this.bridge.previewOptimizationSetup(this.projectId, { modelId: selected.model.id, datasetVersionId: selected.dataset.id, benchmarkVersionId: selected.benchmark.id }, progress, this.preparationId);
         if (epoch !== this.epoch) return;
         if (!sameInputs(selected, preview.inputs) || preview.expectedParent !== (this.latest?.id ?? null)) throw new Error("Inputs changed. Refresh the project before saving.");
         this.retry = { id: crypto.randomUUID(), expectedParent: preview.expectedParent, inputs: preview.inputs };
       }
+      if (this.stopping) return;
       this.phase = "Verifying files and saving…"; this.render();
-      await this.bridge.saveOptimizationSetup(this.projectId, this.retry, progress);
+      await this.bridge.saveOptimizationSetup(this.projectId, this.retry, progress, this.preparationId);
       if (epoch !== this.epoch) return;
       // Read current history even on a successful old retry: do not reactivate it.
       await this.load(); if (this.error) throw this.error;
       this.retry = undefined;
-    } catch (error) { if (epoch === this.epoch) this.error = error; }
+    } catch (error) { if (epoch === this.epoch && !this.stopping) this.error = error; }
     finally { this.saving = false; this.phase = undefined; this.startedAt = undefined; this.render(); }
   }
 
   async optimize(): Promise<void> {
     if (!this.canOptimize) return;
+    this.preparationId = crypto.randomUUID(); this.liveEvents = []; this.liveProgress = undefined; this.stopping = false;
+    this.render();
+    try { await this.optimizePrepared(); }
+    finally {
+      const token = this.preparationId; this.preparationId = undefined;
+      if (token) await this.bridge.finishInputPreparation(this.projectId, token);
+      this.stopping = false; this.render();
+    }
+  }
+  private observe(value: NativeProgress): void {
+    this.liveProgress = value; this.liveProgressAt = Date.now();
+    appendLiveActivity(this.liveEvents, value, this.liveProgressAt);
+  }
+  private async optimizePrepared(): Promise<void> {
     this.error = undefined;
     if (!this.benchmark) await this.initializeEvaluation();
-    if (!this.benchmark || this.error) return;
+    if (!this.benchmark || this.error || this.stopping) return;
     if (!this.saved) await this.save();
-    if (!this.saved || this.error || !this.latest) return;
+    if (!this.saved || this.error || !this.latest || this.stopping) return;
     const epoch = this.epoch;
     this.running = true; this.startedAt = Date.now(); this.render();
-    const progress = (value: NativeProgress): void => { if (epoch === this.epoch && this.running) { this.liveProgress = value; this.liveProgressAt = Date.now(); this.render(); } };
+    const progress = (value: NativeProgress): void => { if (epoch === this.epoch && this.running) { this.observe(value); this.render(); } };
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       if (!this.run || inputOptimizationTerminal(this.run.state)) {
@@ -140,11 +160,17 @@ export class OptimizationSetupController {
         this.run = undefined;
         this.phase = "Starting run";
         this.render();
-        this.run = (await this.bridge.startInputOptimization(this.projectId, this.latest.id, progress)).run;
+        this.run = (await this.bridge.startInputOptimization(this.projectId, this.latest.id, progress, this.preparationId)).run;
         if (epoch !== this.epoch) return;
         this.phase = undefined;
         this.render();
       }
+      if (this.stopping) return;
+      if (this.preparationId) {
+        await this.bridge.finishInputPreparation(this.projectId, this.preparationId);
+        this.preparationId = undefined;
+      }
+      if (this.stopping) return;
       let settled = false;
       const poll = (): void => {
         timer = setTimeout(() => {
@@ -173,7 +199,7 @@ export class OptimizationSetupController {
     } catch (error) {
       if (timer) clearTimeout(timer);
       if (epoch === this.epoch) {
-        this.error = error;
+        if (!this.stopping) this.error = error;
         if (this.run) {
           const existing = this.run;
           this.run = await this.bridge.inputOptimizationRun(this.projectId, existing.id).catch(() => existing);
@@ -192,8 +218,8 @@ export class OptimizationSetupController {
     try {
       const saved = await this.bridge.initializeBenchmark(this.projectId, progress => {
         if (epoch !== this.epoch || !this.initializingEvaluation) return;
-        this.benchmarkProgress = progress; this.phase = inputRunStageLabel(progress.phase); this.render();
-      });
+        this.benchmarkProgress = progress; this.observe(progress); this.phase = inputRunStageLabel(progress.phase); this.render();
+      }, this.preparationId);
       if (epoch !== this.epoch) return;
       const opened = await this.bridge.selectProject(this.projectId);
       if (epoch !== this.epoch) return;
@@ -204,7 +230,7 @@ export class OptimizationSetupController {
       await this.load();
       if (this.error) throw this.error;
       if (this.benchmarkId !== saved.version.id) throw new Error("The current project benchmark changed. Refresh the project.");
-    } catch (error) { if (epoch === this.epoch) this.error = error; }
+    } catch (error) { if (epoch === this.epoch && !this.stopping) this.error = error; }
     finally {
       if (epoch === this.epoch) {
         this.initializingEvaluation = false; this.benchmarkProgress = undefined; this.phase = undefined; this.startedAt = undefined; this.render();

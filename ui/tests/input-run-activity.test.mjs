@@ -1,7 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
-import { inputRunActivity, inputRunStageDetail, inputRunStageLabel } from "../dist/evidence/input-run-activity.js";
+import { appendLiveActivity, inputRunActivity, inputRunStageDetail, inputRunStageLabel, mergedActivity } from "../dist/evidence/input-run-activity.js";
+
+test("activity keeps recorded timestamps on redraw and compacts live file counters", () => {
+  const at = "2026-09-14T10:00:00.000Z";
+  const progress = { phase: "verifying_file", subject: "model.safetensors", completed: 1, total: 4 };
+  const activity = { updatedAt: at, events: [{ at, progress }] };
+  assert.deepEqual(mergedActivity(activity, [], progress), activity.events);
+  const live = [];
+  appendLiveActivity(live, progress, Date.parse(at) + 1000);
+  appendLiveActivity(live, { ...progress, completed: 4 }, Date.parse(at) + 2000);
+  assert.equal(live.length, 1);
+  assert.equal(mergedActivity(activity, live).length, 1);
+  appendLiveActivity(live, { ...progress, subject: "dataset.jsonl" }, Date.parse(at) + 3000);
+  assert.equal(mergedActivity(activity, live).length, 2);
+});
 
 test("file identity and counters survive project activity persistence", () => {
   const log = { actions: [{ action_id: "a", operation: "optimization.run", state: "progress", started_at: "2026-09-13T12:00:00Z",
