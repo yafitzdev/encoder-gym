@@ -31,259 +31,175 @@ is a completed experiment; improvement itself is not guaranteed.
 ## Current state — 15 September 2026
 
 The agentic user journey is **not ready yet**. Run 17 demonstrated fixed training
-and evaluation, not Agent-driven optimization. The next action belongs to
-implementation, not to the user: connect and test the engine before asking for
-another real run.
+and evaluation, not Agent-driven optimization. Implementation must finish and
+verify the connected engine before asking the user to try another real run.
 
-| Capability | Verified level | Still missing |
+| Capability | Evidence | Remaining work |
 | --- | --- | --- |
-| Fixed training and development evaluation | Real Nomos Run 17 | Agent-directed dataset changes |
-| Agent → generation → dataset publication and native clearance | Pre-training CLI-integrated; deterministic process and audit tests | Training/evaluation handoff and later-iteration results |
-| First-iteration input and evidence binding (`6dc5585`) | CLI-integrated; invoked automatically by the pre-training route | Later-iteration lineage and full coordinator handoff |
-| Derived candidate report association (`24d61db`) | CLI-tested and read-only verified against Nomos | Full multi-iteration app journey |
-| One-click bounded Agent loop | Not implemented end to end | Composition, recovery and Overview verification |
+| Fixed training and development evaluation | Real Nomos Run 17 | This path is not Agent-driven |
+| Agent → generation → dataset publication → native clearance | Committed in `18fc85b`; deterministic production-CLI tests | Preserve and reuse this path |
+| One Agent-directed cycle through training and development evaluation | Implemented in the working tree; focused CLI tests passed for an earlier revision of these changes | Validate the latest changes and commit the coherent checkpoint |
+| Repeated iterations and complete recovery | Not implemented end to end | Completion/selection lineage, finite coordinator and interruption tests |
+| One-click agentic Overview journey | Not connected end to end | Wire the same coordinator, model/report links and iteration activity |
 
-The pre-training implementation and its activity changes are currently
-uncommitted working-tree changes. Preserve them. The next missing connection is
-`prepare-candidate` → training → development evaluation → recorded iteration
-result. Do not ask the user to launch another Nomos run until that connection
-works through the same production coordinator used by Optimize.
+### Committed foundations
 
-Validation handoff: the Rust formatting, compilation, lint and full test suite
-passed for the preceding executable snapshot. The embedded native audit then
-received additional ancestry and diagnostic-redaction changes; its nine Python
-tests pass, but the exact final executable tree still needs the required Rust
-gates before an implementation commit. All 125 UI tests and the rendered
-Overview interaction checks passed. Those rendered checks use fixtures and do
-not establish a working agentic app journey. A documentation-only commit does
-not certify or release the outstanding implementation changes.
+- `2986f1b`: validated advanced settings and Quick test authorization.
+  These contracts do not by themselves implement the loop or expose working
+  advanced controls in production. The fixed-recipe executor must reject
+  settings it cannot enforce.
+- `bb96421`: selected-model Pi transport, bounded inspection tools, validated
+  proposals, append-only Agent-call journal, native development diagnostics,
+  concurrent generation with durable accounting, and immutable dataset
+  publication. Provider connections are pinned by UUID; changing project
+  defaults must not redirect a resumed run.
+- `6dc5585`: immutable first-iteration input/evidence binding, separate from
+  individual Agent calls. Later iterations still need verified predecessor
+  lineage, not caller-supplied replacement evidence.
+- `24d61db`: derived candidate report lookup follows recorded preparation,
+  materialization and child-experiment receipts. Read-only verification against
+  real Nomos recovered Run 17's two candidate reports without changing its
+  database or rerunning evaluation. Preserve historical fixed-run compatibility.
+- `18fc85b`: the production CLI connects the pinned Agent, separate generator,
+  immutable removal/addition publication and full-population native clearance.
+  `edit-dataset` publishes the diff; `prepare-candidate` also qualifies it.
+  Native clearance checks row validity, duplicates and source/group/lineage
+  benchmark overlap. It exposes aggregate facts, not protected payloads.
+  The activity projection includes actual Agent and Generation journal actions.
 
-- The current Optimize executor performs a fixed one-candidate training and
-  evaluation sequence. It does not invoke the configured optimization Agent or
-  Data generation model, or perform agent-directed dataset edits.
-- Nomos Run 17 (`998d54fb-363f-443f-abeb-195dd2574d79`) completed that fixed path:
-  6,800 existing training rows, one epoch on CUDA, both development suites
-  failed, baseline retained, final holdout unused. Its 4,431 activity events
-  contain zero Agent-origin entries. The four narrative entries are System
-  templates, including the entry labeled `reasoning`.
-- Project connections, model discovery and independent Agent/Data generation
-  assignments exist. Configuring those connections does not prove that the
-  optimization executor calls them. Evaluation metrics named `agent_*` are
-  benchmark measurements, not evidence of an optimization-agent invocation.
-- Commit `2986f1b` adds validated advanced settings, quick-test authorization,
-  immutable CLI preview/history and desktop parsing compatibility. It does not
-  implement the agent loop or expose working advanced controls in production.
-  The fixed-recipe executor explicitly rejects agentic settings.
-- Commit `bb96421` contains a selected-model Pi transport, bounded
-  development/training inspection tools, validated edit proposals, an
-  append-only Agent-call journal, a native development-diagnostic reader,
-  bounded concurrent generation with durable call accounting, and recoverable
-  publication through ordinary imports and dataset versions. These are
-  foundations, not a connected optimization engine. The full Rust checks and
-  desktop smoke/restart journeys passed for this checkpoint; they do not
-  establish that Optimize invokes these components. Preserve and connect this
-  committed work rather than rebuilding it or replacing it with another fixed
-  recipe.
-- Native generation currently creates questions from inspected training
-  templates while preserving their labels, tool registry and router state.
-  Schema checks and duplicate rejection are implemented components, not proof
-  of semantic correctness or complete training-to-benchmark isolation. The
-  complete derived dataset must pass the separately connected native clearance
-  below before training; no semantic-label correctness claim is made.
-- The same commit pins provider credentials by connection UUID and lets
-  the desktop retrieve a run's original provider revision through the CLI.
-  Preserve this implementation: changing project defaults must not redirect a
-  resumed run to another key. This is execution infrastructure, not evidence
-  that the Agent or generator participates in Optimize yet.
-- The Agent journal still restricts execution to the first iteration. There is
-  no connected production coordinator that carries an accepted proposal through
-  generation, dataset qualification, training, evaluation and the next Agent
-  turn. This integration, rather than another provider-settings redesign, is
-  the next priority.
-- The pre-training `optimization-run edit-dataset` route now binds that first
-  iteration, loads exact native development diagnostics and training members,
-  calls the pinned Agent through Pi, invokes the separate generator for accepted
-  additions and publishes an immutable dataset diff. It reuses completed calls
-  and publication on retry. The production-CLI regression demonstrates a real
-  removal/addition through those adapters with deterministic Pi wire responses
-  and a loopback generator; changing project defaults does not change the run's
-  selected models. No native training or new evaluation occurs in this test.
-  The fixture still seeds the root reservation because the full execution guard
-  remains closed. This is **not** the required complete optimization cycle.
-  Successful replay proves reuse of completed work, not recovery from every
-  interruption. Generation-call accounting and its activity records also need
-  reconciliation across a crash between their separate writes. Unknown provider
-  prices must remain unknown; reserved cost is not verified actual spend.
-- The activity projection now includes the Agent and generator's own journal
-  actions, with explicit Agent/Generation attribution. A rendered Overview test
-  verifies inline display; it is separate from the CLI integration test and is
-  not proof that the Optimize button invokes the Agent loop.
-- `prepare-candidate` extends the same Agent path through iteration-owned native
-  materialization and a fingerprinted full-population clearance. It imports
-  Nomos's own validator and input renderer, checks native row validity,
-  exact/normalized duplicates and source/group/lineage benchmark overlap, and
-  emits only aggregate facts. Generated rows retain their template's source
-  ancestry. Protected payloads and native error text never enter Agent activity.
-  Replay reuses the published clearance; altered receipts fail closed. The
-  native process is deterministic-test-adapted in the CLI regression, while
-  separate Python tests exercise the embedded audit logic. This command still
-  stops before training. It does not open the production start guard, sample
-  Quick test's training population, register a model or complete an iteration.
-- Commit `6dc5585` gives the first iteration a project-owned immutable input
-  record, separate from individual Agent calls. It binds the prepared baseline revision, model,
-  dataset, benchmark, provider revision and complete development-report set.
-  `optimization-run bind-iteration` builds it from the pinned scientific source;
-  `optimization-run iterations` reads it without native execution. Agent-store
-  opening and scope admission now require this record. Binding is currently a
-  CLI operation, also called automatically by `edit-dataset`; Prepare and the
-  GUI do not invoke it automatically.
-  This is the first input handoff, not the Agent/generation/training coordinator
-  or a working app loop.
-  Later iteration completion and selection lineage are still unimplemented.
-  Its production-CLI regression passes: exact retry identity, unchanged native
-  database bytes, complete suite coverage, substituted-input rejection,
-  immutable storage, foreign-key integrity and live-call ownership on reopening.
-  Formatting, compilation, lint, the full Rust suite, all 124 UI tests and
-  desktop smoke/restart checks passed. An offline research-sidecar startup
-  timeout on the first full run passed both an isolated retry and the full
-  rerun; runtime limits were not changed. No live Nomos execution was performed.
-- Run 17's candidate reports were missing from project benchmark results even
-  though they existed in the scientific journal. The lookup searched only the
-  original scientific project, while Optimize recorded its candidate under a
-  derived project for the selected dataset.
-- Commit `24d61db` fixes report association by following the optimization run's
-  recorded preparation, materialization and child-experiment receipts. It preserves the
-  original baseline context and does not scan arbitrary scientific projects.
-  The CLI regression now verifies linked reports, original verdicts after a
-  baseline change, forged-link rejection, holdout exclusion and unchanged
-  database/WAL bytes. The fixture explicitly completes its own WAL checkpoint
-  before the standalone-file comparison. Native materialization's fresh baseline
-  UUID is handled through the existing exact-content-equivalence contract.
-  Read-only verification against real Nomos now returns Run 17's two candidate
-  reports (`generic_holdout`, `retired_post_scaling`) with their original failed
-  verdicts and baseline revision. Both database hashes remained unchanged; no
-  training or evaluation was rerun.
-  The full Rust gates, UI typecheck, all 124 UI tests and both desktop
-  smoke/restart journeys passed for this change.
+The exact `18fc85b` checkpoint passed the required Rust formatting, compilation,
+lint and full test gates. Its nine native-clearance Python tests, 125 UI tests
+and rendered Overview checks also passed. Those rendered checks use fixtures;
+they do not prove that Optimize invokes an Agent loop.
 
-Verification levels are currently distinct: Agent/generation through dataset
-publication and native clearance is pre-training CLI-tested with deterministic
-adapters; the full agent-driven CLI coordinator is not connected; the production
-app journey is not agent-loop-verified. The report
-lookup is a verified CLI capability, not proof of an Agent invocation. Earlier
-green checks do not certify subsequent edits; record final validation against
-the exact checkpoint being committed.
+### In-progress single-cycle connection — preserve these changes
 
-Preserve existing projects, runs, model custody, dataset versions, provider
-connections, credentials, navigation and the user's approved Overview design.
-Do not require another real Nomos run to rediscover the known missing executor.
+The uncommitted `optimization-run complete-iteration` route extends that same
+production composition through:
 
-## Immediate next task: connect the engine
+1. Normal run reservation and input preparation; no manually seeded reservation
+   is required by the new integration fixture.
+2. First-iteration evidence binding, Agent inspection/proposal, separate
+   generation, dataset publication and complete-population native clearance.
+3. An immutable training binding, including actual training dataset, native
+   materialization, candidate/protocol identities and resolved device.
+4. Native training with the pinned settings and both development suites against
+   the original comparison baseline.
+5. A journal-derived iteration result with reports and deterministic verdicts.
 
-The deliverable is one executable, evidence-linked chain:
+Quick test derives its deterministic training subset **after** qualifying the
+full population. The actual sampled dataset is recorded separately; the
+development benchmark is not sampled. Native training receipts check the
+effective input and training parameters. Adaptive iteration protocols have no
+final-holdout allowance.
+
+A focused production-CLI test passed with deterministic Pi responses, a
+loopback generator and native test adapters: inspect evidence, remove/add rows,
+qualify, train the exact sample, evaluate both suites, and reuse completed work
+on retry without additional provider or native calls. It also verifies that
+changing project provider defaults does not change the run's selected models.
+
+Further edits subsequently added publication-lineage/device checks, saved-model
+verification, a failure/recovery test at iteration-result persistence, and a
+zero-holdout authorization regression. Their final test outcome is not confirmed
+in this handoff. Re-run the focused tests and all required Rust gates against
+the exact final tree before committing or claiming this checkpoint verified.
+The earlier passing test does not certify these later edits.
+
+Run reservation now accepts an authorized agentic request. The legacy
+fixed-recipe materialization path remains guarded; the new coordinator is the
+only path intended to honor those settings. Do not bypass that guard.
+
+This work still does **not** provide:
+
+- A second iteration driven by the first result, or a durable no-change outcome.
+- A complete root-run lifecycle, final selection or separately authorized holdout.
+- Candidate registration and ordinary Models/dataset/report viewer links for
+  the new iteration path.
+- The production Overview button invoking this coordinator.
+- Proven Stop/restart recovery at every boundary or reconciliation of uncertain
+  provider outcomes and separately persisted activity/accounting.
+
+### What Run 17 actually established
+
+Nomos Run 17 (`998d54fb-363f-443f-abeb-195dd2574d79`) used 6,800 existing
+training rows, one epoch on CUDA, failed both development suites, kept the
+baseline and left final holdout unused. Its 4,431 activity events contained
+zero Agent-origin entries. Its narrative entries were System templates,
+including one labeled `reasoning`. Evaluation metrics named `agent_*` measure
+benchmark performance; they are not optimization-Agent invocations.
+
+Project connections, model discovery and independent Agent/Data generation
+assignments exist. Their presence does not prove execution. The Agent's actual
+public explanation, evidence references and validated tool decisions must be
+visible; System narration must never masquerade as Agent reasoning.
+
+No new real Nomos training, provider calls or protected evaluation were used to
+demonstrate the in-progress cycle. Keep real project state read-only during
+development and distinguish deterministic test evidence from live execution.
+
+## Immediate next task: finish the connected engine
+
+The target is one executable chain:
 
 `Optimize → Agent proposal → dataset diff → clearance → training → evaluation → report`
 
-The first five links already have a pre-training CLI path except for the
-production Optimize entry point. Connect its existing output to the remaining
-training/evaluation/report work; do not start another implementation of the
-Agent or generator. Keep the current Overview design.
+Do not rebuild the committed Agent, generator, provider resolver or clearance.
+Do not redesign the approved Overview. Complete the working-tree connection,
+then finish iteration, recovery and app integration in this order:
 
-Finish the handoff from the existing qualified Agent-generated dataset to
-training and development evaluation through the production CLI before adding
-more presentation. The next engine checkpoint must complete the whole cycle:
-inspect development failures and training rows, propose edits, generate and
-publish a qualified dataset version, train and evaluate.
-Prove this composition with deterministic adapters before asking the user to
-try another run. Do not spend the next checkpoint on another settings-only
-change, mockup or synthetic Agent message. This checkpoint is not completion:
-continue through bounded iteration, recovery and the production Overview journey.
+1. **Verify and commit the single-cycle checkpoint.** Run the production-CLI
+   regression through normal reservation and the same coordinator that the
+   desktop will invoke. Confirm exact dataset/sample lineage, enforced training
+   settings, original-baseline comparisons, no adaptive holdout access, and
+   recovery after native work completes but before the iteration result saves.
+   Review dependencies and run all required gates. Commit only verified work;
+   a documentation commit does not certify outstanding executable changes.
+2. **Finish iteration ownership and result links.** Register every trained
+   candidate, including rejected candidates, with its actual training dataset.
+   Persist no-change/stop outcomes and root-run progress. Link candidate reports
+   through explicit iteration receipts so Models, Evaluation and Overview agree.
+3. **Implement bounded repeated iterations.** Feed persisted development results
+   and eligible dataset lineage into the next Agent scope. Preserve the original
+   comparison baseline and benchmark. Enforce cumulative row/request/token/spend,
+   time and iteration limits, plus bounded generation concurrency.
+4. **Complete recovery and final selection.** Reuse completed provider calls,
+   dataset publication, training and evaluation. Test fine-grained Stop,
+   interruption and restart, including uncertain external outcomes. Reconcile
+   activity with durable outcomes. Select the best eligible candidate
+   deterministically; final holdout is a separate, at-most-once authorization
+   after adaptive work ends. Promotion remains manual.
+5. **Connect and verify the existing Overview.** One Optimize action must invoke
+   this same coordinator. Expose iteration-specific stages and complete activity,
+   actual Agent decisions, separate provider usage and linked reports. Add only
+   Advanced controls whose settings execution really enforces. Verify rendered
+   interactions with the connected production path, not injected Agent captions.
 
-Use the existing exact-connection resolver and pinned-provider CLI read in the
-new execution path; do not build a second credential-selection mechanism.
-The immediate integration must resolve the run's pinned credential connection,
-not whichever connection is currently assigned in project settings. Persist the
-Agent proposal, generation attempts and resulting dataset version as resumable
-steps of the same run. Remove the fixed-executor rejection only when the new
-path actually enforces the authorized settings. Do not unblock the UI by
-bypassing that guard or silently ignoring unsupported settings.
+Keep root setup/preparation immutable. Each iteration owns its derived dataset,
+training input, candidate and result. Do not overwrite the starting dataset or
+reuse one fixed-recipe receipt to represent multiple iterations.
 
-Close these integration gaps in that order:
+Use the existing ownership boundaries:
 
-1. Reuse the connected `agent_dataset` path and its durable first-iteration input
-   binding. Do not rebuild inspection, provider selection, generation or dataset
-   publication or the connected native qualification step; the next missing
-   execution handoff starts at `prepare-candidate`'s output.
-2. Bind that exact clearance and derived population to native training and
-   development evaluation. Record per-iteration
-   materialization, candidate and result receipts; enforce training and quick-
-   test settings through the normal slice contracts. Prove one complete cycle
-   through this same production composition, not a separate test coordinator.
-   The test must reserve and drive its run through normal production entry
-   points; the pre-training fixture's direct reservation seeding is not enough
-   to demonstrate that a user can start this cycle.
-   Quick test must derive and record its deterministic training subset only
-   after full-population clearance, keep the full development benchmark, and
-   never label the full dataset as the actual sampled trainer input.
-3. Drive subsequent iterations from their persisted predecessors. Extend
-   the first-iteration record with completion/selection lineage, not caller-
-   supplied replacement datasets or evidence. Recover completed steps without
-   repeating provider calls,
-   dataset publication or training; account separately for uncertain attempts.
-   Reconcile activity with durable step/call outcomes after interruption so a
-   recovered run cannot show a permanently running action that already ended.
-4. Connect this same execution path to Overview and verify report associations
-   across all iterations.
-   Provider calls, Agent activity and results must refer to the same run and
-   iteration; the UI must not maintain a separate imitation of the workflow.
+- `encoder-optimization-core` / `encoder-optimization-runner`: provider-neutral
+  Agent inspection, proposal and generation contracts.
+- `project-workspace-core` / `project-workspace-local`: immutable authority,
+  iteration lineage, provider pins, accounting and publication.
+- `encoder-experiment-nomos`: native diagnostics, data admission,
+  materialization and training/evaluation adapters.
+- Workspace optimization CLI: production composition; the desktop invokes the
+  same coordinator rather than maintaining another workflow.
 
-Use the existing components as the implementation starting points:
+Known recovery gaps remain work, not guarantees: successful replay is not proof
+of interruption safety at every boundary; provider usage and activity written
+separately need reconciliation; interrupted training may lack a resumable
+checkpoint. A reserved cost is not actual spend. Unknown prices stay unknown.
 
-- `encoder-optimization-core` and `encoder-optimization-runner`: bounded Agent
-  inspection/proposals, generation and provider-neutral execution contracts.
-- `project-workspace-local`: persisted Agent/generation calls, exact provider
-  pins and immutable dataset publication. Add verified iteration lineage here;
-  do not relax the first-iteration restriction to accept arbitrary datasets.
-- `encoder-experiment-nomos`: native development diagnostics, training-row
-  inspection, generation admission and training/evaluation adapters. Complete
-  derived-population qualification before handing data to training.
-- The workspace optimization CLI: compose these components into the production
-  run path, then have the desktop invoke that same coordinator.
-
-Keep the original root setup and preparation immutable. Generated dataset
-versions and later candidates belong to their own iteration records; do not
-overwrite the initial dataset or reuse a single-candidate receipt as if it
-represented every iteration. The existing report fix must continue to work for
-historical fixed-recipe runs as well as new iteration-linked results.
-
-Report implementation status separately as component-tested, CLI-integrated,
-and app-verified. Do not call the agentic system fixed until the configured
-providers actually participate in the verified end-to-end journey.
-
-For each checkpoint, report the concrete user-visible capability added, the
-production path exercised, and the remaining integration gaps. Record completed
-foundation work here instead of repeatedly treating it as new work. Keep the
-full end-to-end acceptance criteria below unchanged until they are satisfied.
-
-The next implementation checkpoint must demonstrate one complete composed
-cycle, not just another isolated component. Intermediate components may be
-committed when verified, but do not describe them as a working agent loop.
-
-The checkpoint's executable proof must enter through the production coordinator
-with deterministic provider and training adapters. It must load the recorded
-iteration inputs, inspect a saved development failure and relevant training
-rows, persist the Agent's evidence-linked removal/addition proposal, invoke the
-separately pinned generator, qualify and publish the derived dataset, train its
-candidate, and persist development comparisons against the original baseline.
-Assert the resulting linked records and actual Agent/Generation activity, not
-just success messages. Connect these operations inside the coordinator; a test
-that manually calls disconnected components in sequence is not sufficient.
-
-Do not start a new real Nomos run, change its provider assignments or modify its
-historical records to demonstrate this checkpoint. Keep the existing fixed-run
-compatibility and agentic-settings guard until the new route genuinely enforces
-its authorization. After the composed cycle, finish repeated iterations,
-stop/resume and Overview integration before calling the overall goal complete.
+Report progress separately as component-tested, CLI-integrated and app-verified.
+For each checkpoint state what capability was added, the exact production path
+tested and the remaining integration gaps. Keep the end-to-end acceptance
+criteria below unchecked until their complete evidence exists. The next action
+belongs to implementation, not another user-triggered Nomos experiment.
 
 ## Required execution
 
