@@ -10,6 +10,13 @@ app.whenReady().then(async()=>{
   const web=window.webContents, evaluate=code=>web.executeJavaScript(code);
   const check=async(name,code)=>{assert.ok(await evaluate(code),name);console.log('PASS '+name)};
   const click=selector=>evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
+  const pointer = async(selector, during) => {
+    const point=await evaluate(`(()=>{const node=document.querySelector(${JSON.stringify(selector)});node.scrollIntoView({block:'center'});const r=node.getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`);
+    web.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...point});
+    await during();
+    web.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...point});
+    await evaluate('new Promise(resolve=>setTimeout(resolve,30))');
+  };
   const capture=async name=>{await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');writeFileSync(join(output,name+'.png'),(await web.capturePage()).toPNG())};
   try{
     await window.loadFile(join(__dirname,'../tests/overview-renderer.html'));
@@ -40,11 +47,13 @@ app.whenReady().then(async()=>{
     await evaluate('window.__stableRunSpinner=document.querySelector(".optimization-progress .spinner")');
     await evaluate(`qa.setup.activity={startedAt:'2026-09-14T12:00:00Z',updatedAt:'2026-09-14T12:01:00Z',progress:{phase:'training',completed:40,total:100},events:[{at:'2026-09-14T12:01:00Z',progress:{phase:'training',completed:40,total:100}}]};qa.render()`);
     await check('live status exposes exact work and an unlabeled meter','document.querySelector("progress").value===40 && document.querySelector("progress").max===100 && !document.querySelector(".focus-status").textContent.includes("40 / 100") && document.querySelector(".optimization-progress .spinner")');
-    await check('live progress preserves one continuously animated spinner','window.__stableRunSpinner===document.querySelector(".optimization-progress .spinner") && window.__stableRunSpinner.getAnimations()[0].startTime===0');
+    await evaluate('window.__stableRunSpinner=document.querySelector(".optimization-progress .spinner")');
+    await check('spinner lives in active stage, not a duplicated heading','document.querySelector(".optimization-progress-steps li.active .spinner") && !document.querySelector(".optimization-current-work") && !document.querySelector(".optimization-progress-title")');
+    await check('elapsed and Stop share the activity heading','document.querySelector(".activity-heading [data-elapsed-start]") && [...document.querySelectorAll(".activity-heading button")].some(button=>button.textContent==="Stop")');
     await evaluate('window.__spinTime=window.__stableRunSpinner.getAnimations()[0].currentTime');
     await evaluate('new Promise(resolve=>setTimeout(resolve,120))');
     await evaluate('qa.render()');
-    await check('spinner time advances across replacement instead of restarting','window.__stableRunSpinner.getAnimations()[0].currentTime>window.__spinTime+80');
+    await check('spinner stays connected and advances across progress updates','window.__stableRunSpinner===document.querySelector(".optimization-progress .spinner") && window.__stableRunSpinner.getAnimations()[0].currentTime>window.__spinTime+80');
     await check('stage tracker follows the native task','document.querySelector(".optimization-progress-steps li.active").textContent==="Training"');
     await capture('status-dark');
     await evaluate(`qa.setup.liveProgress={phase:'verifying_file',subject:'model.safetensors',completed:8388608,total:16777216,unit:'bytes'};qa.setup.liveProgressAt=Date.parse('2026-09-14T12:02:00Z');qa.render()`);
@@ -59,8 +68,35 @@ app.whenReady().then(async()=>{
       await check('all 140 activities remain selectable in '+stage,`document.querySelectorAll('.focus-events li').length===140 && [...document.querySelectorAll('.focus-events li')].every(row=>row.dataset.activityStage==='${stage}') && document.querySelector('.focus-events li:last-child').textContent.includes('${stage}-0.json')`);
     }
     await click('#overview-new-root-stage-checking_inputs');
+    await pointer('#overview-new-root-stage-preparing_data', async()=>{
+      await evaluate(`window.__pressedStage=document.querySelector('#overview-new-root-stage-preparing_data');window.__liveList=document.querySelector('.focus-events');for(let i=0;i<3;i++)qa.render()`);
+      await check('redraw does not detach a pressed stage or native scroll container',`window.__pressedStage===document.querySelector('#overview-new-root-stage-preparing_data') && window.__liveList===document.querySelector('.focus-events')`);
+    });
+    await check('one physical click switches stages despite intervening updates',`document.querySelector('#overview-new-root-stage-preparing_data').getAttribute('aria-pressed')==='true'`);
+    await pointer('#overview-new-root-stage-evaluating', async()=>{
+      await evaluate(`window.__pressedStage=document.querySelector('#overview-new-root-stage-evaluating');qa.setup.activity.events.push({at:'2026-09-14T13:00:00Z',stage:'saving_candidate',progress:{phase:'registering_candidate'}});qa.render()`);
+      await check('stage transition also keeps the pressed button connected',`window.__pressedStage===document.querySelector('#overview-new-root-stage-evaluating')`);
+    });
+    await check('a physical click survives a change of active stage',`document.querySelector('#overview-new-root-stage-evaluating').getAttribute('aria-pressed')==='true'`);
+    await evaluate(`qa.setup.activity.events.pop();qa.render()`);
+    await click('#overview-new-root-stage-checking_inputs');
     await evaluate(`document.querySelector('.focus-events').scrollTop=400;document.querySelector('.focus-events').dispatchEvent(new Event('scroll'));qa.render()`);
     await check('polling retains the selected historical stage and its scroll','document.querySelector("#overview-new-root-stage-checking_inputs").getAttribute("aria-pressed")==="true" && document.querySelector(".focus-events").scrollTop===400 && !document.querySelector(".focus-event.current")');
+    await click('#overview-new-root-stage-preparing_data');
+    await click('#overview-new-root-stage-checking_inputs');
+    await check('returning to a stage restores its own scroll','document.querySelector(".focus-events").scrollTop===400');
+    await evaluate(`document.querySelector('.focus-events').scrollTop=0`);
+    await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    const thumb=await evaluate(`(()=>{const list=document.querySelector('.focus-events');const r=list.getBoundingClientRect();return {x:Math.round(r.right-4),y:Math.round(r.top+14)}})()`);
+    web.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...thumb});
+    await check('drag begins on the scrollbar thumb, not a page-down track click','document.querySelector(".focus-events").scrollTop===0');
+    await evaluate('qa.render()');
+    web.sendInputEvent({type:'mouseMove',x:thumb.x,y:thumb.y+120,button:'left'});
+    await evaluate('new Promise(resolve=>setTimeout(resolve,30))');
+    await evaluate('qa.render()');
+    web.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:thumb.x,y:thumb.y+120});
+    await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    await check('native scrollbar remains draggable through live redraws','document.querySelector(".focus-events").scrollTop>500');
     await evaluate(`document.querySelector('#overview-new-root-stage-checking_inputs').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))`);
     await check('stage selection supports keyboard navigation','document.activeElement.id==="overview-new-root-stage-preparing_data" && document.querySelectorAll("[data-activity-stage=preparing_data]").length===140');
     await capture('stage-history-dark');

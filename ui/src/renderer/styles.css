@@ -820,7 +820,15 @@ dialog::backdrop { background: #0008; }
 .optimization-progress-steps button:hover { background: var(--accent-soft); }
 .optimization-progress-steps button[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); box-shadow: inset 0 -2px var(--accent); }
 .optimization-progress-steps button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.activity-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.activity-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.activity-heading .focus-activity-title { margin: 0; }
+.activity-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.optimization-progress-steps button, .stage-label { display: flex; align-items: center; gap: 7px; }
+.optimization-progress-steps li { min-width: 0; }
+.optimization-progress-steps button > span:not(.spinner) { white-space: normal; }
+.optimization-progress-steps .spinner { width: 12px; height: 12px; flex: 0 0 12px; color: var(--accent); }
+.optimization-activity > .optimization-progress-title { margin-bottom: 12px; font-size: 12px; }
+.focus-events { scrollbar-gutter: stable; overflow-anchor: none; }
 .activity-empty { padding-block: 20px; }
 .recorded-run-steps { grid-template-columns: repeat(4, 1fr); margin: -8px 0 34px; }
 .input-run-view > .optimization-progress { max-width: none; }

@@ -51,12 +51,14 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     : undefined;
   const error = controllerError && (!expandedActivity?.failure
     || failureReason(controllerError) !== failureReason(expandedActivity.failure.message)) ? controllerError : undefined;
-  return workspacePage("Overview", create,
+  const page = workspacePage("Overview", create,
     error ? h("div", { class: "operation-failure", role: "alert" }, failureNotice(error), !setup.data || !runs.runs ? button("Retry", () => { setup.refresh(); runs.refresh(); }, "secondary") : null) : null,
     (setup.loading || runs.loading) && !records.length ? h("div", { role: "status", class: "workspace-progress" }, spinner(), "Loading runs") : null,
     h("div", { class: "focus-runs", "aria-label": "Optimization runs" },
       state.draft ? row("draft", `Run ${String(records.length + 1).padStart(2, "0")}`, busy ? "Starting" : "Draft", undefined) : null,
       ...records.map(record => row(record.id, record.name, runLabel(record), record))));
+  page.setAttribute("data-live-view", "overview");
+  return page;
 
   function runBusy(record?: OverviewRecord): boolean { return !!record?.input && (runs.runningId === record.id || setup.running && setup.run?.id === record.id); }
   function needsRegistration(record: OverviewRecord): boolean {

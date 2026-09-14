@@ -8,6 +8,7 @@ import { optimizationStages, stageLabels, taskStage, type OptimizationStage } fr
 const phases = optimizationStages, labels = stageLabels;
 export interface ActivityView { stage?: OptimizationStage; scroll: Partial<Record<OptimizationStage, number>> }
 interface ActivityNavigation { view: ActivityView; change: (stage?: OptimizationStage) => void; key: string }
+const displayedStages = new WeakMap<HTMLElement, OptimizationStage>();
 const fallback: Record<ReturnType<typeof inputOptimizationPhase>, NativeProgress["phase"]> = {
   checking_inputs: "checking_model", preparing_data: "loading_training_rows", starting: "loading_evaluation_protocol",
   training: "checking_files", saving_candidate: "registering_candidate", evaluating: "checking_evaluation", complete: "optimization_complete",
@@ -31,11 +32,9 @@ export interface InputRunProgressOptions {
 export function pendingInputRunProgress(progress?: NativeProgress, animationKey = "pending-run", events: InputRunActivityEntry[] = [], controls?: HTMLElement, running = true, navigation?: ActivityNavigation): HTMLElement {
   const selected = navigation?.view.stage ?? "checking_inputs";
   return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": String(running) },
-    progressSteps(0, false, selected, navigation),
-    h("div", { class: "optimization-current-work" },
-      h("div", { class: "optimization-progress-state" },
-        h("div", { class: "optimization-progress-title" }, running ? spinner(animationKey) : null, h("strong", {}, running ? "Checking inputs" : "Paused")), controls)),
-    activityStream(stagedActivity(mergedActivity(undefined, events, progress)).filter(event => event.stage === selected), undefined, running && selected === "checking_inputs", selected, navigation));
+    progressSteps(0, false, selected, navigation, running ? animationKey : undefined),
+    activityStream(stagedActivity(mergedActivity(undefined, events, progress)).filter(event => event.stage === selected), undefined, running && selected === "checking_inputs", selected, navigation, controls,
+      running ? undefined : "Paused"));
 }
 
 /** The single live-status presentation shared by Optimize and Runs. */
@@ -61,21 +60,20 @@ export function inputRunProgress(options: InputRunProgressOptions): HTMLElement 
   const selected = options.navigation?.view.stage ?? (visiblePhase === "complete" ? events.at(-1)?.stage ?? "evaluating" : visiblePhase);
   const selectedEvents = events.filter(event => event.stage === selected);
   return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": String(running) },
-    progressSteps(active, failed, selected, options.navigation),
-    h("div", { class: "optimization-current-work" },
-      h("div", { class: "optimization-progress-state" },
-        h("div", { class: "optimization-progress-title" }, running ? spinner(options.animationKey ?? `run-progress:${run.id}`) : null, h("strong", {}, current)),
-        h("div", { class: "optimization-status-controls" }, running && startedAt ? h("span", { class: "muted" }, "Elapsed ", h("span", { "data-elapsed-start": String(startedAt) })) : null, options.controls))),
+    progressSteps(active, failed, selected, options.navigation, running ? options.animationKey ?? `run-progress:${run.id}` : undefined),
     activityStream(selectedEvents.length || events.length ? selectedEvents : selected === visiblePhase ? [{ at: activity?.updatedAt ?? new Date().toISOString(), progress: activeProgress }] : [], context,
-      running && selected === events.at(-1)?.stage, selected, options.navigation));
+      running && selected === events.at(-1)?.stage, selected, options.navigation,
+      h("div", { class: "optimization-status-controls" }, running && startedAt ? h("span", { class: "muted" }, "Elapsed ", h("span", { "data-elapsed-start": String(startedAt) })) : null, options.controls),
+      running ? undefined : current));
 }
 
-function activityStream(events: InputRunActivityEntry[], context: InputRunStageContext | undefined, running: boolean, selected: OptimizationStage, navigation?: ActivityNavigation): HTMLElement {
-  const list = h("ol", { class: "focus-events", "aria-label": `${labels[selected]} activity`,
+function activityStream(events: InputRunActivityEntry[], context: InputRunStageContext | undefined, running: boolean, selected: OptimizationStage, navigation?: ActivityNavigation, controls?: HTMLElement, status?: string): HTMLElement {
+  const listId = navigation ? `${navigation.key}-events` : undefined;
+  const list = h("ol", { class: "focus-events", id: listId, "aria-label": `${labels[selected]} activity`,
     onScroll: (event: Event) => { if (navigation) navigation.view.scroll[selected] = (event.target as HTMLElement).scrollTop; } }, ...events.slice().reverse().map((event, index) => {
       const narrative = event.narrative, live = running && index === 0;
       const detail = narrative || event.label ? "" : context ? inputRunStageDetail(event.progress, context) : event.progress.subject ?? "";
-      return h("li", { "data-activity-stage": selected, class: `focus-event ${narrative ? `narrative ${narrative.origin} ${narrative.kind}` : "work"}${live ? " current" : ""}` },
+      return h("li", { "data-key": `${selected}:${events.length - index}`, "data-activity-stage": selected, class: `focus-event ${narrative ? `narrative ${narrative.origin} ${narrative.kind}` : "work"}${live ? " current" : ""}` },
         h("time", { datetime: event.at }, new Date(event.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })),
         h("span", { class: "focus-event-kind" }, narrative ? ({ intent: "Intent", reasoning: "Reason", action: "Action", observation: "Result", decision: "Decision", next_step: "Next" })[narrative.kind] : live ? "Now" : "Work",
           narrative ? h("small", {}, narrative.origin === "agent" ? "Agent" : "System") : null),
@@ -83,10 +81,18 @@ function activityStream(events: InputRunActivityEntry[], context: InputRunStageC
           detail ? h("span", {}, detail) : null,
           index === 0 ? counterBar(event.progress) : null));
     }));
-  queueMicrotask(() => { if (list.isConnected && navigation) list.scrollTop = navigation.view.scroll[selected] ?? 0; });
+  queueMicrotask(() => {
+    const live = listId ? document.getElementById(listId) : list;
+    if (live?.isConnected && navigation && displayedStages.get(live) !== selected) {
+      live.scrollTop = navigation.view.scroll[selected] ?? 0;
+      displayedStages.set(live, selected);
+    }
+  });
   return h("div", { class: "optimization-activity", id: navigation ? `${navigation.key}-activity` : undefined, role: "region", "aria-label": `${labels[selected]} activity` },
     h("div", { class: "activity-heading" }, h("h3", { class: "focus-activity-title" }, "Activity · ", labels[selected]),
-      navigation?.view.stage ? h("button", { type: "button", class: "button ghost small", onClick: () => navigation.change() }, "Latest") : null),
+      h("div", { class: "activity-actions" },
+        navigation?.view.stage ? h("button", { type: "button", class: "button ghost small", "data-key": "follow-latest", onClick: () => navigation.change() }, "Latest") : null, controls)),
+    status ? h("div", { class: "optimization-progress-title muted" }, h("strong", {}, status)) : null,
     events.length ? list : h("p", { class: "muted activity-empty" }, "No recorded activity"));
 }
 
@@ -96,9 +102,10 @@ function counterBar(progress: NativeProgress): HTMLElement | null {
     h("progress", { value: progress.completed, max: progress.total, "aria-label": progress.subject ?? inputRunStageLabel(progress.phase) }));
 }
 
-function progressSteps(active: number, failed: boolean, selected: OptimizationStage, navigation?: ActivityNavigation): HTMLElement {
+function progressSteps(active: number, failed: boolean, selected: OptimizationStage, navigation?: ActivityNavigation, animationKey?: string): HTMLElement {
   return h("ol", { class: "optimization-progress-steps", "aria-label": "Run stages" },
     ...phases.map((item, index) => h("li", {
+      "data-key": item,
       class: index < active ? "complete" : index === active ? failed ? "failed" : "active" : "",
       "aria-current": index === active ? "step" : null,
     }, navigation ? h("button", { type: "button", id: `${navigation.key}-stage-${item}`, "aria-controls": `${navigation.key}-activity`, "aria-pressed": String(selected === item),
@@ -106,5 +113,6 @@ function progressSteps(active: number, failed: boolean, selected: OptimizationSt
         const target = event.key === "ArrowRight" ? (index + 1) % phases.length : event.key === "ArrowLeft" ? (index + phases.length - 1) % phases.length : event.key === "Home" ? 0 : event.key === "End" ? phases.length - 1 : undefined;
         if (target === undefined) return;
         event.preventDefault(); navigation.change(phases[target]); document.getElementById(`${navigation.key}-stage-${phases[target]}`)?.focus();
-      } }, labels[item]) : labels[item])));
+      } }, animationKey && index === active ? spinner(animationKey) : null, h("span", {}, labels[item]))
+      : h("span", { class: "stage-label" }, animationKey && index === active ? spinner(animationKey) : null, labels[item]))));
 }

@@ -650,7 +650,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await check("optimization keeps its stable name and saved progress while paused", "document.querySelector('.focus-run.expanded .focus-run-heading strong').textContent.startsWith('Run ') && document.querySelector('.focus-status').textContent.includes('Building training dataset') && document.querySelectorAll('.optimization-progress-steps li').length===6");
   await check("Overview does not expose repair recipes as the workflow", "!document.querySelector('.focus-runs').textContent.toLowerCase().includes('repair')");
   await textButton("Resume");
-  await until("document.querySelector('.focus-status .optimization-progress-title')?.textContent === 'Training'");
+  await until("document.querySelector('.focus-status .optimization-progress-steps li.active')?.textContent === 'Training'");
   await check("resumed run shows its persisted counter and sidebar spinner", "(()=>{const bar=document.querySelector('.focus-status progress');return bar.value===40 && bar.max===100 && document.querySelector('#nav-overview .spinner')})()");
   await until("document.querySelector('.focus-event.narrative.agent')?.textContent.includes('Use the smallest candidate')");
   await check("agent reasoning is an inline durable activity entry", "(()=>{const event=document.querySelector('.focus-event.narrative.agent');return event.querySelector('.focus-event-kind').textContent.includes('Reason') && event.querySelector('.focus-event-kind small').textContent==='Agent' && event.querySelector('.focus-event-copy strong').textContent.includes('current development evidence')})()");
