@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 pub use activity::{
     ActivityInitialization, AppendActivity, append_activity, export_activity, initialize_activity,
-    read_action, read_activity,
+    read_action, read_activity, read_run_activity,
 };
 pub use datasets::{DatasetPreview, backfill_nomos, import_dataset, inspect_dataset};
 use files::{canonical_plain, contained, copy_verified, hash, json, plain, write_new};

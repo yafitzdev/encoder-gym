@@ -434,6 +434,9 @@ async fn activity(folder: &Path, command: WorkspaceActivityCommand) -> anyhow::R
         WorkspaceActivityCommand::Show { action_id } => {
             print(&read_action(folder, action_id).await?)?;
         }
+        WorkspaceActivityCommand::Run { run_id } => {
+            print(&project_workspace_local::read_run_activity(folder, run_id).await?)?;
+        }
         WorkspaceActivityCommand::Append { file } => {
             anyhow::ensure!(
                 std::fs::metadata(&file)?.len() <= 64 * 1024,

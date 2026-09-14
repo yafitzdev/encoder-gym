@@ -453,6 +453,48 @@ fn project_activity_cli_appends_inspects_and_exports_verified_jsonl() {
         ],
     );
     assert_eq!(shown["state"], "succeeded");
+    // A reference appended at completion must select the entire action chain,
+    // not just that event, and unrelated actions must remain excluded.
+    let run_id = uuid::Uuid::new_v4();
+    let run_action = uuid::Uuid::new_v4();
+    for state in ["started", "succeeded"] {
+        fs::write(root.join("run-activity.json"), serde_json::to_vec(&serde_json::json!({
+            "action_id": run_action, "operation": "optimization.start", "source": "desktop", "state": state,
+            "references": if state == "started" { serde_json::json!([]) } else { serde_json::json!([{"kind":"run","id":run_id}]) },
+            "created_at": "2026-09-10T13:00:00Z"
+        })).unwrap()).unwrap();
+        run(
+            root,
+            &[
+                "activity",
+                "activity-project",
+                "append",
+                "--file",
+                "run-activity.json",
+            ],
+        );
+    }
+    let scoped = run(
+        root,
+        &["activity", "activity-project", "run", &run_id.to_string()],
+    );
+    assert_eq!(scoped["actions"].as_array().unwrap().len(), 1);
+    assert_eq!(scoped["actions"][0]["action_id"], run_action.to_string());
+    assert_eq!(scoped["actions"][0]["events"].as_array().unwrap().len(), 2);
+    assert!(
+        run(
+            root,
+            &[
+                "activity",
+                "activity-project",
+                "run",
+                &uuid::Uuid::new_v4().to_string()
+            ]
+        )["actions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
     let exported = run(
         root,
         &[
@@ -463,12 +505,12 @@ fn project_activity_cli_appends_inspects_and_exports_verified_jsonl() {
             "activity.jsonl",
         ],
     );
-    assert_eq!(exported["events"], 2);
+    assert_eq!(exported["events"], 4);
     assert_eq!(
         fs::read_to_string(root.join("activity.jsonl"))
             .unwrap()
             .lines()
             .count(),
-        2
+        4
     );
 }

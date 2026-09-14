@@ -160,6 +160,8 @@ pub enum WorkspaceActivityCommand {
     },
     /// Show one action and every event recorded for it.
     Show { action_id: Uuid },
+    /// Show every action and retry linked to a run, without a recent-action cutoff.
+    Run { run_id: Uuid },
     /// Append one validated event from a JSON request file.
     Append {
         #[arg(long)]

@@ -153,6 +153,19 @@ pub async fn read_activity(folder: &Path, limit: usize) -> Result<ProjectActivit
         (1..=10_000).contains(&limit),
         "Activity limit must be between 1 and 10000."
     );
+    read_activity_filtered(folder, Some(limit), None).await
+}
+
+/// Complete action chains for one run, including retries older than the project feed.
+pub async fn read_run_activity(folder: &Path, run_id: Uuid) -> Result<ProjectActivityLog> {
+    read_activity_filtered(folder, None, Some(run_id)).await
+}
+
+async fn read_activity_filtered(
+    folder: &Path,
+    limit: Option<usize>,
+    run_id: Option<Uuid>,
+) -> Result<ProjectActivityLog> {
     let root = canonical_plain(folder)?;
     let manifest: project_workspace_core::ProjectManifest = json(&contained(&root, MANIFEST)?)?;
     manifest.validate()?;
@@ -184,7 +197,18 @@ pub async fn read_activity(folder: &Path, limit: usize) -> Result<ProjectActivit
         "Activity log contains another project's action."
     );
     actions.reverse();
-    actions.truncate(limit);
+    if let Some(run_id) = run_id {
+        let id = run_id.to_string();
+        actions.retain(|action| {
+            action
+                .references
+                .iter()
+                .any(|reference| reference.kind == "run" && reference.id == id)
+        });
+    }
+    if let Some(limit) = limit {
+        actions.truncate(limit);
+    }
     Ok(ProjectActivityLog {
         project_id: manifest.id,
         actions,
