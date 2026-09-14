@@ -25,6 +25,8 @@ use project_workspace_local::{
 use std::path::Path;
 use uuid::Uuid;
 
+mod iteration_inputs;
+
 fn emit_progress(phase: &str, completed: Option<u64>, total: Option<u64>) {
     let mut value = serde_json::json!({"phase": phase});
     if let (Some(completed), Some(total)) = (completed, total) {
@@ -67,6 +69,10 @@ fn candidate_reasoning(candidate: &TrainingCandidate) -> Result<String> {
 pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunCommand) -> Result<()> {
     use WorkspaceOptimizationRunCommand::*;
     match command {
+        BindIteration { run_id } => iteration_inputs::bind(folder, run_id).await,
+        Iterations { run_id } => super::print(
+            &project_workspace_local::optimization_iterations::list(folder, run_id).await?,
+        ),
         Providers { run_id } => super::print(&optimization_runs::providers(folder, run_id).await?),
         List => super::print(&optimization_runs::list(folder).await?),
         Show { run_id } => super::print(&optimization_runs::show(folder, run_id).await?),

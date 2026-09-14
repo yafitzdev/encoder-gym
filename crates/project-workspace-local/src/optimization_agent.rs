@@ -17,7 +17,7 @@ use encoder_optimization_core::{
 use project_workspace_core::{
     ActivityEventState, ActivityNarrative, ActivityNarrativeKind, ActivityNarrativeOrigin,
     ActivityReference, ActivitySource, OptimizationLaunchAuthorization, ProviderConfiguration,
-    ProviderLimits, ProviderRole,
+    ProviderLimits, ProviderRole, optimization_iteration::ProjectOptimizationIteration,
 };
 use sqlx::{Connection, Row, SqliteConnection};
 use sysinfo::{Pid, System};
@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 use crate::{
     AppendActivity, append_activity, connect, load_provider_catalog_history, open_workspace,
-    optimization_launch, optimization_runs, optimization_setup,
+    optimization_iterations, optimization_launch, optimization_runs,
 };
 
 pub struct ProjectAgentStore {
@@ -33,8 +33,7 @@ pub struct ProjectAgentStore {
     run_id: Uuid,
     action_id: Uuid,
     launch: OptimizationLaunchAuthorization,
-    starting_dataset_id: Uuid,
-    starting_dataset_fingerprint: String,
+    iterations: Vec<ProjectOptimizationIteration>,
     provider: ProviderConfiguration,
 }
 
@@ -51,17 +50,20 @@ impl ProjectAgentStore {
             launch.scope.agentic.is_some(),
             "This historical fixed-recipe run has no Agent execution authorization"
         );
-        let setup = optimization_setup::list(folder)
-            .await?
-            .into_iter()
-            .find(|setup| setup.id.to_string() == run.run.setup.id)
-            .context("Run setup was not found")?;
+        let iterations = optimization_iterations::list(folder, run_id).await?;
+        ensure!(
+            !iterations.is_empty(),
+            "Bind the iteration's exact development evidence before Agent execution"
+        );
         let mut database = connect(Path::new(&workspace.folder), false, false).await?;
         sqlx::migrate!("./migrations").run(&mut database).await?;
         let catalogs = load_provider_catalog_history(&mut database, &workspace.manifest).await?;
         let catalog = catalogs
             .iter()
-            .find(|catalog| catalog.id.to_string() == launch.scope.provider_catalog.id)
+            .find(|catalog| {
+                catalog.id.to_string() == launch.scope.provider_catalog.id
+                    && catalog.fingerprint == launch.scope.provider_catalog.fingerprint
+            })
             .context("Pinned Agent connection revision is missing")?;
         let provider = catalog
             .provider(ProviderRole::Advisor)
@@ -73,8 +75,7 @@ impl ProjectAgentStore {
             run_id,
             action_id,
             launch,
-            starting_dataset_id: setup.inputs.dataset.id,
-            starting_dataset_fingerprint: setup.inputs.dataset.fingerprint,
+            iterations,
             provider,
         })
     }
@@ -102,12 +103,10 @@ impl ProjectAgentStore {
                 && scope.objective == settings.objective,
             "Agent scope exceeds its pinned settings"
         );
-        // Iterative dataset ancestry is admitted by the iteration journal, not
-        // by accepting an arbitrary replacement dataset from a caller.
         ensure!(
-            scope.iteration == 1
-                && scope.dataset_version_id == self.starting_dataset_id
-                && scope.dataset_fingerprint == self.starting_dataset_fingerprint,
+            self.iterations
+                .iter()
+                .any(|iteration| iteration.scope == *scope),
             "Agent dataset requires an exact authorized iteration binding"
         );
         Ok(())

@@ -93,6 +93,14 @@ fork/revision operations into a replayable publication receipt. It does not
 reinterpret native labels or grant training qualification. These components are
 not yet the complete iterative CLI composition.
 
+`project-workspace-core::optimization_iteration` binds prepared run inputs to
+exact development report references and an `encoder-optimization-core` Agent
+scope. The local adapter stores that first-iteration record append-only before
+Agent dispatch; the CLI loads its original scientific protocol through the
+normal read-only store. The serialized record excludes the protocol payload
+and sealed scores. Further iterations must extend this contract with recorded
+completion/selection lineage rather than accepting arbitrary scope replacements.
+
 `semantic-catalog` owns immutable reusable/dataset-scoped profiles, append-only
 bindings, deterministic layered resolution, and the provider-neutral resolved
 context. It imports only `artifact-core`; it knows no prompt, provider, SQLite,

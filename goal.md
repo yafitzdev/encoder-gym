@@ -71,6 +71,21 @@ is a completed experiment; improvement itself is not guaranteed.
   generation, dataset qualification, training, evaluation and the next Agent
   turn. This integration, rather than another provider-settings redesign, is
   the next priority.
+- The first iteration now has a project-owned immutable input record, separate
+  from individual Agent calls. It binds the prepared baseline revision, model,
+  dataset, benchmark, provider revision and complete development-report set.
+  `optimization-run bind-iteration` builds it from the pinned scientific source;
+  `optimization-run iterations` reads it without native execution. Agent-store
+  opening and scope admission now require this record. This is the first input
+  handoff, not the Agent/generation/training coordinator or a working app loop.
+  Later iteration completion and selection lineage are still unimplemented.
+  Its production-CLI regression passes: exact retry identity, unchanged native
+  database bytes, complete suite coverage, substituted-input rejection,
+  immutable storage, foreign-key integrity and live-call ownership on reopening.
+  Formatting, compilation, lint, the full Rust suite, all 124 UI tests and
+  desktop smoke/restart checks passed. An offline research-sidecar startup
+  timeout on the first full run passed both an isolated retry and the full
+  rerun; runtime limits were not changed. No live Nomos execution was performed.
 - Run 17's candidate reports were missing from project benchmark results even
   though they existed in the scientific journal. The lookup searched only the
   original scientific project, while Optimize recorded its candidate under a
@@ -122,14 +137,16 @@ bypassing that guard or silently ignoring unsupported settings.
 
 Close these integration gaps in that order:
 
-1. Establish a durable iteration record linking its starting model, dataset,
-   permitted development evidence and already-pinned provider selections.
+1. Use the durable first-iteration input binding already implemented. Connect
+   its exact development references and dataset to the existing Agent runner;
+   do not introduce another parallel input/credential mechanism.
 2. Connect Agent inspection and proposals to generation, full dataset
    qualification, version publication, native training and evaluation through
    the production CLI. Reuse the existing slice contracts and journals.
 3. Drive subsequent iterations from their persisted predecessors. Extend
-   first-iteration-only scope checks using recorded lineage, not caller-supplied
-   replacements. Recover completed steps without repeating provider calls,
+   the first-iteration record with completion/selection lineage, not caller-
+   supplied replacement datasets or evidence. Recover completed steps without
+   repeating provider calls,
    dataset publication or training; account separately for uncertain attempts.
 4. Connect this same execution path to Overview and verify report associations
    across all iterations.

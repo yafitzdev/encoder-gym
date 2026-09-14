@@ -48,6 +48,10 @@ pub enum WorkspaceOptimizationLaunchCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum WorkspaceOptimizationRunCommand {
+    /// Read immutable iteration inputs and development report references.
+    Iterations { run_id: Uuid },
+    /// Pin the first Agent iteration from already-verified inputs and saved development evidence.
+    BindIteration { run_id: Uuid },
     /// Read this run's pinned non-secret provider connections and models.
     Providers { run_id: Uuid },
     /// Authorize exact inputs and idempotently reserve their project run.

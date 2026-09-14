@@ -39,6 +39,9 @@ use benchmark_support::{
 #[path = "fixtures/optimization_result_check.rs"]
 mod optimization_result_check;
 
+#[path = "fixtures/optimization_iteration_check.rs"]
+mod optimization_iteration_check;
+
 #[tokio::test]
 async fn benchmark_initialize_evaluates_the_baseline_once_and_replays_without_native_work() {
     let temp = tempfile::tempdir().unwrap();

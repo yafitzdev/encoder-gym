@@ -19,6 +19,16 @@ reports without running an evaluator; the historical evaluator's fifty-failure
 sample is explicitly labeled as a sample. These component tests do not prove a
 completed application/CLI cycle or a real Nomos improvement.
 
+The first Agent iteration now has an append-only project input record before
+call dispatch. It binds the root preparation, baseline revision, starting model
+and dataset, benchmark, provider revision and every declared development report.
+The CLI derives it from the benchmark's exact recorded scientific source;
+only development references enter the record, not the source protocol's sealed
+scores. Retries retain the original timestamp and identity. Agent-store opening
+requires this binding and rejects substituted scope evidence. This first-input
+handoff does not yet compose the Agent runner, generation, qualification and
+training, and does not admit later iterations without completion lineage.
+
 Generation uses the generation slice's separate structured-output port, without
 recasting a native retrieval task as classification. The Nomos adapter currently
 generates questions for inspected templates, preserving their registry, label,
