@@ -12,7 +12,7 @@ export interface SecretProtector {
 interface CredentialFile { version: 1; records: Record<string, { encrypted: string; updatedAt: string }> }
 
 function secretId(value: unknown): string {
-  if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:(generation|advisor|evaluator)$/i.test(value)) throw new Error("Invalid project credential identity.");
+  if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:(?:(?:generation|advisor|evaluator)|connection:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.test(value)) throw new Error("Invalid project credential identity.");
   return value.toLowerCase();
 }
 function secretValue(value: unknown): string {

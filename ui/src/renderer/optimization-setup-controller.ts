@@ -66,7 +66,9 @@ export class OptimizationSetupController {
   get canSave(): boolean { return !!this.selected && !this.saved && !this.saving && !this.loading && !this.running && !this.initializingEvaluation; }
   get canOptimize(): boolean {
     const canCreateInputs = this.canInitializeBenchmark && !!this.model && !!this.dataset?.version.rows;
-    return (!!this.selected || canCreateInputs) && !this.preparationId && !this.loading && !this.saving && !this.running && !this.initializingEvaluation;
+    const providers = this.workspace.providerCatalog?.providers ?? [];
+    const providersReady = providers.some(provider => provider.role === "advisor") && providers.some(provider => provider.role === "generation");
+    return providersReady && (!!this.selected || canCreateInputs) && !this.preparationId && !this.loading && !this.saving && !this.running && !this.initializingEvaluation;
   }
   get canCancel(): boolean { return this.running && !!this.run && !inputOptimizationTerminal(this.run.state) && !this.cancelling; }
   get runPhase(): InputOptimizationPhase | undefined { return this.run ? inputOptimizationPhase(this.run.state) : undefined; }

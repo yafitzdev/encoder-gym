@@ -9,6 +9,7 @@ import type { OpenedProject, ProjectCollection } from "./projects.js";
 import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, ModelChoice } from "./managed-workspace.js";
 import type { ProjectActivityExport, ProjectActivityLog } from "./project-activity.js";
 import type { InputOptimizationRun, InputOptimizationStarted } from "./input-optimization.js";
+import type { ProjectProviderConnections, ProviderAssignmentRequest } from "./provider-connections.js";
 
 export interface EncoderGymBridge {
   optimizationSetups(id: string): Promise<OptimizationSetup[]>;
@@ -49,6 +50,11 @@ export interface EncoderGymBridge {
   configureManagedProviders(id: string, request: ProviderSettingsRequest): Promise<ManagedProviderStatus>;
   setProviderCredential(id: string, role: ProviderRole, secret: string): Promise<ManagedProviderStatus>;
   removeProviderCredential(id: string, role: ProviderRole): Promise<ManagedProviderStatus>;
+  providerConnections(id: string): Promise<ProjectProviderConnections>;
+  addProviderConnection(id: string, request: { endpoint: string; apiKey: string }): Promise<ProjectProviderConnections>;
+  refreshProviderConnection(id: string, connectionId: string): Promise<ProjectProviderConnections>;
+  removeProviderConnection(id: string, connectionId: string): Promise<ProjectProviderConnections>;
+  assignProviderModels(id: string, request: ProviderAssignmentRequest): Promise<ManagedProviderStatus>;
   chooseNomosRuntime(id: string): Promise<NativePathChoice | null>;
   chooseNomosPython(id: string): Promise<NativePathChoice | null>;
   chooseNomosHistory(id: string): Promise<NativePathChoice | null>;
@@ -119,6 +125,11 @@ const bridge: EncoderGymBridge = {
   configureManagedProviders: (id, request) => ipcRenderer.invoke("encoder-gym:configure-managed-providers", id, request),
   setProviderCredential: (id, role, secret) => ipcRenderer.invoke("encoder-gym:set-provider-credential", id, role, secret),
   removeProviderCredential: (id, role) => ipcRenderer.invoke("encoder-gym:remove-provider-credential", id, role),
+  providerConnections: id => ipcRenderer.invoke("encoder-gym:provider-connections", id),
+  addProviderConnection: (id, request) => ipcRenderer.invoke("encoder-gym:add-provider-connection", id, request),
+  refreshProviderConnection: (id, connectionId) => ipcRenderer.invoke("encoder-gym:refresh-provider-connection", id, connectionId),
+  removeProviderConnection: (id, connectionId) => ipcRenderer.invoke("encoder-gym:remove-provider-connection", id, connectionId),
+  assignProviderModels: (id, request) => ipcRenderer.invoke("encoder-gym:assign-provider-models", id, request),
   chooseNomosRuntime: id => ipcRenderer.invoke("encoder-gym:choose-nomos-runtime", id),
   chooseNomosPython: id => ipcRenderer.invoke("encoder-gym:choose-nomos-python", id),
   chooseNomosHistory: id => ipcRenderer.invoke("encoder-gym:choose-nomos-history", id),

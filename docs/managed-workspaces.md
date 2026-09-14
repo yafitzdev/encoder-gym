@@ -236,15 +236,22 @@ successor still takes precedence over unrelated historical terminal runs.
 
 ## Provider settings and credentials
 
-Generation and advisor authorities are configured separately. An evaluator is
-optional. Save only non-secret endpoint, model, authentication mode, and finite
-limits in a strict JSON file:
+The desktop separates reusable connections from run authority. A project may
+have up to 50 connections. Adding one requires only an API base URL and API key;
+the main process queries the OpenAI-compatible `GET <base>/models` endpoint and
+caches the returned model identities. DeepSeek and the operator's Yan gateway
+are URL presets, not hard-coded model catalogs. API keys are encrypted in the
+desktop profile and never enter project metadata, activity events, or renderer
+state after submission.
 
-The desktop setup intentionally exposes only a URL and API key for each of the
-generation and advisor authorities. DeepSeek and the operator's Yan gateway are
-available as URL presets. The desktop owns the model choice and finite default
-limits; the lower-level CLI retains the complete explicit contract below for
-automation and reproducibility.
+The user independently assigns any discovered model to Agent and Data
+generation. Both roles may use different models from one connection, the same
+model, or models from different connections. Saving those assignments compiles
+the existing strict role-based provider catalog below. Optimization launch then
+pins that catalog revision, endpoint, model, authentication mode, and finite
+limits for reproducibility. Model discovery does not authorize provider use;
+only execution of a separately authorized run may resolve the selected keys.
+An optional evaluator remains part of the lower-level contract.
 
 ```json
 {

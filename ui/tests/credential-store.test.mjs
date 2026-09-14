@@ -47,6 +47,7 @@ test("environment fallback works without OS encryption and corrupt indexes fail 
 
 test("credential identifiers and secret values are strictly bounded", () => {
   const store = new CredentialStore(join(mkdtempSync(join(tmpdir(), "gym-credential-invalid-")), "credentials.json"), new Protector(), {});
+  store.set(`${randomUUID()}:connection:${randomUUID()}`, "connection-secret");
   assert.throws(() => store.set("global:generation", "valid-secret"), /identity/);
   assert.throws(() => store.set(`${randomUUID()}:generation`, "short"), /between 8 and 8192/);
   assert.throws(() => store.set(`${randomUUID()}:generation`, "line\nbreak-secret"), /control characters/);

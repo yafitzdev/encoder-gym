@@ -396,28 +396,41 @@ export function mount(): void {
     const id = selection.selectedId;
     if (!id || !workspace()?.managed || view.providers.loading) return;
     const state = view.providers; state.loading = true; state.error = undefined; render();
-    try { state.status = await bridge.managedProviders(id); }
+    try { [state.status, state.connections] = await Promise.all([bridge.managedProviders(id), bridge.providerConnections(id)]); }
     catch (error) { state.error = message(error); }
     finally { state.loading = false; if (selection.selectedId === id) render(); }
   }
   const providerActions: ProviderPageActions = {
     refresh: () => { void refreshProviders(); },
-    configure: () => {
+    add: () => {
       const id = selection.selectedId;
       if (!id || view.providers.loading) return;
-      providerDialog(element("project-dialog") as HTMLDialogElement, view.providers.status, async submission => {
-        view.providers.status = await bridge.configureManagedProviders(id, submission.settings);
-        for (const role of ["generation", "advisor", "evaluator"] as const) {
-          const secret = submission.credentials[role];
-          if (secret) view.providers.status = await bridge.setProviderCredential(id, role, secret);
-        }
-        if (selection.selectedId === id) { notify("Providers saved"); render(); }
+      providerDialog(element("project-dialog") as HTMLDialogElement, async submission => {
+        view.providers.connections = await bridge.addProviderConnection(id, submission);
+        if (selection.selectedId === id) { notify("Provider connected"); render(); }
       });
     },
-    remove: role => {
+    refreshConnection: connectionId => {
       const id = selection.selectedId; if (!id || view.providers.loading) return;
       view.providers.loading = true; view.providers.error = undefined; render();
-      void bridge.removeProviderCredential(id, role).then(result => { if (selection.selectedId === id) { view.providers.status = result; view.providers.loading = false; render(); notify("Saved credential removed."); } }, error => { if (selection.selectedId === id) { view.providers.loading = false; view.providers.error = message(error); render(); } });
+      void bridge.refreshProviderConnection(id, connectionId).then(result => { if (selection.selectedId === id) { view.providers.connections = result; view.providers.loading = false; render(); notify("Models refreshed"); } }, error => { if (selection.selectedId === id) { view.providers.loading = false; view.providers.error = message(error); render(); } });
+    },
+    removeConnection: connectionId => {
+      const id = selection.selectedId; if (!id || view.providers.loading) return;
+      view.providers.loading = true; view.providers.error = undefined; render();
+      void bridge.removeProviderConnection(id, connectionId).then(result => { if (selection.selectedId === id) { view.providers.connections = result; view.providers.loading = false; render(); notify("Provider removed"); } }, error => { if (selection.selectedId === id) { view.providers.loading = false; view.providers.error = message(error); render(); } });
+    },
+    assign: assignment => {
+      const id = selection.selectedId; if (!id || view.providers.loading) return;
+      view.providers.loading = true; view.providers.error = undefined; render();
+      void (async () => {
+        try {
+          const status = await bridge.assignProviderModels(id, assignment);
+          const [connections, selected] = await Promise.all([bridge.providerConnections(id), bridge.selectProject(id)]);
+          if (selection.selectedId === id) { view.providers.status = status; view.providers.connections = connections; opened = selected; notify("Model assignments saved"); }
+        } catch (error) { if (selection.selectedId === id) view.providers.error = message(error); }
+        finally { if (selection.selectedId === id) { view.providers.loading = false; render(); } }
+      })();
     },
   };
   const runtimeActions = {

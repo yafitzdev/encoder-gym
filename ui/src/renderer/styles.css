@@ -608,6 +608,11 @@ dialog::backdrop { background: #0008; }
 .provider-presets { display: flex; gap: 6px; margin: 12px 0; }
 .provider-presets .button.selected { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .provider-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.provider-assignments { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--line); }
+.provider-assignments .section-heading { margin-bottom: 12px; }
+.provider-assignment { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 16px; padding: 9px 0; font-size: 13px; font-weight: 600; }
+.provider-assignment select { width: 100%; min-width: 0; }
+.provider-assignment-save { display: flex; justify-content: flex-end; margin-top: 14px; }
 #project-dialog:has(.runtime-form) { width: 700px; max-width: min(700px, calc(100vw - 30px)); }
 .runtime-form { width: 100%; min-width: 0; }
 .runtime-notice { margin: 18px 24px 0; padding: 13px 15px; border-left: 3px solid var(--accent); background: var(--bg); }
@@ -764,6 +769,7 @@ dialog::backdrop { background: #0008; }
   .provider-form-grid .form-field:last-child { grid-column: auto; }
   .provider-summary { align-items: start; flex-direction: column; gap: 10px; }
   .provider-state { justify-content: start; }
+  .provider-assignment { grid-template-columns: 1fr; gap: 7px; }
   .runtime-selection, .runtime-preview-heading { align-items: start; flex-direction: column; }
   .runtime-selection .button { width: 100%; }
   .runtime-notice { margin-inline: 17px; }

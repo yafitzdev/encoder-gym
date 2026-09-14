@@ -6,7 +6,8 @@ export function setupFixture() {
   const baseline = { id: randomUUID(), modelArtifactId: model.id, fingerprint };
   const version = { id: randomUUID(), datasetId: randomUUID(), projectId, number: 1, fingerprint };
   const benchmark = { id: randomUUID(), projectId, number: 1, fingerprint };
-  const workspace = { folder: "owned-project", manifest: { id: projectId }, benchmarkVersions: [benchmark],
+  const provider = role => ({ role, endpoint: "https://provider.example.test", model: `${role}-model` });
+  const workspace = { folder: "owned-project", manifest: { id: projectId }, benchmarkVersions: [benchmark], providerCatalog: { id: randomUUID(), fingerprint, providers: [provider("advisor"), provider("generation")] },
     modelCatalog: { artifacts: [model], baselineRevisions: [baseline], activeBaselineRevisionId: baseline.id }, modelDatasetLinks: [{ modelId: model.id, version }] };
   const inputs = { projectId, baselineRevision: { id: baseline.id, fingerprint }, model: { id: model.id, fingerprint }, dataset: version, benchmark: { id: benchmark.id, fingerprint } };
   const datasets = [{ dataset: { id: version.datasetId, projectId, name: "Base" }, versions: [{ version, rows: 10 }] }];

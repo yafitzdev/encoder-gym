@@ -59,8 +59,8 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await screenshot("managed-optimization-inputs-restarted");
     const routing = harness.registry.read().projects.find(project => project.name === "Routing encoder")!;
     await click('[data-project-id="' + routing.id + '"]'); await loaded();
-    await nav("project"); await until("document.querySelectorAll('.provider-summary').length === 2 && !document.querySelector('.provider-state .neutral')");
-    await check("provider settings and encrypted credential availability survive restart", "document.querySelectorAll('.provider-state .success').length === 2 && !document.getElementById('page').textContent.includes('smoke-secret')");
+    await nav("project"); await until("document.querySelectorAll('.provider-summary').length === 1 && document.querySelectorAll('.provider-assignment').length === 2");
+    await check("provider connections, assignments and encrypted credentials survive restart", "document.querySelectorAll('.provider-state .success').length === 1 && document.getElementById('provider-assignment-advisor').selectedOptions[0].textContent.includes('smoke-flash') && document.getElementById('provider-assignment-generation').selectedOptions[0].textContent.includes('smoke-pro') && !document.getElementById('page').textContent.includes('smoke-secret')");
     await nav("datasets");
     await until("document.querySelectorAll('[data-dataset-id]').length === 2");
     await check("dataset variants and versions survive restart", "document.querySelector('.dataset-collection').textContent.includes('Base dataset') && document.querySelector('.dataset-collection').textContent.includes('Version 4')");
@@ -127,27 +127,29 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await check("Overview starts with five concise inputs", "document.querySelectorAll('.focus-field').length === 5 && document.getElementById('optimization-start').disabled && !document.querySelector('.launch-definition')");
   await check("optimization inputs expose no paths or credentials", "!document.querySelector('.focus-setup input') && !document.querySelector('.focus-setup').textContent.includes('project.sqlite')");
   await screenshot("managed-readiness");
-  await nav("project"); await until("[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Configure providers' && !b.disabled)");
+  await nav("project"); await until("[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Add provider' && !b.disabled)");
   await check("scientific runtime setup is a real project-settings action", "[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Connect scientific runtime') && !document.getElementById('page').textContent.includes('not implemented')");
   await textButton("Connect scientific runtime"); await until("document.querySelector('#project-dialog[open] .runtime-form')");
   await check("runtime setup is compact and requires verification", "document.querySelector('.runtime-form').textContent.includes('Isolated clean checkout required') && document.querySelector('.runtime-form').textContent.includes('Existing history') && [...document.querySelectorAll('.runtime-form button')].find(b=>b.textContent === 'Import history') && [...document.querySelectorAll('.runtime-form button')].find(b=>b.textContent === 'Connect runtime').disabled && document.querySelectorAll('.runtime-form p').length === 0");
   await screenshot("managed-runtime-setup", 760, 760); window.setContentSize(1440, 960);
   await textButton("Cancel"); await until("!document.querySelector('#project-dialog[open]')");
-  await textButton("Configure providers"); await until("document.querySelector('#project-dialog[open]')");
-  await check("provider setup exposes only URL and API key", "document.querySelectorAll('.provider-form input').length === 4 && [...document.querySelectorAll('.provider-form label')].map(e=>e.firstChild.textContent.trim()).join('|') === 'URL|API key|URL|API key' && !document.querySelector('.provider-form').textContent.includes('Model') && !document.querySelector('.provider-form').textContent.includes('Maximum')");
-  await check("DeepSeek and Yan are one-click provider presets", "[...document.querySelectorAll('.provider-presets button')].filter(b=>b.textContent === 'DeepSeek').length === 2 && [...document.querySelectorAll('.provider-presets button')].filter(b=>b.textContent === 'Yan').length === 2");
-  await evaluate("[...document.querySelectorAll('.provider-presets')][0].querySelector('[data-endpoint=\"https://yan.tail85512d.ts.net\"]').click();[...document.querySelectorAll('.provider-presets')][1].querySelector('[data-endpoint=\"https://yan.tail85512d.ts.net\"]').click();true");
-  await type("generation-credential", "generation-smoke-secret-123"); await type("advisor-credential", "advisor-smoke-secret-456");
-  await textButton("Save provider setup"); await until("!document.querySelector('#project-dialog[open]') && document.querySelectorAll('.provider-summary').length === 2");
-  await check("separate provider authorities expose availability without secret values", "document.querySelectorAll('.provider-state .success').length === 2 && !document.getElementById('page').textContent.includes('generation-smoke-secret-123') && !document.getElementById('page').textContent.includes('advisor-smoke-secret-456')");
+  await textButton("Add provider"); await until("document.querySelector('#project-dialog[open]')");
+  await check("provider setup exposes only URL and API key", "document.querySelectorAll('.provider-form input').length === 2 && [...document.querySelectorAll('.provider-form label')].map(e=>e.firstChild.textContent.trim()).join('|') === 'URL|API key' && !document.querySelector('.provider-form').textContent.includes('Model') && !document.querySelector('.provider-form').textContent.includes('Maximum')");
+  await check("DeepSeek and Yan are one-click URL presets", "[...document.querySelectorAll('.provider-presets button')].filter(b=>b.textContent === 'DeepSeek').length === 1 && [...document.querySelectorAll('.provider-presets button')].filter(b=>b.textContent === 'Yan').length === 1");
+  await evaluate("document.querySelector('.provider-presets [data-endpoint=\"https://yan.tail85512d.ts.net\"]').click()");
+  await type("provider-api-key", "provider-smoke-secret-123");
+  await textButton("Add connection"); await until("!document.querySelector('#project-dialog[open]') && document.querySelectorAll('.provider-summary').length === 1 && document.querySelectorAll('.provider-assignment').length === 2");
+  await evaluate("(()=>{const agent=document.getElementById('provider-assignment-advisor'),generation=document.getElementById('provider-assignment-generation');agent.value=[...agent.options].find(o=>o.textContent.includes('smoke-flash')).value;agent.dispatchEvent(new Event('change',{bubbles:true}));generation.value=[...generation.options].find(o=>o.textContent.includes('smoke-pro')).value;generation.dispatchEvent(new Event('change',{bubbles:true}));return true})()");
+  await textButton("Save assignments"); await until("!document.querySelector('.provider-assignment select:disabled') && document.querySelector('.provider-state .success')");
+  await check("one key can assign different discovered models to each role", "document.getElementById('provider-assignment-advisor').selectedOptions[0].textContent.includes('smoke-flash') && document.getElementById('provider-assignment-generation').selectedOptions[0].textContent.includes('smoke-pro') && !document.getElementById('page').textContent.includes('provider-smoke-secret-123')");
   const savedProviders = (await harness.backend.providerStatus(firstId)).catalog?.providers;
-  if (savedProviders?.find(provider => provider.role === "generation")?.model !== "deepseek-v4-flash" || savedProviders.find(provider => provider.role === "advisor")?.model !== "deepseek-v4-pro") throw new Error("Provider presets did not resolve their app-managed model choices.");
-  console.log("PASS provider presets persist app-managed models without exposing model inputs");
+  if (savedProviders?.find(provider => provider.role === "generation")?.model !== "smoke-pro" || savedProviders.find(provider => provider.role === "advisor")?.model !== "smoke-flash") throw new Error("Discovered provider assignments were not persisted independently.");
+  console.log("PASS discovered provider assignments persist independently");
   const credentialIndex = readFileSync(join(harness.registry.file, "..", "credentials.json"), "utf8");
-  if (credentialIndex.includes("generation-smoke-secret-123") || credentialIndex.includes("advisor-smoke-secret-456")) throw new Error("Credential plaintext reached the desktop profile");
+  if (credentialIndex.includes("provider-smoke-secret-123")) throw new Error("Credential plaintext reached the desktop profile");
   await screenshot("managed-provider-settings");
-  await nav("activity"); await until("[...document.querySelectorAll('.activity-action strong')].some(e=>e.textContent === 'Providers configured')");
-  await check("provider changes are inspectable by action UUID without credential values", "[...document.querySelectorAll('.activity-action strong')].filter(e=>e.textContent === 'Credential saved').length === 2 && !document.getElementById('page').textContent.includes('smoke-secret')");
+  await nav("activity"); await until("[...document.querySelectorAll('.activity-action strong')].some(e=>e.textContent === 'Provider models assigned')");
+  await check("provider changes are inspectable by action UUID without credential values", "[...document.querySelectorAll('.activity-action strong')].some(e=>e.textContent === 'Provider connected') && !document.getElementById('page').textContent.includes('smoke-secret')");
   await nav("project");
 
   // Exercise the actual renderer/preload/main IPC journey using deterministic
@@ -549,6 +551,12 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   const setupSource = join(root, "optimization-training.jsonl");
   writeFileSync(setupSource, JSON.stringify({ text: "OPTIMIZATION_TRAINING_ROW_CANARY", label: "training" }) + "\n");
   const setupProjectId = harness.registry.read().selectedId!;
+  const fakeLimits = { maximumRequests: 10, maximumInputTokens: 10_000, maximumOutputTokens: 2_000, maximumCostMicrousd: 0 };
+  await harness.backend.configureProviders(setupProjectId, {
+    version: 1,
+    generation: { kind: "fake", model: "fixture-generation", authentication: "none", limits: fakeLimits },
+    advisor: { kind: "fake", model: "fixture-advisor", authentication: "none", limits: fakeLimits },
+  });
   const importPreview = await harness.backend.chooseDataset(setupProjectId, setupSource, "training");
   const imported = await harness.backend.importDataset(setupProjectId, importPreview.token, "Starting data");
   const sourceId = imported.datasets.at(-1)!.id;
@@ -599,12 +607,6 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
     await check("input selection fits the page at " + width, "document.getElementById('page').scrollWidth <= document.getElementById('page').clientWidth + 1 && document.documentElement.scrollWidth <= innerWidth");
   }
   window.setContentSize(1440, 960);
-  const fakeLimits = { maximumRequests: 10, maximumInputTokens: 10_000, maximumOutputTokens: 2_000, maximumCostMicrousd: 0 };
-  await harness.backend.configureProviders(setupProjectId, {
-    version: 1,
-    generation: { kind: "fake", model: "fixture-generation", authentication: "none", limits: fakeLimits },
-    advisor: { kind: "fake", model: "fixture-advisor", authentication: "none", limits: fakeLimits },
-  });
   const driveInputRun = harness.backend.optimizationLaunch.drive.bind(harness.backend.optimizationLaunch);
   let emitOptimizationProgress: Parameters<typeof driveInputRun>[2];
   let activeRunId = "", finishOptimizationStatus!: () => void;

@@ -12,8 +12,9 @@ import { runManagedSmokeChecks } from "./managed-smoke-checks.js";
 import { checkCurrentManaged } from "./current-managed-check.js";
 import { ManagedBackend, datasetPurpose, managedSnapshot } from "./managed-backend.js";
 import { CredentialStore } from "./credential-store.js";
-import type { ManagedProviderStatus, ManagedReadiness, ProviderRole } from "./managed-control.js";
+import type { ManagedProviderStatus, ManagedReadiness, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
 import type { NativeProgress } from "./managed-control.js";
+import { discoverProviderModels, ProviderConnectionStore, providerConnectionSecretId, type ProjectProviderConnections, type ProviderAssignmentRequest } from "./provider-connections.js";
 import type { ProjectActivityReference } from "./project-activity.js";
 import type { InputOptimizationPhase } from "./input-optimization.js";
 import { OptimizationPreparation } from "./optimization-preparation.js";
@@ -33,11 +34,15 @@ const credentials = new CredentialStore(join(app.getPath("userData"), "credentia
   encrypt: value => safeStorage.encryptString(value),
   decrypt: value => safeStorage.decryptString(value),
 });
+const providerConnections = new ProviderConnectionStore(join(app.getPath("userData"), "provider-connections.json"));
 const backend = new ManagedBackend(
   app.isPackaged ? join(process.resourcesPath, "synth" + (process.platform === "win32" ? ".exe" : "")) : join(directory, "..", "..", "target", "debug", "synth" + (process.platform === "win32" ? ".exe" : "")),
   registry,
   undefined,
-  { resolveCredential: (id, environmentFallback) => credentials.resolve(id, environmentFallback) },
+  { resolveCredential: (id, environmentFallback) => {
+    const connectionSecret = providerConnections.secretForRole(id);
+    return connectionSecret ? credentials.resolve(connectionSecret) : credentials.resolve(id, environmentFallback);
+  } },
 );
 let smokeFolderChoice: string | undefined;
 async function pickFolder(title: string, defaultPath?: string): Promise<string | undefined> {
@@ -70,10 +75,41 @@ function desktopProviderStatus(status: ManagedProviderStatus): ManagedProviderSt
       if (provider.authentication === "none") return { role: provider.role, authentication: provider.authentication, availability: "available", source: "not_required" };
       const reference = provider.secret;
       if (!reference || reference.id !== `${status.projectId}:${provider.role}`) return { role: provider.role, authentication: provider.authentication, availability: "unavailable" };
-      return { role: provider.role, authentication: provider.authentication, ...credentials.status(reference.id, reference.environmentFallback) };
+      const connectionSecret = providerConnections.secretForRole(reference.id);
+      return { role: provider.role, authentication: provider.authentication, ...(connectionSecret ? credentials.status(connectionSecret) : credentials.status(reference.id, reference.environmentFallback)) };
     }) ?? [],
   };
 }
+function desktopConnections(projectId: string): ProjectProviderConnections {
+  registry.get(projectId);
+  const current = providerConnections.get(projectId);
+  return {
+    ...current,
+    connections: current.connections.map(connection => ({
+      ...connection,
+      availability: credentials.status(providerConnectionSecretId(projectId, connection.id)).availability,
+    })),
+  };
+}
+function assignmentSettings(projectId: string, request: ProviderAssignmentRequest, status: ManagedProviderStatus): ProviderSettingsRequest {
+  const current = providerConnections.get(projectId);
+  const resolve = (role: "advisor" | "generation") => {
+    const selected = request[role], connection = current.connections.find(item => item.id === selected.connectionId);
+    if (!connection || !connection.models.includes(selected.model)) throw new Error(`Choose a discovered model for ${role === "advisor" ? "Agent" : "Data generation"}.`);
+    const previous = status.catalog?.providers.find(provider => provider.role === role);
+    const limits = previous?.limits ?? (role === "advisor"
+      ? { maximumRequests: 20, maximumInputTokens: 200_000, maximumOutputTokens: 50_000, maximumCostMicrousd: 2_000_000 }
+      : { maximumRequests: 100, maximumInputTokens: 1_000_000, maximumOutputTokens: 200_000, maximumCostMicrousd: 5_000_000 });
+    return {
+      kind: "openai-compatible" as const, endpoint: connection.endpoint, model: selected.model, authentication: "bearer" as const,
+      environmentFallback: role === "advisor" ? "SYNTH_ADVISOR_API_KEY" : "SYNTH_OPENAI_API_KEY", limits,
+    };
+  };
+  return { version: 1, advisor: resolve("advisor"), generation: resolve("generation"), actor: "local-operator", reason: "Assign discovered project models to optimization roles" };
+}
+const discoverModels = (endpoint: unknown, apiKey: unknown) => smokeTest
+  ? discoverProviderModels(endpoint, apiKey, async () => new Response(JSON.stringify({ data: [{ id: "smoke-flash" }, { id: "smoke-pro" }] }), { status: 200 }))
+  : discoverProviderModels(endpoint, apiKey);
 function withDesktopCredentialAvailability(readiness: ManagedReadiness, providers: ManagedProviderStatus): ManagedReadiness {
   const checks = readiness.report.checks.map(check => {
     const role = check.key === "providers.generation" ? "generation" : check.key === "providers.advisor" ? "advisor" : check.key === "providers.evaluator" ? "evaluator" : undefined;
@@ -375,6 +411,47 @@ ipcMain.handle("encoder-gym:remove-provider-credential", async (_event, value: u
   return trackProjectAction(id, "credential.remove", activityReference("provider_role", role), () => {
     if (provider?.secret?.id === `${id}:${role}`) credentials.remove(provider.secret.id);
     return desktopProviderStatus(status);
+  });
+});
+ipcMain.handle("encoder-gym:provider-connections", async (_event, value: unknown) => desktopConnections(projectId(value)));
+ipcMain.handle("encoder-gym:add-provider-connection", async (_event, value: unknown, request: unknown) => {
+  const id = projectId(value), input = request as { endpoint?: unknown; apiKey?: unknown };
+  return trackProjectAction(id, "provider.connection.add", [], async () => {
+    const discovered = await discoverModels(input?.endpoint, input?.apiKey);
+    const connection = providerConnections.add(id, discovered.endpoint, discovered.models);
+    try { credentials.set(providerConnectionSecretId(id, connection.id), input.apiKey); }
+    catch (error) { providerConnections.remove(id, connection.id); throw error; }
+    return desktopConnections(id);
+  });
+});
+ipcMain.handle("encoder-gym:refresh-provider-connection", async (_event, value: unknown, connectionValue: unknown) => {
+  const id = projectId(value), connectionId = requestId(connectionValue);
+  return trackProjectAction(id, "provider.connection.refresh", activityReference("provider_connection", connectionId), async () => {
+    const connection = providerConnections.get(id).connections.find(item => item.id === connectionId);
+    if (!connection) throw new Error("Provider connection not found.");
+    const secret = credentials.resolve(providerConnectionSecretId(id, connectionId));
+    if (!secret) throw new Error("The API key for this connection is unavailable.");
+    const discovered = await discoverModels(connection.endpoint, secret);
+    providerConnections.update(id, connectionId, discovered.models);
+    return desktopConnections(id);
+  });
+});
+ipcMain.handle("encoder-gym:remove-provider-connection", async (_event, value: unknown, connectionValue: unknown) => {
+  const id = projectId(value), connectionId = requestId(connectionValue);
+  return trackProjectAction(id, "provider.connection.remove", activityReference("provider_connection", connectionId), () => {
+    providerConnections.remove(id, connectionId);
+    credentials.remove(providerConnectionSecretId(id, connectionId));
+    return desktopConnections(id);
+  });
+});
+ipcMain.handle("encoder-gym:assign-provider-models", async (_event, value: unknown, assignmentValue: unknown) => {
+  const id = projectId(value), before = providerConnections.get(id).assignments;
+  return trackProjectAction(id, "provider.models.assign", [], async () => {
+    const assignments = providerConnections.assign(id, assignmentValue);
+    try {
+      const status = await backend.configureProviders(id, assignmentSettings(id, assignments, await backend.providerStatus(id)));
+      return desktopProviderStatus(status);
+    } catch (error) { providerConnections.replaceAssignments(id, before); throw error; }
   });
 });
 ipcMain.handle("encoder-gym:choose-nomos-runtime", async (_event, value: unknown) => {

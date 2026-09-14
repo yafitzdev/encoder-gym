@@ -48,6 +48,11 @@ test("first setup uses model provenance and new runs use the current project eva
   f.controller.refresh(); await f.controller.ensure();
   assert.equal(f.controller.datasetId, f.version.id); assert.equal(f.controller.benchmarkId, f.workspace.benchmarkVersions[1].id); assert.equal(f.controller.saved, false);
 });
+test("Optimize stays unavailable until Agent and Data generation are assigned", async () => {
+  const f = fixture(); f.workspace.providerCatalog = undefined;
+  await f.controller.ensure();
+  assert.equal(f.controller.canOptimize, false);
+});
 
 test("Optimize creates a missing project evaluation and continues in the same click", async () => {
   const f = fixture(), phases = [];
