@@ -11,7 +11,7 @@ The next deliverable is a working end-to-end optimization cycle, followed by
 verified iteration and recovery. More settings, system narration, documentation,
 or UI mockups alone do not complete this goal.
 
-## Verified starting point — 14 September 2026
+## Current state — 14 September 2026
 
 - The current Optimize executor performs a fixed one-candidate training and
   evaluation sequence. It does not invoke the configured optimization Agent or
@@ -29,6 +29,13 @@ or UI mockups alone do not complete this goal.
   immutable CLI preview/history and desktop parsing compatibility. It does not
   implement the agent loop or expose working advanced controls in production.
   The fixed-recipe executor explicitly rejects agentic settings.
+- In-progress code now contains a selected-model Pi transport, bounded
+  development/training inspection tools, validated edit proposals, an
+  append-only Agent-call journal and a native development-diagnostic reader.
+  These are foundations, not a connected optimization engine. They still need
+  integration and end-to-end verification; their existence must not be reported
+  as a working Optimize journey. Preserve and finish this work rather than
+  rebuilding it or replacing it with another fixed recipe.
 - Run 17's candidate reports exist in the scientific journal but are absent
   from its entry in project benchmark results. Diagnose and repair that result
   association without rewriting historical evidence or weakening comparability.
@@ -39,14 +46,22 @@ Do not require another real Nomos run to rediscover the known missing executor.
 
 ## Immediate next task
 
-Continue from the existing settings contracts and implement the missing executor.
-The first checkpoint must connect the configured Agent and Data generation
+Continue from the existing settings and in-progress execution components; connect
+them through the production CLI before adding more presentation. The first
+checkpoint must connect the configured Agent and Data generation
 providers to the real CLI workflow: inspect development failures and training
 rows, propose edits, publish a validated dataset version, train and evaluate.
 Prove this composition with deterministic adapters before asking the user to
 try another run. Do not spend the next checkpoint on another settings-only
 change, mockup or synthetic Agent message. This checkpoint is not completion:
 continue through bounded iteration, recovery and the production Overview journey.
+
+The immediate integration must resolve the run's pinned credential connection,
+not whichever connection is currently assigned in project settings. Persist the
+Agent proposal, generation attempts and resulting dataset version as resumable
+steps of the same run. Remove the fixed-executor rejection only when the new
+path actually enforces the authorized settings. Do not unblock the UI by
+bypassing that guard or silently ignoring unsupported settings.
 
 ## Required execution
 
@@ -117,6 +132,11 @@ candidate for promotion. Setting normal iterations to one is not quick mode.
 - Record actual model-produced public rationales and tool decisions as Agent
   activity. Do not relabel system templates as agent reasoning, expose private
   chain-of-thought, or display fabricated messages as live execution.
+  A tool-only model response must still expose its validated public decision
+  summary. Show which evidence motivated the change and provide inspectable
+  row references; do not make a free-text model response a prerequisite for
+  seeing Agent activity. Label sampled diagnostics as samples rather than
+  implying that the agent inspected every evaluation failure.
 - Pin each role to the selected connection and model for the run. Changing
   project defaults later must not silently switch a resumed run's provider,
   model or credential connection. Resolve secrets outside logs and the renderer;
