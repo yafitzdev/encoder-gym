@@ -9,11 +9,8 @@
 **Generate, curate, train, evaluate, analyze, and improve text encoders while preserving the evidence behind every change.**
 
 [![Rust 1.85+](https://img.shields.io/badge/Rust-1.85%2B-000000?logo=rust)](https://www.rust-lang.org/)
-[![Local first](https://img.shields.io/badge/execution-local--first-2563eb)](docs/PLATFORM.md)
-[![CLI + Desktop](https://img.shields.io/badge/interfaces-CLI%20%2B%20desktop-7c3aed)](ui/README.md)
-[![Status: active development](https://img.shields.io/badge/status-active%20development-f59e0b)](docs/PRODUCTION_READINESS.md)
 
-[Start Here](#start-here) • [Why Encoder Gym?](#why-encoder-gym) • [The Encoder Loop](#the-encoder-loop) • [Quick Start](#quick-start) • [Governance](#governance--provenance) • [Architecture](#architecture) • [Limitations](#limitations) • [Documentation](#links) • [GitHub](https://github.com/yafitzdev/encoder-gym)
+[Start Here](#start-here) • [Why Encoder Gym?](#why-encoder-gym) • [The Encoder Loop](#the-encoder-loop) • [CLI](#cli) • [Quick Start](#quick-start) • [Governance](#governance--provenance) • [Architecture](#architecture) • [Limitations](#limitations) • [Documentation](#links) • [GitHub](https://github.com/yafitzdev/encoder-gym)
 
 </div>
 
@@ -58,6 +55,8 @@ trains the next candidate, and checks whether it is actually better.
 
 The idea is simple: set up Encoder Gym, start a run, go to sleep, and wake up to
 a better encoder than the one you had before—with the evidence to prove it.
+
+Yan Fitzner — [GitHub](https://github.com/yafitzdev) • [Hugging Face](https://huggingface.co/yafitzdev)
 
 ---
 
@@ -122,6 +121,38 @@ block-beta
 Setup defines the job. Status is the working loop: evaluate, understand the
 failures, improve the data, and train again. Report delivers the best candidate
 along with its measurements and a trace of how it was produced.
+
+---
+
+<a id="cli"></a>
+
+### CLI
+
+The `synth` CLI is the main way to run Encoder Gym. These are the commands that
+drive a complete project from setup to a final result:
+
+| Command | What it does |
+|---------|--------------|
+| `synth project bootstrap-preview <MANIFEST>` | Validate the complete project and preview what will be created without writing anything. |
+| `synth project bootstrap <MANIFEST>` | Import the local benchmark data and prepare a startable project. |
+| `synth workflow start <DEFINITION_ID>` | Start the encoder-development workflow created during setup. |
+| `synth workflow status <RUN_ID>` | Show the current stage, results so far, and the next required action. |
+| `synth workflow watch <RUN_ID>` | Wait until the run pauses, finishes development, or completes. |
+| `synth workflow approve <RUN_ID>` | Approve a bounded data proposal when the workflow reaches a review boundary. |
+| `synth workflow finalize <RUN_ID>` | Run the configured sealed acceptance evaluation once. |
+| `synth workflow promote <RUN_ID>` | Record whether the final candidate replaces the baseline. |
+| `synth provenance workflow-run <RUN_ID>` | Trace the run back through its data, training, evaluation, and decisions. |
+| `synth doctor` | Verify the database, configuration, artifacts, and optional backends. |
+
+Specialized command families expose each stage directly: `dataset`, `snapshot`,
+and `quality` manage data; `plan`, `generate`, and `job` run generation;
+`encoder`, `training`, and `evaluation` operate models; and `analysis`,
+`optimize`, and `recovery` handle improvement and interrupted work.
+
+When running from this repository, replace `synth` with
+`cargo run -p synthetic-data-cli --`. Add `--output json` before a subcommand
+for machine-readable output. See the [full CLI reference](docs/CLI.md) for every
+command and option.
 
 ---
 
@@ -302,42 +333,6 @@ dataset-through-optimization capabilities are CLI-first.
 
 ---
 
-<a id="cli-reference"></a>
-
-<details>
-
-<summary><strong>📦 CLI Reference</strong> → <a href="docs/CLI.md">Full CLI Guide</a></summary>
-
-<br />
-
-| Command family | Purpose |
-|----------------|---------|
-| `project`, `config` | Preview, resolve, and atomically prepare a finite encoder project. |
-| `dataset`, `snapshot`, `quality` | Create, import, audit, review, version, and inspect data. |
-| `plan`, `allocation`, `generate`, `job` | Define coverage and execute bounded generation. |
-| `encoder`, `training` | Register supported bundles and run or continue training. |
-| `cohort`, `benchmark`, `evaluation` | Define evidence roles and evaluate exact checkpoints. |
-| `analysis`, `optimize`, `advisor` | Diagnose persisted errors and prepare reviewable improvements. |
-| `workflow` | Execute the finite governed cross-slice workflow. |
-| `experiment`, `encoder optimize`, `production-campaign` | Run bounded adapter-backed production encoder work. |
-| `workspace` | Manage desktop-owned projects, custody, providers, benchmarks, and optimization inputs. |
-| `recovery`, `provenance`, `doctor` | Recover interrupted work and verify stored facts. |
-
-Inspect the live command tree rather than relying on copied examples:
-
-```text
-cargo run -p synthetic-data-cli -- --help
-cargo run -p synthetic-data-cli -- workflow --help
-cargo run -p synthetic-data-cli -- workspace --help
-```
-
-Human output is the default. Place `--output json` before the subcommand for one
-machine-readable JSON value on stdout; diagnostics remain on stderr.
-
-</details>
-
----
-
 <a id="limitations"></a>
 
 <details>
@@ -383,5 +378,3 @@ repository is not offered under an open-source license.
 - [Provenance](docs/PROVENANCE.md)
 - [Production Readiness](docs/PRODUCTION_READINESS.md)
 - [Development Guide](docs/DEVELOPMENT.md)
-
-Yan Fitzner — [GitHub](https://github.com/yafitzdev) • [Hugging Face](https://huggingface.co/yafitzdev)
