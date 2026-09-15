@@ -9,8 +9,10 @@
 **Generate, curate, train, evaluate, analyze, and improve text encoders while preserving the evidence behind every change.**
 
 [![Rust 1.85+](https://img.shields.io/badge/Rust-1.85%2B-000000?logo=rust)](https://www.rust-lang.org/)
+[![Version: 0.1.0](https://img.shields.io/badge/version-0.1.0-2563eb)](CHANGELOG.md)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-yellow)](LICENSE)
 
-[Start Here](#start-here) • [Why Encoder Gym?](#why-encoder-gym) • [The Encoder Loop](#the-encoder-loop) • [CLI](#cli) • [Quick Start](#quick-start) • [Governance](#governance--provenance) • [Architecture](#architecture) • [Limitations](#limitations) • [Documentation](#links) • [GitHub](https://github.com/yafitzdev/encoder-gym)
+[Start Here](#start-here) • [Why `encoder-gym`?](#why-encoder-gym) • [The Encoder Loop](#the-encoder-loop) • [CLI](#cli) • [Quick Start](#quick-start) • [Governance](#governance--provenance) • [Architecture](#architecture) • [Limitations](#limitations) • [Documentation](#links) • [GitHub](https://github.com/yafitzdev/encoder-gym)
 
 </div>
 
@@ -21,11 +23,6 @@
 <a id="start-here"></a>
 
 ### Where to start 🚀
-
-> [!IMPORTANT]
-> The checked-in pilot exercises the complete local workflow with deterministic
-> synthetic data and hashing-linear training. It needs no API key, network,
-> model download, Python environment, or GPU.
 
 ```powershell
 $env:SYNTH_DATABASE_URL = "sqlite://encoder-gym-demo.db?mode=rwc"
@@ -44,23 +41,35 @@ See the [Pilot Quick Start](docs/QUICKSTART.md) for the full offline run.
 
 ### About
 
-An **encoder** takes an input, just like an LLM. Instead of generating a
+An **encoder** takes an input, just like an LLM, but instead of generating a
 response, it turns that input into a useful representation. Fine-tune it for a
 task and it can classify, rank, or compare inputs quickly and cheaply.
 
-Encoder Gym handles the full improvement loop: data generation and curation,
+A fine-tuned support encoder might return:
+
+```text
+Input:  "I was charged twice for the same order."
+
+Output: {
+  "billing": 0.93,
+  "technical_support": 0.05,
+  "account_access": 0.02
+}
+```
+
+`encoder-gym` handles the full improvement loop: data generation and curation,
 training, evaluation, error analysis, and comparison. Its agent inspects the
 evaluation and test set, reasons about which data should be added or removed,
 trains the next candidate, and checks whether it is actually better.
 
-The idea is simple: set up Encoder Gym, start a run, go to sleep, and wake up to
+The idea is simple: set up `encoder-gym`, start a run, go to sleep, and wake up to
 a better encoder than the one you had before—with the evidence to prove it.
 
-Yan Fitzner — [GitHub](https://github.com/yafitzdev) • [Hugging Face](https://huggingface.co/yafitzdev)
+Yan Fitzner — ([LinkedIn](https://www.linkedin.com/in/yan-fitzner/), [GitHub](https://github.com/yafitzdev), [HuggingFace](https://huggingface.co/yafitzdev)).
 
 ---
 
-### Why Encoder Gym?
+### Why `encoder-gym`?
 
 **Agent-native, with tools 🤖**
 > The agent can inspect evaluation evidence, reason about dataset weaknesses,
@@ -83,7 +92,7 @@ Yan Fitzner — [GitHub](https://github.com/yafitzdev) • [Hugging Face](https:
 
 ### What You Can Do
 
-| Stage | What Encoder Gym does | Durable output |
+| Stage | What `encoder-gym` does | Durable output |
 |-------|-----------------------|----------------|
 | **Generate or import data** | Builds explicit coverage plans, generates bounded synthetic examples, or imports JSONL/CSV rows with source provenance. | Dataset rows and generation receipts |
 | **Curate and version** | Audits row quality, records reviews, and freezes exact train/validation/test membership. | Immutable dataset snapshot |
@@ -128,7 +137,7 @@ along with its measurements and a trace of how it was produced.
 
 ### CLI
 
-The `synth` CLI is the main way to run Encoder Gym. These are the commands that
+The `synth` CLI is the main way to run `encoder-gym`. These are the commands that
 drive a complete project from setup to a final result:
 
 | Command | What it does |
@@ -218,7 +227,7 @@ cargo run -p synthetic-data-cli -- doctor
 See [Pilot Quick Start](docs/QUICKSTART.md) for expected outputs,
 idempotent replay, and the opt-in real-provider smoke.
 
-#### Launch Encoder Gym desktop
+#### Launch `encoder-gym` desktop
 
 ```powershell
 cd ui
@@ -242,7 +251,7 @@ does not start training, evaluation, or a provider call. See the
 
 <br />
 
-Encoder Gym treats experiment governance as executable product behavior:
+`encoder-gym` treats experiment governance as executable product behavior:
 
 | Boundary | Enforced behavior |
 |----------|-------------------|
@@ -270,7 +279,7 @@ and [Controlled Workflow Governance](docs/features/governance/workflow-governanc
 
 <details>
 
-<summary><strong>📦 Encoder Gym Desktop</strong> → <a href="ui/README.md">Desktop Guide</a></summary>
+<summary><strong>📦 `encoder-gym` Desktop</strong> → <a href="ui/README.md">Desktop Guide</a></summary>
 
 <br />
 
@@ -361,14 +370,15 @@ The complete scope and non-goals are in the
 
 ### License
 
-A project license has not been published yet. Until one is added, this
-repository is not offered under an open-source license.
+Apache License 2.0. See [LICENSE](LICENSE).
 
 ---
 
 ### Links
 
 - [GitHub](https://github.com/yafitzdev/encoder-gym)
+- [Changelog](CHANGELOG.md)
+- [License](LICENSE)
 - [Documentation](docs/README.md)
 - [Platform Specification](docs/PLATFORM.md)
 - [Pilot Quick Start](docs/QUICKSTART.md)
