@@ -7,11 +7,14 @@ Optimize. The agent uses development evidence to decide which training rows to
 remove and which gaps to fill, requests generation, trains a candidate, evaluates
 it, and uses that result to decide the next bounded iteration.
 
-The single-cycle production CLI is verified. The next deliverable is a bounded
-loop whose second iteration demonstrably uses the first result, including a
-durable no-change outcome and recovery. Then connect that same engine to
-Overview. More settings, system narration, documentation, or UI mockups alone
-do not complete this goal. Preserve the approved GUI rather than redesigning it.
+The working-tree production CLI now supports bounded iterations driven by
+previous results, with durable no-change outcomes and completion-write recovery.
+This implementation is not yet a committed, fully verified release. First
+confirm its final validation results and commit that coherent component. Then
+finish the root-run lifecycle and interruption recovery, followed by one-click
+Overview integration using this same engine. More settings, system
+narration, documentation, or UI mockups alone do not complete this goal.
+Preserve the approved GUI rather than redesigning it.
 
 ## What the user must be able to do
 
@@ -41,45 +44,45 @@ verify the connected engine before asking the user to try another real run.
 | Agent → generation → dataset publication → native clearance | Committed in `18fc85b`; deterministic production-CLI tests | Preserve and reuse this path |
 | One Agent-directed cycle through training and development evaluation | Committed in `a8bb5c4`; complete-cycle/recovery tests and required Rust gates passed at that checkpoint | Root-run completion and production desktop integration |
 | Candidate registration, exact training-dataset links and benchmark report lookup | Committed in `6d90ead`; focused cycle, lineage and recovery regressions pass | Production Overview/viewer interactions and later-iteration associations |
-| Repeated iterations and complete recovery | Completion/continuation code is in progress, uncommitted and unverified | Finish persistence and CLI composition, then prove two iterations and recovery |
+| Repeated iterations, best-dataset selection and no-change | Uncommitted `drive-agent` implementation; 14 managed benchmark CLI tests pass, including seven Agent-path tests | Confirm final workspace gates and commit; then root-run lifecycle, final selection handoff and complete interruption recovery |
 | One-click agentic Overview journey | Not connected end to end | Wire the same coordinator, model/report links and iteration activity |
 
-### Current working-tree checkpoint — not verified
+### Bounded CLI loop checkpoint
 
-The latest verified implementation commit is `6d90ead`. Uncommitted work now
-adds draft iteration-completion/selection records, predecessor-bound next-
-iteration inputs, and append-only local completion persistence:
+`workspace optimization-run <PROJECT> drive-agent <RUN_ID>` composes the existing
+Agent, generator, qualification, training and registration functions. Completion
+records pin proposal calls, requested edit charges, results, best eligible data
+and the reason the loop ended. Next-iteration bindings preserve the original
+baseline and benchmark, use the latest candidate's development evidence and the
+best eligible full dataset, and continue training from the pinned starting model.
+They do not imply candidate warm-start or use Quick-test samples as source data.
 
-- `crates/project-workspace-core/src/optimization_loop.rs`
-- `crates/project-workspace-core/src/optimization_iteration.rs`
-- `crates/project-workspace-local/src/optimization_completions.rs`
-- `crates/project-workspace-local/migrations/0018_optimization_iteration_completions.sql`
+All 14 managed benchmark CLI tests pass on the latest focused build, including
+seven Agent-path tests. They cover the existing single cycle,
+two evidence-dependent iterations, first/later no-change without forced work,
+cumulative edit-limit termination, and retaining an earlier better dataset
+while inspecting the latest result. Injected completion-write failure preserves
+completed provider, training and evaluation work on retry. Candidate and report
+links span iterations. Completion reads reconstruct the original proposal and
+selection; the focused suite also rejects self-consistently re-fingerprinted
+completion records. A large diagnostic fixture verifies that development metrics
+remain visible on the first inspection page instead of being buried beneath
+failure samples.
 
-These changes have not been compiled or tested. They are not a working
-multi-iteration coordinator, and the passing gates below apply to committed
-checkpoints, not this unfinished working tree. Preserve the edits and review
-them before continuing; do not discard them or report them as complete.
+UI typecheck, 125 UI tests, nine native-clearance Python tests and rendered
+Overview fixture checks passed during this checkpoint. The rendered checks are
+not connected Agent-loop acceptance tests. The terminal result of the final
+four Rust gates is not yet confirmed. An earlier full test run overlapped an
+executable fixture edit and failed; it cannot certify the final tree. Recover
+the existing validation process/result before starting another build, and do
+not infer a pass from earlier commits or a missing tool response.
 
-On the next implementation turn:
-
-1. Finish and test completion persistence and ordered predecessor validation.
-   Verify selected candidates against their original scientific journals and
-   enforce cumulative edit charges, including requested additions that fail
-   generation validation. A no-change proposal must finish without training.
-2. Generalize iteration admission, inspection and report lookup beyond the
-   first iteration. Feed the previous candidate's actual development results
-   into the Agent, not the original baseline reports again. Select training
-   data from the best eligible full dataset, or the original dataset if none
-   qualifies; Quick-test samples are not replacement source datasets.
-3. Compose the bounded CLI loop using the existing single-cycle components.
-   Persist completion before advancing and reuse identities and completed work
-   on retry. Explicitly record that the current training policy starts each
-   candidate from the pinned starting model; do not imply candidate warm-start.
-4. Prove two evidence-dependent iterations, no-change termination, cumulative
-   limits, rejected-candidate handling and interruption recovery through that
-   production composition. Run the required gates and commit a working component
-   before wiring the desktop. Root-run lifecycle and fine-grained Stop/Resume
-   remain required work, not guarantees supplied by these draft records.
+The next implementation work is root-run lifecycle, budget/stop outcomes and
+recovery at every boundary, then production Overview integration. The root's
+legacy `ready` state is not an adaptive completion status. Final holdout still
+needs its separate selected-candidate handoff; adaptive protocols remain
+development-only. Do not rebuild the working loop or ask the user to discover
+these missing integrations by starting another real Nomos run.
 
 ### Committed foundations
 
@@ -93,8 +96,9 @@ On the next implementation turn:
   publication. Provider connections are pinned by UUID; changing project
   defaults must not redirect a resumed run.
 - `6dc5585`: immutable first-iteration input/evidence binding, separate from
-  individual Agent calls. Later iterations still need verified predecessor
-  lineage, not caller-supplied replacement evidence.
+  individual Agent calls. The current loop extends it with verified predecessor
+  lineage; preserve that validation rather than accepting caller-supplied
+  replacement evidence.
 - `24d61db`: derived candidate report lookup follows recorded preparation,
   materialization and child-experiment receipts. Read-only verification against
   real Nomos recovered Run 17's two candidate reports without changing its
@@ -138,8 +142,8 @@ qualify, train the exact sample, evaluate both suites, and reuse completed work
 on retry without additional provider or native calls. It also verifies that
 changing project provider defaults does not change the run's selected models.
 
-The latest focused suites pass: nine managed benchmark tests, six optimization
-setup tests, and the zero-holdout runner regression. These include publication
+At that checkpoint, the focused suites passed: nine managed benchmark tests,
+six optimization setup tests, and the zero-holdout runner regression. These include publication
 lineage/device checks, saved-model verification and injected failure at iteration
 result persistence. The holdout regression exposed an invalid authorization
 being appended before rejection; the runner now validates that transition before
@@ -157,7 +161,7 @@ Run reservation now accepts an authorized agentic request. The legacy
 fixed-recipe materialization path remains guarded; the new coordinator is the
 only path intended to honor those settings. Do not bypass that guard.
 
-This work still does **not** provide:
+At `a8bb5c4`, the remaining gaps were:
 
 - A second iteration driven by the first result, or a durable no-change outcome.
 - A complete root-run lifecycle, final selection or separately authorized holdout.
@@ -194,10 +198,9 @@ passed for `6d90ead`, not the current unverified iteration changes. Opt-in
 live-provider tests remain unrun; no real Nomos run or paid provider execution
 was used for this evidence.
 
-This does not connect the production Overview to the Agent coordinator or prove
-later iterations. Preserve the completed first-cycle/model/dataset/report path;
-the next engine work is durable no-change/completion outcomes, second-iteration
-evidence and selection lineage, then the finite coordinator and recovery.
+That checkpoint did not connect production Overview or prove later iterations.
+The bounded CLI loop above now extends it; root lifecycle, complete recovery
+and desktop integration remain required.
 
 ### What Run 17 actually established
 
@@ -224,36 +227,52 @@ The target is one executable chain:
 `Optimize → Agent proposal → dataset diff → clearance → training → evaluation → report`
 
 Do not rebuild the committed Agent, generator, provider resolver or clearance.
-Do not redesign the approved Overview. The first-cycle CLI checkpoint is now
-verified. Finish result ownership, iteration, recovery and app integration:
+Do not redesign the approved Overview. The first-cycle CLI checkpoint is
+committed; the repeated-iteration component has focused test evidence but is
+still uncommitted. Finish validation, run ownership, recovery and app integration:
 
-1. **Preserve the verified single-cycle checkpoint.** The production-CLI test
+1. **Close the bounded-loop checkpoint.** Retrieve the final validation result
+   for the unchanged executable tree. Fix genuine failures, run the required
+   gates and commit only the coherent implementation once verified. Preserve
+   unrelated edits and do not repeatedly rebuild while another build owns the
+   Windows executable. Documentation commits do not certify uncommitted code.
+
+2. **Preserve the verified single-cycle checkpoint.** The production-CLI test
    uses normal reservation and the coordinator the desktop must invoke. It
    covers exact dataset/sample lineage, enforced training settings,
    original-baseline comparisons, no adaptive holdout access and recovery after
    native completion but before iteration-result persistence. Do not rebuild
    this chain or claim it already implements the whole loop.
-2. **Finish iteration ownership.** Preserve the new candidate registration,
+3. **Finish iteration ownership.** Preserve the new candidate registration,
    materialized-version links and receipt-based benchmark projection. Persist
-   no-change/stop outcomes and root-run progress. Generalize iteration/report
-   validation through verified predecessor results; current bindings deliberately
-   admit only the first iteration. Do not invent baseline training history or
+   root-run progress and interruption/budget outcomes. A finished Agent loop
+   must not leave the root run labeled `ready`. Distinguish successful experiment
+   completion (including rejection/no-change), paused work, exhausted budgets
+   and execution errors using persisted facts. Preserve completion,
+   selection and multi-iteration/report validation through verified predecessor
+   results. Do not invent baseline training history or
    relabel a flattened native import as the selected training version.
-3. **Implement bounded repeated iterations.** Feed persisted development results
-   and eligible dataset lineage into the next Agent scope. Preserve the original
-   comparison baseline and benchmark. Enforce cumulative row/request/token/spend,
-   time and iteration limits, plus bounded generation concurrency.
-4. **Complete recovery and final selection.** Reuse completed provider calls,
+4. **Preserve and complete bounded execution.** The CLI now feeds persisted
+   development results and eligible dataset lineage into subsequent Agent scopes.
+   Extend its tests for cumulative request/token/spend and training-time limits,
+   unknown outcomes and concurrency. Keep the original baseline and benchmark
+   and the existing iteration/edit ceilings; do not introduce another loop.
+5. **Complete recovery and final selection.** Reuse completed provider calls,
    dataset publication, training and evaluation. Test fine-grained Stop,
-   interruption and restart, including uncertain external outcomes. Reconcile
+   interruption and restart, including uncertain external outcomes. Do not
+   repurpose permanent cancellation as resumable Stop. Prevent new work after
+   Stop is requested and resume only from verified boundaries. Reconcile
    activity with durable outcomes. Select the best eligible candidate
    deterministically; final holdout is a separate, at-most-once authorization
    after adaptive work ends. Promotion remains manual.
-5. **Connect and verify the existing Overview.** One Optimize action must invoke
+6. **Connect and verify the existing Overview.** One Optimize action must invoke
    this same coordinator. Expose iteration-specific stages and complete activity,
    actual Agent decisions, separate provider usage and linked reports. Add only
    Advanced controls whose settings execution really enforces. Verify rendered
    interactions with the connected production path, not injected Agent captions.
+   Prove one-click execution, a second evidence-dependent iteration, historical
+   stage browsing during live updates, and Stop/restart recovery before asking
+   the user to test another real Nomos run.
 
 Keep root setup/preparation immutable. Each iteration owns its derived dataset,
 training input, candidate and result. Do not overwrite the starting dataset or
@@ -437,9 +456,10 @@ Keep these unchecked until the corresponding production-path evidence exists:
   dataset version, trained model and development comparison. Proven through the
   production CLI with deterministic provider/native adapters, not the GUI or a
   paid/live Nomos experiment.
-- [ ] A second iteration consumes the first result and produces an
+- [x] A second iteration consumes the first result and produces an
   evidence-dependent next proposal while preserving the original baseline and
   benchmark. Explicit no-change decisions end the loop without invented edits.
+  Proven through the production CLI with deterministic adapters, not the GUI.
 - [ ] Every exposed advanced setting is enforced, including cumulative budgets
   and concurrency, and Quick test exercises this same engine with its limits.
 - [ ] Stop/restart tests verify recovery at each boundary, stable identities,
