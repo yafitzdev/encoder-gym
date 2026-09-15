@@ -1,7 +1,7 @@
-# Encoder Gym desktop
+# Encoder Gym Studio
 
-A local, multi-project Electron workspace for importing encoder baselines and
-datasets and inspecting recorded development evidence. The app starts with an
+A local, multi-project workspace for importing encoder baselines and datasets
+and inspecting recorded development evidence. Studio starts with an
 empty project collection. Nomos is an opt-in recorded example, not the product
 identity or a default connection.
 
@@ -15,7 +15,7 @@ npm ci
 npm start
 ```
 
-`npm start` builds the Rust workspace CLI and opens the desktop app. Close an older running instance
+`npm start` builds the Rust workspace CLI and opens Encoder Gym Studio. Close an older running instance
 before launching changed code; a second normal launch focuses that instance.
 
 ## Project folders and page responsibilities

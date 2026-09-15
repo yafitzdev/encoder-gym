@@ -5,7 +5,7 @@ import { example, readExample } from "../evidence/examples.js";
 /** Browser preview is explicitly limited to the recorded example, never local files. */
 export function previewBridge(): EncoderGymBridge {
   let collection: ProjectCollection = { version: 1, selectedId: null, projects: [] };
-  const unavailable = async (): Promise<never> => { throw new Error("Open the Encoder Gym desktop app to manage local project folders."); };
+  const unavailable = async (): Promise<never> => { throw new Error("Open Encoder Gym Studio to manage local project folders."); };
   return {
     optimizationSetups: unavailable, previewOptimizationSetup: unavailable, saveOptimizationSetup: unavailable,
     optimizationLaunches: unavailable, previewOptimizationLaunch: unavailable, authorizeOptimizationLaunch: unavailable,

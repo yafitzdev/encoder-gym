@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- Renamed the desktop app to Encoder Gym Studio and added workflow screenshots
+  to the README.
+
 ## [0.1.0] - 2026-09-15
 
 ### Added

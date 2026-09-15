@@ -6,7 +6,7 @@ import { h, type Child } from "./dom.js";
 
 export function renderWelcome(actions: ProjectActions): HTMLElement {
   return h("div", { class: "page-content welcome-page" },
-    pageHeader("Encoder Gym"),
+    pageHeader("Encoder Gym Studio"),
     h("div", { class: "welcome-action" }, icon("models"), h("h2", {}, "New project"), button("Create", actions.create, "primary")),
     h("div", { class: "welcome-action" }, icon("project"), h("h2", {}, "Open project"), button("Open", actions.openManaged, "secondary")),
     h("button", { type: "button", id: "open-recorded-example", class: "inline-link welcome-example", onClick: actions.openExample }, "Recorded example →"),

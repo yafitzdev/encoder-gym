@@ -173,7 +173,7 @@ export function mount(): void {
   }
   function help(key?: string): void {
     const dialog = element("help-dialog") as HTMLDialogElement, info = key ? metricInfo(key) : undefined;
-    dialog.replaceChildren(h("div", { class: "dialog-heading" }, h("h2", { id: "help-title" }, info ? info.label : "Reading Encoder Gym"), button("Close", () => dialog.close(), "ghost small", "close")),
+    dialog.replaceChildren(h("div", { class: "dialog-heading" }, h("h2", { id: "help-title" }, info ? info.label : "Reading Encoder Gym Studio"), button("Close", () => dialog.close(), "ghost small", "close")),
       info ? h("div", { class: "guide-content" }, tag(info.short), h("p", {}, info.description), h("p", {}, "Changes use this candidate's matching baseline. Passing also depends on the requirements recorded in its evaluation contract.")) :
         h("div", { class: "guide-content" }, ...[
           ["Project folder", "One encoder's workspace. Select a folder in the sidebar to see its baseline, candidates, and runs. Other projects remain separate."],
@@ -557,8 +557,8 @@ export function mount(): void {
     const title = !project ? "Projects" : current.page === "model" ? (data ? findModel(data, current.id ?? "")?.name : undefined) ?? "Model" : current.page === "candidate" ? candidate ? candidateName(candidate) : "Candidate not found" :
       current.page === "run" ? projectRun && data ? inputRunName(data, projectRun, view.inputRuns, view.setup) : run ? runName(run) : "Run not found" : current.page === "dataset" ? view.datasets?.find(current.id)?.entry.dataset.name ?? "Dataset" :
       pages.find(p => p[0] === current.page)?.[1] ?? (current.page === "baseline" ? "Baseline" : current.page === "optimization" ? current.tab === "setup" ? "Optimize" : view.optimization.run ? "Run" : "New run" : "Compare models");
-    element("breadcrumb").textContent = project ? project.name + " / " + title : "Encoder Gym";
-    document.title = title + " · Encoder Gym";
+    element("breadcrumb").textContent = project ? project.name + " / " + title : "Encoder Gym Studio";
+    document.title = title + " · Encoder Gym Studio";
     element("source-state").replaceChildren(...(project ? [button(loading ? "Reading…" : opened?.content.state === "error" ? "Evidence unavailable" : data?.managed ? "Managed workspace" : data?.source === "recorded" ? "Recorded example" : data ? "Legacy journals" : "No records yet", () => navigate({ page: "project" }), "source-button"),
       ...(data ? [h("span", {}, dateLabel(data.capturedAt))] : [])] : []));
     const reload = element("reload-evidence") as HTMLButtonElement; reload.hidden = !project; reload.disabled = loading || collectionBusy;

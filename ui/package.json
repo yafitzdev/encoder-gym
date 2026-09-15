@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
-  "description": "Encoder Gym local encoder and candidate comparison workspace.",
+  "description": "Encoder Gym Studio, the local encoder and candidate comparison workspace.",
   "type": "module",
   "main": "dist/bootstrap.cjs",
   "engines": {

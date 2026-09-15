@@ -12,7 +12,7 @@
 [![Version: 0.1.0](https://img.shields.io/badge/version-0.1.0-2563eb)](CHANGELOG.md)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-yellow)](LICENSE)
 
-[Start Here](#start-here) • [Why `encoder-gym`?](#why-encoder-gym) • [The Encoder Loop](#the-encoder-loop) • [CLI](#cli) • [Quick Start](#quick-start) • [Governance](#governance--provenance) • [Architecture](#architecture) • [Limitations](#limitations) • [Documentation](#links) • [GitHub](https://github.com/yafitzdev/encoder-gym)
+[Start Here](#start-here) • [Why `encoder-gym`?](#why-encoder-gym) • [The Encoder Loop](#the-encoder-loop) • [CLI](#cli) • [Quick Start](#quick-start) • [Studio](#studio) • [Governance](#governance--provenance) • [Architecture](#architecture) • [Limitations](#limitations) • [Documentation](#links) • [GitHub](https://github.com/yafitzdev/encoder-gym)
 
 </div>
 
@@ -57,7 +57,7 @@ Output: {
 }
 ```
 
-`encoder-gym` handles the full improvement loop: data generation and curation,
+`encoder-gym` handles the full loop: data generation and curation,
 training, evaluation, error analysis, and comparison. Its agent inspects the
 evaluation and test set, reasons about which data should be added or removed,
 trains the next candidate, and checks whether it is actually better.
@@ -227,7 +227,7 @@ cargo run -p synthetic-data-cli -- doctor
 See [Pilot Quick Start](docs/QUICKSTART.md) for expected outputs,
 idempotent replay, and the opt-in real-provider smoke.
 
-#### Launch `encoder-gym` desktop
+#### Launch Encoder Gym Studio
 
 ```powershell
 cd ui
@@ -235,11 +235,50 @@ npm ci
 npm start
 ```
 
-The desktop starts with an empty project library. Creating or opening a project
+Studio starts with an empty project library. Creating or opening a project
 does not start training, evaluation, or a provider call. See the
-[Desktop Guide](ui/README.md).
+[Studio Guide](ui/README.md).
 
 </details>
+
+---
+
+<a id="studio"></a>
+
+### Encoder Gym Studio 🖥️
+
+Encoder Gym Studio puts the full workflow in one focused interface: configure a
+run, follow the agent while it works, and decide whether the resulting encoder
+is worth keeping.
+
+#### 1. Set up the run
+
+![Encoder Gym Studio setup screen](docs/assets/studio/setup.png)
+
+Choose the baseline encoder, starting dataset, evaluation benchmark, and the
+models that will inspect failures and generate new training data.
+
+#### 2. Follow the agent loop
+
+![Encoder Gym Studio status screen](docs/assets/studio/status.png)
+
+See which stage is active, what the agent is doing, and how far the current
+training or evaluation task has progressed.
+
+#### 3. Review the result
+
+![Encoder Gym Studio report screen](docs/assets/studio/report.png)
+
+Compare the candidate against the baseline, inspect every metric, and see the
+final keep-or-reject decision.
+
+```powershell
+cd ui
+npm ci
+npm start
+```
+
+See the [Studio Guide](ui/README.md) for project setup and the complete interface.
 
 ---
 
@@ -275,40 +314,6 @@ and [Controlled Workflow Governance](docs/features/governance/workflow-governanc
 
 ---
 
-<a id="desktop"></a>
-
-<details>
-
-<summary><strong>📦 `encoder-gym` Desktop</strong> → <a href="ui/README.md">Desktop Guide</a></summary>
-
-<br />
-
-The Electron desktop is a local multi-project workspace. It can create and open
-Gym-owned folders, copy supported checkpoints into managed custody, import and
-version datasets, inspect models and recorded runs, compare compatible benchmark
-results, manage provider connections, verify project files, and export a
-hash-chained activity journal.
-
-The renderer receives typed, bounded data through the desktop bridge. It cannot
-read arbitrary paths, provider credentials, sealed scores, sealed rows, or raw
-native diagnostics. Adding a folder or saving configuration never authorizes
-training or provider spending.
-
-The desktop is not yet a graphical surface for every independent platform
-slice. Generic presentation and managed custody are broader than execution:
-production task execution still requires a compatible compiled adapter, and the
-existing experiment CLI is currently wired to Nomos.
-
-```powershell
-cd ui
-npm ci
-npm start
-```
-
-</details>
-
----
-
 <a id="architecture"></a>
 
 <details>
@@ -318,7 +323,7 @@ npm start
 <br />
 
 ```text
-Electron desktop        synth CLI        local generation server
+Encoder Gym Studio      synth CLI        local generation server
         └──────────────────┼──────────────────┘
                            ▼
               application composition and runners
@@ -383,7 +388,7 @@ Apache License 2.0. See [LICENSE](LICENSE).
 - [Platform Specification](docs/PLATFORM.md)
 - [Pilot Quick Start](docs/QUICKSTART.md)
 - [CLI Guide](docs/CLI.md)
-- [Desktop Guide](ui/README.md)
+- [Studio Guide](ui/README.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Provenance](docs/PROVENANCE.md)
 - [Production Readiness](docs/PRODUCTION_READINESS.md)

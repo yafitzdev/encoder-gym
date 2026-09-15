@@ -860,7 +860,7 @@ untrusted advisory evidence.
 ## UI strategy
 
 The original HTTP graphical surface covers Slice 1. The separately authorized
-Encoder Gym desktop phase lives in `ui/`: a hardened Electron shell, typed IPC
+Encoder Gym Studio lives in `ui/`: a hardened Electron shell, typed IPC
 bridge, read-only experiment-journal adapter, and vanilla TypeScript renderer.
 It organizes persistent local project folders and presents baseline/candidate
 comparisons, run history, benchmark context, and project settings.
