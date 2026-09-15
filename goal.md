@@ -7,10 +7,11 @@ Optimize. The agent uses development evidence to decide which training rows to
 remove and which gaps to fill, requests generation, trains a candidate, evaluates
 it, and uses that result to decide the next bounded iteration.
 
-The next deliverable is a working end-to-end optimization cycle, followed by
-verified iteration and recovery. More settings, system narration, documentation,
-or UI mockups alone do not complete this goal. The approved GUI is the interface
-to this engine; it is not a separate workflow to redesign.
+The single-cycle production CLI is verified. The next deliverable is a bounded
+loop whose second iteration demonstrably uses the first result, including a
+durable no-change outcome and recovery. Then connect that same engine to
+Overview. More settings, system narration, documentation, or UI mockups alone
+do not complete this goal. Preserve the approved GUI rather than redesigning it.
 
 ## What the user must be able to do
 
@@ -39,9 +40,46 @@ verify the connected engine before asking the user to try another real run.
 | Fixed training and development evaluation | Real Nomos Run 17 | This path is not Agent-driven |
 | Agent → generation → dataset publication → native clearance | Committed in `18fc85b`; deterministic production-CLI tests | Preserve and reuse this path |
 | One Agent-directed cycle through training and development evaluation | Committed in `a8bb5c4`; complete-cycle/recovery tests and required Rust gates passed at that checkpoint | Root-run completion and production desktop integration |
-| Candidate registration, exact training-dataset links and benchmark report lookup | CLI-integrated; focused cycle, lineage and recovery regressions pass | Production Overview/viewer interactions and later-iteration associations |
-| Repeated iterations and complete recovery | Not implemented end to end | Completion/selection lineage, finite coordinator and interruption tests |
+| Candidate registration, exact training-dataset links and benchmark report lookup | Committed in `6d90ead`; focused cycle, lineage and recovery regressions pass | Production Overview/viewer interactions and later-iteration associations |
+| Repeated iterations and complete recovery | Completion/continuation code is in progress, uncommitted and unverified | Finish persistence and CLI composition, then prove two iterations and recovery |
 | One-click agentic Overview journey | Not connected end to end | Wire the same coordinator, model/report links and iteration activity |
+
+### Current working-tree checkpoint — not verified
+
+The latest verified implementation commit is `6d90ead`. Uncommitted work now
+adds draft iteration-completion/selection records, predecessor-bound next-
+iteration inputs, and append-only local completion persistence:
+
+- `crates/project-workspace-core/src/optimization_loop.rs`
+- `crates/project-workspace-core/src/optimization_iteration.rs`
+- `crates/project-workspace-local/src/optimization_completions.rs`
+- `crates/project-workspace-local/migrations/0018_optimization_iteration_completions.sql`
+
+These changes have not been compiled or tested. They are not a working
+multi-iteration coordinator, and the passing gates below apply to committed
+checkpoints, not this unfinished working tree. Preserve the edits and review
+them before continuing; do not discard them or report them as complete.
+
+On the next implementation turn:
+
+1. Finish and test completion persistence and ordered predecessor validation.
+   Verify selected candidates against their original scientific journals and
+   enforce cumulative edit charges, including requested additions that fail
+   generation validation. A no-change proposal must finish without training.
+2. Generalize iteration admission, inspection and report lookup beyond the
+   first iteration. Feed the previous candidate's actual development results
+   into the Agent, not the original baseline reports again. Select training
+   data from the best eligible full dataset, or the original dataset if none
+   qualifies; Quick-test samples are not replacement source datasets.
+3. Compose the bounded CLI loop using the existing single-cycle components.
+   Persist completion before advancing and reuse identities and completed work
+   on retry. Explicitly record that the current training policy starts each
+   candidate from the pinned starting model; do not imply candidate warm-start.
+4. Prove two evidence-dependent iterations, no-change termination, cumulative
+   limits, rejected-candidate handling and interruption recovery through that
+   production composition. Run the required gates and commit a working component
+   before wiring the desktop. Root-run lifecycle and fine-grained Stop/Resume
+   remain required work, not guarantees supplied by these draft records.
 
 ### Committed foundations
 
@@ -127,7 +165,7 @@ This work still does **not** provide:
 - Proven Stop/restart recovery at every boundary or reconciliation of uncertain
   provider outcomes and separately persisted activity/accounting.
 
-### Candidate and report checkpoint
+### Candidate and report checkpoint — `6d90ead`
 
 The single-cycle CLI now registers its verified trained output, including a
 development-rejected candidate, and returns its ordinary model and dataset link.
@@ -152,8 +190,9 @@ after moving the project. All nine managed benchmark tests and nine local
 model-dataset tests pass. UI typecheck, all 125 UI tests, rendered Overview
 fixture checks and nine native-clearance Python tests also pass. All four Rust
 gates (`cargo fmt-check`, `cargo check-all`, `cargo lint`, `cargo test-all`)
-pass for this candidate/report checkpoint. Opt-in live-provider tests remain
-unrun; no real Nomos run or paid provider execution was used for this evidence.
+passed for `6d90ead`, not the current unverified iteration changes. Opt-in
+live-provider tests remain unrun; no real Nomos run or paid provider execution
+was used for this evidence.
 
 This does not connect the production Overview to the Agent coordinator or prove
 later iterations. Preserve the completed first-cycle/model/dataset/report path;
