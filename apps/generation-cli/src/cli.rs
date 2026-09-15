@@ -15,7 +15,7 @@ pub use workspace::{
 #[command(
     name = "synth",
     version,
-    about = "Local, explicit-coverage synthetic-data generation",
+    about = "Encoder Gym local, reproducible encoder development",
     arg_required_else_help = true
 )]
 pub struct Cli {

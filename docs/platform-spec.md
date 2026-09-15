@@ -1,4 +1,4 @@
-# Encoder-development platform specification
+# Encoder Gym platform specification
 
 ## Product objective
 

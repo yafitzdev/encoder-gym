@@ -29,7 +29,7 @@ repair, experiment, benchmark-generation, and campaign commands remain usable.
 
 Repositories:
 
-- Encoder Gym: `C:\Users\yanfi\PycharmProjects\fitz-traylm`
+- Encoder Gym repository: `<repository-root>`
 - read-only source Nomos: `C:\Users\yanfi\PycharmProjects\fitz-tool`
 - isolated experiment: `C:\Users\yanfi\PycharmProjects\nomos-encoder-gym-experiment`
 - experiment database: `encoder-gym-repair.sqlite` inside the isolated copy

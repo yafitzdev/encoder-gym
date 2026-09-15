@@ -1,8 +1,9 @@
-# Encoder Development Platform
+# Encoder Gym
 
-A local, CLI-first Rust platform for generating, managing, training, evaluating,
-analyzing, and improving text-classification datasets and encoders. Slices 1–6
-are implemented through explicit immutable artifact and backend contracts.
+Encoder Gym is a local, CLI-first Rust platform for generating, managing,
+training, evaluating, analyzing, and improving text-classification datasets and
+encoders. Slices 1–6 are implemented through explicit immutable artifact and
+backend contracts.
 
 See [`docs/platform-spec.md`](docs/platform-spec.md) for the full platform and
 [`docs/current-status.md`](docs/current-status.md) for the current verified
