@@ -11,6 +11,53 @@ slice contracts. More settings, System narration, mockups or documentation alone
 do not satisfy this goal. A completed experiment may reject every candidate:
 model improvement is not guaranteed.
 
+## Handoff — paused for project rename and a new chat
+
+The user requested a clean stopping point. Implementation is paused; resume in
+the new chat when requested. This is an unfinished product goal, not a failed
+or blocked build.
+
+- Last implementation commit: **`5a31588`** on `main` (cumulative native-training
+  time). The worktree was clean before this documentation-only handoff update.
+- Verification completed: `cargo fmt-check`, `cargo check-all`, `cargo lint`,
+  `cargo test-all`, UI typecheck, 125 UI tests and nine native-clearance Python
+  tests. The full Rust suite includes 18 managed benchmark CLI tests. No build
+  or test command from that checkpoint remains pending.
+- No real Nomos training, paid provider call or protected evaluation was
+  started. Historical Run 17 is not evidence of Agent-loop execution.
+- The GUI has not yet been connected to the new Agent coordinator. Do not
+  report the app as ready or ask the user to run another experiment as a test.
+
+Start the next implementation checkpoint with **a distinct root budget-stop
+state**. Native training already returns typed exhaustion and retains its
+charges, but root execution currently records it as an ordinary failed attempt.
+Make that outcome truthful and non-retrying without changing historical
+fingerprints or losing completed work. Then address descendant-process recovery
+and the remaining integration/acceptance items below. Do not rebuild accounting,
+redesign Overview or create a second coordinator.
+
+Useful entry points, relative to this repository's new location:
+
+- `apps/generation-cli/src/commands/workspace/optimization_runs/agent_dataset/iteration_loop.rs`
+  — existing `drive-agent` coordinator and error-to-root-state handoff.
+- `crates/project-workspace-core/src/optimization_execution.rs` and
+  `crates/project-workspace-local/src/optimization_execution.rs`
+  — root lifecycle, persistence, Stop/Resume fencing and state projection.
+- `crates/encoder-experiment-core/src/training_budget.rs`,
+  `crates/project-workspace-local/src/optimization_training_time.rs` and
+  `crates/encoder-experiment-nomos/src/training_accounting.rs`
+  — verified training accounting; migration `0021_optimization_training_time.sql`.
+- `apps/generation-cli/tests/fixtures/optimization_training_time_check.rs`
+  — Stop, timeout and lost-settlement production-CLI regressions.
+- `ui/src/input-optimization.ts` — strict desktop parser needing Agent lifecycle
+  support before connecting launch and recovery controls.
+
+If the source directory is renamed, resolve all paths from the new checkout and
+recheck development startup and saved path references. The source repository
+and the managed Nomos project are separate: do not rename its data directory,
+rewrite immutable project/run IDs or recreate its history as part of a source
+rename. No rename or broad path migration has been performed by this handoff.
+
 ## Current status — 15 September 2026
 
 **The one-click agentic desktop journey is not ready.** The production CLI has a
@@ -25,7 +72,7 @@ connection to that coordinator.
 | Evidence-dependent iterations, best eligible dataset selection and no-change completion | `f3d222b` | Complete cumulative accounting and interruption coverage |
 | Root execution attempts and adaptive completion | `3e18b6c` | Integrate lifecycle and recovery into the desktop |
 | Durable Stop and explicit Resume | `9ea9dc4`; all four Rust gates and 15 managed benchmark tests pass | Descendant ownership, every-boundary recovery and desktop controls |
-| Cumulative native-training time | CLI connected; all four Rust gates and 18 managed benchmark tests pass | Root budget-stop projection and abrupt-process recovery |
+| Cumulative native-training time | `5a31588`; all four Rust gates and 18 managed benchmark tests pass | Root budget-stop projection and abrupt-process recovery |
 | One-click Overview execution | Not verified end to end | Update the strict parser, connect the existing coordinator and test the rendered journey |
 
 The committed CLI checkpoints passed their required Rust gates. Prior UI tests
