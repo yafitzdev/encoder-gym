@@ -25,17 +25,14 @@
 ### Where to start 🚀
 
 ```powershell
-$env:SYNTH_DATABASE_URL = "sqlite://encoder-gym-demo.db?mode=rwc"
-
-cargo run -p synthetic-data-cli -- project bootstrap-preview demo/project-bootstrap.toml
-cargo run -p synthetic-data-cli -- project bootstrap demo/project-bootstrap.toml
+git clone https://github.com/yafitzdev/encoder-gym.git
+cd encoder-gym/ui
+npm ci
+npm start
 ```
 
-Preview writes nothing. Bootstrap creates the immutable inputs and prints the
-exact next command for starting the workflow. Continue with that command, then
-use `workflow status` to see the next explicit decision.
-
-See the [Pilot Quick Start](docs/QUICKSTART.md) for the full offline run.
+This installs the desktop dependencies, builds the Rust CLI, and opens Encoder
+Gym Studio. You need Git, Rust, and Node.js `22.19` or newer.
 
 ---
 
@@ -150,50 +147,26 @@ along with its measurements and a trace of how it was produced.
 
 The repository pins the stable Rust toolchain profile and required components.
 
-#### Inspect the CLI
+#### Install and launch
 
-```text
+```powershell
+git clone https://github.com/yafitzdev/encoder-gym.git
+cd encoder-gym/ui
+npm ci
+npm start
+```
+
+`npm start` builds the Rust CLI and opens Encoder Gym Studio. From there, create
+a project and select the local encoder checkpoint you want to improve.
+
+#### Use the CLI
+
+```powershell
 cargo run -p synthetic-data-cli -- --help
 ```
 
 The executable is currently named `synth`. Human-readable output is the
-default; add `--output json` before a subcommand for one machine-readable JSON
-value on stdout.
-
-#### Run the complete offline pilot
-
-```powershell
-$env:SYNTH_DATABASE_URL = "sqlite://encoder-gym-demo.db?mode=rwc"
-
-cargo run -p synthetic-data-cli -- project bootstrap-preview demo/project-bootstrap.toml
-cargo run -p synthetic-data-cli -- --output json project bootstrap demo/project-bootstrap.toml
-```
-
-Run the exact workflow command printed by bootstrap:
-
-```text
-cargo run -p synthetic-data-cli -- workflow start <DEFINITION_ID>
-cargo run -p synthetic-data-cli -- workflow status <RUN_ID>
-```
-
-If the workflow pauses for review, inspect its status and approve only that
-bounded iteration:
-
-```text
-cargo run -p synthetic-data-cli -- workflow approve <RUN_ID>
-```
-
-Development completion, sealed evaluation, and promotion remain separate:
-
-```text
-cargo run -p synthetic-data-cli -- workflow finalize <RUN_ID>
-cargo run -p synthetic-data-cli -- workflow promote <RUN_ID>
-cargo run -p synthetic-data-cli -- provenance workflow-run <RUN_ID>
-cargo run -p synthetic-data-cli -- doctor
-```
-
-See [Pilot Quick Start](docs/QUICKSTART.md) for expected outputs,
-idempotent replay, and the opt-in real-provider smoke.
+default; add `--output json` before a subcommand for machine-readable output.
 
 </details>
 
@@ -329,7 +302,6 @@ Apache License 2.0. See [LICENSE](LICENSE).
 - [Changelog](CHANGELOG.md)
 - [License](LICENSE)
 - [Documentation](docs/README.md)
-- [Pilot Quick Start](docs/QUICKSTART.md)
 - [Studio Guide](ui/README.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [CLI Guide](docs/CLI.md)
