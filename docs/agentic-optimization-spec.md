@@ -67,9 +67,15 @@ scientific gate remains a completed development result, not an execution error.
 The process regression uses deterministic native adapters, checks both suites
 and exact sample membership, and injects failure after native work but before
 result persistence; replay must not repeat provider, training or evaluation work.
-This is one CLI-integrated cycle, not a working multi-iteration app loop. Model
-catalog registration, result-view links, no-change completion, later-iteration
-lineage and complete interruption recovery remain outstanding.
+The cycle also registers its verified trained model, including development
+rejections, and links the exact trainer dataset version through ordinary model
+custody. Materialized input evidence preserves original source-row identities
+even for Quick-test subsets. Ordinary benchmark results follow the iteration's
+explicit scientific receipts and expose saved development reports before the
+iteration summary is written. Retry reuses model, dataset and report identities.
+This is one CLI-integrated cycle, not a working multi-iteration app loop.
+No-change completion, later-iteration lineage, complete interruption recovery
+and the production Overview coordinator remain outstanding.
 
 Agent and Generation activities are now projected from their own persisted
 actions into the existing activity stream, rather than requiring desktop

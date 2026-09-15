@@ -50,6 +50,23 @@ pub async fn adopt_completed(
     folder: &Path,
     request: CompletedTrainingData,
 ) -> Result<ModelDatasetLink> {
+    adopt(folder, request, false).await
+}
+
+/// Bind an adapter-verified rendering to its existing exact dataset version.
+/// Unlike legacy adoption this never creates substitute row/version identities.
+pub async fn adopt_materialized(
+    folder: &Path,
+    request: CompletedTrainingData,
+) -> Result<ModelDatasetLink> {
+    adopt(folder, request, true).await
+}
+
+async fn adopt(
+    folder: &Path,
+    request: CompletedTrainingData,
+    materialized: bool,
+) -> Result<ModelDatasetLink> {
     let mut workspace = open_workspace(folder, false).await?;
     let model = workspace
         .model_catalog
@@ -68,12 +85,23 @@ pub async fn adopt_completed(
             && model.producing_run.as_ref() == Some(&request.run),
         "Training data belongs to another model, snapshot, or run."
     );
-    let parent = workspace
-        .model_dataset_links
-        .iter()
-        .find(|link| Some(link.model_id) == model.parent_model_id)
-        .context("Link the starting model's training dataset first.")?
-        .clone();
+    let exact_version = if materialized {
+        let version = dataset_versions::inspect(
+            folder,
+            request
+                .parent_version_id
+                .context("Materialized training needs its exact dataset version.")?,
+        )
+        .await?;
+        ensure!(
+            request.snapshot.id == version.id.to_string()
+                && request.snapshot.fingerprint == version.fingerprint,
+            "Materialized training snapshot differs from the selected version."
+        );
+        Some(version)
+    } else {
+        None
+    };
     let checkpoint = inspect_model(&contained(Path::new(&workspace.folder), &model.path)?)?;
     ensure!(
         checkpoint.fingerprint == model.fingerprint
@@ -175,10 +203,20 @@ pub async fn adopt_completed(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let evidence = ModelTrainingEvidence::CompletedTraining {
-        manifest: request.manifest,
-        snapshot: request.snapshot,
-        run: request.run,
+    let evidence = match &exact_version {
+        Some(version) => ModelTrainingEvidence::MaterializedTraining {
+            manifest: request.manifest,
+            snapshot: request.snapshot,
+            run: request.run,
+            ordered_content_fingerprint: ModelDatasetLink::materialized_content_fingerprint(
+                version,
+            )?,
+        },
+        None => ModelTrainingEvidence::CompletedTraining {
+            manifest: request.manifest,
+            snapshot: request.snapshot,
+            run: request.run,
+        },
     };
     if let Some(existing) = workspace
         .model_dataset_links
@@ -192,13 +230,26 @@ pub async fn adopt_completed(
         let version = dataset_versions::inspect(folder, existing.version.id).await?;
         existing.validate_for(&model, &version)?;
         dataset_versions::rows::verify_members(&workspace, &version.members)?;
+        super::verify_materialized_members(&workspace, existing)?;
         return Ok(existing.clone());
     }
-    let original = dataset_versions::inspect(
-        folder,
-        request.parent_version_id.unwrap_or(parent.version.id),
-    )
-    .await?;
+    if let Some(version) = exact_version {
+        let link = ModelDatasetLink::new(&model, &version, inputs, evidence, Utc::now())?;
+        dataset_versions::rows::verify_members(&workspace, &version.members)?;
+        super::verify_materialized_members(&workspace, &link)?;
+        return super::persist_link(&workspace, link, &version).await;
+    }
+    let parent_version = request
+        .parent_version_id
+        .or_else(|| {
+            workspace
+                .model_dataset_links
+                .iter()
+                .find(|link| Some(link.model_id) == model.parent_model_id)
+                .map(|link| link.version.id)
+        })
+        .context("Select the training dataset or link the starting model's recorded dataset.")?;
+    let original = dataset_versions::inspect(folder, parent_version).await?;
     let mut versions = vec![original.clone()];
     // Reuse any already-recorded exact population, even with a different native
     // input order. Models trained with different settings can share a version.

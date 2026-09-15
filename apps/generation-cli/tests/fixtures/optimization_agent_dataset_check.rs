@@ -2,6 +2,7 @@
 //! Pi wire responses and one loopback generator. No trainer/provider overrides
 //! exist in the production command.
 use super::*;
+use encoder_experiment_nomos::NomosBackend;
 use project_workspace_core::{
     DatasetPurpose, OptimizationAgentSettings, ProjectOptimizationRun, ProviderAuthentication,
     ProviderCatalog, ProviderConfiguration, ProviderKind, ProviderLimits, ProviderRole,
@@ -305,6 +306,19 @@ async fn scenario(complete: bool) {
             "{}",
             String::from_utf8_lossy(&interrupted.stderr)
         );
+        // Ordinary report views survive interruption before the iteration result
+        // is saved, without running a new evaluation.
+        let projected = run(
+            root,
+            &["benchmark", "project", "results", &benchmark.id.to_string()],
+        );
+        let projected_candidate = projected["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|model| model["isBaseline"] == false)
+            .unwrap();
+        assert_eq!(projected_candidate["reports"].as_array().unwrap().len(), 2);
         let mut db = SqliteConnection::connect(&format!(
             "sqlite://{}",
             folder.join("project.sqlite").display()
@@ -349,6 +363,10 @@ async fn scenario(complete: bool) {
             serde_json::from_value(first["datasetStep"]["development"].clone()).unwrap();
         assert_eq!(result.reports.len(), 2);
         assert_eq!(result.assessments.len(), 2);
+        assert!(
+            !result.development_passed,
+            "The fixture candidate must be retained even when rejected"
+        );
         assert!(!first["datasetStep"].to_string().contains("99999.125"));
         let binding = project_workspace_local::optimization_iteration_execution::training(
             &folder,
@@ -365,6 +383,49 @@ async fn scenario(complete: bool) {
         assert_eq!(binding.training_rows, 1);
         assert_ne!(binding.training_dataset, binding.qualified_dataset);
         assert_eq!(binding.resolved_device, "cpu");
+        let registered: project_workspace_core::ModelArtifact =
+            serde_json::from_value(first["datasetStep"]["candidate"]["model"].clone()).unwrap();
+        let link: project_workspace_core::ModelDatasetLink =
+            serde_json::from_value(first["datasetStep"]["candidate"]["dataset"].clone()).unwrap();
+        let inventory = project_workspace_local::open_workspace(&folder, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            inventory.model_catalog.as_ref().unwrap().active_model(),
+            workspace.model_catalog.as_ref().unwrap().active_model()
+        );
+        assert_eq!(inventory.model_catalog.as_ref().unwrap().artifacts.len(), 2);
+        assert!(
+            inventory
+                .model_catalog
+                .as_ref()
+                .unwrap()
+                .artifacts
+                .contains(&registered)
+        );
+        // The imported baseline has no invented training history.
+        assert_eq!(inventory.model_dataset_links, vec![link.clone()]);
+        assert_eq!(link.model_id, registered.id);
+        assert_eq!(link.version, binding.training_dataset);
+        assert_eq!(
+            registered.training_snapshot.as_ref().unwrap().id,
+            link.version.id.to_string()
+        );
+        let exact = dataset_versions::inspect(&folder, link.version.id)
+            .await
+            .unwrap();
+        let qualified = dataset_versions::inspect(&folder, binding.qualified_dataset.id)
+            .await
+            .unwrap();
+        assert_eq!(exact.members.len(), 1);
+        assert!(qualified.members.contains(&exact.members[0]));
+        // A one-row rendering may reuse an identical one-row generated import;
+        // either way the trainer version keeps its qualified source identity.
+        assert_eq!(link.inputs.iter().map(|input| input.rows).sum::<u64>(), 1);
+        let viewed = dataset_versions::read_rows(&folder, exact.id, 0, 10)
+            .await
+            .unwrap();
+        assert_eq!(viewed.rows.len(), 1);
         assert_eq!(result.training_binding_fingerprint, binding.fingerprint);
         assert_eq!(result.output.metadata["native_manifest"]["batch_size"], 8);
         assert_eq!(
@@ -389,6 +450,7 @@ async fn scenario(complete: bool) {
             reserved.child_id("candidate", 1).unwrap().to_string()
         );
         store.pool().close().await;
+        assert_iteration_projection(&folder, reserved.id, &binding, &benchmark).await;
     } else {
         assert_eq!(added, "encoder_gym.qualify_training\n");
     }
@@ -408,10 +470,30 @@ async fn scenario(complete: bool) {
     assert!(rows.iter().any(|r| r.value["decision_state_id"] == "keep"));
     assert!(!rows.iter().any(|r| r.value["decision_state_id"] == "old"));
     let calls_before = fs::read(&calls).unwrap();
+    let versions_before = dataset_versions::list(&folder).await.unwrap();
+    let inventory_before = project_workspace_local::open_workspace(&folder, true)
+        .await
+        .unwrap();
     assert_eq!(String::from_utf8_lossy(&calls_before).lines().count(), 3);
     // The loopback server is gone: completed generation must replay, not dispatch.
     let second = execute();
     assert_eq!(first["datasetStep"], second["datasetStep"]);
+    assert_eq!(
+        serde_json::to_value(dataset_versions::list(&folder).await.unwrap()).unwrap(),
+        serde_json::to_value(versions_before).unwrap()
+    );
+    let inventory_after = project_workspace_local::open_workspace(&folder, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        inventory_after.model_catalog,
+        inventory_before.model_catalog
+    );
+    assert_eq!(
+        inventory_after.model_dataset_links,
+        inventory_before.model_dataset_links
+    );
+    assert_eq!(inventory_after.datasets, inventory_before.datasets);
     assert_eq!(fs::read(&calls).unwrap(), calls_before);
     assert_eq!(
         fs::read(root.join("runtime/native-invocations.log")).unwrap(),
@@ -469,4 +551,110 @@ async fn scenario(complete: bool) {
         fs::read(root.join("runtime/native-invocations.log")).unwrap(),
         after_native
     );
+}
+
+async fn assert_iteration_projection(
+    folder: &Path,
+    run_id: Uuid,
+    training: &project_workspace_core::optimization_iteration_execution::IterationTrainingBinding,
+    benchmark: &project_workspace_core::ProjectBenchmarkVersion,
+) {
+    use project_workspace_core::benchmark_results::{
+        BenchmarkRunEvidence, IterationResultLineage, ProjectBenchmarkResults,
+    };
+    let inventory = project_workspace_local::open_workspace(folder, true)
+        .await
+        .unwrap();
+    let catalog = inventory.model_catalog.as_ref().unwrap();
+    let view = optimization_runs::show(folder, run_id).await.unwrap();
+    let preparation = view.preparation.as_ref().unwrap();
+    let launches = optimization_launch::list(folder).await.unwrap();
+    let launch = launches
+        .iter()
+        .find(|item| item.id.to_string() == view.run.launch.id)
+        .unwrap();
+    let setups = optimization_setup::list(folder).await.unwrap();
+    let setup = setups
+        .iter()
+        .find(|item| item.id.to_string() == view.run.setup.id)
+        .unwrap();
+    let iterations = project_workspace_local::optimization_iterations::list(folder, run_id)
+        .await
+        .unwrap();
+    let iteration = &iterations[0];
+    let bindings = project_workspace_local::scientific_binding_history(folder)
+        .await
+        .unwrap();
+    let binding = bindings
+        .iter()
+        .find(|item| item.id.to_string() == preparation.execution_binding.id)
+        .unwrap();
+    let store = SqliteExperimentStore::connect_read_only(&format!(
+        "sqlite://{}",
+        folder.join("runs/scientific.sqlite").display()
+    ))
+    .await
+    .unwrap();
+    let runtime_project = store
+        .get_project(binding.runtime.project_snapshot.id.parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let project = store
+        .get_project(training.scientific_project.id.parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let protocol = store
+        .get_protocol(training.protocol.id.parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let events = store.load_events(training.experiment_run_id).await.unwrap();
+    let definition = NomosBackend::recorded_benchmark(&project, &protocol).unwrap();
+    let project_result = |results: &mut ProjectBenchmarkResults, candidate_training: &project_workspace_core::optimization_iteration_execution::IterationTrainingBinding| {
+        results.include_agent_iteration(catalog, BenchmarkRunEvidence {
+            binding, project:&project, protocol:&protocol, definition:&definition, events:&events,
+        }, IterationResultLineage {
+            run:&view.run, launch, setup, preparation, iteration, training:candidate_training, runtime_project:&runtime_project,
+        })
+    };
+    let mut results = ProjectBenchmarkResults::new(benchmark.clone(), catalog).unwrap();
+    project_result(&mut results, training).unwrap();
+    let model = results
+        .models
+        .iter()
+        .find(|model| !model.is_baseline)
+        .unwrap();
+    assert_eq!(model.reports.len(), 2);
+    assert!(model.reports.iter().all(|report| {
+        report.contexts.iter().all(|context| {
+            context.run_id == training.experiment_run_id
+                && context.candidate_id.unwrap().to_string() == training.candidate.id
+        })
+    }));
+    assert!(
+        !serde_json::to_string(&results)
+            .unwrap()
+            .contains("99999.125")
+    );
+    let unchanged = results.clone();
+    project_result(&mut results, training).unwrap();
+    assert_eq!(results, unchanged);
+    // Even consistently re-fingerprinted training receipts cannot associate
+    // another project, protocol, candidate, population or experiment.
+    for field in 0..5 {
+        let mut changed = training.clone();
+        match field {
+            0 => changed.scientific_project.id = Uuid::new_v4().to_string(),
+            1 => changed.protocol.id = Uuid::new_v4().to_string(),
+            2 => changed.candidate.id = Uuid::new_v4().to_string(),
+            3 => changed.experiment_run_id = Uuid::new_v4(),
+            _ => changed.training_artifact.fingerprint = format!("sha256:{}", "b".repeat(64)),
+        }
+        changed.fingerprint = changed.reproduce().unwrap();
+        assert!(project_result(&mut results, &changed).is_err());
+        assert_eq!(results, unchanged);
+    }
+    store.pool().close().await;
 }

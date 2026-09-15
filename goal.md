@@ -38,8 +38,8 @@ verify the connected engine before asking the user to try another real run.
 | --- | --- | --- |
 | Fixed training and development evaluation | Real Nomos Run 17 | This path is not Agent-driven |
 | Agent → generation → dataset publication → native clearance | Committed in `18fc85b`; deterministic production-CLI tests | Preserve and reuse this path |
-| One Agent-directed cycle through training and development evaluation | Committed in `a8bb5c4`; complete-cycle/recovery tests and required Rust gates passed at that checkpoint | Candidate/result viewer links and root-run completion |
-| Candidate registration and exact training-dataset links | Partially implemented in the working tree; not yet a verified checkpoint | Complete regression coverage, report associations and ordinary viewer integration |
+| One Agent-directed cycle through training and development evaluation | Committed in `a8bb5c4`; complete-cycle/recovery tests and required Rust gates passed at that checkpoint | Root-run completion and production desktop integration |
+| Candidate registration, exact training-dataset links and benchmark report lookup | CLI-integrated; focused cycle, lineage and recovery regressions pass | Production Overview/viewer interactions and later-iteration associations |
 | Repeated iterations and complete recovery | Not implemented end to end | Completion/selection lineage, finite coordinator and interruption tests |
 | One-click agentic Overview journey | Not connected end to end | Wire the same coordinator, model/report links and iteration activity |
 
@@ -123,37 +123,42 @@ This work still does **not** provide:
 
 - A second iteration driven by the first result, or a durable no-change outcome.
 - A complete root-run lifecycle, final selection or separately authorized holdout.
-- Verified candidate registration and ordinary Models/dataset/report viewer
-  links for the new iteration path.
 - The production Overview button invoking this coordinator.
 - Proven Stop/restart recovery at every boundary or reconciliation of uncertain
   provider outcomes and separately persisted activity/accounting.
 
-### In-progress working tree — preserve and finish
+### Candidate and report checkpoint
 
-The next component is already partially implemented; do not start it again:
+The single-cycle CLI now registers its verified trained output, including a
+development-rejected candidate, and returns its ordinary model and dataset link.
+Materialized training evidence verifies the exact trainer version and ordered
+native contents, including Quick-test subsets, without replacing original row
+IDs or inventing the imported baseline's unknown training history.
 
-- Materialized training evidence identifies the exact dataset version and
-  ordered contents used by the trainer, including Quick test subsets.
-- Local model/dataset linking is being extended to verify native training files
-  against that version without replacing its original row IDs and ancestry.
-- The CLI cycle is being connected to ordinary candidate registration and
-  returns the registered model and dataset link alongside its development result.
-- UI evidence types and the deterministic native fixture have corresponding
-  compatibility changes. This is not production Overview integration.
+Normal `workspace benchmark <PROJECT> results <VERSION>` follows explicit root,
+iteration and training receipts into the derived scientific project. It replays
+development reports without rerunning evaluation and does not expose sealed
+scores. Results remain available if the process stops after native completion
+but before the iteration summary is saved. Successful activity records link the
+model, exact dataset version, scientific run and development reports.
 
-These changes are uncommitted and are **not covered by the green `a8bb5c4`
-validation claim**. Inspect their current state, finish targeted tests and then
-run the required gates before treating this component as complete. Preserve
-all existing work; do not reset the worktree or assume incomplete code is ready
-for a live Nomos run.
+The focused CLI tests prove rejection still produces a cataloged model, a
+one-row Quick-test version preserves its qualified source identity, and retry
+does not duplicate models, imports, versions or completed calls. They also
+reject re-fingerprinted foreign project/protocol/candidate/training-source/run
+associations without partially changing the report projection. Local tests cover
+reordered native rows, foreign versions, failed-link retry and full verification
+after moving the project. All nine managed benchmark tests and nine local
+model-dataset tests pass. UI typecheck, all 125 UI tests, rendered Overview
+fixture checks and nine native-clearance Python tests also pass. All four Rust
+gates (`cargo fmt-check`, `cargo check-all`, `cargo lint`, `cargo test-all`)
+pass for this candidate/report checkpoint. Opt-in live-provider tests remain
+unrun; no real Nomos run or paid provider execution was used for this evidence.
 
-The immediate checkpoint must prove that a trained candidate appears in Models
-even when development rejects it; its dataset viewer opens the exact full or
-sampled version actually trained; original row identities survive; reports
-follow explicit iteration receipts; and retries reuse the same artifacts.
-Neither the baseline role nor an imported model's unknown training history may
-be silently changed to make registration succeed.
+This does not connect the production Overview to the Agent coordinator or prove
+later iterations. Preserve the completed first-cycle/model/dataset/report path;
+the next engine work is durable no-change/completion outcomes, second-iteration
+evidence and selection lineage, then the finite coordinator and recovery.
 
 ### What Run 17 actually established
 
@@ -189,14 +194,12 @@ verified. Finish result ownership, iteration, recovery and app integration:
    original-baseline comparisons, no adaptive holdout access and recovery after
    native completion but before iteration-result persistence. Do not rebuild
    this chain or claim it already implements the whole loop.
-2. **Finish the in-progress candidate links, then iteration ownership.** Register every trained
-   candidate, including rejected candidates, with its actual training dataset.
-   Persist no-change/stop outcomes and root-run progress. Link candidate reports
-   through explicit iteration receipts so Models, Evaluation and Overview agree.
-   The existing model/dataset link assumes whole imported files; materialized
-   subsets need an exact verified mapping that preserves the original version
-   and row identities. Do not invent the imported baseline's training history
-   or relabel a new flattened import as the selected training version.
+2. **Finish iteration ownership.** Preserve the new candidate registration,
+   materialized-version links and receipt-based benchmark projection. Persist
+   no-change/stop outcomes and root-run progress. Generalize iteration/report
+   validation through verified predecessor results; current bindings deliberately
+   admit only the first iteration. Do not invent baseline training history or
+   relabel a flattened native import as the selected training version.
 3. **Implement bounded repeated iterations.** Feed persisted development results
    and eligible dataset lineage into the next Agent scope. Preserve the original
    comparison baseline and benchmark. Enforce cumulative row/request/token/spend,
@@ -390,9 +393,11 @@ Keep these unchecked until the corresponding production-path evidence exists:
 
 - [ ] One Optimize action invokes the pinned Agent and, when additions are
   proposed, the independently pinned generator through the real coordinator.
-- [ ] A deterministic end-to-end test traces inspected failure evidence to an
+- [x] A deterministic end-to-end test traces inspected failure evidence to an
   actual public Agent explanation, removal, generated addition, qualified
-  dataset version, trained model and development comparison.
+  dataset version, trained model and development comparison. Proven through the
+  production CLI with deterministic provider/native adapters, not the GUI or a
+  paid/live Nomos experiment.
 - [ ] A second iteration consumes the first result and produces an
   evidence-dependent next proposal while preserving the original baseline and
   benchmark. Explicit no-change decisions end the loop without invented edits.

@@ -34,14 +34,23 @@ pub enum ModelTrainingEvidence {
         snapshot: BoundIdentity,
         run: BoundIdentity,
     },
+    /// A verified rendering of an existing version, including selected subsets.
+    /// Native file positions do not replace the version's stable row identities.
+    MaterializedTraining {
+        manifest: FileIdentity,
+        snapshot: BoundIdentity,
+        run: BoundIdentity,
+        #[serde(rename = "orderedContentFingerprint")]
+        ordered_content_fingerprint: String,
+    },
 }
 
 impl ModelTrainingEvidence {
     pub fn manifest(&self) -> &FileIdentity {
         match self {
-            Self::ImportedManifest { manifest } | Self::CompletedTraining { manifest, .. } => {
-                manifest
-            }
+            Self::ImportedManifest { manifest }
+            | Self::CompletedTraining { manifest, .. }
+            | Self::MaterializedTraining { manifest, .. } => manifest,
         }
     }
 }
@@ -120,7 +129,8 @@ impl ModelDatasetLink {
                 model.origin == ModelOrigin::Imported,
                 "Imported evidence cannot replace a trained model's receipt.",
             )?,
-            ModelTrainingEvidence::CompletedTraining { snapshot, run, .. } => {
+            ModelTrainingEvidence::CompletedTraining { snapshot, run, .. }
+            | ModelTrainingEvidence::MaterializedTraining { snapshot, run, .. } => {
                 snapshot.validate("Training snapshot")?;
                 run.validate("Training run")?;
                 require(
@@ -130,6 +140,19 @@ impl ModelDatasetLink {
                     "Training evidence does not match the model's recorded snapshot and run.",
                 )?;
             }
+        }
+        if let ModelTrainingEvidence::MaterializedTraining {
+            snapshot,
+            ordered_content_fingerprint,
+            ..
+        } = &self.evidence
+        {
+            validate_hash(ordered_content_fingerprint)?;
+            require(
+                snapshot.id == version.id.to_string()
+                    && snapshot.fingerprint == version.fingerprint,
+                "Materialized training must identify the actual dataset version.",
+            )?;
         }
         require(!self.inputs.is_empty(), "Training inputs are missing.")?;
         let mut keys = BTreeSet::new();
@@ -157,6 +180,23 @@ impl ModelDatasetLink {
         version
             .validate_integrity()
             .map_err(|error| Invalid(error.to_string()))?;
+        if let ModelTrainingEvidence::MaterializedTraining {
+            ordered_content_fingerprint,
+            ..
+        } = &self.evidence
+        {
+            let rows = self
+                .inputs
+                .iter()
+                .try_fold(0_u64, |sum, input| sum.checked_add(input.rows));
+            require(
+                rows == Some(version.members.len() as u64)
+                    && *ordered_content_fingerprint
+                        == Self::materialized_content_fingerprint(version)?,
+                "Rendered training content or order differs from the dataset version.",
+            )?;
+            return Ok(());
+        }
         let imports = self
             .inputs
             .iter()
@@ -190,5 +230,40 @@ impl ModelDatasetLink {
             )?;
         }
         Ok(())
+    }
+
+    /// The local adapter must independently reproduce this from the native
+    /// input records. This digest is not proof of file contents on its own.
+    pub fn materialized_content_fingerprint(version: &DatasetVersion) -> Result<String, Invalid> {
+        version
+            .validate_integrity()
+            .map_err(|error| Invalid(error.to_string()))?;
+        require(
+            !version.members.is_empty()
+                && version
+                    .members
+                    .iter()
+                    .all(|row| row.split == SnapshotSplit::Train),
+            "Materialized training requires train-only membership.",
+        )?;
+        Self::ordered_content_fingerprint(
+            version
+                .members
+                .iter()
+                .map(|row| row.content_fingerprint.as_str()),
+        )
+    }
+
+    pub fn ordered_content_fingerprint<'a>(
+        contents: impl IntoIterator<Item = &'a str>,
+    ) -> Result<String, Invalid> {
+        let contents: Vec<_> = contents.into_iter().collect();
+        for content in &contents {
+            validate_hash(content)?;
+        }
+        artifact_core::fingerprint(&serde_json::json!({
+            "protocol": "materialized-training-order-v1", "contents": contents
+        }))
+        .map_err(|error| Invalid(error.to_string()))
     }
 }

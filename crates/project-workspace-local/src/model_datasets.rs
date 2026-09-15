@@ -1,6 +1,8 @@
 //! Reconstruct recorded model inputs without altering checkpoints or run history.
 mod completed;
-pub use completed::{CompletedTrainingData, RecordedTrainingInput, adopt_completed};
+pub use completed::{
+    CompletedTrainingData, RecordedTrainingInput, adopt_completed, adopt_materialized,
+};
 
 use std::{collections::BTreeSet, path::Path};
 
@@ -50,7 +52,7 @@ pub(crate) async fn load_links(
         let keys = manifest.get("inputs").and_then(serde_json::Value::as_array).context("Training manifest has no input list.")?;
         let actual_keys = keys.iter().map(|key| key.as_str().map(|key| key.replace('\\', "/")).context("Training input key is invalid.")).collect::<Result<Vec<_>>>()?;
         ensure!(actual_keys == link.inputs.iter().map(|input| input.key.clone()).collect::<Vec<_>>(), "Model training input order changed.");
-        let count_field = match &link.evidence { ModelTrainingEvidence::ImportedManifest { .. } => "input_state_counts", ModelTrainingEvidence::CompletedTraining { .. } => "input_row_counts" };
+        let count_field = match &link.evidence { ModelTrainingEvidence::ImportedManifest { .. } => "input_state_counts", ModelTrainingEvidence::CompletedTraining { .. } | ModelTrainingEvidence::MaterializedTraining { .. } => "input_row_counts" };
         for (key, input) in keys.iter().zip(&link.inputs) {
             ensure!(manifest.get(count_field).and_then(|counts| counts.get(key.as_str().expect("validated input key"))).and_then(serde_json::Value::as_u64) == Some(input.rows), "Model training manifest row counts changed.");
         }
@@ -88,8 +90,37 @@ pub(crate) async fn verify_members(workspace: &ManagedWorkspace) -> Result<()> {
             .context("Linked model is missing.")?;
         link.validate_for(model, &version)?;
         dataset_versions::rows::verify_members(workspace, &version.members)?;
+        verify_materialized_members(workspace, link)?;
     }
     database.close().await?;
+    Ok(())
+}
+
+fn verify_materialized_members(
+    workspace: &ManagedWorkspace,
+    link: &ModelDatasetLink,
+) -> Result<()> {
+    let ModelTrainingEvidence::MaterializedTraining {
+        ordered_content_fingerprint,
+        ..
+    } = &link.evidence
+    else {
+        return Ok(());
+    };
+    let mut contents = Vec::new();
+    for input in &link.inputs {
+        let members = dataset_versions::rows::source_members(workspace, input.import_id)?;
+        ensure!(
+            members.len() as u64 == input.rows,
+            "Materialized training source count changed."
+        );
+        contents.extend(members.into_iter().map(|row| row.content_fingerprint));
+    }
+    ensure!(
+        ModelDatasetLink::ordered_content_fingerprint(contents.iter().map(String::as_str))?
+            == *ordered_content_fingerprint,
+        "Materialized training rows or their order differ from the recorded version."
+    );
     Ok(())
 }
 

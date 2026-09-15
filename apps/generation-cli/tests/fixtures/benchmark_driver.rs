@@ -139,10 +139,13 @@ fn native_evaluation(arguments: &[String]) -> Result<()> {
             let input = argument(arguments, "--input")?;
             let count = fs::read_to_string(input)?.lines().count();
             let output = PathBuf::from(argument(arguments, "--output")?);
-            fs::create_dir_all(&output)?;
-            fs::write(
-                output.join("model.safetensors"),
-                b"offline-trained-candidate",
+            training_transformer::fixture::write_tiny_bert_bundle(&output)
+                .map_err(anyhow::Error::msg)?;
+            write_json(
+                &output.join("modules.json"),
+                &serde_json::json!([
+                    {"idx":0,"name":"0","path":"","type":"sentence_transformers.models.Transformer"}
+                ]),
             )?;
             write_json(
                 &output.join("nomos_training_manifest.json"),

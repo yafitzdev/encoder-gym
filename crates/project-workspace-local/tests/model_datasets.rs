@@ -518,3 +518,274 @@ async fn metadata_navigation_is_not_a_substitute_for_full_membership_verificatio
         .unwrap();
     assert!(open_workspace(&folder, false).await.is_err());
 }
+
+async fn materialized_request(
+    root: &Path,
+    folder: &Path,
+    version_id: Uuid,
+    reverse: bool,
+) -> model_datasets::CompletedTrainingData {
+    use project_workspace_core::{BoundIdentity, DatasetPurpose};
+    use project_workspace_local::{
+        CompletedModelRegistration, inspect_dataset, register_completed_model,
+    };
+    let version = dataset_versions::inspect(folder, version_id).await.unwrap();
+    let mut rows = dataset_versions::materialization_rows(folder, version_id)
+        .await
+        .unwrap();
+    if reverse {
+        rows.reverse();
+    }
+    let source = root.join(format!("rendered-{}.jsonl", Uuid::new_v4()));
+    fs::write(
+        &source,
+        rows.iter()
+            .map(|row| format!("{}\n", row.value))
+            .collect::<String>(),
+    )
+    .unwrap();
+    let preview = inspect_dataset(&source, DatasetPurpose::Training).unwrap();
+    let checkpoint = root.join(format!("trained-{}", Uuid::new_v4()));
+    training_transformer::fixture::write_tiny_bert_bundle(&checkpoint).unwrap();
+    fs::write(
+        checkpoint.join("nomos_training_manifest.json"),
+        serde_json::to_vec(&json!({
+            "inputs":["rendered.jsonl"], "input_row_counts":{"rendered.jsonl":rows.len()},
+            "fixture_run":Uuid::new_v4()
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let model = inspect_model(&checkpoint).unwrap();
+    let workspace = open_workspace(folder, false).await.unwrap();
+    let identity = || BoundIdentity {
+        id: Uuid::new_v4().to_string(),
+        fingerprint: format!("sha256:{}", "7".repeat(64)),
+    };
+    let source_model = identity();
+    let snapshot = BoundIdentity {
+        id: version.id.to_string(),
+        fingerprint: version.fingerprint,
+    };
+    let run = identity();
+    let registered = register_completed_model(
+        folder,
+        &checkpoint,
+        CompletedModelRegistration {
+            parent_model_id: workspace.model_catalog.as_ref().unwrap().active_model().id,
+            name: "Materialized candidate".into(),
+            source_model: source_model.clone(),
+            source_model_format: model.format,
+            source_model_bytes: model.bytes,
+            producing_run: run.clone(),
+            training_snapshot: snapshot.clone(),
+            trainer: identity(),
+            effective_configuration_fingerprint: format!("sha256:{}", "8".repeat(64)),
+            source_revision: "fixture".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let model_id = registered
+        .model_catalog
+        .unwrap()
+        .artifacts
+        .iter()
+        .find(|model| model.source_model.as_ref() == Some(&source_model))
+        .unwrap()
+        .id;
+    model_datasets::CompletedTrainingData {
+        model_id,
+        parent_version_id: Some(version_id),
+        snapshot,
+        run,
+        manifest: model
+            .files
+            .into_iter()
+            .find(|file| file.path == "nomos_training_manifest.json")
+            .unwrap(),
+        inputs: vec![model_datasets::RecordedTrainingInput {
+            key: "rendered.jsonl".into(),
+            path: source,
+            bytes: preview.artifact.bytes,
+            fingerprint: preview.artifact.fingerprint,
+            rows: preview.rows,
+        }],
+    }
+}
+
+#[tokio::test]
+async fn materialized_subset_preserves_original_rows_and_retries_without_new_versions() {
+    let temp = TempDir::new().unwrap();
+    let folder = fixture(temp.path()).await;
+    let baseline = model_datasets::adopt_baseline(&folder).await.unwrap();
+    let original = dataset_versions::inspect(&folder, baseline.version.id)
+        .await
+        .unwrap();
+    let selected = dataset_versions::revise(
+        &folder,
+        dataset_versions::DatasetVersionUpdate {
+            dataset_id: original.dataset_id,
+            version_id: Uuid::new_v4(),
+            parent_id: original.id,
+            removed: vec![original.members[0].id.clone()],
+            added: vec![],
+            replaced: vec![],
+        },
+    )
+    .await
+    .unwrap();
+    let request = materialized_request(temp.path(), &folder, selected.id, false).await;
+    let before = open_workspace(&folder, true).await.unwrap();
+    let versions = dataset_versions::list(&folder).await.unwrap();
+    let mut db = SqliteConnection::connect(&format!(
+        "sqlite://{}",
+        folder.join("project.sqlite").display()
+    ))
+    .await
+    .unwrap();
+    sqlx::query("CREATE TRIGGER fail_rendered_link BEFORE INSERT ON model_dataset_links BEGIN SELECT RAISE(ABORT, 'injected'); END").execute(&mut db).await.unwrap();
+    assert!(
+        model_datasets::adopt_materialized(&folder, request.clone())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("injected")
+    );
+    sqlx::query("DROP TRIGGER fail_rendered_link")
+        .execute(&mut db)
+        .await
+        .unwrap();
+    db.close().await.unwrap();
+    let link = model_datasets::adopt_materialized(&folder, request.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        link,
+        model_datasets::adopt_materialized(&folder, request)
+            .await
+            .unwrap()
+    );
+    assert_eq!(link.version, selected.reference());
+    assert_eq!(
+        dataset_versions::inspect(&folder, selected.id)
+            .await
+            .unwrap(),
+        selected
+    );
+    assert_eq!(
+        serde_json::to_value(dataset_versions::list(&folder).await.unwrap()).unwrap(),
+        serde_json::to_value(versions).unwrap()
+    );
+    assert!(
+        selected
+            .members
+            .iter()
+            .all(|row| original.members.contains(row))
+    );
+    assert!(
+        selected
+            .members
+            .iter()
+            .all(|row| row.source.import_id != link.inputs[0].import_id)
+    );
+    let after = open_workspace(&folder, true).await.unwrap();
+    assert_eq!(after.model_catalog, before.model_catalog);
+    assert!(after.model_dataset_links.contains(&baseline));
+    let model = after
+        .model_catalog
+        .as_ref()
+        .unwrap()
+        .artifacts
+        .iter()
+        .find(|model| model.id == link.model_id)
+        .unwrap();
+    let mut wrong_count = link.inputs.clone();
+    wrong_count[0].rows += 1;
+    assert!(
+        ModelDatasetLink::new(
+            model,
+            &selected,
+            wrong_count,
+            link.evidence.clone(),
+            Utc::now()
+        )
+        .is_err()
+    );
+    let mut wrong_order = selected.members.clone();
+    wrong_order.reverse();
+    let mut evidence = link.evidence.clone();
+    if let ModelTrainingEvidence::MaterializedTraining {
+        ordered_content_fingerprint,
+        ..
+    } = &mut evidence
+    {
+        *ordered_content_fingerprint = ModelDatasetLink::ordered_content_fingerprint(
+            wrong_order
+                .iter()
+                .map(|row| row.content_fingerprint.as_str()),
+        )
+        .unwrap();
+    } else {
+        panic!("Missing materialized evidence");
+    }
+    assert!(
+        ModelDatasetLink::new(model, &selected, link.inputs.clone(), evidence, Utc::now()).is_err()
+    );
+    let moved = temp.path().join("moved-rendered");
+    fs::rename(&folder, &moved).unwrap();
+    assert!(
+        open_workspace(&moved, true)
+            .await
+            .unwrap()
+            .model_dataset_links
+            .contains(&link)
+    );
+}
+
+#[tokio::test]
+async fn materialized_link_rejects_reordered_native_rows_and_foreign_version() {
+    let temp = TempDir::new().unwrap();
+    let folder = fixture(temp.path()).await;
+    let baseline = model_datasets::adopt_baseline(&folder).await.unwrap();
+    let request = materialized_request(temp.path(), &folder, baseline.version.id, true).await;
+    let error = model_datasets::adopt_materialized(&folder, request.clone())
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("rows or their order"),
+        "{error:#}"
+    );
+    assert_eq!(
+        open_workspace(&folder, true)
+            .await
+            .unwrap()
+            .model_dataset_links,
+        vec![baseline.clone()]
+    );
+    let other = dataset_versions::fork(
+        &folder,
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        "Same contents, another version",
+        baseline.version.id,
+    )
+    .await
+    .unwrap();
+    let mut wrong_version = request;
+    wrong_version.parent_version_id = Some(other.id);
+    assert!(
+        model_datasets::adopt_materialized(&folder, wrong_version)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("snapshot differs")
+    );
+    assert_eq!(
+        open_workspace(&folder, true)
+            .await
+            .unwrap()
+            .model_dataset_links,
+        vec![baseline]
+    );
+}

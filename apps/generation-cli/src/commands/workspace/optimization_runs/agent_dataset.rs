@@ -4,6 +4,7 @@
 mod inspection;
 mod providers;
 mod qualification;
+mod registration;
 mod training;
 
 use std::{collections::BTreeSet, path::Path, sync::Arc};
@@ -38,6 +39,8 @@ struct DatasetStepResult {
     development: Option<
         project_workspace_core::optimization_iteration_execution::IterationDevelopmentResult,
     >,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidate: Option<registration::IterationCandidate>,
 }
 
 pub(super) async fn execute(
@@ -112,13 +115,16 @@ async fn execute_step(
         }
         if train {
             if let Some(qualified) = &result.qualification {
-                result.development = Some(training::complete(folder, run_id, qualified).await?);
+                let (development, candidate) =
+                    training::complete(folder, run_id, qualified).await?;
+                result.development = Some(development);
+                result.candidate = Some(candidate);
             }
         }
         Ok(result)
     }
     .await;
-    let terminal = if result.is_ok() {
+    let mut terminal = if result.is_ok() {
         event(ActivityEventState::Succeeded, None)
     } else {
         event(
@@ -129,6 +135,33 @@ async fn execute_step(
             )?),
         )
     };
+    if let Ok(step) = &result {
+        terminal.references.push(ActivityReference::new(
+            "iteration_id",
+            step.iteration_id.to_string(),
+        )?);
+        if let Some(candidate) = &step.candidate {
+            terminal.references.extend([
+                ActivityReference::new("model", candidate.model.id.to_string())?,
+                ActivityReference::new(
+                    "dataset_version",
+                    candidate.dataset.version.id.to_string(),
+                )?,
+            ]);
+        }
+        if let Some(development) = &step.development {
+            terminal.references.push(ActivityReference::new(
+                "experiment_run",
+                development.experiment_run_id.to_string(),
+            )?);
+            for report in development.reports.values() {
+                terminal.references.push(ActivityReference::new(
+                    "evaluation_report",
+                    report.id.to_string(),
+                )?);
+            }
+        }
+    }
     append_activity(folder, terminal).await?;
     super::super::print(&serde_json::json!({"actionId": action_id, "datasetStep": result?}))
 }
@@ -189,6 +222,7 @@ async fn drive(
             publication: None,
             qualification: None,
             development: None,
+            candidate: None,
         });
     }
     let history = agent_store.history(iteration.scope.clone()).await?;
@@ -236,5 +270,6 @@ async fn drive(
         publication: Some(publication),
         qualification: None,
         development: None,
+        candidate: None,
     })
 }

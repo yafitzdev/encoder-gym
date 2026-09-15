@@ -97,6 +97,18 @@ all ancestral pretraining. `CompletedTraining` additionally binds the model's
 exact original run and native snapshot. A source name or row count alone never
 establishes a link.
 
+`MaterializedTraining` binds a trained model to an existing exact version,
+including a Quick-test subset, without replacing its stable source-row IDs with
+positions in a flattened native file. It pins that version as the native
+snapshot and records a digest of ordered row-content fingerprints. The core
+checks version membership, order and counts; the local adapter independently
+reads the verified native inputs and original managed sources to reproduce
+those contents. A digest or matching row count alone is not proof of a rendering.
+`adopt_materialized` uses normal import custody for the rendered files but never
+creates a replacement dataset/version. An imported baseline need not have known
+training history for a candidate to link its independently selected version.
+Legacy whole-input adoption and its separate native input order stay unchanged.
+
 `workspace dataset <PROJECT> adopt-baseline` reconstructs the imported Nomos
 model's version from its verified checkpoint manifest and already-recorded
 training imports. It reuses an exact existing base version or creates one with

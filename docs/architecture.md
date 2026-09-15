@@ -122,6 +122,17 @@ Each adaptive protocol has zero sealed allowance. Reservation accepts Agent
 authority, but legacy materialization still rejects it. This first-cycle CLI
 path is not yet a repeated loop or the production Overview executor.
 
+The CLI now transfers each iteration's verified training output into ordinary
+model custody, including development-rejected candidates. The model's producing
+run pins the scientific training-completion event, and its dataset link verifies
+the exact trainer version and ordered native contents without changing source
+row identities. Benchmark result projection follows the root preparation,
+iteration and training receipts into the derived scientific project; it does
+not invent a runtime binding or search arbitrary sibling databases. Normal
+development-journal replay supplies scores and original verdicts, including
+completed suites before iteration-summary persistence. Model registration and
+report viewing neither promote a candidate nor authorize final holdout.
+
 `semantic-catalog` owns immutable reusable/dataset-scoped profiles, append-only
 bindings, deterministic layered resolution, and the provider-neutral resolved
 context. It imports only `artifact-core`; it knows no prompt, provider, SQLite,

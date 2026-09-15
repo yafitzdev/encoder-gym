@@ -34,7 +34,7 @@ export interface BoundIdentity { id: string; fingerprint: string }
 export interface ModelDatasetLink {
   projectId: string; modelId: string; modelFingerprint: string; version: DatasetVersionRef;
   inputs: { key: string; importId: string; fingerprint: string; rows: number }[];
-  evidence: { kind: "importedManifest"; manifest: FileIdentity } | { kind: "completedTraining"; manifest: FileIdentity; snapshot: BoundIdentity; run: BoundIdentity };
+  evidence: { kind: "importedManifest"; manifest: FileIdentity } | { kind: "completedTraining"; manifest: FileIdentity; snapshot: BoundIdentity; run: BoundIdentity } | { kind: "materializedTraining"; manifest: FileIdentity; snapshot: BoundIdentity; run: BoundIdentity; orderedContentFingerprint: string };
   createdAt: string; fingerprint: string;
 }
 export interface ModelArtifact {

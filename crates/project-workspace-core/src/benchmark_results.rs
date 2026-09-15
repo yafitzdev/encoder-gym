@@ -1,4 +1,7 @@
 //! Safe model-inventory projection of exactly comparable development reports.
+mod iteration;
+pub use iteration::IterationResultLineage;
+
 use crate::{
     BenchmarkSource, BoundIdentity, Invalid, ModelCatalog, OptimizationLaunchAuthorization,
     OptimizationSetup, ProjectBenchmarkVersion, ProjectOptimizationExperiment,

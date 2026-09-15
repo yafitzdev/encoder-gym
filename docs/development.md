@@ -152,6 +152,14 @@ production `synth`: normal reservation/preparation, evidence-driven Agent edits,
 separate generation, native full-population clearance, exact Quick-test sampling,
 training and both development suites. A persistence interruption after native
 completion must recover without additional provider or native invocations.
+The same test verifies ordinary candidate registration despite a rejected
+development result, exact sampled dataset/row identity, and benchmark report
+lookup even before the iteration summary is saved. Re-fingerprinted foreign
+project/protocol/candidate/training-source/experiment links must fail projection
+without partially changing its results. Local model-dataset tests separately
+cover reordered native rows, foreign versions and failed-link retry without
+creating substitute versions; full verification still works after moving the
+managed folder.
 The native trainer fixture records effective settings and produces its receipt;
 it is test-only and cannot prove live model quality. Run this integration with:
 

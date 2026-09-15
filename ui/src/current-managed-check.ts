@@ -36,7 +36,7 @@ export async function checkCurrentManaged(window: BrowserWindow, output: string,
       await until("document.querySelector('.dataset-row-entry')");
       await check("document.getElementById('dataset-version').value === " + JSON.stringify(trainingData.version.id));
       await capture(model.role === "Baseline" ? "managed-current-linked-dataset" : "managed-current-candidate-dataset");
-      if (trainingData.evidence.kind === "completedTraining") {
+      if (trainingData.evidence.kind !== "importedManifest") {
         await evaluate("document.getElementById('tab-changes').click()");
         await until("document.querySelector('.dataset-change-row, .empty-state')");
         await capture("managed-current-candidate-data-changes");

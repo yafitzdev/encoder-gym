@@ -19,7 +19,10 @@ pub(super) async fn complete(
     folder: &Path,
     run_id: Uuid,
     qualified: &super::qualification::QualifiedDataset,
-) -> Result<IterationDevelopmentResult> {
+) -> Result<(
+    IterationDevelopmentResult,
+    super::registration::IterationCandidate,
+)> {
     let run = optimization_runs::show(folder, run_id).await?;
     ensure!(!run.state.is_terminal(), "Run stopped before training");
     let iteration = optimization_iterations::list(folder, run_id)
@@ -217,7 +220,7 @@ pub(super) async fn complete(
             fingerprint: String::new(),
         };
         binding.fingerprint = binding.reproduce()?;
-        custody::record_training(folder, run_id, binding).await?;
+        let binding = custody::record_training(folder, run_id, binding).await?;
         ensure!(
             !optimization_runs::show(folder, run_id)
                 .await?
@@ -229,15 +232,30 @@ pub(super) async fn complete(
             .create_run_identified(protocol.id, experiment_id)
             .await?;
         let completed = runner.run_development(experiment_id).await?;
-        if let Some(output) = completed
+        let events = store.load_events(experiment_id).await?;
+        let output = completed
             .candidates
             .get(&candidate.id)
             .and_then(|execution| execution.train_output.as_ref())
-        {
-            backend.verified_model_path(&output.model)?;
-        }
-        let events = store.load_events(experiment_id).await?;
-        custody::record_result(folder, run_id, iteration.id, &project, &protocol, &events).await
+            .context("Iteration did not produce a trained model")?;
+        // Preserve every trained output, even if a later evaluation failed.
+        let registered = super::registration::register(
+            folder,
+            &backend,
+            super::registration::TrainedIteration {
+                iteration: &iteration,
+                binding: &binding,
+                project: &project,
+                candidate: &candidate,
+                output,
+                events: &events,
+            },
+        )
+        .await?;
+        let result =
+            custody::record_result(folder, run_id, iteration.id, &project, &protocol, &events)
+                .await?;
+        Ok((result, registered))
     }
     .await;
     store.pool().close().await;
