@@ -132,8 +132,17 @@ normal store. Later Agent inputs bind the preceding result and best eligible
 full dataset without changing the original baseline, benchmark or model
 starting checkpoint. The CLI bounds continuation by the immutable iteration
 limit and reuses the same inspection, generation, qualification, training and
-registration functions. Its output is a completion history, not a substitute
-for the still-needed root lifecycle and desktop integration.
+registration functions. Desktop integration remains outstanding.
+
+`project-workspace-core::optimization_execution` owns only the coordinator's
+execution-attempt transitions and a terminal-iteration reference, not another
+optimization algorithm. The project adapter persists that hash-chained journal
+beside the unchanged fixed-recipe root journal. Ordinary root reads validate
+the completion/iteration lineage through non-recursive database readers before
+projecting Agent-specific states. The CLI acquires the existing exclusive
+execution lease before recovering an abandoned attempt. Provider reservations
+also reject closed execution attempts inside their database transaction. This
+does not yet implement resumable Stop, active-child cancellation or final holdout.
 
 The CLI now transfers each iteration's verified training output into ordinary
 model custody, including development-rejected candidates. The model's producing

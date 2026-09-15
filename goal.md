@@ -66,7 +66,7 @@ verify the connected engine before asking the user to try another real run.
 | One Agent-directed cycle through training and development evaluation | Committed in `a8bb5c4`; complete-cycle/recovery tests and required Rust gates passed at that checkpoint | Root-run completion and production desktop integration |
 | Candidate registration, exact training-dataset links and benchmark report lookup | Committed in `6d90ead`; focused cycle, lineage and recovery regressions pass | Production Overview/viewer interactions and later-iteration associations |
 | Repeated iterations, best-dataset selection and no-change | Committed in `f3d222b`; all four Rust gates and 14 managed benchmark CLI tests pass, including seven Agent-path tests | Resumable run lifecycle, final selection handoff and complete interruption recovery |
-| Root execution attempts and adaptive completion | Uncommitted follow-on: journal-derived Agent states, verified terminal-iteration link, failure and abandoned-attempt recovery; final managed CLI suite passes | Confirm full validation/commit, durable Stop/Resume, liveness reconciliation and explicit budget outcomes |
+| Root execution attempts and adaptive completion | Verified follow-on: journal-derived Agent states, terminal-iteration link, failure and abandoned-attempt recovery; all four Rust gates pass | Durable Stop/Resume, liveness reconciliation and explicit budget outcomes |
 | One-click agentic Overview journey | Not connected end to end; strict desktop run parser does not yet accept the new Agent execution states/record | Update parser and lifecycle handling, then wire the same coordinator, model/report links and iteration activity |
 
 ### Bounded CLI loop checkpoint
@@ -121,8 +121,10 @@ all 14 managed benchmark CLI tests, including the added parent-completion
 interruption case: retry saves the parent completion without repeating completed
 Agent, generation, training or evaluation work. UI typecheck, all 125 UI tests,
 nine native-clearance Python tests and rendered Overview fixture checks pass.
-The full Rust process has not yet been confirmed terminal; do not claim all
-gates passed for this working-tree component until its exit result is recorded.
+The final unchanged-tree process exited successfully: `cargo fmt-check`,
+`cargo check-all`, `cargo lint` and `cargo test-all` all pass. This verifies
+execution attempts and adaptive completion, not the outstanding Stop/Resume
+or desktop connection.
 
 This component does not yet implement durable resumable Stop/Resume or active
 child cancellation. An unclosed attempt is reconciled after exclusive lease

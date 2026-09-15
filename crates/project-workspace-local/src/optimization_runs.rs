@@ -114,7 +114,27 @@ pub async fn list(folder: &Path) -> Result<Vec<ProjectOptimizationRunView>> {
     let launches = optimization_launch::list(folder).await?;
     let setups = optimization_setup::list(folder).await?;
     let mut database = connect(Path::new(&workspace.folder), true, false).await?;
-    let runs = load(&mut database, workspace.manifest.id, &launches, &setups).await?;
+    let mut runs = load(&mut database, workspace.manifest.id, &launches, &setups).await?;
+    for view in &mut runs {
+        let launch = launches
+            .iter()
+            .find(|l| l.id.to_string() == view.run.launch.id)
+            .context("Launch missing")?;
+        if launch.scope.agentic.is_none() {
+            continue;
+        }
+        let setup = setups
+            .iter()
+            .find(|s| s.id.to_string() == view.run.setup.id)
+            .context("Setup missing")?;
+        let benchmark = workspace
+            .benchmark_versions
+            .iter()
+            .find(|b| b.id.to_string() == setup.inputs.benchmark.id)
+            .context("Benchmark missing")?;
+        crate::optimization_execution::project(&mut database, view, launch, setup, benchmark)
+            .await?;
+    }
     database.close().await?;
     Ok(runs)
 }
@@ -183,6 +203,14 @@ pub async fn cancel(folder: &Path, run_id: Uuid) -> Result<ProjectOptimizationRu
     ensure!(
         !view.state.is_terminal(),
         "A completed optimization run cannot be cancelled."
+    );
+    let execution = crate::optimization_execution::read(&mut transaction, run_id).await?;
+    ensure!(
+        execution.last().is_none_or(|event| !matches!(
+            event.change,
+            project_workspace_core::optimization_execution::AgentExecutionChange::Completed { .. }
+        )),
+        "A completed Agent run cannot be cancelled."
     );
     let previous = last_event(&mut transaction, run_id).await?;
     let event = ProjectOptimizationEvent::cancelled(

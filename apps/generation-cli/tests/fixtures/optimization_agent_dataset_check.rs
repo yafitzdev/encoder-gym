@@ -388,6 +388,12 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         .unwrap();
         sqlx::query("CREATE TRIGGER interrupt_loop_completion BEFORE INSERT ON optimization_iteration_completions BEGIN SELECT RAISE(ABORT, 'injected loop completion interruption'); END")
             .execute(&mut db).await.unwrap();
+        if loop_mode == Some("two_iterations") {
+            // The real CLI exits without closing its execution attempt. Its
+            // successor must acquire the lease before recording interruption.
+            sqlx::query("CREATE TRIGGER interrupt_execution_failure BEFORE INSERT ON optimization_agent_execution_events WHEN NEW.kind='failed' BEGIN SELECT RAISE(ABORT, 'injected execution failure interruption'); END")
+                .execute(&mut db).await.unwrap();
+        }
         let interrupted = invoke_iteration();
         assert!(!interrupted.status.success());
         assert!(
@@ -404,7 +410,55 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
                 3
             }
         );
+        let failed = optimization_runs::show(&folder, reserved.id).await.unwrap();
+        let expected = if loop_mode == Some("two_iterations") {
+            project_workspace_core::ProjectOptimizationRunState::AgentRunning
+        } else {
+            project_workspace_core::ProjectOptimizationRunState::AgentFailed
+        };
+        assert_eq!(failed.state, expected);
+        assert_eq!(failed.agent_execution.as_ref().unwrap().attempts, 1);
+        if loop_mode == Some("two_iterations") {
+            sqlx::query("DROP TRIGGER interrupt_execution_failure")
+                .execute(&mut db)
+                .await
+                .unwrap();
+        }
         sqlx::query("DROP TRIGGER interrupt_loop_completion")
+            .execute(&mut db)
+            .await
+            .unwrap();
+        db.close().await.unwrap();
+    }
+    if loop_mode == Some("no_change_first") {
+        let mut db = SqliteConnection::connect(&format!(
+            "sqlite://{}",
+            folder.join("project.sqlite").display()
+        ))
+        .await
+        .unwrap();
+        sqlx::query("CREATE TRIGGER interrupt_execution_completion BEFORE INSERT ON optimization_agent_execution_events WHEN NEW.kind='completed' BEGIN SELECT RAISE(ABORT, 'injected root completion interruption'); END")
+            .execute(&mut db).await.unwrap();
+        let interrupted = invoke_iteration();
+        assert!(!interrupted.status.success());
+        assert!(
+            String::from_utf8_lossy(&interrupted.stderr)
+                .contains("injected root completion interruption")
+        );
+        let pending = optimization_runs::show(&folder, reserved.id).await.unwrap();
+        assert_eq!(
+            pending.state,
+            project_workspace_core::ProjectOptimizationRunState::AgentRunning
+        );
+        assert_eq!(pending.agent_execution.as_ref().unwrap().attempts, 2);
+        assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 2);
+        let completions =
+            project_workspace_local::optimization_completions::list(&folder, reserved.id)
+                .await
+                .unwrap();
+        assert_eq!(completions.len(), 1);
+        assert!(completions[0].end.is_some());
+        sqlx::query("DROP TRIGGER interrupt_execution_completion")
             .execute(&mut db)
             .await
             .unwrap();

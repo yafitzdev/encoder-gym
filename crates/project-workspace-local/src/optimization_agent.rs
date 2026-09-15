@@ -226,9 +226,11 @@ impl OptimizationAgentStore for ProjectAgentStore {
                 return Err(adapter("Agent stop query belongs to another run"));
             }
             let mut database = connect(&self.folder, true, false).await.map_err(adapter)?;
-            let kind: Option<String> = sqlx::query_scalar("SELECT kind FROM project_optimization_events WHERE run_id=? ORDER BY sequence DESC LIMIT 1").bind(run_id.to_string()).fetch_optional(&mut database).await.map_err(adapter)?;
+            let stopped = crate::optimization_execution::dispatch_stopped(&mut database, run_id)
+                .await
+                .map_err(adapter)?;
             database.close().await.map_err(adapter)?;
-            Ok(kind.as_deref() == Some("cancelled"))
+            Ok(stopped)
         })
     }
 
@@ -286,10 +288,9 @@ async fn reserve(
     limits: &ProviderLimits,
 ) -> Result<()> {
     scope.validate()?;
-    let latest: Option<String> = sqlx::query_scalar("SELECT kind FROM project_optimization_events WHERE run_id=? ORDER BY sequence DESC LIMIT 1").bind(scope.run_id.to_string()).fetch_optional(&mut *database).await?;
     ensure!(
-        latest.as_deref() != Some("cancelled"),
-        "The optimization run was cancelled before Agent dispatch"
+        !crate::optimization_execution::dispatch_stopped(database, scope.run_id).await?,
+        "The optimization run was cancelled or its execution attempt is closed before Agent dispatch"
     );
     ensure!(
         call.scope_fingerprint == scope.fingerprint()?

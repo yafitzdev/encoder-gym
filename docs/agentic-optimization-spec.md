@@ -97,10 +97,23 @@ process tests cover changed second-iteration evidence and proposals, selection
 of an earlier better dataset, first/later no-change, row-limit termination, and
 interruption after scientific completion but before the completion record.
 Retry reuses provider work, datasets, models and reports; re-fingerprinted
-completion substitutions are rejected. This does not yet establish a complete
-root-run lifecycle, recovery at every interruption boundary, separately
-authorized final holdout, or the production Overview coordinator. The existing
-fixed-recipe root state is not the adaptive loop's completion status.
+completion substitutions are rejected. This does not yet establish recovery at
+every interruption boundary, separately authorized final holdout, or the
+production Overview coordinator.
+
+The same CLI coordinator now journals root execution attempts before input
+preparation, recording failure, interruption and exact adaptive completion.
+Normal run show/list returns a separate `agentExecution` view and Agent-specific
+root states without rewriting fixed-recipe history. Completion references the
+verified last iteration and never implies promotion or final-holdout success.
+A successor can mark an abandoned attempt interrupted only after acquiring the
+exclusive PID/start-time-verified execution lease. Completed retries revalidate
+scientific evidence without adding attempts or repeating completed work.
+The process fixtures exercise failure before iteration completion, failure while
+recording that error, and interruption before parent completion. This recorded
+attempt status is not independently a live-process probe. Durable resumable
+Stop/Resume, proactive dead-worker reconciliation, detailed budget-stop reasons
+and active-child cancellation remain required; permanent Cancel is unchanged.
 
 Agent and Generation activities are now projected from their own persisted
 actions into the existing activity stream, rather than requiring desktop

@@ -33,6 +33,23 @@ struct ContextBinding {
     benchmark: ProjectBenchmarkVersion,
 }
 
+pub(crate) async fn validate_for_view(
+    db: &mut SqliteConnection,
+    run: &ProjectOptimizationRunView,
+    launch: &OptimizationLaunchAuthorization,
+    setup: &OptimizationSetup,
+    benchmark: &ProjectBenchmarkVersion,
+) -> Result<()> {
+    let context = ContextBinding {
+        run: run.clone(),
+        launch: launch.clone(),
+        setup: setup.clone(),
+        benchmark: benchmark.clone(),
+    };
+    let iterations = read(db, run.run.id).await?;
+    context.validate_ordered(db, &iterations).await
+}
+
 impl ContextBinding {
     async fn load(folder: &Path, run_id: Uuid) -> Result<Self> {
         let run = optimization_runs::show(folder, run_id).await?;

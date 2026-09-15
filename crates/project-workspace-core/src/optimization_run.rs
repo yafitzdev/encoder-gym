@@ -1488,6 +1488,10 @@ pub enum ProjectOptimizationRunState {
     CandidateRejected,
     FinalEvaluationFailed,
     Cancelled,
+    AgentRunning,
+    AgentInterrupted,
+    AgentFailed,
+    AgentCompleted,
 }
 
 impl ProjectOptimizationRunState {
@@ -1568,6 +1572,7 @@ impl ProjectOptimizationRunState {
                 | Self::CandidateAccepted
                 | Self::CandidateRejected
                 | Self::Cancelled
+                | Self::AgentCompleted
         )
     }
 }
@@ -1576,6 +1581,8 @@ impl ProjectOptimizationRunState {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProjectOptimizationRunView {
     pub run: ProjectOptimizationRun,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_execution: Option<crate::optimization_execution::AgentExecutionView>,
     pub state: ProjectOptimizationRunState,
     pub attempt: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1852,6 +1859,7 @@ pub fn replay_project_optimization(
     }
     Ok(ProjectOptimizationRunView {
         run: run.clone(),
+        agent_execution: None,
         state,
         attempt,
         preparation,

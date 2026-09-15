@@ -285,8 +285,7 @@ impl OptimizationGenerationStore for ProjectGenerationStore {
 }
 
 async fn is_stopped(database: &mut SqliteConnection, run: Uuid) -> Result<bool> {
-    let latest:Option<String>=sqlx::query_scalar("SELECT kind FROM project_optimization_events WHERE run_id=? ORDER BY sequence DESC LIMIT 1").bind(run.to_string()).fetch_optional(database).await?;
-    Ok(latest.as_deref() == Some("cancelled"))
+    crate::optimization_execution::dispatch_stopped(database, run).await
 }
 
 async fn reserve(

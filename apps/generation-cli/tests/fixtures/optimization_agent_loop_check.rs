@@ -11,6 +11,66 @@ pub(super) async fn assert_loop(
     first: &Value,
     execute: impl Fn() -> Value,
 ) {
+    let view = optimization_runs::show(folder, run_id).await.unwrap();
+    assert_eq!(
+        view.state,
+        project_workspace_core::ProjectOptimizationRunState::AgentCompleted
+    );
+    assert!(view.state.is_terminal());
+    let execution = view.agent_execution.as_ref().unwrap();
+    assert_eq!(
+        execution.attempts,
+        if mode == "no_change_first" { 3 } else { 2 }
+    );
+    let terminal: project_workspace_core::optimization_loop::IterationCompletion =
+        serde_json::from_value(first["completion"].clone()).unwrap();
+    assert_eq!(execution.completion, Some(terminal.identity()));
+    assert!(optimization_runs::cancel(folder, run_id).await.is_err());
+    let mut execution_db = SqliteConnection::connect(&format!(
+        "sqlite://{}",
+        folder.join("project.sqlite").display()
+    ))
+    .await
+    .unwrap();
+    let kinds: Vec<String> = sqlx::query_scalar(
+        "SELECT kind FROM optimization_agent_execution_events WHERE run_id=? ORDER BY sequence",
+    )
+    .bind(run_id.to_string())
+    .fetch_all(&mut execution_db)
+    .await
+    .unwrap();
+    let expected = if mode == "no_change_first" {
+        vec![
+            "started",
+            "failed",
+            "started",
+            "interrupted",
+            "started",
+            "completed",
+        ]
+    } else {
+        vec![
+            "started",
+            if mode == "two_iterations" {
+                "interrupted"
+            } else {
+                "failed"
+            },
+            "started",
+            "completed",
+        ]
+    };
+    assert_eq!(kinds, expected);
+    assert!(
+        sqlx::query("UPDATE optimization_agent_execution_events SET kind='started' WHERE run_id=?")
+            .bind(run_id.to_string())
+            .execute(&mut execution_db)
+            .await
+            .is_err()
+    );
+    execution_db.close().await.unwrap();
+    assert_eq!(execute(), *first);
+    assert_eq!(optimization_runs::show(folder, run_id).await.unwrap(), view);
     let expected_end = match mode {
         "no_change" | "eligible" | "no_change_first" => "no_change",
         "row_limit" => "row_change_limit",
@@ -271,6 +331,7 @@ pub(super) async fn assert_loop(
             .await
             .is_err()
     );
+    assert!(optimization_runs::show(folder, run_id).await.is_err());
     let rejected = Command::new(env!("CARGO_BIN_EXE_synth"))
         .current_dir(root)
         .args([

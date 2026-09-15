@@ -176,6 +176,14 @@ rejection of a re-fingerprinted completion. Native fixture counters prove that
 retry does not repeat training, evaluation or provider calls. No production
 fake switch, live provider, GPU or real Nomos workspace is used.
 
+Agent root execution tests additionally verify failed attempts, recovery of an
+attempt whose worker exited before recording failure, and replay after iteration
+completion but before parent completion. Completed retries preserve the parent
+history as well as provider/model/dataset identities. Root projection rejects
+tampered completion lineage, and terminal Agent runs cannot be cancelled or
+restarted. These checks do not yet prove fine-grained Stop/Resume or live-worker
+status reconciliation.
+
 The runner's `development_only_iteration_cannot_authorize_or_execute_holdout`
 regression separately proves zero-allowance adaptive protocols cannot acquire
 sealed authorization even when a candidate passes development.
