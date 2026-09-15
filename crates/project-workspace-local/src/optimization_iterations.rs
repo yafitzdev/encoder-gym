@@ -12,12 +12,19 @@ use encoder_experiment_core::{
 use project_workspace_core::{
     OptimizationLaunchAuthorization, OptimizationSetup, ProjectBenchmarkVersion,
     ProjectOptimizationRunView,
-    optimization_iteration::{IterationDevelopmentEvidence, ProjectOptimizationIteration},
+    optimization_iteration::{
+        IterationContinuation, IterationDevelopmentEvidence, ProjectOptimizationIteration,
+    },
+    optimization_iteration_execution::{IterationDevelopmentResult, IterationTrainingBinding},
 };
 use sqlx::{Connection, Row, SqliteConnection};
 use uuid::Uuid;
 
-use crate::{connect, open_workspace, optimization_launch, optimization_runs, optimization_setup};
+use crate::{
+    connect, open_workspace, optimization_completions,
+    optimization_iteration_execution as execution, optimization_launch, optimization_runs,
+    optimization_setup,
+};
 
 struct ContextBinding {
     run: ProjectOptimizationRunView,
@@ -63,6 +70,126 @@ impl ContextBinding {
         iteration.validate_benchmark(&self.benchmark)?;
         Ok(())
     }
+
+    async fn validate_ordered(
+        &self,
+        db: &mut SqliteConnection,
+        rows: &[ProjectOptimizationIteration],
+    ) -> Result<()> {
+        let completions = optimization_completions::read(db, self.run.run.id).await?;
+        for (index, iteration) in rows.iter().enumerate() {
+            ensure!(
+                iteration.scope.iteration as usize == index + 1,
+                "Iteration history is not contiguous"
+            );
+            if index == 0 {
+                self.validate(iteration)?;
+                continue;
+            }
+            let previous = &rows[index - 1];
+            let completion = completions
+                .get(index - 1)
+                .context("Previous iteration is not completed")?;
+            let training: IterationTrainingBinding =
+                execution::read(db, "optimization_iteration_training", previous.id)
+                    .await?
+                    .context("Previous training is missing")?;
+            let result: IterationDevelopmentResult =
+                execution::read(db, "optimization_iteration_results", previous.id)
+                    .await?
+                    .context("Previous result is missing")?;
+            iteration.validate_next(
+                &self.run.run,
+                &self.launch,
+                &self.setup,
+                self.run
+                    .preparation
+                    .as_ref()
+                    .context("Run preparation is missing")?,
+                IterationContinuation {
+                    previous,
+                    completion,
+                    training: &training,
+                    result: &result,
+                },
+            )?;
+            iteration.validate_benchmark(&self.benchmark)?;
+        }
+        optimization_completions::validate_records(db, rows, &self.launch, &completions).await?;
+        Ok(())
+    }
+}
+
+/// The caller supplies source journals from the pinned scientific store. Replay
+/// verifies the previous selection before it can become new Agent authority.
+pub async fn begin_next(
+    folder: &Path,
+    run_id: Uuid,
+    scientific: &[optimization_completions::IterationScientificEvidence],
+) -> Result<ProjectOptimizationIteration> {
+    let context = ContextBinding::load(folder, run_id).await?;
+    ensure!(
+        !context.run.state.is_terminal(),
+        "Run ended before the next iteration"
+    );
+    let completed = optimization_completions::list(folder, run_id).await?;
+    let last = completed
+        .last()
+        .context("Complete the first iteration before advancing")?;
+    let verified =
+        optimization_completions::finish(folder, run_id, last.number, scientific).await?;
+    ensure!(verified.end.is_none(), "The Agent loop has finished");
+    let mut db = connect(folder, false, false).await?;
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    let head: String = sqlx::query_scalar("SELECT fingerprint FROM project_optimization_events WHERE run_id=? ORDER BY sequence DESC LIMIT 1")
+        .bind(run_id.to_string()).fetch_one(&mut *tx).await?;
+    ensure!(
+        head == context.run.head_fingerprint
+            && optimization_completions::read(&mut tx, run_id).await? == completed,
+        "Run changed before next iteration reservation"
+    );
+    let rows = read(&mut tx, run_id).await?;
+    context.validate_ordered(&mut tx, &rows).await?;
+    ensure!(
+        rows.len() == last.number as usize || rows.len() == last.number as usize + 1,
+        "Iteration history does not follow completion"
+    );
+    let previous = &rows[last.number as usize - 1];
+    let training: IterationTrainingBinding =
+        execution::read(&mut tx, "optimization_iteration_training", previous.id)
+            .await?
+            .context("Previous training missing")?;
+    let result: IterationDevelopmentResult =
+        execution::read(&mut tx, "optimization_iteration_results", previous.id)
+            .await?
+            .context("Previous result missing")?;
+    let existing = rows.get(last.number as usize);
+    let value = ProjectOptimizationIteration::next(
+        &context.run.run,
+        &context.launch,
+        &context.setup,
+        context
+            .run
+            .preparation
+            .as_ref()
+            .context("Preparation missing")?,
+        IterationContinuation {
+            previous,
+            completion: &verified,
+            training: &training,
+            result: &result,
+        },
+        existing.map_or_else(Utc::now, |value| value.created_at),
+    )?;
+    value.validate_benchmark(&context.benchmark)?;
+    if let Some(existing) = existing {
+        ensure!(*existing == value, "Next iteration inputs changed");
+    } else {
+        insert(&mut tx, &value).await?;
+    }
+    tx.commit().await?;
+    db.close().await?;
+    Ok(value)
 }
 
 /// The native adapter must have normalized `definition` from `project`; the
@@ -131,10 +258,8 @@ pub async fn list(folder: &Path, run_id: Uuid) -> Result<Vec<ProjectOptimization
     let context = ContextBinding::load(folder, run_id).await?;
     let mut database = connect(folder, true, false).await?;
     let rows = read(&mut database, run_id).await?;
+    context.validate_ordered(&mut database, &rows).await?;
     database.close().await?;
-    for iteration in &rows {
-        context.validate(iteration)?;
-    }
     Ok(rows)
 }
 

@@ -167,6 +167,15 @@ it is test-only and cannot prove live model quality. Run this integration with:
 cargo test -p synthetic-data-cli --features test-fixtures --test managed_benchmark_cli
 ```
 
+The same suite now tests `drive-agent` across two actual composed iterations.
+The deterministic sidecar requires the previous candidate's changed failure
+sample and metrics, then makes a different edit. Other cases cover first/later
+no-change, cumulative row limits, retaining an earlier better dataset while
+inspecting the latest result, completion-write interruption and reuse, and
+rejection of a re-fingerprinted completion. Native fixture counters prove that
+retry does not repeat training, evaluation or provider calls. No production
+fake switch, live provider, GPU or real Nomos workspace is used.
+
 The runner's `development_only_iteration_cannot_authorize_or_execute_holdout`
 regression separately proves zero-allowance adaptive protocols cannot acquire
 sealed authorization even when a candidate passes development.

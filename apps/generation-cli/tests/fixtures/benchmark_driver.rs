@@ -118,7 +118,8 @@ fn native_clearance(arguments: &[String]) -> Result<()> {
             "protocol":request["protocol"], "requestFingerprint":request["fingerprint"],
             "trainingRows":request["rows"], "benchmarkRows":3,
             "invalidRows":0, "duplicateRows":0, "overlapRows":0,
-            "missingGroupRows":5, "missingLineageRows":5,
+            "missingGroupRows":request["rows"].as_u64().unwrap() + 3,
+            "missingLineageRows":request["rows"].as_u64().unwrap() + 3,
         }),
     )
 }
@@ -169,6 +170,16 @@ fn native_evaluation(arguments: &[String]) -> Result<()> {
             let output = PathBuf::from(argument(arguments, "--output")?);
             let mrr = if input.contains("holdout") {
                 99_999.125
+            } else if PathBuf::from("runs/fixture-eligible-candidates").exists() {
+                let manifest: serde_json::Value = serde_json::from_slice(&fs::read(
+                    PathBuf::from(argument(arguments, "--model")?)
+                        .join("nomos_training_manifest.json"),
+                )?)?;
+                if manifest["unique_trainable_rows"] == 2 {
+                    0.95
+                } else {
+                    0.76
+                }
             } else if input.contains("regression") {
                 0.72
             } else {
@@ -177,6 +188,7 @@ fn native_evaluation(arguments: &[String]) -> Result<()> {
             write_json(
                 &output,
                 &serde_json::json!({
+                    "model":argument(arguments,"--model")?,
                     "inputs":{input:{"metrics":{
                         "states":11,
                         "recall_at_1":0.5,
@@ -184,7 +196,7 @@ fn native_evaluation(arguments: &[String]) -> Result<()> {
                         "recall_at_3":0.8,
                         "mrr":mrr,
                         "mean_positive_margin":0.2
-                    }}}
+                    }, "disagreements":[{"decision_state_id":"candidate-failure", "question":"Retain useful coverage after candidate regression", "task_kind":"route", "expected_rank":3}]}}
                 }),
             )?;
         }

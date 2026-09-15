@@ -13,6 +13,8 @@ use project_workspace_local::{
 };
 use sqlx::{Connection, SqliteConnection};
 use std::io::{Read, Write};
+#[path = "optimization_agent_loop_check.rs"]
+mod loop_check;
 
 fn native_row(id: &str, question: &str) -> Value {
     let tool = |id| json!({"tool_id":id,"tool_family":"search","description":"Find evidence","capabilities":["search"],"input_modalities":["text"],"output_modalities":["text"],"evidence_roles":["primary"],"side_effect_class":"none","argument_schema":{}});
@@ -21,15 +23,40 @@ fn native_row(id: &str, question: &str) -> Value {
 
 #[tokio::test]
 async fn cli_agent_inspects_generates_qualifies_and_replays_exact_dataset_without_training() {
-    scenario(false).await;
+    scenario(false, None).await;
 }
 
 #[tokio::test]
 async fn cli_agent_edits_qualified_data_trains_exact_sample_evaluates_and_replays() {
-    scenario(true).await;
+    scenario(true, None).await;
 }
 
-async fn scenario(complete: bool) {
+#[tokio::test]
+async fn cli_agent_loop_uses_previous_result_and_recovers_completion_without_repeating_work() {
+    scenario(true, Some("two_iterations")).await;
+}
+
+#[tokio::test]
+async fn cli_agent_loop_no_change_ends_without_another_training_or_generation() {
+    scenario(true, Some("no_change")).await;
+}
+
+#[tokio::test]
+async fn cli_agent_loop_stops_at_cumulative_row_budget_before_another_call() {
+    scenario(true, Some("row_limit")).await;
+}
+
+#[tokio::test]
+async fn cli_agent_loop_keeps_best_eligible_dataset_but_inspects_latest_result() {
+    scenario(true, Some("eligible")).await;
+}
+
+#[tokio::test]
+async fn cli_agent_loop_can_finish_first_analysis_without_edits_or_training() {
+    scenario(true, Some("no_change_first")).await;
+}
+
+async fn scenario(complete: bool, loop_mode: Option<&str>) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let (folder, project) = initial_benchmark_fixture(
@@ -65,10 +92,19 @@ async fn scenario(complete: bool) {
             .join(format!("{}.json", report.suite_key));
         let mut saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         saved["model"] = report.model.key.clone().into();
-        saved["inputs"][suite["path"].as_str().unwrap()]["disagreements"] = json!([{
-            "decision_state_id":"dev-failure", "question":"Search for an exact reference", "task_kind":"route", "expected_rank":2,
-            "expected_capabilities":["search"], "predicted_capabilities":["write"]}]);
+        let count = if loop_mode == Some("eligible") { 50 } else { 1 };
+        saved["inputs"][suite["path"].as_str().unwrap()]["disagreements"] = json!((0..count).map(|index| json!({
+            "decision_state_id":format!("dev-failure-{index}"), "question":"Search for an exact reference", "task_kind":"route", "expected_rank":2,
+            "expected_capabilities":["search"], "predicted_capabilities":["write"]})).collect::<Vec<_>>());
         fs::write(path, serde_json::to_vec(&saved).unwrap()).unwrap();
+    }
+    if loop_mode == Some("eligible") {
+        // Only the test-native executable interprets this fixture setting.
+        fs::write(
+            root.join("runtime/runs/fixture-eligible-candidates"),
+            "two candidates",
+        )
+        .unwrap();
     }
     let source = root.join("selected.jsonl");
     fs::write(
@@ -103,7 +139,7 @@ async fn scenario(complete: bool) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
-    let generator = std::thread::spawn(move || {
+    let generator = (loop_mode != Some("no_change_first")).then(|| std::thread::spawn(move || {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
         let mut stream = loop {
             match listener.accept() {
@@ -148,7 +184,7 @@ async fn scenario(complete: bool) {
         let body = json!({"choices":[{"message":{"content":"{\"rows\":[{\"question\":\"Search the exact technical reference\"}]}"}}],"usage":{"prompt_tokens":120,"completion_tokens":40,"total_tokens":160}}).to_string();
         write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
         request
-    });
+    }));
     let provider = |role, model: &str| ProviderConfiguration {
         role,
         kind: ProviderKind::OpenaiCompatible,
@@ -199,8 +235,17 @@ async fn scenario(complete: bool) {
     .await
     .unwrap();
     let mut settings = OptimizationAgentSettings::quick_test();
+    if let Some(mode) = loop_mode {
+        settings = OptimizationAgentSettings::default();
+        settings.maximum_iterations = if mode == "two_iterations" { 2 } else { 3 };
+        settings.maximum_row_changes = if mode == "row_limit" { 2 } else { 8 };
+        settings.training.maximum_seconds_per_iteration = 120;
+    }
     settings.training.device = project_workspace_core::OptimizationDevice::Cpu;
     settings.training.maximum_training_rows = Some(1);
+    if loop_mode == Some("eligible") {
+        settings.training.maximum_training_rows = None;
+    }
     let scope = optimization_launch::preview_agentic(&folder, setup.id, settings)
         .await
         .unwrap()
@@ -260,13 +305,16 @@ async fn scenario(complete: bool) {
         Command::new(env!("CARGO_BIN_EXE_synth"))
             .current_dir(root)
             .env("AGENT_FIXTURE_CALLS", &calls)
+            .env("AGENT_FIXTURE_LOOP", loop_mode.unwrap_or(""))
             .args([
                 "--output",
                 "json",
                 "workspace",
                 "optimization-run",
                 "project",
-                if complete {
+                if loop_mode.is_some() {
+                    "drive-agent"
+                } else if complete {
                     "complete-iteration"
                 } else {
                     "prepare-candidate"
@@ -288,7 +336,7 @@ async fn scenario(complete: bool) {
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
     let before_native = fs::read(root.join("runtime/native-invocations.log")).unwrap();
-    if complete {
+    if complete && loop_mode.is_none() {
         let mut db = SqliteConnection::connect(&format!(
             "sqlite://{}",
             folder.join("project.sqlite").display()
@@ -331,8 +379,51 @@ async fn scenario(complete: bool) {
             .unwrap();
         db.close().await.unwrap();
     }
+    if loop_mode.is_some() {
+        let mut db = SqliteConnection::connect(&format!(
+            "sqlite://{}",
+            folder.join("project.sqlite").display()
+        ))
+        .await
+        .unwrap();
+        sqlx::query("CREATE TRIGGER interrupt_loop_completion BEFORE INSERT ON optimization_iteration_completions BEGIN SELECT RAISE(ABORT, 'injected loop completion interruption'); END")
+            .execute(&mut db).await.unwrap();
+        let interrupted = invoke_iteration();
+        assert!(!interrupted.status.success());
+        assert!(
+            String::from_utf8_lossy(&interrupted.stderr)
+                .contains("injected loop completion interruption"),
+            "{}",
+            String::from_utf8_lossy(&interrupted.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(&calls).unwrap().lines().count(),
+            if loop_mode == Some("no_change_first") {
+                2
+            } else {
+                3
+            }
+        );
+        sqlx::query("DROP TRIGGER interrupt_loop_completion")
+            .execute(&mut db)
+            .await
+            .unwrap();
+        db.close().await.unwrap();
+    }
     let first = execute();
-    generator.join().unwrap();
+    if let Some(generator) = generator {
+        generator.join().unwrap();
+    }
+    if let Some(mode) = loop_mode {
+        loop_check::assert_loop(root, &folder, reserved.id, mode, &first, execute).await;
+        assert_eq!(
+            dataset_versions::inspect(&folder, dataset.id)
+                .await
+                .unwrap(),
+            dataset
+        );
+        return;
+    }
     assert_eq!(
         first["datasetStep"]["qualification"]["clearance"]["trainingRows"],
         2
@@ -616,7 +707,7 @@ async fn assert_iteration_projection(
         results.include_agent_iteration(catalog, BenchmarkRunEvidence {
             binding, project:&project, protocol:&protocol, definition:&definition, events:&events,
         }, IterationResultLineage {
-            run:&view.run, launch, setup, preparation, iteration, training:candidate_training, runtime_project:&runtime_project,
+            run:&view.run, launch, setup, preparation, iteration, training:candidate_training, runtime_project:&runtime_project, predecessors:&[],
         })
     };
     let mut results = ProjectBenchmarkResults::new(benchmark.clone(), catalog).unwrap();

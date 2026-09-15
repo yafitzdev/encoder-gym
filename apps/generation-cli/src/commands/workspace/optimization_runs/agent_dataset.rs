@@ -2,10 +2,12 @@
 //! immutable dataset. The returned version is NOT permission to train: complete
 //! task-owned benchmark isolation must still precede the training handoff.
 mod inspection;
+mod iteration_loop;
 mod providers;
 mod qualification;
 mod registration;
 mod training;
+pub(super) use iteration_loop::execute as drive_loop;
 
 use std::{collections::BTreeSet, path::Path, sync::Arc};
 
@@ -18,6 +20,7 @@ use encoder_optimization_core::{
 use encoder_optimization_runner::{OptimizationAgent, generation::OptimizationGenerator};
 use project_workspace_core::{
     ActivityEventState, ActivityFailure, ActivityReference, ActivitySource,
+    optimization_iteration::ProjectOptimizationIteration,
 };
 use project_workspace_local::{
     AppendActivity, append_activity, initialize_activity, optimization_agent::ProjectAgentStore,
@@ -79,6 +82,26 @@ async fn execute_step(
         &database_url,
         run_id,
     )?;
+    if optimization_runs::show(folder, run_id)
+        .await?
+        .preparation
+        .is_none()
+    {
+        super::prepare_inputs(folder, run_id).await?;
+    }
+    let iteration = super::iteration_inputs::bind_inputs(folder, run_id).await?;
+    let (action_id, result) = run_step(folder, &iteration, runtime, qualify, train).await?;
+    super::super::print(&serde_json::json!({"actionId": action_id, "datasetStep": result}))
+}
+
+async fn run_step(
+    folder: &Path,
+    iteration: &ProjectOptimizationIteration,
+    runtime: crate::cli::ResearchRuntimeArgs,
+    qualify: bool,
+    train: bool,
+) -> Result<(Uuid, DatasetStepResult)> {
+    let run_id = iteration.scope.run_id;
     initialize_activity(folder).await?;
     let action_id = Uuid::new_v4();
     let event = |state, failure| AppendActivity {
@@ -92,21 +115,15 @@ async fn execute_step(
         narrative: None,
         references: vec![
             ActivityReference::new("run", run_id.to_string()).expect("UUID"),
-            ActivityReference::new("iteration", "1").expect("iteration"),
+            ActivityReference::new("iteration", iteration.scope.iteration.to_string())
+                .expect("iteration"),
         ],
         failure,
         created_at: Utc::now(),
     };
     append_activity(folder, event(ActivityEventState::Started, None)).await?;
     let result: Result<_> = async {
-        if optimization_runs::show(folder, run_id)
-            .await?
-            .preparation
-            .is_none()
-        {
-            super::prepare_inputs(folder, run_id).await?;
-        }
-        let mut result = drive(folder, run_id, action_id, runtime).await?;
+        let mut result = drive(folder, iteration, action_id, runtime).await?;
         if qualify {
             if let Some(publication) = &result.publication {
                 result.qualification =
@@ -163,15 +180,16 @@ async fn execute_step(
         }
     }
     append_activity(folder, terminal).await?;
-    super::super::print(&serde_json::json!({"actionId": action_id, "datasetStep": result?}))
+    Ok((action_id, result?))
 }
 
 async fn drive(
     folder: &Path,
-    run_id: Uuid,
+    iteration: &ProjectOptimizationIteration,
     action_id: Uuid,
     runtime: crate::cli::ResearchRuntimeArgs,
 ) -> Result<DatasetStepResult> {
+    let run_id = iteration.scope.run_id;
     let run = optimization_runs::show(folder, run_id).await?;
     ensure!(
         !run.state.is_terminal() && run.materialization.is_none() && run.experiment.is_none(),
@@ -190,8 +208,7 @@ async fn drive(
         .agentic
         .as_ref()
         .context("Run has no Agent execution authorization")?;
-    let iteration = super::iteration_inputs::bind_inputs(folder, run_id).await?;
-    let inspection = Arc::new(inspection::IterationInspection::load(folder, &iteration).await?);
+    let inspection = Arc::new(inspection::IterationInspection::load(folder, iteration).await?);
     let agent_store = Arc::new(ProjectAgentStore::open(folder, run_id, action_id).await?);
     let generation_store = Arc::new(
         ProjectGenerationStore::open(folder, run_id)

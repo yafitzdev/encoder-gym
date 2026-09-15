@@ -7,11 +7,10 @@ Optimize. The agent uses development evidence to decide which training rows to
 remove and which gaps to fill, requests generation, trains a candidate, evaluates
 it, and uses that result to decide the next bounded iteration.
 
-The working-tree production CLI now supports bounded iterations driven by
-previous results, with durable no-change outcomes and completion-write recovery.
-This implementation is not yet a committed, fully verified release. First
-confirm its final validation results and commit that coherent component. Then
-finish the root-run lifecycle and interruption recovery, followed by one-click
+The production CLI now supports bounded iterations driven by previous results,
+with durable no-change outcomes and completion-write recovery. All four Rust
+gates passed for this component. Finish the root-run lifecycle and interruption
+recovery, followed by one-click
 Overview integration using this same engine. More settings, system
 narration, documentation, or UI mockups alone do not complete this goal.
 Preserve the approved GUI rather than redesigning it.
@@ -44,7 +43,7 @@ verify the connected engine before asking the user to try another real run.
 | Agent → generation → dataset publication → native clearance | Committed in `18fc85b`; deterministic production-CLI tests | Preserve and reuse this path |
 | One Agent-directed cycle through training and development evaluation | Committed in `a8bb5c4`; complete-cycle/recovery tests and required Rust gates passed at that checkpoint | Root-run completion and production desktop integration |
 | Candidate registration, exact training-dataset links and benchmark report lookup | Committed in `6d90ead`; focused cycle, lineage and recovery regressions pass | Production Overview/viewer interactions and later-iteration associations |
-| Repeated iterations, best-dataset selection and no-change | Uncommitted `drive-agent` implementation; 14 managed benchmark CLI tests pass, including seven Agent-path tests | Confirm final workspace gates and commit; then root-run lifecycle, final selection handoff and complete interruption recovery |
+| Repeated iterations, best-dataset selection and no-change | `drive-agent`; all four Rust gates and 14 managed benchmark CLI tests pass, including seven Agent-path tests | Root-run lifecycle, final selection handoff and complete interruption recovery |
 | One-click agentic Overview journey | Not connected end to end | Wire the same coordinator, model/report links and iteration activity |
 
 ### Bounded CLI loop checkpoint
@@ -71,11 +70,11 @@ failure samples.
 
 UI typecheck, 125 UI tests, nine native-clearance Python tests and rendered
 Overview fixture checks passed during this checkpoint. The rendered checks are
-not connected Agent-loop acceptance tests. The terminal result of the final
-four Rust gates is not yet confirmed. An earlier full test run overlapped an
-executable fixture edit and failed; it cannot certify the final tree. Recover
-the existing validation process/result before starting another build, and do
-not infer a pass from earlier commits or a missing tool response.
+not connected Agent-loop acceptance tests. The final unchanged-tree validation
+process was recovered and exited successfully: `cargo fmt-check`,
+`cargo check-all`, `cargo lint` and `cargo test-all` all passed. This supersedes
+the earlier run that overlapped an executable fixture edit; it does not prove
+the remaining root lifecycle, complete recovery or desktop integration.
 
 The next implementation work is root-run lifecycle, budget/stop outcomes and
 recovery at every boundary, then production Overview integration. The root's
@@ -227,23 +226,17 @@ The target is one executable chain:
 `Optimize → Agent proposal → dataset diff → clearance → training → evaluation → report`
 
 Do not rebuild the committed Agent, generator, provider resolver or clearance.
-Do not redesign the approved Overview. The first-cycle CLI checkpoint is
-committed; the repeated-iteration component has focused test evidence but is
-still uncommitted. Finish validation, run ownership, recovery and app integration:
+Do not redesign the approved Overview. The single-cycle and repeated-iteration
+CLI components have passed the required gates. Finish run ownership, recovery
+and app integration:
 
-1. **Close the bounded-loop checkpoint.** Retrieve the final validation result
-   for the unchanged executable tree. Fix genuine failures, run the required
-   gates and commit only the coherent implementation once verified. Preserve
-   unrelated edits and do not repeatedly rebuild while another build owns the
-   Windows executable. Documentation commits do not certify uncommitted code.
-
-2. **Preserve the verified single-cycle checkpoint.** The production-CLI test
+1. **Preserve the verified single-cycle checkpoint.** The production-CLI test
    uses normal reservation and the coordinator the desktop must invoke. It
    covers exact dataset/sample lineage, enforced training settings,
    original-baseline comparisons, no adaptive holdout access and recovery after
    native completion but before iteration-result persistence. Do not rebuild
    this chain or claim it already implements the whole loop.
-3. **Finish iteration ownership.** Preserve the new candidate registration,
+2. **Finish iteration ownership.** Preserve the new candidate registration,
    materialized-version links and receipt-based benchmark projection. Persist
    root-run progress and interruption/budget outcomes. A finished Agent loop
    must not leave the root run labeled `ready`. Distinguish successful experiment
@@ -252,12 +245,12 @@ still uncommitted. Finish validation, run ownership, recovery and app integratio
    selection and multi-iteration/report validation through verified predecessor
    results. Do not invent baseline training history or
    relabel a flattened native import as the selected training version.
-4. **Preserve and complete bounded execution.** The CLI now feeds persisted
+3. **Preserve and complete bounded execution.** The CLI now feeds persisted
    development results and eligible dataset lineage into subsequent Agent scopes.
    Extend its tests for cumulative request/token/spend and training-time limits,
    unknown outcomes and concurrency. Keep the original baseline and benchmark
    and the existing iteration/edit ceilings; do not introduce another loop.
-5. **Complete recovery and final selection.** Reuse completed provider calls,
+4. **Complete recovery and final selection.** Reuse completed provider calls,
    dataset publication, training and evaluation. Test fine-grained Stop,
    interruption and restart, including uncertain external outcomes. Do not
    repurpose permanent cancellation as resumable Stop. Prevent new work after
@@ -265,7 +258,7 @@ still uncommitted. Finish validation, run ownership, recovery and app integratio
    activity with durable outcomes. Select the best eligible candidate
    deterministically; final holdout is a separate, at-most-once authorization
    after adaptive work ends. Promotion remains manual.
-6. **Connect and verify the existing Overview.** One Optimize action must invoke
+5. **Connect and verify the existing Overview.** One Optimize action must invoke
    this same coordinator. Expose iteration-specific stages and complete activity,
    actual Agent decisions, separate provider usage and linked reports. Add only
    Advanced controls whose settings execution really enforces. Verify rendered

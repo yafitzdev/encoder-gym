@@ -71,3 +71,68 @@ pub(super) async fn bind_inputs(
     store.pool().close().await;
     result
 }
+
+/// Load only the run's explicitly linked scientific children. This is read-only
+/// and replays development-only completion before the next Agent can inspect it.
+pub(super) async fn scientific_history(
+    folder: &Path,
+    run_id: Uuid,
+    through: u32,
+) -> Result<Vec<project_workspace_local::optimization_completions::IterationScientificEvidence>> {
+    use project_workspace_core::optimization_iteration_execution::IterationDevelopmentResult;
+    use project_workspace_local::{optimization_iteration_execution, optimization_iterations};
+    let run = optimization_runs::show(folder, run_id).await?;
+    let preparation = run.preparation.as_ref().context("Preparation missing")?;
+    let binding = project_workspace_local::scientific_binding_history(folder)
+        .await?
+        .into_iter()
+        .find(|binding| {
+            binding.id.to_string() == preparation.execution_binding.id
+                && binding.fingerprint == preparation.execution_binding.fingerprint
+        })
+        .context("Pinned execution binding missing")?;
+    let (benchmark, _) =
+        project_workspace_local::benchmarks::inspect(folder, preparation.benchmark.id.parse()?)
+            .await?;
+    let store = super::super::open_bound_store(&folder.to_string_lossy(), &binding).await?;
+    let result = async {
+        let mut history = Vec::new();
+        for iteration in optimization_iterations::list(folder, run_id)
+            .await?
+            .into_iter()
+            .take(through as usize)
+        {
+            let Some(training) =
+                optimization_iteration_execution::training(folder, run_id, iteration.id).await?
+            else {
+                continue;
+            };
+            let project = store
+                .get_project(training.scientific_project.id.parse()?)
+                .await?
+                .context("Iteration project missing")?;
+            let protocol = store
+                .get_protocol(training.protocol.id.parse()?)
+                .await?
+                .context("Iteration protocol missing")?;
+            let events = store.load_events(training.experiment_run_id).await?;
+            ensure!(
+                NomosBackend::recorded_benchmark(&project, &protocol)? == benchmark.definition,
+                "Iteration changed the comparison benchmark"
+            );
+            IterationDevelopmentResult::from_journal(&training, &project, &protocol, &events)?;
+            history.push(
+                project_workspace_local::optimization_completions::IterationScientificEvidence {
+                    iteration_id: iteration.id,
+                    project,
+                    protocol,
+                    events,
+                },
+            );
+        }
+        Ok(history)
+    }
+    .await;
+    store.pool().close().await;
+    result
+}

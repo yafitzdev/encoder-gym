@@ -48,6 +48,12 @@ pub enum WorkspaceOptimizationLaunchCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum WorkspaceOptimizationRunCommand {
+    /// Run/resume the authorized finite Agent loop through development; never uses final holdout.
+    DriveAgent {
+        run_id: Uuid,
+        #[command(flatten)]
+        runtime: super::ResearchRuntimeArgs,
+    },
     /// Read immutable iteration inputs and development report references.
     Iterations { run_id: Uuid },
     /// Pin the first Agent iteration from already-verified inputs and saved development evidence.

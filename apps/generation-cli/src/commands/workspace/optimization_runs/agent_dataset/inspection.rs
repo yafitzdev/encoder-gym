@@ -22,14 +22,62 @@ pub(super) struct IterationInspection {
 
 impl IterationInspection {
     pub async fn load(folder: &Path, iteration: &ProjectOptimizationIteration) -> Result<Self> {
-        let (benchmark, binding) =
+        let (benchmark, mut binding) =
             project_workspace_local::benchmarks::inspect(folder, iteration.benchmark.id.parse()?)
                 .await?;
         iteration.validate_benchmark(&benchmark)?;
+        let prior = if iteration.scope.iteration > 1 {
+            let run =
+                project_workspace_local::optimization_runs::show(folder, iteration.scope.run_id)
+                    .await?;
+            let preparation = run.preparation.as_ref().context("Preparation missing")?;
+            binding = project_workspace_local::scientific_binding_history(folder)
+                .await?
+                .into_iter()
+                .find(|value| {
+                    value.id.to_string() == preparation.execution_binding.id
+                        && value.fingerprint == preparation.execution_binding.fingerprint
+                })
+                .context("Pinned runtime missing")?;
+            let history = super::super::iteration_inputs::scientific_history(
+                folder,
+                iteration.scope.run_id,
+                iteration.scope.iteration - 1,
+            )
+            .await?;
+            project_workspace_local::optimization_completions::finish(
+                folder,
+                iteration.scope.run_id,
+                iteration.scope.iteration - 1,
+                &history,
+            )
+            .await?;
+            let source = history
+                .into_iter()
+                .last()
+                .context("Previous development evidence missing")?;
+            let training = project_workspace_local::optimization_iteration_execution::training(
+                folder,
+                iteration.scope.run_id,
+                source.iteration_id,
+            )
+            .await?
+            .context("Previous training missing")?;
+            let result = project_workspace_core::optimization_iteration_execution::IterationDevelopmentResult::from_journal(&training, &source.project, &source.protocol, &source.events)?;
+            let evidence = project_workspace_core::optimization_iteration::IterationDevelopmentEvidence::completed(&training, &result, &benchmark.definition.fingerprint)?;
+            ensure!(
+                evidence == iteration.development,
+                "Agent evidence differs from the previous result"
+            );
+            Some(result)
+        } else {
+            None
+        };
         let store =
             super::super::super::open_bound_store(&folder.to_string_lossy(), &binding).await?;
         let result: Result<_> = async {
-            let project = super::super::super::load_bound_project(&store, &binding).await?;
+            let runtime_project = super::super::super::load_bound_project(&store, &binding).await?;
+            let project = store.get_project(iteration.development.project.id.parse()?).await?.context("Development project missing")?;
             ensure!(
                 iteration.development.project.id == project.id.to_string()
                     && iteration.development.project.fingerprint == project.fingerprint,
@@ -43,12 +91,12 @@ impl IterationInspection {
                 protocol.fingerprint == iteration.development.protocol.fingerprint,
                 "Iteration development protocol changed"
             );
-            let backend = super::super::super::open_nomos_binding(&binding, &project)?;
+            let backend = super::super::super::open_nomos_binding(&binding, &runtime_project)?;
             let mut failures = Vec::new();
+            let reports: Vec<_> = if let Some(prior) = &prior { prior.reports.values().collect() }
+                else { protocol.baseline_development_reports() };
             for (suite, identity) in &iteration.development.reports {
-                let report = protocol
-                    .baseline_development_reports()
-                    .into_iter()
+                let report = reports.iter().copied()
                     .find(|report| {
                         report.suite_key == *suite
                             && report.id.to_string() == identity.id
@@ -62,6 +110,17 @@ impl IterationInspection {
                 )?;
                 failures.extend(evidence.failures);
             }
+            // Metrics and verdicts are explicit evidence, even when the native
+            // diagnostic sample is empty. They supplement, not replace, failures.
+            let content = serde_json::json!({
+                "kind":"development_summary", "iteration":iteration.scope.iteration.saturating_sub(1),
+                "model":iteration.development.model, "reports":reports,
+                "assessments":prior.as_ref().map(|value| &value.assessments),
+            });
+            // Keep the comparison on the first inspection page even when the
+            // native sample spans many pages of concrete failures.
+            failures.insert(0, InspectionItem {id:format!("development-summary-{}", iteration.development.fingerprint),
+                fingerprint:encoder_optimization_core::fingerprint(&content)?, content});
             Ok(failures)
         }
         .await;

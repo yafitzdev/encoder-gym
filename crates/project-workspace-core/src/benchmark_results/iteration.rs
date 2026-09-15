@@ -4,8 +4,9 @@ use super::{BenchmarkRunEvidence, ProjectBenchmarkResults, invalid};
 use crate::{
     BoundIdentity, Invalid, ModelCatalog, OptimizationLaunchAuthorization, OptimizationSetup,
     ProjectOptimizationPreparation, ProjectOptimizationRun,
-    optimization_iteration::ProjectOptimizationIteration,
-    optimization_iteration_execution::IterationTrainingBinding, require,
+    optimization_iteration::{IterationContinuation, ProjectOptimizationIteration},
+    optimization_iteration_execution::IterationTrainingBinding,
+    require,
 };
 use encoder_experiment_core::domain::ExternalProjectSnapshot;
 use uuid::Uuid;
@@ -19,6 +20,7 @@ pub struct IterationResultLineage<'a> {
     pub iteration: &'a ProjectOptimizationIteration,
     pub training: &'a IterationTrainingBinding,
     pub runtime_project: &'a ExternalProjectSnapshot,
+    pub predecessors: &'a [IterationContinuation<'a>],
 }
 
 impl ProjectBenchmarkResults {
@@ -36,6 +38,7 @@ impl ProjectBenchmarkResults {
             iteration,
             training,
             runtime_project,
+            predecessors,
         } = lineage;
         let BenchmarkRunEvidence {
             binding,
@@ -48,7 +51,31 @@ impl ProjectBenchmarkResults {
         binding.validate()?;
         runtime_project.validate_integrity().map_err(invalid)?;
         definition.validate_integrity().map_err(invalid)?;
-        iteration.validate_first(run, launch, setup, preparation)?;
+        require(
+            predecessors.len() + 1 == iteration.scope.iteration as usize,
+            "Iteration report is missing its predecessor chain",
+        )?;
+        for (index, prior) in predecessors.iter().enumerate() {
+            if index == 0 {
+                prior
+                    .previous
+                    .validate_first(run, launch, setup, preparation)?;
+            } else {
+                prior.previous.validate_next(
+                    run,
+                    launch,
+                    setup,
+                    preparation,
+                    predecessors[index - 1],
+                )?;
+            }
+            prior.previous.validate_benchmark(&self.version)?;
+        }
+        if let Some(prior) = predecessors.last() {
+            iteration.validate_next(run, launch, setup, preparation, *prior)?;
+        } else {
+            iteration.validate_first(run, launch, setup, preparation)?;
+        }
         iteration.validate_benchmark(&self.version)?;
         training.validate_for(iteration, launch)?;
         let identity = |id: Uuid, fingerprint: &str| BoundIdentity {
@@ -80,7 +107,12 @@ impl ProjectBenchmarkResults {
                 && baseline.fingerprint == iteration.comparison_baseline_revision.fingerprint
                 && starting_model.id == baseline.model_artifact_id
                 && starting_model.fingerprint == iteration.starting_model.fingerprint
-                && iteration.development.protocol == self.version.source.protocol
+                && predecessors
+                    .first()
+                    .map_or(iteration, |prior| prior.previous)
+                    .development
+                    .protocol
+                    == self.version.source.protocol
                 && training.scientific_project == identity(project.id, &project.fingerprint)
                 && project.inputs.contains(&training.training_artifact)
                 && project

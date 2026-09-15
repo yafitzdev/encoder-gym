@@ -13,6 +13,7 @@ mod models;
 pub mod optimization_iteration;
 pub mod optimization_iteration_execution;
 mod optimization_launch;
+pub mod optimization_loop;
 mod optimization_run;
 mod optimization_settings;
 mod optimization_setup;

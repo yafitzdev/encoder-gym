@@ -5,9 +5,9 @@ desktop history compatibility are implemented. The new execution components now
 include a bounded Pi inspection/proposal loop, selected OpenAI-compatible model
 transport, an append-only project Agent-call journal, read-only native
 development-failure inspection, bounded concurrent generation, and recoverable
-publication through ordinary imports and dataset versions. They are not yet
-composed into Optimize: repeated iteration,
-complete recovery and the production GUI remain outstanding. The fixed-recipe executor
+publication through ordinary imports and dataset versions. Bounded repeated
+iteration is composed through the CLI below. Root lifecycle, complete recovery
+and the production GUI remain outstanding. The fixed-recipe executor
 still explicitly rejects agentic settings; it must not masquerade as an agent run.
 
 The pre-training CLI composition now exists as `workspace optimization-run
@@ -73,9 +73,34 @@ custody. Materialized input evidence preserves original source-row identities
 even for Quick-test subsets. Ordinary benchmark results follow the iteration's
 explicit scientific receipts and expose saved development reports before the
 iteration summary is written. Retry reuses model, dataset and report identities.
-This is one CLI-integrated cycle, not a working multi-iteration app loop.
-No-change completion, later-iteration lineage, complete interruption recovery
-and the production Overview coordinator remain outstanding.
+The bounded CLI composition now continues that same cycle through
+`workspace optimization-run <PROJECT> drive-agent <RUN_ID>`. It records each
+completed iteration, exact proposal-call identity, requested edit charges,
+development result, deterministic best eligible dataset and terminal reason
+before advancing. Requested additions consume the edit allowance even when
+generation rejects them. Existing provider journals enforce cumulative request,
+token and spend limits independently of this edit ledger.
+
+The next iteration binds the previous completion, uses the latest candidate's
+development metrics and saved failure sample, and starts from the best eligible
+full dataset, or the original dataset when none qualifies. Training continues
+from the pinned starting model, not an implicit warm-start from a candidate.
+Quick-test subsets are actual trainer versions, never replacement source data.
+No-change decisions stop without generation or training; iteration/edit limits
+stop before another Agent dispatch. Historical first-iteration fingerprints
+remain unchanged. Normal benchmark reports follow the whole predecessor chain.
+
+Completion reads reconstruct choices from saved proposals and results. Before
+admitting another iteration or returning a completed loop, the CLI replays the
+original scientific journals and checks exact dataset custody. The deterministic
+process tests cover changed second-iteration evidence and proposals, selection
+of an earlier better dataset, first/later no-change, row-limit termination, and
+interruption after scientific completion but before the completion record.
+Retry reuses provider work, datasets, models and reports; re-fingerprinted
+completion substitutions are rejected. This does not yet establish a complete
+root-run lifecycle, recovery at every interruption boundary, separately
+authorized final holdout, or the production Overview coordinator. The existing
+fixed-recipe root state is not the adaptive loop's completion status.
 
 Agent and Generation activities are now projected from their own persisted
 actions into the existing activity stream, rather than requiring desktop
@@ -99,8 +124,9 @@ The CLI derives it from the benchmark's exact recorded scientific source;
 only development references enter the record, not the source protocol's sealed
 scores. Retries retain the original timestamp and identity. Agent-store opening
 requires this binding and rejects substituted scope evidence. This first-input
-handoff is consumed by the CLI paths above. It does not yet admit later
-iterations without completion/selection lineage.
+handoff is consumed by the CLI paths above. Later iterations require the
+verified completion/selection lineage described above; they cannot supply
+arbitrary replacement evidence.
 
 Generation uses the generation slice's separate structured-output port, without
 recasting a native retrieval task as classification. The Nomos adapter currently

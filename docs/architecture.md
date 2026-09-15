@@ -90,8 +90,8 @@ native admission. The optimization runner reserves and dispatches bounded
 concurrent batches through that port. The project adapter journals attempts,
 usage and admission outcomes, then composes ordinary imports and dataset
 fork/revision operations into a replayable publication receipt. It does not
-reinterpret native labels or grant training qualification. These components are
-not yet the complete iterative CLI composition.
+reinterpret native labels or grant training qualification. The CLI composition
+below reuses these components without copying their policy or implementations.
 
 `project-workspace-core::optimization_iteration` binds prepared run inputs to
 exact development report references and an `encoder-optimization-core` Agent
@@ -120,7 +120,20 @@ append-only persistence. Quick-test sampling follows full-population clearance,
 and the native adapter verifies effective training settings in its receipt.
 Each adaptive protocol has zero sealed allowance. Reservation accepts Agent
 authority, but legacy materialization still rejects it. This first-cycle CLI
-path is not yet a repeated loop or the production Overview executor.
+path is also reused by the finite `drive-agent` CLI coordinator, but is not yet
+the production Overview executor.
+
+`project-workspace-core::optimization_loop` owns completion, cumulative edit
+charges and selection using the existing experiment-core development ranking.
+The local completion table is append-only and links an exact proposal call,
+iteration inputs and result. Ordered reads reproduce selection from persisted
+facts; advancing also verifies each original scientific journal through the
+normal store. Later Agent inputs bind the preceding result and best eligible
+full dataset without changing the original baseline, benchmark or model
+starting checkpoint. The CLI bounds continuation by the immutable iteration
+limit and reuses the same inspection, generation, qualification, training and
+registration functions. Its output is a completion history, not a substitute
+for the still-needed root lifecycle and desktop integration.
 
 The CLI now transfers each iteration's verified training output into ordinary
 model custody, including development-rejected candidates. The model's producing

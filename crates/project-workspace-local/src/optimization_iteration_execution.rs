@@ -176,7 +176,7 @@ async fn check_head(database: &mut SqliteConnection, run_id: Uuid, expected: &st
     Ok(())
 }
 
-async fn read<T: DeserializeOwned>(
+pub(crate) async fn read<T: DeserializeOwned>(
     database: &mut SqliteConnection,
     table: &str,
     iteration_id: Uuid,

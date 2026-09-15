@@ -57,7 +57,10 @@ pub(super) async fn include(
         let store = super::super::open_bound_store(workspace, binding).await?;
         let projected: Result<()> = async {
             let runtime_project = super::super::load_bound_project(&store, binding).await?;
-            for iteration in optimization_iterations::list(folder, view.run.id).await? {
+            let iterations = optimization_iterations::list(folder, view.run.id).await?;
+            let completions = project_workspace_local::optimization_completions::list(folder, view.run.id).await?;
+            let mut previous = Vec::new();
+            for iteration in &iterations {
                 let Some(training) =
                     optimization_iteration_execution::training(folder, view.run.id, iteration.id)
                         .await?
@@ -82,6 +85,10 @@ pub(super) async fn include(
                     definition == results.version.definition,
                     "Iteration benchmark changed"
                 );
+                let predecessors: Vec<_> = previous.iter().map(|(inputs, completion, training, result)|
+                    project_workspace_core::optimization_iteration::IterationContinuation {
+                        previous:inputs, completion, training, result,
+                    }).collect();
                 results
                     .include_agent_iteration(
                         catalog,
@@ -97,14 +104,19 @@ pub(super) async fn include(
                             launch,
                             setup,
                             preparation,
-                            iteration: &iteration,
+                            iteration,
                             training: &training,
                             runtime_project: &runtime_project,
+                            predecessors: &predecessors,
                         },
                     )
                     .with_context(|| {
                         format!("Iteration {} has inconsistent result lineage", iteration.id)
                     })?;
+                if let Some(completion) = completions.iter().find(|value| value.number == iteration.scope.iteration) {
+                    let result = project_workspace_core::optimization_iteration_execution::IterationDevelopmentResult::from_journal(&training, &project, &protocol, &events)?;
+                    previous.push((iteration.clone(), completion.clone(), training, result));
+                }
             }
             Ok(())
         }
