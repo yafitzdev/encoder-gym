@@ -107,6 +107,7 @@ block-beta
     columns 6
 
     space inspect["Inspect failures"] reason["Reason about data"] curate["Add, remove,<br/>or rebalance"] train["Train next"] space
+    space:6
     setup["1 · SETUP"] space evaluate["2 · STATUS<br/>Evaluate"]:2 space report["3 · REPORT"]
 
     setup --> evaluate
