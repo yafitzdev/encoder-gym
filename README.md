@@ -4,9 +4,9 @@
 
 # Encoder Gym
 
-### Local, reproducible encoder development—from data to decision.
+### Agent-driven encoder development—from data to decision.
 
-**Generate, curate, train, evaluate, analyze, and improve text encoders while preserving the evidence behind every change.**
+**Generate, curate, train, evaluate, analyze, and improve text encoders through one evidence-backed agent loop.**
 
 [![Rust 1.85+](https://img.shields.io/badge/Rust-1.85%2B-000000?logo=rust)](https://www.rust-lang.org/)
 [![Version: 0.1.0](https://img.shields.io/badge/version-0.1.0-2563eb)](CHANGELOG.md)
