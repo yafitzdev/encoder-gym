@@ -103,24 +103,19 @@ contracts.
 ### The Encoder Loop
 
 ```mermaid
-flowchart LR
-    setup["1 · SETUP<br/>Choose the encoder, task,<br/>data, and success criteria"]
+block-beta
+    columns 6
 
-    subgraph status["2 · STATUS — the agent loop"]
-        direction TB
-        evaluate["Evaluate the current encoder"]
-        inspect["Inspect failures and test coverage"]
-        reason["Reason about what data must change"]
-        curate["Generate, add, remove, or rebalance examples"]
-        train["Train the next candidate"]
-
-        evaluate --> inspect --> reason --> curate --> train --> evaluate
-    end
-
-    report["3 · REPORT<br/>Best encoder, measured gains,<br/>changes, and provenance"]
+    space:2 inspect["Inspect failures"] reason["Reason about data"] curate["Add, remove,<br/>or rebalance"] train["Train next"]
+    setup["1 · SETUP"] space evaluate["2 · STATUS<br/>Evaluate"] space:2 report["3 · REPORT"]
 
     setup --> evaluate
-    evaluate -->|goal reached or budget complete| report
+    evaluate --> report
+    evaluate --> inspect
+    inspect --> reason
+    reason --> curate
+    curate --> train
+    train --> evaluate
 ```
 
 Setup defines the job. Status is the working loop: evaluate, understand the
