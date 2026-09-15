@@ -106,8 +106,8 @@ contracts.
 block-beta
     columns 6
 
-    space:2 inspect["Inspect failures"] reason["Reason about data"] curate["Add, remove,<br/>or rebalance"] train["Train next"]
-    setup["1 · SETUP"] space evaluate["2 · STATUS<br/>Evaluate"] space:2 report["3 · REPORT"]
+    space inspect["Inspect failures"] reason["Reason about data"] curate["Add, remove,<br/>or rebalance"] train["Train next"] space
+    setup["1 · SETUP"] space evaluate["2 · STATUS<br/>Evaluate"]:2 space report["3 · REPORT"]
 
     setup --> evaluate
     evaluate --> report
@@ -115,7 +115,7 @@ block-beta
     inspect --> reason
     reason --> curate
     curate --> train
-    train --> report
+    train --> evaluate
 ```
 
 Setup defines the job. Status is the working loop: evaluate, understand the
