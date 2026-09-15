@@ -24,7 +24,7 @@ connection to that coordinator.
 | Candidate registration, exact training-dataset links and benchmark report lookup | `6d90ead` | Verify navigation through the connected app |
 | Evidence-dependent iterations, best eligible dataset selection and no-change completion | `f3d222b` | Complete cumulative accounting and interruption coverage |
 | Root execution attempts and adaptive completion | `3e18b6c` | Integrate lifecycle and recovery into the desktop |
-| Durable Stop and explicit Resume | Verified CLI checkpoint; all four Rust gates and 15 managed benchmark tests pass | Interrupted-training accounting, descendant ownership, every-boundary recovery and desktop controls |
+| Durable Stop and explicit Resume | `9ea9dc4`; all four Rust gates and 15 managed benchmark tests pass | Interrupted-training accounting, descendant ownership, every-boundary recovery and desktop controls |
 | One-click Overview execution | Not verified end to end | Update the strict parser, connect the existing coordinator and test the rendered journey |
 
 The committed CLI checkpoints passed their required Rust gates. Prior UI tests
@@ -40,8 +40,13 @@ development suites failed, baseline retained, final holdout unused. Its 4,431
 activity events contained no Agent-origin entries. System templates and
 `agent_*` evaluation metrics are not evidence of optimization-Agent calls.
 
-No additional real Nomos training, paid calls or protected evaluation is
-authorized by this document update.
+Latest implementation checkpoint: `9ea9dc4`. Interrupted-training accounting
+has been investigated but is not implemented: fresh native training dispatch
+still receives the candidate's original time ceiling on each retry. Do not
+describe Stop/Resume as fully budget-safe until cumulative enforcement passes.
+
+This update is documentation-only. Do not continue implementation, start real
+Nomos training, make paid calls or expose protected evaluation in this turn.
 
 ## Immediate next deliverable
 
@@ -53,10 +58,25 @@ another executor.
    UUID; Resume pins the observed execution head. The production-CLI regression
    rejects stale Resume, preserves interrupted-call charges and reuses completed
    work. Do not rebuild it or equate this coverage with complete recovery.
-2. **Close the known recovery and budget gaps before exposing controls.**
+2. **Implement interrupted-training accounting next.** Deliver one bounded,
+   production-CLI-connected checkpoint:
 
-   - Persist cumulative interrupted-training charges. Restarting unfinished
-     training must not reset the run's time allowance.
+   - Persist a training-attempt reservation before fresh native training starts.
+     Enforce the remaining iteration and run allowances across retries without
+     changing immutable candidate, protocol or dataset identities.
+   - Record time consumed by successful, interrupted, failed and timed-out
+     attempts. Unresolved attempts retain conservative charges; Resume must
+     never reset the allowance or treat unknown consumption as zero.
+   - Reuse verified completed artifacts without dispatching or charging a new
+     training attempt. Keep training accounting distinct from qualification and
+     evaluation time. Budget exhaustion needs a typed outcome, not a candidate
+     rejection or an endlessly retryable generic error.
+   - Prove these cases through deterministic production-path tests before
+     claiming the checkpoint complete. Do not promise optimizer-state recovery:
+     unfinished training may restart, but only within the remaining allowance.
+
+3. **Close the remaining recovery gaps before exposing controls.**
+
    - Reconcile coordinator and descendant-process ownership after abrupt exit.
      A dead coordinator does not prove its children stopped.
    - Test interruption around publication, qualification, training, candidate
@@ -66,11 +86,11 @@ another executor.
    - Preserve the verified control-intent fence through desktop integration:
      a stale Resume cannot clear a new Stop; retrying an old Stop cannot halt
      an already resumed attempt.
-3. **Connect the desktop.** Extend `ui/src/input-optimization.ts` to accept the
+4. **Connect the desktop.** Extend `ui/src/input-optimization.ts` to accept the
    actual Agent execution states and `agentExecution` record. Update lifecycle
    handling and the launch controller to invoke the existing `drive-agent`
    coordinator. Preserve historical fixed-run compatibility.
-4. **Prove the connected journey.** Use production orchestration with
+5. **Prove the connected journey.** Use production orchestration with
    deterministic provider/native adapters to demonstrate one-click execution,
    an evidence-dependent second iteration, linked artifacts, complete activity
    and Stop/app-restart/Resume.
@@ -279,6 +299,9 @@ Completed CLI mechanics are not completed desktop integration:
   deterministic adapters.
 - [x] Production-CLI tests prove an evidence-dependent second iteration,
   unchanged baseline/benchmark and genuine no-change completion.
+- [x] Production-CLI Stop/Resume tests prove durable control intent, stale-command
+  rejection and reuse of completed inspection after an interrupted Agent call
+  (`9ea9dc4`). This is narrower than every-boundary recovery below.
 - [ ] One Optimize action invokes the pinned Agent and, when additions are
   proposed, the independently pinned generator through that same coordinator.
 - [ ] Every exposed Advanced setting is enforced cumulatively, including
