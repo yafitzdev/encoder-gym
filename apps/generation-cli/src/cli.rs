@@ -40,7 +40,7 @@ impl Cli {
         self.database_url
             .clone()
             .or_else(|| std::env::var("SYNTH_DATABASE_URL").ok())
-            .unwrap_or_else(|| "sqlite://data/synthetic-data.db?mode=rwc".into())
+            .unwrap_or_else(|| "sqlite://encoder-gym.db?mode=rwc".into())
     }
 }
 

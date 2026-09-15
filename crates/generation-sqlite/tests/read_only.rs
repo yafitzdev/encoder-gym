@@ -2,7 +2,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::str::FromStr;
 use synthetic_data_sqlite::SqliteStore;
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
+static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 fn database(directory: &tempfile::TempDir) -> (std::path::PathBuf, String) {
     let path = directory.path().join("passive.db");

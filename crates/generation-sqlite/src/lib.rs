@@ -63,7 +63,7 @@ use sqlx::{
 };
 use uuid::Uuid;
 
-static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
+static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Debug, Clone)]
 pub struct SqliteStore {

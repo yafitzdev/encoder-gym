@@ -17,7 +17,7 @@ async fn migration_0045_preserves_exposures_and_allows_dataset_architecture() {
     let mut connection = SqliteConnection::connect_with(&options)
         .await
         .expect("connect");
-    let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+    let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations");
     let full = Migrator::new(migrations.as_path())
         .await
         .expect("load migrations");

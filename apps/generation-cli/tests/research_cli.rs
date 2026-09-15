@@ -39,9 +39,18 @@ fn full_offline_pi_research_review_binding_and_generation_handoff() {
         ],
     );
     let dataset_id = text(&dataset, "id");
-    let brief = path(&root, "examples/research/support-authenticity-brief.json");
-    let script = path(&root, "examples/research/support-scripted-turns.json");
-    let corpus = path(&root, "examples/research/support-corpus.json");
+    let brief = path(
+        &root,
+        "apps/generation-cli/tests/fixtures/research/support-authenticity-brief.json",
+    );
+    let script = path(
+        &root,
+        "apps/generation-cli/tests/fixtures/research/support-scripted-turns.json",
+    );
+    let corpus = path(
+        &root,
+        "apps/generation-cli/tests/fixtures/research/support-corpus.json",
+    );
     let sidecar = sidecar.to_string_lossy().into_owned();
     let research = run_json(
         &database_url,

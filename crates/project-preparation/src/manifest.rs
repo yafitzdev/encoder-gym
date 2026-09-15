@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn bootstrap_manifest_is_strict_content_bound_and_resolves_without_uuid_plumbing() {
-        let source = include_str!("../../../examples/pilot-support/project-bootstrap.toml");
+        let source = include_str!("../../../demo/project-bootstrap.toml");
         let manifest = BootstrapManifest::parse_toml(source).expect("pilot manifest");
         assert_eq!(manifest.source_keys(), vec!["development:0", "sealed:0"]);
         let fingerprints = BTreeMap::from([
@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn checked_in_supervised_preparation_example_is_strict_and_complete() {
-        let source = include_str!("../../../examples/project-preparation-supervised.toml");
+        let source = include_str!("../tests/fixtures/project-preparation-supervised.toml");
         let manifest = PreparationManifest::parse_toml(source).expect("supervised manifest");
         let supervision = manifest
             .workflow

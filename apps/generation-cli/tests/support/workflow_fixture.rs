@@ -51,7 +51,7 @@ impl WorkflowFixture {
         let (development_snapshot_id, sealed_snapshot_id) = tokio::runtime::Runtime::new()
             .expect("runtime")
             .block_on(create_snapshot_fixtures(&database_url));
-        let source = include_str!("../../../../examples/project-preparation.toml").replace(
+        let source = include_str!("../fixtures/project-preparation.toml").replace(
             "00000000-0000-0000-0000-000000000000",
             &development_snapshot_id.to_string(),
         );

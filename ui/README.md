@@ -79,7 +79,7 @@ They are labelled Legacy and are not silently converted into managed projects.
   registration; older registered runs can use `workspace dataset <folder>
   adopt-run <optimization>`. The viewer never infers training provenance from
   names or row counts. See
-  [dataset versions](../docs/dataset-versions-spec.md).
+  [dataset versions](../docs/features/datasets/dataset-versions-spec.md).
 - **Runs (legacy journal projects):** immutable experiment records. A run owns its candidate attempts,
   activity, recorded budgets, provenance, and final decision. Completion does
   not mean the candidate was accepted.
@@ -127,10 +127,10 @@ the registered artifact and appends only the baseline revision. Native and manag
 inventory fingerprints are connected through the recorded source-model identity.
 
 Initial benchmark onboarding, baseline controls, and automatic agent execution
-remain tracked in [the product contract](../docs/encoder-workspace-product.md).
+remain tracked in [the product contract](../docs/features/workspaces/encoder-workspace-product.md).
 The shared-benchmark domain, immutable project catalog, and read-only
 preview/inspection, adoption and comparable-results CLI are available under
-`workspace benchmark`; see [project benchmarks](../docs/project-benchmark-spec.md).
+`workspace benchmark`; see [project benchmarks](../docs/features/evaluation/project-benchmark-spec.md).
 The typed `queryBenchmarks` desktop bridge lists versions and reads model results
 using fixed project-bound commands. It rejects substituted versions, inventories,
 baseline roles and protected report content. Evaluation uses that catalog;
@@ -146,13 +146,13 @@ It preserves exact versions across restart and exact request IDs across save
 retries. The automatic executor is not connected yet; saving configuration does
 not run the older reviewed recipe or authorize spending. Existing run controls
 remain accessible from Runs. See
-[optimization launch](../docs/optimization-launch-spec.md).
+[optimization launch](../docs/features/optimization/optimization-launch-spec.md).
 
 Managed onboarding calls the project-owned `synth workspace` commands. It
 accepts self-contained BERT-family safetensors encoder bundles, preserving
 supported sentence-transformer modules. It does not execute model code or
 prove trainer compatibility. Unsupported formats, custom code, pickle weights,
-and links/junctions are rejected. See [the workspace guide](../docs/managed-workspaces.md).
+and links/junctions are rejected. See [the workspace guide](../docs/features/workspaces/managed-workspaces.md).
 
 Project settings offers **Verify project files**: the backend rehashes model
 and dataset artifacts and checks counts and native training provenance. Routine

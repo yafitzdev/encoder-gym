@@ -23,7 +23,7 @@ async fn migration_0048_preserves_legacy_promotions_without_fabricating_clearanc
     let mut connection = SqliteConnection::connect_with(&options)
         .await
         .expect("connect");
-    let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+    let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations");
     let full = Migrator::new(migrations.as_path())
         .await
         .expect("load migrations");

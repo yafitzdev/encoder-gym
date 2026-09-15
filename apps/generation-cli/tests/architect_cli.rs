@@ -38,10 +38,13 @@ fn full_offline_pi_architecture_review_application_and_generation_handoff() {
             "style=clean,messy",
         ],
     );
-    let brief = path(&root, "examples/architect/support-architect-brief.json");
+    let brief = path(
+        &root,
+        "apps/generation-cli/tests/fixtures/architect/support-architect-brief.json",
+    );
     let script = path(
         &root,
-        "examples/architect/support-architect-scripted-turns.json",
+        "apps/generation-cli/tests/fixtures/architect/support-architect-scripted-turns.json",
     );
     let sidecar = sidecar.to_string_lossy().into_owned();
     let outcome = run_json(

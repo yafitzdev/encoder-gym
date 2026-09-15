@@ -449,8 +449,7 @@ struct PilotFixture {
 impl PilotFixture {
     fn new() -> Self {
         let directory = tempfile::tempdir().expect("pilot directory");
-        let source_root =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/pilot-support");
+        let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../demo");
         let development_path = directory.path().join("development.jsonl");
         let sealed_path = directory.path().join("sealed.csv");
         std::fs::copy(source_root.join("development.jsonl"), &development_path)

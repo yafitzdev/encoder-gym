@@ -1,30 +1,69 @@
-# Rust build output
-/target/
+# Repository allowlist
+#
+# Ignore every top-level path unless it is explicitly admitted below. This keeps
+# local state and accidental root-level files out of Git by default.
+/*
 
-# Local configuration and secrets
+# Repository metadata and root configuration
+!/.cargo/
+!/.github/
+!/.editorconfig
+!/.env.example
+!/.gitattributes
+!/.gitignore
+!/.mailmap
+!/CHANGELOG.md
+!/CODE_OF_CONDUCT.md
+!/CONTRIBUTING.md
+!/Cargo.lock
+!/Cargo.toml
+!/LICENSE
+!/LICENSE.*
+!/README.md
+!/SECURITY.md
+!/goal.md
+!/rust-toolchain.toml
+!/rustfmt.toml
+
+# Version-controlled product surface
+!/adapters/
+!/apps/
+!/crates/
+!/demo/
+!/docs/
+!/ui/
+
+# Internal planning and decision logs are intentionally not published
+/docs/decisions/
+/docs/roadmap/
+
+# Root-level scratch, runtime, and implementation-owned directories stay local
+/artifacts/
+/data/
+/examples/
+/exports/
+/migrations/
+
+# Generated, private, and machine-local content inside allowlisted trees
+target/
+node_modules/
+dist/
+/coverage/
+__pycache__/
+.pytest_cache/
+.idea/
+.vscode/
+.electron-cache/
+.npm-cache/
+qa/
+
 .env
 .env.*
 !.env.example
 
-# Runtime data and exports
-/data/*
-!/data/.gitkeep
-/exports/*
-!/exports/.gitkeep
-/artifacts/*
-!/artifacts/.gitkeep
-
-# Editors and operating systems
-.idea/
-.vscode/
+*.log
+*.py[cod]
 *.swp
+smoke-ok.txt
 Thumbs.db
 .DS_Store
-
-# Local logs and coverage output
-*.log
-/coverage/
-
-# Local Pi adapter dependencies and build output
-/adapters/research-agent-pi/node_modules/
-/adapters/research-agent-pi/dist/

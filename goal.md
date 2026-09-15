@@ -232,7 +232,7 @@ Put tuning under **Advanced**, and expose only settings execution enforces:
 - Training device, epochs, batch size, learning rate and training-time limit.
   Resolve Auto and record the actual device.
 
-Preserve the settings contracts in `docs/agentic-optimization-spec.md`:
+Preserve the settings contracts in `docs/features/optimization/agentic-optimization-spec.md`:
 standard defaults are three iterations, eight Agent turns per iteration and
 192 total row changes.
 
@@ -303,8 +303,8 @@ completion records require reconciliation.
 
 Follow `AGENTS.md` and read the required platform, slice, architecture and
 development specifications before executable changes.
-`docs/agentic-optimization-spec.md` governs this loop; preserve the object and
-provenance contracts in `docs/encoder-workspace-product.md`.
+`docs/features/optimization/agentic-optimization-spec.md` governs this loop; preserve the object and
+provenance contracts in `docs/features/workspaces/encoder-workspace-product.md`.
 
 Reuse existing ownership:
 

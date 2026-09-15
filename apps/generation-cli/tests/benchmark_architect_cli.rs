@@ -23,13 +23,16 @@ fn full_offline_pi_benchmark_architecture_review_handoff_and_conformance() {
     let database_url = sqlite_url(&temporary, "benchmark-architect-cli.db");
     let brief = path(
         &root,
-        "examples/benchmark-architect/support-benchmark-brief.json",
+        "apps/generation-cli/tests/fixtures/benchmark-architect/support-benchmark-brief.json",
     );
     let script = path(
         &root,
-        "examples/benchmark-architect/support-scripted-turns.json",
+        "apps/generation-cli/tests/fixtures/benchmark-architect/support-scripted-turns.json",
     );
-    let corpus = path(&root, "examples/benchmark-architect/support-corpus.json");
+    let corpus = path(
+        &root,
+        "apps/generation-cli/tests/fixtures/benchmark-architect/support-corpus.json",
+    );
     let sidecar = sidecar.to_string_lossy().into_owned();
     let outcome = run_json(
         &database_url,
@@ -196,7 +199,7 @@ fn queued_cancellation_and_interrupted_recovery_are_durable() {
                 let store = SqliteStore::connect(&database_url).await.unwrap();
                 let mut value: Value = serde_json::from_slice(
                     &std::fs::read(
-                        root.join("examples/benchmark-architect/support-benchmark-brief.json"),
+                        root.join("apps/generation-cli/tests/fixtures/benchmark-architect/support-benchmark-brief.json"),
                     )
                     .unwrap(),
                 )

@@ -5,7 +5,7 @@ use generation_core::{
 use project_config::{ProjectConfig, ProjectInitializer, ProjectOverrides};
 use synthetic_data_sqlite::SqliteStore;
 
-const CONFIG: &str = include_str!("../../../examples/project.toml");
+const CONFIG: &str = include_str!("fixtures/project.toml");
 
 #[tokio::test]
 async fn project_initialization_is_atomic_and_persists_resolved_settings() {

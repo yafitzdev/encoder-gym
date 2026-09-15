@@ -18,7 +18,7 @@ async fn migration_0017_keeps_legacy_reports_decodable_and_backfills_findings() 
     let mut connection = SqliteConnection::connect_with(&options)
         .await
         .expect("connect");
-    let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+    let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations");
     let full = Migrator::new(migrations.as_path())
         .await
         .expect("load migrations");

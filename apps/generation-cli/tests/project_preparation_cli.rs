@@ -38,7 +38,7 @@ fn manifest_previews_prepares_idempotently_and_yields_a_startable_workflow() {
     let manifest_path = directory.path().join("project-preparation.toml");
     std::fs::write(
         &manifest_path,
-        include_str!("../../../examples/project-preparation.toml").replace(
+        include_str!("fixtures/project-preparation.toml").replace(
             "00000000-0000-0000-0000-000000000000",
             &snapshot_id.to_string(),
         ),
@@ -377,7 +377,7 @@ impl PreparedDoctorFixture {
         let manifest_path = directory.path().join("project-preparation.toml");
         std::fs::write(
             &manifest_path,
-            include_str!("../../../examples/project-preparation.toml").replace(
+            include_str!("fixtures/project-preparation.toml").replace(
                 "00000000-0000-0000-0000-000000000000",
                 &snapshot_id.to_string(),
             ),

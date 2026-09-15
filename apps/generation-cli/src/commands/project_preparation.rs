@@ -152,8 +152,9 @@ mod tests {
 
     #[test]
     fn checked_in_example_is_a_strict_manifest() {
-        let path = std::path::Path::new("../../examples/project-preparation.toml");
-        let manifest = load_manifest(path).expect("example manifest");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/project-preparation.toml");
+        let manifest = load_manifest(&path).expect("fixture manifest");
         assert_eq!(manifest.version, 1);
         assert_eq!(manifest.workflow.total_rows, 1_000);
     }

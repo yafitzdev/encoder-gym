@@ -17,7 +17,7 @@ async fn migrations_0051_and_0052_preserve_bundles_and_guard_qualification_histo
     let mut connection = SqliteConnection::connect_with(&options)
         .await
         .expect("connect");
-    let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+    let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations");
     let full = Migrator::new(migrations.as_path())
         .await
         .expect("load migrations");
@@ -217,7 +217,7 @@ async fn migration_0053_preserves_legacy_workflows_and_guards_qualification_auth
     let mut connection = SqliteConnection::connect_with(&options)
         .await
         .expect("connect");
-    let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+    let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations");
     let full = Migrator::new(migrations.as_path())
         .await
         .expect("load migrations");

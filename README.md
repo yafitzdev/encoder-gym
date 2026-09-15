@@ -9,9 +9,9 @@
 **Generate, curate, train, evaluate, analyze, and improve text encoders while preserving the evidence behind every change.**
 
 [![Rust 1.85+](https://img.shields.io/badge/Rust-1.85%2B-000000?logo=rust)](https://www.rust-lang.org/)
-[![Local first](https://img.shields.io/badge/execution-local--first-2563eb)](docs/platform-spec.md)
+[![Local first](https://img.shields.io/badge/execution-local--first-2563eb)](docs/PLATFORM.md)
 [![CLI + Desktop](https://img.shields.io/badge/interfaces-CLI%20%2B%20desktop-7c3aed)](ui/README.md)
-[![Status: active development](https://img.shields.io/badge/status-active%20development-f59e0b)](docs/current-status.md)
+[![Status: active development](https://img.shields.io/badge/status-active%20development-f59e0b)](docs/PRODUCTION_READINESS.md)
 
 [Start Here](#start-here) • [Why Encoder Gym?](#why-encoder-gym) • [The Encoder Loop](#the-encoder-loop) • [Quick Start](#quick-start) • [Governance](#governance--provenance) • [Architecture](#architecture) • [Limitations](#limitations) • [Documentation](#links) • [GitHub](https://github.com/yafitzdev/encoder-gym)
 
@@ -31,79 +31,54 @@
 > model download, Python environment, or GPU.
 
 ```powershell
-$env:SYNTH_DATABASE_URL = "sqlite://data/pilot-support.db?mode=rwc"
+$env:SYNTH_DATABASE_URL = "sqlite://encoder-gym-demo.db?mode=rwc"
 
-cargo run -p synthetic-data-cli -- project bootstrap-preview examples/pilot-support/project-bootstrap.toml
-cargo run -p synthetic-data-cli -- project bootstrap examples/pilot-support/project-bootstrap.toml
+cargo run -p synthetic-data-cli -- project bootstrap-preview demo/project-bootstrap.toml
+cargo run -p synthetic-data-cli -- project bootstrap demo/project-bootstrap.toml
 ```
 
 Preview writes nothing. Bootstrap creates the immutable inputs and prints the
 exact next command for starting the workflow. Continue with that command, then
 use `workflow status` to see the next explicit decision.
 
-See the [Pilot Quick Start](docs/pilot-quickstart.md) for the full offline run.
+See the [Pilot Quick Start](docs/QUICKSTART.md) for the full offline run.
 
 ---
 
 ### About
 
-Encoder Gym is a local, single-user platform for building and improving text
-encoders. It connects synthetic-data generation, dataset management, training,
-evaluation, error analysis, and optimization through explicit persisted
-contracts.
+An **encoder** takes an input, just like an LLM. Instead of generating a
+response, it turns that input into a useful representation. Fine-tune it for a
+task and it can classify, rank, or compare inputs quickly and cheaply.
 
-The main product path is the Rust CLI, backed by SQLite and immutable files. A
-local Electron desktop provides managed project folders, model and dataset
-custody, experiment inspection, comparisons, settings, and activity history.
-External providers are optional and are used only through explicitly configured,
-bounded operations.
+Encoder Gym handles the full improvement loop: data generation and curation,
+training, evaluation, error analysis, and comparison. Its agent inspects the
+evaluation and test set, reasons about which data should be added or removed,
+trains the next candidate, and checks whether it is actually better.
 
-Encoder Gym is not a hosted AutoML service and it does not hide an open-ended
-optimization loop behind a button. Training inputs, evaluation roles, budgets,
-reviews, and promotion decisions remain visible and reproducible.
-
-The standard workflow targets text classification. A provider-neutral experiment
-contract also supports compiled task adapters for other encoder tasks; the first
-real adapter is the isolated Nomos retrieval ranker.
+The idea is simple: set up Encoder Gym, start a run, go to sleep, and wake up to
+a better encoder than the one you had before—with the evidence to prove it.
 
 ---
 
 ### Why Encoder Gym?
 
-**The complete encoder loop 🧪**
-> Generate or import examples, curate immutable datasets, train checkpoints,
-> evaluate them, inspect failures, and turn reviewed findings into the next
-> bounded data plan.
+**Agent-native, with tools 🤖**
+> The agent can inspect evaluation evidence, reason about dataset weaknesses,
+> use bounded tools to change the data, train another candidate, and measure the
+> result.
 
-**Immutable evidence instead of mutable experiment folders 🧾**
-> Snapshots, checkpoints, evaluations, reports, proposals, reviews, and
-> promotion decisions retain the identities and fingerprints of what produced
-> them.
+**Recovery built in ♻️**
+> Runs, artifacts, and decisions are persisted as work happens. Interrupted
+> training and optimization can be inspected, resumed, or safely replayed.
 
-**Evaluation that stays separate from adaptation 🔒**
-> Development evidence may guide iteration. Sealed acceptance evidence is
-> handled through a separate explicit finalization step and is never supplied
-> to analysis, generation, or optimization.
+**Custom-made GUI 🖥️**
+> A purpose-built desktop interface makes encoder projects, datasets, runs, and
+> results easy to manage. The CLI provides precise, scriptable control.
 
-**A real offline path 🏠**
-> Deterministic generation, hashing-linear training, local SQLite persistence,
-> and mock provider tests make the ordinary development workflow reproducible
-> without external services.
-
-**Human authority at consequential boundaries 🧭**
-> Agents may research, diagnose, or propose within finite scopes. Deterministic
-> contracts and explicit reviews remain the authority for qualification,
-> iteration, sealed evaluation, and promotion.
-
-**Replaceable backends with project-owned contracts 🔌**
-> Generation providers, evaluators, advisors, trainers, and production task
-> adapters remain behind narrow interfaces. Provider-specific types do not
-> define the platform's domain model.
-
-**Recovery is part of the workflow ♻️**
-> Long-running work reserves durable identities before execution. Status,
-> cancellation, recovery, idempotent replay, and provenance are ordinary product
-> operations rather than cleanup scripts.
+**Fully local 🏠**
+> Data, models, SQLite state, evaluation, and supported training can stay on
+> your machine. External model providers are optional.
 
 ---
 
@@ -127,52 +102,30 @@ contracts.
 
 ### The Encoder Loop
 
-```text
-Task + benchmark contract
-          │
-          ▼
-Generate or import ──→ qualify ──→ immutable snapshot
-                                           │
-                                           ▼
-                                     train checkpoint
-                                           │
-                                           ▼
-                                development evaluation
-                                           │
-                                           ▼
-                        error analysis ──→ reviewed proposal
-                              ▲                    │
-                              └── next bounded iteration
+```mermaid
+flowchart LR
+    setup["1 · SETUP<br/>Choose the encoder, task,<br/>data, and success criteria"]
 
-After development stops:
+    subgraph status["2 · STATUS — the agent loop"]
+        direction TB
+        evaluate["Evaluate the current encoder"]
+        inspect["Inspect failures and test coverage"]
+        reason["Reason about what data must change"]
+        curate["Generate, add, remove, or rebalance examples"]
+        train["Train the next candidate"]
 
-separate sealed finalization ──→ promote candidate or retain baseline
+        evaluate --> inspect --> reason --> curate --> train --> evaluate
+    end
+
+    report["3 · REPORT<br/>Best encoder, measured gains,<br/>changes, and provenance"]
+
+    setup --> evaluate
+    evaluate -->|goal reached or budget complete| report
 ```
 
-Every arrow crosses a persisted contract. A later stage links the earlier
-artifact instead of reaching into its internal state or replacing it in place.
-
----
-
-### What Exists Today
-
-> [!NOTE]
-> Encoder Gym is at version `0.1.0` and is under active development. The core
-> local workflows are implemented and tested; interface coverage is intentionally
-> uneven while the desktop catches up with the CLI.
-
-| Area | Current state |
-|------|---------------|
-| Core platform | Synthetic data, datasets, training, evaluation, analysis, and optimization have Rust domain, persistence, CLI, and deterministic tests. |
-| Controlled workflow | A finite, persisted CLI workflow composes the slices with explicit approvals, budgets, contamination checks, sealed finalization, and promotion. |
-| Training | Deterministic hashing-linear and supported local BERT-family CPU backends. |
-| External providers | Optional OpenAI-compatible generation, row-quality evaluation, and advisory adapters with explicit configuration and finite limits. |
-| Desktop | Managed local projects, model/data custody, comparisons, settings, activity history, and recorded experiment inspection. It does not expose every CLI capability. |
-| Production tasks | Provider-neutral experiment contracts with a compiled Nomos retrieval-ranking adapter as the first real integration. |
-| Deployment | Local, single-user execution. No hosted service, authentication, distributed execution, or multi-worker runtime. |
-
-The detailed implementation and real experiment handoff are tracked in
-[Current Project Status](docs/current-status.md).
+Setup defines the job. Status is the working loop: evaluate, understand the
+failures, improve the data, and train again. Report delivers the best candidate
+along with its measurements and a trace of how it was produced.
 
 ---
 
@@ -206,10 +159,10 @@ value on stdout.
 #### Run the complete offline pilot
 
 ```powershell
-$env:SYNTH_DATABASE_URL = "sqlite://data/pilot-support.db?mode=rwc"
+$env:SYNTH_DATABASE_URL = "sqlite://encoder-gym-demo.db?mode=rwc"
 
-cargo run -p synthetic-data-cli -- project bootstrap-preview examples/pilot-support/project-bootstrap.toml
-cargo run -p synthetic-data-cli -- --output json project bootstrap examples/pilot-support/project-bootstrap.toml
+cargo run -p synthetic-data-cli -- project bootstrap-preview demo/project-bootstrap.toml
+cargo run -p synthetic-data-cli -- --output json project bootstrap demo/project-bootstrap.toml
 ```
 
 Run the exact workflow command printed by bootstrap:
@@ -235,7 +188,7 @@ cargo run -p synthetic-data-cli -- provenance workflow-run <RUN_ID>
 cargo run -p synthetic-data-cli -- doctor
 ```
 
-See [Pilot Quick Start](docs/pilot-quickstart.md) for expected outputs,
+See [Pilot Quick Start](docs/QUICKSTART.md) for expected outputs,
 idempotent replay, and the opt-in real-provider smoke.
 
 #### Launch Encoder Gym desktop
@@ -254,39 +207,11 @@ does not start training, evaluation, or a provider call. See the
 
 ---
 
-<a id="core-concepts"></a>
-
-<details>
-
-<summary><strong>📦 Core Concepts and Artifacts</strong></summary>
-
-<br />
-
-| Concept | Meaning |
-|---------|---------|
-| **Project configuration** | A resolved local task definition with explicit labels, dimensions, backends, budgets, and workflow settings. |
-| **Dataset** | An append-only identity containing accepted, rejected, generated, and imported row facts. |
-| **Snapshot** | Immutable, reproducibly split dataset membership used by later stages. |
-| **Benchmark bundle** | Exact development and optional sealed suites plus their qualification and contamination authority. |
-| **Training run** | Persisted lifecycle, backend configuration, progress, and input binding for one training attempt. |
-| **Checkpoint** | Immutable model artifact tied to its training run and source snapshot. |
-| **Evaluation** | Metrics and predictions produced by one checkpoint against one exact suite. |
-| **Analysis report** | Persisted findings derived from evaluation facts, never from presentation state. |
-| **Optimization proposal** | A finite set of explicit data recommendations awaiting review. |
-| **Promotion decision** | Immutable acceptance or rejection of a candidate; not a mutable `best-model` pointer. |
-
-Artifacts retain enough identity and configuration to inspect how later results
-were derived. See [Provenance](docs/provenance.md).
-
-</details>
-
----
-
 <a id="governance--provenance"></a>
 
 <details>
 
-<summary><strong>📦 Governance and Provenance</strong> → <a href="docs/workflow-governance-spec.md">Full Workflow Contract</a></summary>
+<summary><strong>📦 Governance and Provenance</strong> → <a href="docs/features/governance/workflow-governance-spec.md">Full Workflow Contract</a></summary>
 
 <br />
 
@@ -307,8 +232,8 @@ Provenance follows source snapshots, plans, model artifacts, evaluations,
 reports, reviews, and decisions. Use the `provenance` command family to inspect
 the complete dependency tree for a supported artifact.
 
-See [Provenance](docs/provenance.md), [Benchmark Stewardship](docs/benchmark-stewardship-spec.md),
-and [Controlled Workflow Governance](docs/workflow-governance-spec.md).
+See [Provenance](docs/PROVENANCE.md), [Benchmark Stewardship](docs/features/evaluation/benchmark-stewardship-spec.md),
+and [Controlled Workflow Governance](docs/features/governance/workflow-governance-spec.md).
 
 </details>
 
@@ -352,7 +277,7 @@ npm start
 
 <details>
 
-<summary><strong>📦 Architecture</strong> → <a href="docs/architecture.md">Full Architecture Guide</a></summary>
+<summary><strong>📦 Architecture</strong> → <a href="docs/ARCHITECTURE.md">Full Architecture Guide</a></summary>
 
 <br />
 
@@ -385,7 +310,7 @@ dataset-through-optimization capabilities are CLI-first.
 
 <details>
 
-<summary><strong>📦 CLI Reference</strong> → <a href="docs/cli.md">Full CLI Guide</a></summary>
+<summary><strong>📦 CLI Reference</strong> → <a href="docs/CLI.md">Full CLI Guide</a></summary>
 
 <br />
 
@@ -417,71 +342,6 @@ machine-readable JSON value on stdout; diagnostics remain on stderr.
 
 ---
 
-<a id="backends--configuration"></a>
-
-<details>
-
-<summary><strong>📦 Backends and Configuration</strong></summary>
-
-<br />
-
-| Role | Implementations currently available |
-|------|-------------------------------------|
-| Synthetic generation | Deterministic fake; OpenAI-compatible endpoint |
-| Dataset-quality evaluation | Deterministic fake; OpenAI-compatible endpoint |
-| Advisory interpretation | Deterministic fake; OpenAI-compatible endpoint |
-| Text-classification training | Hashing-linear; supported local BERT-family CPU bundle |
-| Production encoder tasks | Compiled task adapters; Nomos retrieval ranking is the first integration |
-
-Copy `.env.example` to `.env` for local development. Supported process settings
-include:
-
-- `SYNTH_DATABASE_URL` — SQLite connection URL
-- `SYNTH_BIND_ADDRESS` — local generation-server bind address
-- `SYNTH_OPENAI_API_KEY` — optional generation/evaluation credential
-- `SYNTH_ADVISOR_API_KEY` — optional advisor credential
-- `BRAVE_SEARCH_API_KEY` — optional bounded research credential
-- `RUST_LOG` — diagnostic log filter
-
-Non-secret provider settings are persisted explicitly. CLI credentials remain
-process-local; desktop credentials are stored through its operating-system-backed
-encrypted credential store and are never returned to the renderer.
-
-See [Configuration](docs/configuration.md), [Operations](docs/operations.md), and
-[Transformer Training](docs/transformer-training.md).
-
-</details>
-
----
-
-<a id="recovery--reproducibility"></a>
-
-<details>
-
-<summary><strong>📦 Recovery and Reproducibility</strong></summary>
-
-<br />
-
-Generation jobs, training runs, workflows, experiments, and managed optimization
-runs persist state rather than relying on a live terminal or UI session.
-Interrupted work is recovered through its reserved identity; retries reuse
-completed artifacts when their fingerprints still match.
-
-```text
-cargo run -p synthetic-data-cli -- recovery list
-cargo run -p synthetic-data-cli -- recovery resume-generation <JOB_ID> --config project.toml
-cargo run -p synthetic-data-cli -- provenance workflow-run <RUN_ID>
-cargo run -p synthetic-data-cli -- doctor
-```
-
-`doctor` derives its verdict from stored facts and artifact bytes. It does not
-trust a previous green UI state. See [Recovery](docs/recovery.md),
-[Provenance](docs/provenance.md), and [Database Migrations](docs/migrations.md).
-
-</details>
-
----
-
 <a id="limitations"></a>
 
 <details>
@@ -502,91 +362,7 @@ trust a previous green UI state. See [Recovery](docs/recovery.md),
 | Compatibility | The repository is at `0.1.0`; public package and long-term compatibility commitments have not been declared. |
 
 The complete scope and non-goals are in the
-[Platform Specification](docs/platform-spec.md).
-
-</details>
-
----
-
-<a id="faq--troubleshooting"></a>
-
-<details>
-
-<summary><strong>📦 FAQ / Troubleshooting</strong></summary>
-
-<br />
-
-**Do I need an API key?**
-> No. The offline pilot, deterministic fake backends, hashing-linear trainer,
-> and ordinary test suite require no credentials. Keys are needed only for an
-> explicitly selected external provider.
-
-**Do I need a GPU?**
-> No for the included pilot. The supported transformer path is a local CPU
-> backend, though real encoder training can take materially longer than the
-> deterministic baseline.
-
-**Does opening a desktop project start training?**
-> No. Project creation, imports, configuration, inspection, and verification do
-> not authorize model execution or provider calls.
-
-**Can sealed evaluation data influence optimization?**
-> No. Sealed rows, predictions, and scores are excluded from adaptive analysis
-> and agent inputs. Sealed finalization is a separate explicit operation.
-
-**Can Encoder Gym use an OpenAI-compatible endpoint?**
-> Yes, for explicitly configured generation, quality evaluation, or advisory
-> roles. Each external operation remains subject to its persisted authority and
-> finite limits.
-
-**Can it train any encoder architecture?**
-> Not automatically. The generic trainer supports the documented local
-> BERT-family bundle contract. Different task semantics or model layouts need a
-> compatible backend or compiled production-task adapter.
-
-**Where is local state stored?**
-> Core CLI workflows use the configured SQLite URL plus immutable artifact
-> files. Desktop projects own their model, dataset, registry, activity, and run
-> directories inside the selected project folder.
-
-For detailed command failures, start with `synth doctor`, then see
-[Operations](docs/operations.md) and [Recovery](docs/recovery.md).
-
-</details>
-
----
-
-<a id="development"></a>
-
-<details>
-
-<summary><strong>📦 Development and Verification</strong> → <a href="docs/development.md">Development Guide</a></summary>
-
-<br />
-
-Run the Rust gates from the repository root:
-
-```text
-cargo fmt-check
-cargo check-all
-cargo lint
-cargo test-all
-```
-
-Run the desktop checks separately:
-
-```powershell
-cd ui
-npm ci
-npm run check
-npm run smoke
-```
-
-Ordinary tests use deterministic fakes, local fixtures, and loopback mock
-servers. Live-provider tests and real-project checks are explicit opt-ins.
-
-Read [Architecture](docs/architecture.md) before changing dependency boundaries
-and [Development](docs/development.md) before implementing a coherent component.
+[Limitations](docs/LIMITATIONS.md).
 
 </details>
 
@@ -602,13 +378,14 @@ repository is not offered under an open-source license.
 ### Links
 
 - [GitHub](https://github.com/yafitzdev/encoder-gym)
-- [Platform Specification](docs/platform-spec.md)
-- [Pilot Quick Start](docs/pilot-quickstart.md)
-- [CLI Guide](docs/cli.md)
+- [Documentation](docs/README.md)
+- [Platform Specification](docs/PLATFORM.md)
+- [Pilot Quick Start](docs/QUICKSTART.md)
+- [CLI Guide](docs/CLI.md)
 - [Desktop Guide](ui/README.md)
-- [Architecture](docs/architecture.md)
-- [Provenance](docs/provenance.md)
-- [Current Project Status](docs/current-status.md)
-- [Development Guide](docs/development.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Provenance](docs/PROVENANCE.md)
+- [Production Readiness](docs/PRODUCTION_READINESS.md)
+- [Development Guide](docs/DEVELOPMENT.md)
 
 Yan Fitzner — [GitHub](https://github.com/yafitzdev) • [Hugging Face](https://huggingface.co/yafitzdev)

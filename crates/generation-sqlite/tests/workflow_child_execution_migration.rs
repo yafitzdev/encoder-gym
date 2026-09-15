@@ -17,7 +17,7 @@ async fn migration_0050_preserves_workflows_and_fences_child_execution_links() {
     let mut connection = SqliteConnection::connect_with(&options)
         .await
         .expect("connect");
-    let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+    let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations");
     let full = Migrator::new(migrations.as_path())
         .await
         .expect("load migrations");
@@ -151,7 +151,7 @@ async fn migration_0057_preserves_children_and_allows_one_supervisor_across_stag
     let mut connection = SqliteConnection::connect_with(&options)
         .await
         .expect("connect");
-    let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+    let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations");
     let full = Migrator::new(migrations.as_path())
         .await
         .expect("load migrations");

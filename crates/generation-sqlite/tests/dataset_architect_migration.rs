@@ -15,7 +15,7 @@ async fn migration_0043_preserves_existing_generation_and_adds_architect_history
     .create_if_missing(true)
     .foreign_keys(false);
     let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
-    let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+    let migrations = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations");
     let full = Migrator::new(migrations.as_path()).await.unwrap();
     let first_forty_two = Migrator {
         migrations: Cow::Owned(full.migrations.iter().take(42).cloned().collect()),

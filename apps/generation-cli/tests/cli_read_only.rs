@@ -18,7 +18,7 @@ fn pure_configuration_and_policy_commands_never_open_a_database() {
     let directory = tempfile::tempdir().unwrap();
     let database_url = url(&directory.path().join("missing-parent/database.db"));
     let file = directory.path().join("project.toml");
-    std::fs::write(&file, include_str!("../../../examples/hybrid-project.toml")).unwrap();
+    std::fs::write(&file, include_str!("fixtures/hybrid-project.toml")).unwrap();
     let file = file.to_str().unwrap();
     assert_eq!(
         run_json(&database_url, ["config", "validate", file])["valid"],
@@ -39,7 +39,7 @@ fn pure_configuration_and_policy_commands_never_open_a_database() {
     );
     run_json(&database_url, ["quality", "policy-preview"]);
     let brief = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/benchmark-architect/support-benchmark-brief.json");
+        .join("tests/fixtures/benchmark-architect/support-benchmark-brief.json");
     run_json(
         &database_url,
         [
