@@ -87,24 +87,6 @@ Yan Fitzner — ([LinkedIn](https://www.linkedin.com/in/yan-fitzner/), [GitHub](
 
 ---
 
-### What You Can Do
-
-| Stage | What `encoder-gym` does | Durable output |
-|-------|-----------------------|----------------|
-| **Generate or import data** | Builds explicit coverage plans, generates bounded synthetic examples, or imports JSONL/CSV rows with source provenance. | Dataset rows and generation receipts |
-| **Curate and version** | Audits row quality, records reviews, and freezes exact train/validation/test membership. | Immutable dataset snapshot |
-| **Train** | Runs deterministic hashing-linear training or a supported local BERT-family CPU backend. | Training run and checksum-verified checkpoints |
-| **Evaluate** | Applies a persisted benchmark contract to an exact checkpoint and immutable cohort. | Predictions, metrics, and acceptance evidence |
-| **Analyze** | Aggregates persisted errors by label and arbitrary categorical dimensions without rerunning the model. | Error report and inspectable findings |
-| **Improve** | Converts eligible development findings into finite, reviewable data recommendations and generation plans. | Optimization proposal, review, and successor plan |
-
-Optional bounded capabilities add authenticity research, dataset architecture,
-row qualification, generation supervision, benchmark architecture, declarative
-project preparation, and production-task adapters around the same core artifact
-contracts.
-
----
-
 ### The Encoder Loop
 
 ```mermaid
