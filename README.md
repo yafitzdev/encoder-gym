@@ -12,7 +12,7 @@
 [![Version: 0.1.0](https://img.shields.io/badge/version-0.1.0-2563eb)](CHANGELOG.md)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-yellow)](LICENSE)
 
-[Start Here](#start-here) • [Why `encoder-gym`?](#why-encoder-gym) • [The Encoder Loop](#the-encoder-loop) • [CLI](#cli) • [Quick Start](#quick-start) • [Studio](#studio) • [Governance](#governance--provenance) • [Architecture](#architecture) • [Limitations](#limitations) • [Documentation](#links) • [GitHub](https://github.com/yafitzdev/encoder-gym)
+[Start Here](#start-here) • [Why `encoder-gym`?](#why-encoder-gym) • [The Encoder Loop](#the-encoder-loop) • [Quick Start](#quick-start) • [Studio](#studio) • [Architecture](#architecture) • [CLI](#cli) • [License](#license) • [Links](#links) • [GitHub](https://github.com/yafitzdev/encoder-gym)
 
 </div>
 
@@ -133,38 +133,6 @@ along with its measurements and a trace of how it was produced.
 
 ---
 
-<a id="cli"></a>
-
-### CLI
-
-The `synth` CLI is the main way to run `encoder-gym`. These are the commands that
-drive a complete project from setup to a final result:
-
-| Command | What it does |
-|---------|--------------|
-| `synth project bootstrap-preview <MANIFEST>` | Validate the complete project and preview what will be created without writing anything. |
-| `synth project bootstrap <MANIFEST>` | Import the local benchmark data and prepare a startable project. |
-| `synth workflow start <DEFINITION_ID>` | Start the encoder-development workflow created during setup. |
-| `synth workflow status <RUN_ID>` | Show the current stage, results so far, and the next required action. |
-| `synth workflow watch <RUN_ID>` | Wait until the run pauses, finishes development, or completes. |
-| `synth workflow approve <RUN_ID>` | Approve a bounded data proposal when the workflow reaches a review boundary. |
-| `synth workflow finalize <RUN_ID>` | Run the configured sealed acceptance evaluation once. |
-| `synth workflow promote <RUN_ID>` | Record whether the final candidate replaces the baseline. |
-| `synth provenance workflow-run <RUN_ID>` | Trace the run back through its data, training, evaluation, and decisions. |
-| `synth doctor` | Verify the database, configuration, artifacts, and optional backends. |
-
-Specialized command families expose each stage directly: `dataset`, `snapshot`,
-and `quality` manage data; `plan`, `generate`, and `job` run generation;
-`encoder`, `training`, and `evaluation` operate models; and `analysis`,
-`optimize`, and `recovery` handle improvement and interrupted work.
-
-When running from this repository, replace `synth` with
-`cargo run -p synthetic-data-cli --`. Add `--output json` before a subcommand
-for machine-readable output. See the [full CLI reference](docs/CLI.md) for every
-command and option.
-
----
-
 <a id="quick-start"></a>
 
 <details>
@@ -178,7 +146,7 @@ command and option.
 - Git
 - Rust `1.85` or newer through `rustup`
 - The `rustfmt` and `clippy` components requested by `rust-toolchain.toml`
-- Node.js `22.19` or newer and npm only when running the desktop app
+- Node.js `22.19` or newer and npm only when running Encoder Gym Studio
 
 The repository pins the stable Rust toolchain profile and required components.
 
@@ -227,25 +195,17 @@ cargo run -p synthetic-data-cli -- doctor
 See [Pilot Quick Start](docs/QUICKSTART.md) for expected outputs,
 idempotent replay, and the opt-in real-provider smoke.
 
-#### Launch Encoder Gym Studio
-
-```powershell
-cd ui
-npm ci
-npm start
-```
-
-Studio starts with an empty project library. Creating or opening a project
-does not start training, evaluation, or a provider call. See the
-[Studio Guide](ui/README.md).
-
 </details>
 
 ---
 
 <a id="studio"></a>
 
-### Encoder Gym Studio 🖥️
+<details>
+
+<summary><strong>📦 Encoder Gym Studio</strong> → <a href="ui/README.md">Studio Guide</a></summary>
+
+<br />
 
 Encoder Gym Studio puts the full workflow in one focused interface: configure a
 run, follow the agent while it works, and decide whether the resulting encoder
@@ -279,36 +239,6 @@ npm start
 ```
 
 See the [Studio Guide](ui/README.md) for project setup and the complete interface.
-
----
-
-<a id="governance--provenance"></a>
-
-<details>
-
-<summary><strong>📦 Governance and Provenance</strong> → <a href="docs/features/governance/workflow-governance-spec.md">Full Workflow Contract</a></summary>
-
-<br />
-
-`encoder-gym` treats experiment governance as executable product behavior:
-
-| Boundary | Enforced behavior |
-|----------|-------------------|
-| Dataset history | Completed snapshots and derived artifacts are immutable. |
-| Benchmark leakage | Trainer-visible data must pass a strict persisted contamination check against the bound benchmark population. |
-| Evidence roles | Development evidence may support adaptation; sealed evidence is aggregate-only and non-adaptive. |
-| Agent authority | Bounded agents may inspect or propose; deterministic validation and explicit reviews decide what becomes active. |
-| External calls | Provider operations require configured authority and persisted finite request, attempt, token, and optional cost limits. |
-| Long-running work | Child identities, attempts, cancellation, and recovery are persisted before or alongside execution. |
-| Acceptance | Deterministic benchmark contracts decide pass, fail, inconclusive, or invalid. |
-| Promotion | Finalization and promotion are explicit operations with immutable records. |
-
-Provenance follows source snapshots, plans, model artifacts, evaluations,
-reports, reviews, and decisions. Use the `provenance` command family to inspect
-the complete dependency tree for a supported artifact.
-
-See [Provenance](docs/PROVENANCE.md), [Benchmark Stewardship](docs/features/evaluation/benchmark-stewardship-spec.md),
-and [Controlled Workflow Governance](docs/features/governance/workflow-governance-spec.md).
 
 </details>
 
@@ -347,31 +277,43 @@ dataset-through-optimization capabilities are CLI-first.
 
 ---
 
-<a id="limitations"></a>
+<a id="cli"></a>
 
 <details>
 
-<summary><strong>📦 Limitations</strong></summary>
+<summary><strong>📦 CLI Reference</strong> → <a href="docs/CLI.md">Full CLI Guide</a></summary>
 
 <br />
 
-| Boundary | Current behavior |
-|----------|------------------|
-| Product scope | Local, single-user operation; no authentication, hosted control plane, multi-user collaboration, or distributed workers. |
-| Standard task | The complete generic slice workflow currently targets text classification. Other encoder tasks require compiled adapters. |
-| Desktop coverage | The desktop manages projects and evidence but does not expose every CLI workflow or every production adapter. |
-| Trainer support | Hashing-linear and supported BERT-family CPU bundles; arbitrary model code and pickle-based weights are not accepted. |
-| Contamination detection | Exact source, exact text, normalized text, and declared group checks—not semantic or embedding deduplication. |
-| External provenance | The platform cannot prove that benchmark content was absent from a pretrained base model or training performed elsewhere. |
-| Automation | Workflows are finite, persisted, and bounded. There is no open-ended autonomous optimization loop. |
-| Compatibility | The repository is at `0.1.0`; public package and long-term compatibility commitments have not been declared. |
+The `synth` CLI drives a complete project from setup to a final result:
 
-The complete scope and non-goals are in the
-[Limitations](docs/LIMITATIONS.md).
+| Command | What it does |
+|---------|--------------|
+| `synth project bootstrap-preview <MANIFEST>` | Validate the complete project and preview what will be created without writing anything. |
+| `synth project bootstrap <MANIFEST>` | Import the local benchmark data and prepare a startable project. |
+| `synth workflow start <DEFINITION_ID>` | Start the encoder-development workflow created during setup. |
+| `synth workflow status <RUN_ID>` | Show the current stage, results so far, and the next required action. |
+| `synth workflow watch <RUN_ID>` | Wait until the run pauses, finishes development, or completes. |
+| `synth workflow approve <RUN_ID>` | Approve a bounded data proposal when the workflow reaches a review boundary. |
+| `synth workflow finalize <RUN_ID>` | Run the configured sealed acceptance evaluation once. |
+| `synth workflow promote <RUN_ID>` | Record whether the final candidate replaces the baseline. |
+| `synth provenance workflow-run <RUN_ID>` | Trace the run back through its data, training, evaluation, and decisions. |
+| `synth doctor` | Verify the database, configuration, artifacts, and optional backends. |
+
+Specialized command families expose each stage directly: `dataset`, `snapshot`,
+and `quality` manage data; `plan`, `generate`, and `job` run generation;
+`encoder`, `training`, and `evaluation` operate models; and `analysis`,
+`optimize`, and `recovery` handle improvement and interrupted work.
+
+When running from this repository, replace `synth` with
+`cargo run -p synthetic-data-cli --`. Add `--output json` before a subcommand
+for machine-readable output.
 
 </details>
 
 ---
+
+<a id="license"></a>
 
 ### License
 
@@ -379,17 +321,19 @@ Apache License 2.0. See [LICENSE](LICENSE).
 
 ---
 
+<a id="links"></a>
+
 ### Links
 
 - [GitHub](https://github.com/yafitzdev/encoder-gym)
 - [Changelog](CHANGELOG.md)
 - [License](LICENSE)
 - [Documentation](docs/README.md)
-- [Platform Specification](docs/PLATFORM.md)
 - [Pilot Quick Start](docs/QUICKSTART.md)
-- [CLI Guide](docs/CLI.md)
 - [Studio Guide](ui/README.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [CLI Guide](docs/CLI.md)
+- [Platform Specification](docs/PLATFORM.md)
 - [Provenance](docs/PROVENANCE.md)
 - [Production Readiness](docs/PRODUCTION_READINESS.md)
 - [Development Guide](docs/DEVELOPMENT.md)
