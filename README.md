@@ -115,7 +115,7 @@ block-beta
     inspect --> reason
     reason --> curate
     curate --> train
-    train --> evaluate
+    train --> report
 ```
 
 Setup defines the job. Status is the working loop: evaluate, understand the
