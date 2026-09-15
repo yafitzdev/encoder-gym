@@ -155,6 +155,7 @@ mod tests {
             observer_identity: identity.clone(),
             repair_delta_identity: identity,
             progress: None,
+            training_accounting: None,
         };
         let signal = Arc::new(AtomicBool::new(false));
         let observed = signal.clone();
@@ -182,7 +183,10 @@ mod tests {
             backend.run_bounded(&arguments, 10),
         );
         let (result, ()) = tokio::join!(work, stop);
-        assert_eq!(result.unwrap_err().0, "Optimization stopped");
+        assert_eq!(
+            result.unwrap_err(),
+            EncoderTaskAdapterError::Failure("Optimization stopped".into())
+        );
     }
     #[tokio::test]
     async fn stop_interrupts_native_hashing_and_is_task_scoped() {

@@ -130,9 +130,24 @@ normal Stop confirms the owned child's termination before acknowledging pause.
 Scientific training/evaluation interruption does not append a failed-candidate
 verdict, and completed scientific outputs remain reusable. Unfinished training
 may restart rather than continue an optimizer checkpoint. Full recovery after
-abrupt coordinator death, descendant ownership, cumulative interrupted-training
-time accounting and typed budget outcomes still need complete process coverage.
+abrupt coordinator death, descendant ownership and root budget-stop presentation
+still need complete process coverage.
 The desktop has not yet connected these controls or reconciliation commands.
+
+Native training now reserves remaining time immediately before fresh process
+dispatch, through an experiment-core accounting port backed by the project
+database. Append-only attempts pin the iteration and exact training binding;
+completion records retain measured milliseconds for success, Stop, failure and
+deadline expiry. Iteration and whole-run limits include previous attempts and
+unsettled reservations. A lost settlement keeps the full unknown charge, even
+when the completed artifact is reused. Previously started unmetered iterations
+also retain a conservative reservation rather than receiving a fresh allowance.
+Artifact reuse does not dispatch another trainer or alter candidate identities.
+Accounting failures and exhausted time leave scientific work resumable rather
+than writing a failed-candidate verdict. The CLI exposes these facts with
+`workspace optimization-run <PROJECT> training-time <RUN_ID>`. Root execution
+still records these errors as failed attempts; a dedicated budget-stop view is
+remaining integration work, not an implemented desktop state.
 
 Agent and Generation activities are now projected from their own persisted
 actions into the existing activity stream, rather than requiring desktop

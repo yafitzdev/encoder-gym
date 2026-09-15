@@ -13,8 +13,16 @@ use crate::{journal::ExperimentEvent, protocol::ExperimentProtocol};
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
-#[error("encoder task adapter failed: {0}")]
-pub struct EncoderTaskAdapterError(pub String);
+pub enum EncoderTaskAdapterError {
+    #[error("encoder task adapter failed: {0}")]
+    Failure(String),
+    #[error("Training time budget exhausted; completed work is preserved")]
+    TrainingBudgetExhausted,
+    #[error("Training accounting failed: {0}")]
+    TrainingAccounting(String),
+    #[error("Native process exceeded its finite time limit")]
+    TimeLimitExceeded,
+}
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[error("encoder experiment store failed: {0}")]

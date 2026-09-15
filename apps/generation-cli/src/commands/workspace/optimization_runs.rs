@@ -80,6 +80,9 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunComm
                 .await
         }
         ReconcileAgent { run_id } => agent_dataset::control::reconcile(folder, run_id).await,
+        TrainingTime { run_id } => super::print(
+            &project_workspace_local::optimization_training_time::history(folder, run_id).await?,
+        ),
         EditDataset { run_id, runtime } => agent_dataset::execute(folder, run_id, runtime).await,
         PrepareCandidate { run_id, runtime } => {
             agent_dataset::prepare_candidate(folder, run_id, runtime).await

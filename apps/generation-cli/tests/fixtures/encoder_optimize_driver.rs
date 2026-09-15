@@ -104,7 +104,7 @@ impl FakeBackend {
 }
 
 fn adapter_error(error: impl std::fmt::Display) -> EncoderTaskAdapterError {
-    EncoderTaskAdapterError(error.to_string())
+    EncoderTaskAdapterError::Failure(error.to_string())
 }
 
 impl EncoderTaskBackend for FakeBackend {

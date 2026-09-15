@@ -10,6 +10,7 @@ pub mod journal;
 pub mod metrics;
 pub mod ports;
 pub mod protocol;
+pub mod training_budget;
 
 use thiserror::Error;
 

@@ -223,7 +223,7 @@ impl EncoderTaskBackend for FakeRankingBackend {
         Box::pin(async move {
             project
                 .validate_integrity()
-                .map_err(|error| EncoderTaskAdapterError(error.to_string()))?;
+                .map_err(|error| EncoderTaskAdapterError::Failure(error.to_string()))?;
             Ok(AdapterInspection {
                 source_fingerprint: project.source_fingerprint,
                 verified_artifact_keys: project.inputs.into_iter().map(|input| input.key).collect(),
@@ -281,7 +281,11 @@ impl EncoderTaskBackend for FakeRankingBackend {
                     sealed_calls.fetch_add(1, Ordering::SeqCst);
                     (0.81, 0.90)
                 }
-                _ => return Err(EncoderTaskAdapterError("unexpected fake evaluation".into())),
+                _ => {
+                    return Err(EncoderTaskAdapterError::Failure(
+                        "unexpected fake evaluation".into(),
+                    ));
+                }
             };
             let suite_fingerprint = match suite_key.as_str() {
                 "development_b" => digest('3'),
@@ -299,7 +303,7 @@ impl EncoderTaskBackend for FakeRankingBackend {
                 100,
                 Utc::now(),
             )
-            .map_err(|error| EncoderTaskAdapterError(error.to_string()))
+            .map_err(|error| EncoderTaskAdapterError::Failure(error.to_string()))
         })
     }
 }

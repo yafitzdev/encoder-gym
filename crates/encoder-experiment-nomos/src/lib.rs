@@ -9,6 +9,7 @@ mod progress;
 mod repair_delta;
 mod training_clearance;
 pub use agent_training::NomosFineTuneSettings;
+mod training_accounting;
 mod training_data;
 pub use benchmark::NomosBenchmarkPlan;
 pub use development_evidence::NomosDevelopmentEvidence;
@@ -109,6 +110,8 @@ pub struct NomosBackend {
     observer_identity: BackendIdentity,
     repair_delta_identity: BackendIdentity,
     progress: Option<Arc<dyn ProgressObserver>>,
+    training_accounting:
+        Option<Arc<dyn encoder_experiment_core::training_budget::TrainingAccounting>>,
 }
 
 impl NomosBackend {
@@ -202,6 +205,7 @@ impl NomosBackend {
             observer_identity,
             repair_delta_identity,
             progress: None,
+            training_accounting: None,
         })
     }
 
@@ -978,8 +982,23 @@ impl NomosBackend {
         arguments: &[String],
         maximum_seconds: u64,
     ) -> Result<(), EncoderTaskAdapterError> {
+        self.run_with_deadline(arguments, Duration::from_secs(maximum_seconds))
+            .await
+            .map_err(|error| match error {
+                EncoderTaskAdapterError::TimeLimitExceeded => {
+                    adapter_error("Nomos process exceeded its finite time limit")
+                }
+                error => error,
+            })
+    }
+
+    async fn run_with_deadline(
+        &self,
+        arguments: &[String],
+        maximum_duration: Duration,
+    ) -> Result<(), EncoderTaskAdapterError> {
         progress::check_stop()?;
-        if maximum_seconds == 0 {
+        if maximum_duration.is_zero() {
             return Err(adapter_error(
                 "Nomos process requires a positive time limit",
             ));
@@ -1040,7 +1059,7 @@ impl NomosBackend {
             }
             Ok::<_, std::io::Error>(tail)
         };
-        let work = tokio::time::timeout(Duration::from_secs(maximum_seconds), async {
+        let work = tokio::time::timeout(maximum_duration, async {
             let mut sink = tokio::io::sink();
             tokio::try_join!(child.wait(), tokio::io::copy(&mut stdout, &mut sink), drain)
         });
@@ -1052,16 +1071,19 @@ impl NomosBackend {
             // Await confirmed termination before the parent may acknowledge Stop
             // or release its lease for a replacement execution.
             progress::terminate_child(&mut child).await;
-            return Err(adapter_error(if result.is_none() {
-                "Optimization stopped"
+            return Err(if result.is_none() {
+                adapter_error("Optimization stopped")
             } else {
-                "Nomos process exceeded its finite time limit"
-            }));
+                EncoderTaskAdapterError::TimeLimitExceeded
+            });
         }
-        let output = result
-            .expect("present result")
-            .map_err(|_| adapter_error("Nomos process exceeded its finite time limit"))?
-            .map_err(|error| adapter_error(format!("could not start Nomos process: {error}")))?;
+        let output = match result.expect("present result").expect("deadline handled") {
+            Ok(output) => output,
+            Err(error) => {
+                progress::terminate_child(&mut child).await;
+                return Err(adapter_error(format!("Nomos process I/O failed: {error}")));
+            }
+        };
         if !output.0.success() {
             let stderr = bounded_text(&output.2, 2_000);
             return Err(adapter_error(format!(
@@ -1577,8 +1599,7 @@ impl EncoderTaskBackend for NomosBackend {
             }
             let started = std::time::Instant::now();
             self.observe(NativePhase::LoadingModel);
-            self.run_bounded(&arguments, candidate.maximum_training_seconds)
-                .await?;
+            self.run_accounted_training(&arguments, &candidate).await?;
             self.observe(NativePhase::SavingCheckpoint);
             let native_manifest = strategy.read_and_validate_manifest(
                 native_output,
@@ -3812,7 +3833,7 @@ fn bounded_text(bytes: &[u8], maximum: usize) -> String {
 }
 
 fn adapter_error(error: impl std::fmt::Display) -> EncoderTaskAdapterError {
-    EncoderTaskAdapterError(error.to_string())
+    EncoderTaskAdapterError::Failure(error.to_string())
 }
 
 fn observation_error(error: impl std::fmt::Display) -> DevelopmentObservationBackendError {

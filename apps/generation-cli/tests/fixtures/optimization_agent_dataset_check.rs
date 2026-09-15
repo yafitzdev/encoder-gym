@@ -17,6 +17,8 @@ use std::io::{Read, Write};
 mod loop_check;
 #[path = "optimization_agent_stop_check.rs"]
 mod stop_check;
+#[path = "optimization_training_time_check.rs"]
+mod training_time_check;
 
 fn native_row(id: &str, question: &str) -> Value {
     let tool = |id| json!({"tool_id":id,"tool_family":"search","description":"Find evidence","capabilities":["search"],"input_modalities":["text"],"output_modalities":["text"],"evidence_roles":["primary"],"side_effect_class":"none","argument_schema":{}});
@@ -61,6 +63,21 @@ async fn cli_agent_loop_can_finish_first_analysis_without_edits_or_training() {
 #[tokio::test]
 async fn cli_agent_stop_and_explicit_resume_preserve_completed_work_and_unknown_call_charge() {
     scenario(true, Some("stop_resume")).await;
+}
+
+#[tokio::test]
+async fn cli_agent_training_stop_and_resume_preserve_cumulative_time() {
+    scenario(true, Some("training_stop")).await;
+}
+
+#[tokio::test]
+async fn cli_agent_training_lost_accounting_reuses_output_without_refunding_unknown_time() {
+    scenario(true, Some("training_settlement")).await;
+}
+
+#[tokio::test]
+async fn cli_agent_training_deadline_exhausts_budget_without_repeating_native_work() {
+    scenario(true, Some("training_timeout")).await;
 }
 
 async fn scenario(complete: bool, loop_mode: Option<&str>) {
@@ -246,13 +263,19 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         settings = OptimizationAgentSettings::default();
         settings.maximum_iterations = if mode == "two_iterations" {
             2
-        } else if mode == "stop_resume" {
+        } else if matches!(
+            mode,
+            "stop_resume" | "training_stop" | "training_settlement" | "training_timeout"
+        ) {
             1
         } else {
             3
         };
         settings.maximum_row_changes = if mode == "row_limit" { 2 } else { 8 };
         settings.training.maximum_seconds_per_iteration = 120;
+        if mode == "training_timeout" {
+            settings.training.maximum_seconds_per_iteration = 1;
+        }
     }
     settings.training.device = project_workspace_core::OptimizationDevice::Cpu;
     settings.training.maximum_training_rows = Some(1);
@@ -350,6 +373,24 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
     let before_native = fs::read(root.join("runtime/native-invocations.log")).unwrap();
+    if loop_mode == Some("training_timeout") {
+        training_time_check::timeout(root, &folder, reserved.id, &calls, command).await;
+        generator.unwrap().join().unwrap();
+        return;
+    }
+    if matches!(loop_mode, Some("training_stop" | "training_settlement")) {
+        training_time_check::exercise(
+            root,
+            &folder,
+            reserved.id,
+            &calls,
+            command,
+            loop_mode == Some("training_stop"),
+        )
+        .await;
+        generator.unwrap().join().unwrap();
+        return;
+    }
     if loop_mode == Some("stop_resume") {
         stop_check::exercise(root, &folder, reserved.id, &calls, command).await;
         generator.unwrap().join().unwrap();

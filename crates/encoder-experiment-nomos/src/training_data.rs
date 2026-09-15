@@ -51,6 +51,7 @@ pub(super) mod tests {
             observer_identity: identity.clone(),
             repair_delta_identity: identity.clone(),
             progress: None,
+            training_accounting: None,
         };
         let configuration = json!({
             "adapter_protocol": ADAPTER_PROTOCOL_VERSION, "source_reference":{},"baseline_evidence":{},

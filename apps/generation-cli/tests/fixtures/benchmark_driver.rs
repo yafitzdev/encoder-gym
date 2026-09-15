@@ -137,6 +137,11 @@ fn native_evaluation(arguments: &[String]) -> Result<()> {
     )?;
     match module.as_str() {
         "tools.train_dense_triplet_router" => {
+            if let Some(ready) = env::var_os("ENCODER_FIXTURE_TRAINING_HOLD") {
+                fs::write(ready, "native training started")?;
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                anyhow::bail!("The held fixture trainer was not stopped");
+            }
             let input = argument(arguments, "--input")?;
             let count = fs::read_to_string(input)?.lines().count();
             let output = PathBuf::from(argument(arguments, "--output")?);

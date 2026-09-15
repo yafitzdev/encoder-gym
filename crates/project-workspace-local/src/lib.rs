@@ -17,6 +17,7 @@ pub mod optimization_iterations;
 pub mod optimization_launch;
 pub mod optimization_runs;
 pub mod optimization_setup;
+pub mod optimization_training_time;
 pub mod progress;
 
 use std::{fs, path::Path};

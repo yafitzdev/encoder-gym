@@ -665,6 +665,7 @@ mod tests {
             observer_identity: identity.clone(),
             repair_delta_identity: identity,
             progress: None,
+            training_accounting: None,
         }
     }
 

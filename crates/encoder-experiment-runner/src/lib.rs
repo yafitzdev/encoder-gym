@@ -441,6 +441,14 @@ where
                         if self.backend.stop_requested() {
                             return Err(ExperimentRunnerError::Stopped);
                         }
+                        if matches!(
+                            error,
+                            EncoderTaskAdapterError::TrainingBudgetExhausted
+                                | EncoderTaskAdapterError::TrainingAccounting(_)
+                                | EncoderTaskAdapterError::TimeLimitExceeded
+                        ) {
+                            return Err(error.into());
+                        }
                         self.append(
                             &protocol,
                             &view,

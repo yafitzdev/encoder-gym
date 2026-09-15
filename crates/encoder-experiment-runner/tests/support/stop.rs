@@ -30,7 +30,9 @@ impl EncoderTaskBackend for Interruptible {
             self.trains.fetch_add(1, Ordering::SeqCst);
             if self.mode.load(Ordering::SeqCst) == 1 {
                 self.stopped.store(true, Ordering::SeqCst);
-                return Err(EncoderTaskAdapterError("training interrupted".into()));
+                return Err(EncoderTaskAdapterError::Failure(
+                    "training interrupted".into(),
+                ));
             }
             let result = self.inner.train(project, candidate).await;
             if self.mode.load(Ordering::SeqCst) == 2 {
@@ -50,7 +52,9 @@ impl EncoderTaskBackend for Interruptible {
         Box::pin(async move {
             if self.mode.load(Ordering::SeqCst) == 3 && model.key.starts_with("candidate") {
                 self.stopped.store(true, Ordering::SeqCst);
-                return Err(EncoderTaskAdapterError("evaluation interrupted".into()));
+                return Err(EncoderTaskAdapterError::Failure(
+                    "evaluation interrupted".into(),
+                ));
             }
             self.inner
                 .evaluate(project, model, contract, suite, seconds)

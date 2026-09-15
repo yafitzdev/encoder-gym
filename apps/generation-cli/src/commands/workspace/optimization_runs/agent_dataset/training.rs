@@ -221,6 +221,22 @@ pub(super) async fn complete(
         };
         binding.fingerprint = binding.reproduce()?;
         let binding = custody::record_training(folder, run_id, binding).await?;
+        let events = store.load_events(experiment_id).await?;
+        let prior_training_started =
+            events.iter().any(|event| {
+                matches!(event.event,
+            encoder_experiment_core::journal::ExperimentEventKind::CandidateTrainingStarted { .. })
+            });
+        let accounting =
+            project_workspace_local::optimization_training_time::ProjectTrainingAccounting::open(
+                folder,
+                run_id,
+                iteration.id,
+                prior_training_started,
+            )
+            .await?;
+        let backend = backend.with_training_accounting(std::sync::Arc::new(accounting));
+        let runner = ExperimentRunner::new(&store, &backend);
         ensure!(
             !optimization_runs::show(folder, run_id)
                 .await?

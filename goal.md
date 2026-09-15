@@ -24,7 +24,8 @@ connection to that coordinator.
 | Candidate registration, exact training-dataset links and benchmark report lookup | `6d90ead` | Verify navigation through the connected app |
 | Evidence-dependent iterations, best eligible dataset selection and no-change completion | `f3d222b` | Complete cumulative accounting and interruption coverage |
 | Root execution attempts and adaptive completion | `3e18b6c` | Integrate lifecycle and recovery into the desktop |
-| Durable Stop and explicit Resume | `9ea9dc4`; all four Rust gates and 15 managed benchmark tests pass | Interrupted-training accounting, descendant ownership, every-boundary recovery and desktop controls |
+| Durable Stop and explicit Resume | `9ea9dc4`; all four Rust gates and 15 managed benchmark tests pass | Descendant ownership, every-boundary recovery and desktop controls |
+| Cumulative native-training time | CLI connected; all four Rust gates and 18 managed benchmark tests pass | Root budget-stop projection and abrupt-process recovery |
 | One-click Overview execution | Not verified end to end | Update the strict parser, connect the existing coordinator and test the rendered journey |
 
 The committed CLI checkpoints passed their required Rust gates. Prior UI tests
@@ -40,13 +41,17 @@ development suites failed, baseline retained, final holdout unused. Its 4,431
 activity events contained no Agent-origin entries. System templates and
 `agent_*` evaluation metrics are not evidence of optimization-Agent calls.
 
-Latest implementation checkpoint: `9ea9dc4`. Interrupted-training accounting
-has been investigated but is not implemented: fresh native training dispatch
-still receives the candidate's original time ceiling on each retry. Do not
-describe Stop/Resume as fully budget-safe until cumulative enforcement passes.
+Native training now reserves the remaining iteration/run time before dispatch
+and records measured elapsed time after the owned process stops. Interrupted,
+failed and timed-out attempts consume allowance; unknown attempts retain their
+full reservation. Retries preserve candidate identity and reuse verified output.
+The read-only `training-time` CLI exposes the ledger. Three focused process tests,
+all four Rust gates, UI typecheck, all 125 UI tests and nine native-clearance
+Python tests passed on this checkpoint's unchanged executable tree.
 
-This update is documentation-only. Do not continue implementation, start real
-Nomos training, make paid calls or expose protected evaluation in this turn.
+This is not full recovery or desktop readiness. The root still projects budget
+errors as failed attempts; distinct budget-stop presentation and safe descendant
+reconciliation remain unfinished. No real Nomos run or paid call was started.
 
 ## Immediate next deliverable
 
@@ -58,22 +63,12 @@ another executor.
    UUID; Resume pins the observed execution head. The production-CLI regression
    rejects stale Resume, preserves interrupted-call charges and reuses completed
    work. Do not rebuild it or equate this coverage with complete recovery.
-2. **Implement interrupted-training accounting next.** Deliver one bounded,
-   production-CLI-connected checkpoint:
-
-   - Persist a training-attempt reservation before fresh native training starts.
-     Enforce the remaining iteration and run allowances across retries without
-     changing immutable candidate, protocol or dataset identities.
-   - Record time consumed by successful, interrupted, failed and timed-out
-     attempts. Unresolved attempts retain conservative charges; Resume must
-     never reset the allowance or treat unknown consumption as zero.
-   - Reuse verified completed artifacts without dispatching or charging a new
-     training attempt. Keep training accounting distinct from qualification and
-     evaluation time. Budget exhaustion needs a typed outcome, not a candidate
-     rejection or an endlessly retryable generic error.
-   - Prove these cases through deterministic production-path tests before
-     claiming the checkpoint complete. Do not promise optimizer-state recovery:
-     unfinished training may restart, but only within the remaining allowance.
+2. **Preserve the verified cumulative training-accounting checkpoint.** Do not
+   rebuild it. The same production CLI now charges
+   interrupted work, enforces remaining time and reuses completed artifacts.
+   Keep qualification/evaluation time separate and unknown charges conservative.
+   Do not promise optimizer-state recovery: unfinished training may restart,
+   but only within the remaining allowance.
 
 3. **Close the remaining recovery gaps before exposing controls.**
 
@@ -83,6 +78,8 @@ another executor.
      registration and each development report.
    - Reconcile activity with durable outcomes; distinguish paused work,
      exhausted budgets, execution failure and successful experiment completion.
+     Native budget exhaustion already has a typed error and persisted charges;
+     project execution still needs a distinct, non-retrying budget-stop state.
    - Preserve the verified control-intent fence through desktop integration:
      a stale Resume cannot clear a new Stop; retrying an old Stop cannot halt
      an already resumed attempt.
@@ -117,8 +114,9 @@ proves that retrying an old Stop after Resume leaves the new attempt running.
 All four required Rust gates passed on the unchanged executable tree, including
 the 15 managed benchmark tests and the legacy optimization recovery suite.
 
-These tests do not establish every-boundary recovery, safe orphan reconciliation
-or cumulative interrupted-training budgets. Unfinished training may restart;
+These Stop/Resume tests alone do not establish every-boundary recovery, safe
+orphan reconciliation or cumulative interrupted-training budgets. The separate
+training-time checkpoint adds the latter's CLI tests. Unfinished training may restart;
 do not promise optimizer-checkpoint continuation. Stored `running` state is
 not by itself proof of a live worker.
 
@@ -302,6 +300,9 @@ Completed CLI mechanics are not completed desktop integration:
 - [x] Production-CLI Stop/Resume tests prove durable control intent, stale-command
   rejection and reuse of completed inspection after an interrupted Agent call
   (`9ea9dc4`). This is narrower than every-boundary recovery below.
+- [x] Production-CLI training-time tests prove reduced retry grants after Stop,
+  no native dispatch after deadline exhaustion, and completed-output reuse after
+  a lost settlement without refunding the unknown charge.
 - [ ] One Optimize action invokes the pinned Agent and, when additions are
   proposed, the independently pinned generator through that same coordinator.
 - [ ] Every exposed Advanced setting is enforced cumulatively, including

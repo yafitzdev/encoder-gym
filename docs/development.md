@@ -194,8 +194,18 @@ reject duplicate and nil control identities. Native tests interrupt checksums
 between reads and terminate an
 owned helper process; scientific runner tests preserve training/evaluation
 history rather than failing a stopped candidate. These tests do not prove
-abrupt coordinator/descendant death recovery at every boundary, cumulative
-interrupted-training time accounting, or the connected desktop controls.
+abrupt coordinator/descendant death recovery at every boundary or the connected
+desktop controls.
+
+Three additional production-CLI tests cover cumulative native-training time:
+Stop during a held trainer and Resume with a reduced grant, deadline exhaustion
+without another native dispatch, and a lost accounting write after native
+completion followed by artifact reuse with the original unknown charge intact.
+They verify unchanged provider-call counts, immutable accounting history and
+SQLite foreign keys. Pure tests cover iteration/run ceilings, failed attempts,
+unknown reservations, cleanup overruns, exact settlement retries and invalid
+grants. These tests use the existing deterministic native executable; they do
+not exercise a real Nomos model or prove abrupt descendant-process recovery.
 
 The runner's `development_only_iteration_cannot_authorize_or_execute_holdout`
 regression separately proves zero-allowance adaptive protocols cannot acquire

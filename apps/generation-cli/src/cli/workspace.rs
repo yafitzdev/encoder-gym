@@ -66,6 +66,8 @@ pub enum WorkspaceOptimizationRunCommand {
     },
     /// Reconcile an exited Agent worker without starting or resuming work.
     ReconcileAgent { run_id: Uuid },
+    /// Inspect durable native-training attempts and time charges without executing work.
+    TrainingTime { run_id: Uuid },
     /// Read immutable iteration inputs and development report references.
     Iterations { run_id: Uuid },
     /// Pin the first Agent iteration from already-verified inputs and saved development evidence.

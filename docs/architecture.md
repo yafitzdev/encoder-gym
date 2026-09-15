@@ -154,8 +154,20 @@ Scoped cancellation probes stop local/native file reads and owned native child
 processes. The experiment backend's provider-neutral Stop predicate prevents
 new scientific steps and preserves resumable journal state on interruption,
 rather than recording an artificial candidate failure. No subprocess, SQLite
-or provider types enter core. Complete abrupt-process recovery, interrupted
-training-time accounting, desktop wiring and final holdout remain outstanding.
+or provider types enter core. Complete abrupt-process recovery, root budget-stop
+projection, desktop wiring and final holdout remain outstanding.
+
+`encoder-experiment-core::training_budget` owns cumulative native-training time
+and its narrow reserve/finish port. `project-workspace-local` implements this
+port with append-only reservations and completions linked to immutable iteration
+training custody. The CLI attaches it to the ordinary Nomos backend after that
+custody is recorded. Native dispatch uses only the remaining grant and settles
+elapsed time after the owned process has stopped; unknown outcomes retain the
+full grant. Reusing verified artifacts bypasses dispatch, not input validation.
+No candidate/protocol identity changes on retry. The read-only `training-time`
+command reports the same persisted facts. Budget/accounting errors propagate
+without a false scientific rejection; the root lifecycle still needs a distinct
+budget-stop projection before desktop integration.
 
 The CLI now transfers each iteration's verified training output into ordinary
 model custody, including development-rejected candidates. The model's producing
