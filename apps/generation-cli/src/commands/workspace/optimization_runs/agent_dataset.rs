@@ -1,6 +1,7 @@
 //! Production pre-training composition: exact inputs -> Agent -> generation ->
 //! immutable dataset. The returned version is NOT permission to train: complete
 //! task-owned benchmark isolation must still precede the training handoff.
+pub(super) mod control;
 mod inspection;
 mod iteration_loop;
 mod providers;
@@ -124,6 +125,10 @@ async fn run_step(
     append_activity(folder, event(ActivityEventState::Started, None)).await?;
     let result: Result<_> = async {
         let mut result = drive(folder, iteration, action_id, runtime).await?;
+        ensure!(
+            !project_workspace_local::optimization_execution::stopped(folder, run_id).await?,
+            "Run stopped before qualification"
+        );
         if qualify {
             if let Some(publication) = &result.publication {
                 result.qualification =
@@ -131,6 +136,10 @@ async fn run_step(
             }
         }
         if train {
+            ensure!(
+                !project_workspace_local::optimization_execution::stopped(folder, run_id).await?,
+                "Run stopped before training"
+            );
             if let Some(qualified) = &result.qualification {
                 let (development, candidate) =
                     training::complete(folder, run_id, qualified).await?;

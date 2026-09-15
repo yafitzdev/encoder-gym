@@ -71,11 +71,12 @@ pub(crate) fn hash(path: &Path, relative: &str) -> Result<FileIdentity> {
     );
     let mut reader = File::open(path)?;
     let total = reader.metadata()?.len();
-    crate::progress::file_progress(path, 0, total);
+    crate::progress::file_progress(path, 0, total)?;
     let mut hasher = Sha256::new();
     let mut bytes = 0;
     let mut buffer = [0_u8; 65_536];
     loop {
+        crate::progress::check_stop()?;
         let n = reader.read(&mut buffer)?;
         if n == 0 {
             break;
@@ -83,10 +84,10 @@ pub(crate) fn hash(path: &Path, relative: &str) -> Result<FileIdentity> {
         hasher.update(&buffer[..n]);
         bytes += n as u64;
         if bytes % (8 * 1024 * 1024) == 0 {
-            crate::progress::file_progress(path, bytes, total);
+            crate::progress::file_progress(path, bytes, total)?;
         }
     }
-    crate::progress::file_progress(path, bytes, total);
+    crate::progress::file_progress(path, bytes, total)?;
     Ok(FileIdentity {
         path: relative.into(),
         bytes,

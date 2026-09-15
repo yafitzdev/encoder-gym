@@ -115,6 +115,14 @@ impl OptimizationExecutionLease {
     }
 
     pub(crate) fn acquire(database_url: &str, run_id: Uuid) -> anyhow::Result<Self> {
+        Self::try_acquire(database_url, run_id)?.context(
+            "This optimization stage is already running in another local process. Reopen its status instead of starting it again.",
+        )
+    }
+
+    /// None means the exact recorded PID/start-time owner is still alive.
+    /// Invalid or unreadable ownership remains an error, never proof of death.
+    pub(crate) fn try_acquire(database_url: &str, run_id: Uuid) -> anyhow::Result<Option<Self>> {
         let database = database_file_path(database_url)?;
         let parent = database
             .parent()
@@ -146,15 +154,13 @@ impl OptimizationExecutionLease {
             file.sync_all()?;
             drop(file);
             match fs::rename(&staged, &directory) {
-                Ok(()) => return Ok(Self { directory, owner }),
+                Ok(()) => return Ok(Some(Self { directory, owner })),
                 Err(_error) if directory.is_dir() => {
                     fs::remove_file(&owner_path)?;
                     fs::remove_dir(&staged)?;
                     let current = read_execution_lease(&directory)?;
                     if execution_owner_is_active(&current) {
-                        anyhow::bail!(
-                            "This optimization stage is already running in another local process. Reopen its status instead of starting it again."
-                        );
+                        return Ok(None);
                     }
                     let stale = parent.join(format!(
                         ".encoder-optimization-{run_id}.lease-stale-{}",

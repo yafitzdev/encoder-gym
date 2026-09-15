@@ -51,9 +51,21 @@ pub enum WorkspaceOptimizationRunCommand {
     /// Run/resume the authorized finite Agent loop through development; never uses final holdout.
     DriveAgent {
         run_id: Uuid,
+        /// Resume only the stopped execution head returned by run show.
+        #[arg(long, value_name = "EXECUTION_HEAD")]
+        resume: Option<String>,
         #[command(flatten)]
         runtime: super::ResearchRuntimeArgs,
     },
+    /// Durably stop the Agent run; preserve its identity and completed artifacts.
+    StopAgent {
+        run_id: Uuid,
+        /// Reuse this UUID when retrying the same Stop command.
+        #[arg(long)]
+        request_id: Option<Uuid>,
+    },
+    /// Reconcile an exited Agent worker without starting or resuming work.
+    ReconcileAgent { run_id: Uuid },
     /// Read immutable iteration inputs and development report references.
     Iterations { run_id: Uuid },
     /// Pin the first Agent iteration from already-verified inputs and saved development evidence.

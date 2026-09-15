@@ -326,7 +326,9 @@ async fn execute_inner(command: WorkspaceCommand) -> anyhow::Result<()> {
             optimization_launch::execute(&folder, command).await
         }
         WorkspaceCommand::OptimizationRun { folder, command } => {
-            optimization_runs::execute(&folder, command).await
+            // Keep the bounded coordinator's aggregate future off the dispatcher
+            // stack; adding scoped cancellation must not enlarge every command.
+            Box::pin(optimization_runs::execute(&folder, command)).await
         }
         WorkspaceCommand::Benchmark { folder, command } => {
             benchmarks::execute(&folder, command).await

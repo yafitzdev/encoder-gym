@@ -15,6 +15,8 @@ use sqlx::{Connection, SqliteConnection};
 use std::io::{Read, Write};
 #[path = "optimization_agent_loop_check.rs"]
 mod loop_check;
+#[path = "optimization_agent_stop_check.rs"]
+mod stop_check;
 
 fn native_row(id: &str, question: &str) -> Value {
     let tool = |id| json!({"tool_id":id,"tool_family":"search","description":"Find evidence","capabilities":["search"],"input_modalities":["text"],"output_modalities":["text"],"evidence_roles":["primary"],"side_effect_class":"none","argument_schema":{}});
@@ -54,6 +56,11 @@ async fn cli_agent_loop_keeps_best_eligible_dataset_but_inspects_latest_result()
 #[tokio::test]
 async fn cli_agent_loop_can_finish_first_analysis_without_edits_or_training() {
     scenario(true, Some("no_change_first")).await;
+}
+
+#[tokio::test]
+async fn cli_agent_stop_and_explicit_resume_preserve_completed_work_and_unknown_call_charge() {
+    scenario(true, Some("stop_resume")).await;
 }
 
 async fn scenario(complete: bool, loop_mode: Option<&str>) {
@@ -237,7 +244,13 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     let mut settings = OptimizationAgentSettings::quick_test();
     if let Some(mode) = loop_mode {
         settings = OptimizationAgentSettings::default();
-        settings.maximum_iterations = if mode == "two_iterations" { 2 } else { 3 };
+        settings.maximum_iterations = if mode == "two_iterations" {
+            2
+        } else if mode == "stop_resume" {
+            1
+        } else {
+            3
+        };
         settings.maximum_row_changes = if mode == "row_limit" { 2 } else { 8 };
         settings.training.maximum_seconds_per_iteration = 120;
     }
@@ -301,8 +314,9 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     let calls = root.join("agent-calls.jsonl");
     let sidecar =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/optimization_agent_sidecar.mjs");
-    let invoke_iteration = || {
-        Command::new(env!("CARGO_BIN_EXE_synth"))
+    let command = || {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_synth"));
+        command
             .current_dir(root)
             .env("AGENT_FIXTURE_CALLS", &calls)
             .env("AGENT_FIXTURE_LOOP", loop_mode.unwrap_or(""))
@@ -322,10 +336,10 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
                 &reserved.id.to_string(),
                 "--pi-sidecar",
             ])
-            .arg(&sidecar)
-            .output()
-            .unwrap()
+            .arg(&sidecar);
+        command
     };
+    let invoke_iteration = || command().output().unwrap();
     let execute = || {
         let output = invoke_iteration();
         assert!(
@@ -336,6 +350,11 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
     let before_native = fs::read(root.join("runtime/native-invocations.log")).unwrap();
+    if loop_mode == Some("stop_resume") {
+        stop_check::exercise(root, &folder, reserved.id, &calls, command).await;
+        generator.unwrap().join().unwrap();
+        return;
+    }
     if complete && loop_mode.is_none() {
         let mut db = SqliteConnection::connect(&format!(
             "sqlite://{}",

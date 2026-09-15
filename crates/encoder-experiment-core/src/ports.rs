@@ -44,6 +44,12 @@ pub struct TrainOutput {
 pub trait EncoderTaskBackend: Send + Sync {
     fn identity(&self) -> BackendIdentity;
 
+    /// Cooperative interruption, not a scientific failure. Adapters must unwind
+    /// active work before returning; the runner preserves completed journal work.
+    fn stop_requested(&self) -> bool {
+        false
+    }
+
     fn inspect(
         &self,
         project: ExternalProjectSnapshot,

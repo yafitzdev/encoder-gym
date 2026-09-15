@@ -28,6 +28,9 @@ use encoder_experiment_runner::ExperimentRunner;
 use encoder_experiment_sqlite::SqliteExperimentStore;
 use serde_json::json;
 
+#[path = "support/stop.rs"]
+mod stop;
+
 async fn development_selected_run(
     store: &SqliteExperimentStore,
     backend: &FakeRankingBackend,

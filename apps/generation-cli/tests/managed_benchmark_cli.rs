@@ -24,7 +24,7 @@ fn run(root: &Path, args: &[&str]) -> Value {
         .unwrap();
     assert!(
         output.status.success(),
-        "{}",
+        "workspace {args:?}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout).unwrap()

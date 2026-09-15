@@ -181,8 +181,21 @@ attempt whose worker exited before recording failure, and replay after iteration
 completion but before parent completion. Completed retries preserve the parent
 history as well as provider/model/dataset identities. Root projection rejects
 tampered completion lineage, and terminal Agent runs cannot be cancelled or
-restarted. These checks do not yet prove fine-grained Stop/Resume or live-worker
-status reconciliation.
+restarted. The additional Stop/Resume process test stops before preparation and
+during an actual held Pi call. A concurrent CLI rejects duplicate execution,
+leaves a live worker untouched during reconciliation, requires explicit Resume,
+and reuses the previous completed inspection. The interrupted call's original
+unknown-usage reservation remains unchanged. A migration regression verifies
+version-19 attempt bytes, foreign keys and immutable triggers after the Stop
+schema upgrade. The same CLI test rejects Resume against an older execution
+head after a new Stop, including Stop while paused, and proves that retrying an
+old Stop UUID after Resume does not interrupt the new attempt. Domain tests
+reject duplicate and nil control identities. Native tests interrupt checksums
+between reads and terminate an
+owned helper process; scientific runner tests preserve training/evaluation
+history rather than failing a stopped candidate. These tests do not prove
+abrupt coordinator/descendant death recovery at every boundary, cumulative
+interrupted-training time accounting, or the connected desktop controls.
 
 The runner's `development_only_iteration_cannot_authorize_or_execute_holdout`
 regression separately proves zero-allowance adaptive protocols cannot acquire

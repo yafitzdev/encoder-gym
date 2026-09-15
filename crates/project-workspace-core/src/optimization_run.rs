@@ -1489,6 +1489,8 @@ pub enum ProjectOptimizationRunState {
     FinalEvaluationFailed,
     Cancelled,
     AgentRunning,
+    AgentStopping,
+    AgentPaused,
     AgentInterrupted,
     AgentFailed,
     AgentCompleted,

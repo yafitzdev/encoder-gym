@@ -70,7 +70,16 @@ fn candidate_reasoning(candidate: &TrainingCandidate) -> Result<String> {
 pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunCommand) -> Result<()> {
     use WorkspaceOptimizationRunCommand::*;
     match command {
-        DriveAgent { run_id, runtime } => agent_dataset::drive_loop(folder, run_id, runtime).await,
+        DriveAgent {
+            run_id,
+            runtime,
+            resume,
+        } => agent_dataset::drive_loop(folder, run_id, runtime, resume).await,
+        StopAgent { run_id, request_id } => {
+            agent_dataset::control::stop(folder, run_id, request_id.unwrap_or_else(Uuid::new_v4))
+                .await
+        }
+        ReconcileAgent { run_id } => agent_dataset::control::reconcile(folder, run_id).await,
         EditDataset { run_id, runtime } => agent_dataset::execute(folder, run_id, runtime).await,
         PrepareCandidate { run_id, runtime } => {
             agent_dataset::prepare_candidate(folder, run_id, runtime).await

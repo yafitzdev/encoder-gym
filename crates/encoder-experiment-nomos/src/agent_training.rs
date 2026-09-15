@@ -60,6 +60,7 @@ impl NomosBackend {
         &self,
         requested: &str,
     ) -> Result<String, EncoderTaskAdapterError> {
+        progress::check_stop()?;
         if ["cpu", "cuda"].contains(&requested) {
             return Ok(requested.into());
         }
@@ -78,12 +79,30 @@ impl NomosBackend {
             .stderr(Stdio::null())
             .kill_on_drop(true);
         // Fixed program emits one four-byte enum, never a model or row payload.
-        let output = tokio::time::timeout(Duration::from_secs(30), command.output())
-            .await
-            .map_err(|_| adapter_error("Training device detection timed out"))?
-            .map_err(|_| adapter_error("Training device detection could not start"))?;
-        let device = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        if !output.status.success() || !["cpu", "cuda"].contains(&device.as_str()) {
+        use tokio::io::AsyncReadExt;
+        let mut child = command.spawn().map_err(adapter_error)?;
+        let mut stdout = child.stdout.take().expect("piped stdout").take(64);
+        let mut bytes = Vec::new();
+        let result = tokio::select! {
+            result = tokio::time::timeout(Duration::from_secs(30), async {
+                tokio::try_join!(child.wait(), stdout.read_to_end(&mut bytes))
+            }) => Some(result),
+            () = progress::wait_for_stop() => None,
+        };
+        if result.as_ref().is_none_or(|r| r.is_err()) {
+            progress::terminate_child(&mut child).await;
+            return Err(adapter_error(if result.is_none() {
+                "Optimization stopped"
+            } else {
+                "Training device detection timed out"
+            }));
+        }
+        let (status, _) = result
+            .expect("present")
+            .expect("no timeout")
+            .map_err(adapter_error)?;
+        let device = String::from_utf8_lossy(&bytes).trim().to_owned();
+        if !status.success() || !["cpu", "cuda"].contains(&device.as_str()) {
             return Err(adapter_error("Training device detection failed"));
         }
         Ok(device)

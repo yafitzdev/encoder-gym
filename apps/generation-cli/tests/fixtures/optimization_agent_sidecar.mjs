@@ -1,7 +1,7 @@
 // Deterministic Pi wire fixture. Uses the real CLI's reserved-turn transport;
 // no production flag or application code substitutes Agent captions.
 import readline from 'node:readline';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync } from 'node:fs';
 const send = value => process.stdout.write(JSON.stringify(value) + '\n');
 send({ type: 'ready', protocolVersion: 1, piPackageVersion: '0.84.4' });
 let runId;
@@ -14,9 +14,13 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     if (JSON.stringify(request).includes('NEVER_DISCLOSE_HOLDOUT')) throw Error('Protected evidence leaked');
     const input = JSON.parse(request.initialPrompt);
     appendFileSync(process.env.AGENT_FIXTURE_CALLS, JSON.stringify({model: request.model, runId, iteration: input.scope.iteration, evidence: input.scope.developmentEvidenceFingerprint}) + '\n');
-    const turns = input.previousTurns;
+    const turns = input.previousTurns.filter(turn => !turn.interrupted);
     const later = input.scope.iteration > 1;
     send({ type: 'event', event: {type: 'turn_started', runId, sequence: 1} });
+    if (process.env.AGENT_FIXTURE_HOLD && turns.length === 1) {
+      writeFileSync(process.env.AGENT_FIXTURE_HOLD, 'waiting for stop');
+      return;
+    }
     let name, args;
     if (!turns.length) {
       name = 'inspect_development_failures'; args = {offset: 0, limit: 20};

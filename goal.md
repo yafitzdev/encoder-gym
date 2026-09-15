@@ -24,14 +24,15 @@ connection to that coordinator.
 | Candidate registration, exact training-dataset links and benchmark report lookup | `6d90ead` | Verify navigation through the connected app |
 | Evidence-dependent iterations, best eligible dataset selection and no-change completion | `f3d222b` | Complete cumulative accounting and interruption coverage |
 | Root execution attempts and adaptive completion | `3e18b6c` | Integrate lifecycle and recovery into the desktop |
-| Durable Stop and explicit Resume | Uncommitted working-tree implementation; focused tests passed | Confirm final full validation, close recovery gaps and commit separately |
+| Durable Stop and explicit Resume | Verified CLI checkpoint; all four Rust gates and 15 managed benchmark tests pass | Interrupted-training accounting, descendant ownership, every-boundary recovery and desktop controls |
 | One-click Overview execution | Not verified end to end | Update the strict parser, connect the existing coordinator and test the rendered journey |
 
 The committed CLI checkpoints passed their required Rust gates. Prior UI tests
 and rendered Overview fixture checks passed, but fixture captions do not prove
 that Optimize invokes the Agent. Do not transfer a checkpoint's test results to
-later uncommitted changes. Final full-suite success for the current Stop/Resume
-tree has not been confirmed in this goal update.
+later uncommitted changes. The Stop/Resume checkpoint also passed UI typecheck,
+all 125 UI tests, nine native-clearance Python tests and rendered Overview
+fixture checks. These are not connected Agent-loop desktop acceptance tests.
 
 Run 17 (`998d54fb-363f-443f-abeb-195dd2574d79`) established fixed training and
 evaluation, not Agent optimization: 6,800 existing rows, one epoch on CUDA, both
@@ -48,14 +49,12 @@ Make the existing Overview execute and display the tested Agent loop, with
 working Stop/Resume and truthful activity. Do not rebuild the loop or introduce
 another executor.
 
-1. **Finish the current Stop/Resume checkpoint.** Recover the existing validation
-   result rather than starting duplicate suites. Review the exact executable
-   tree, complete missing validation and commit the coherent component without
-   claiming full recovery.
+1. **Preserve the verified Stop/Resume checkpoint.** Stop has a stable command
+   UUID; Resume pins the observed execution head. The production-CLI regression
+   rejects stale Resume, preserves interrupted-call charges and reuses completed
+   work. Do not rebuild it or equate this coverage with complete recovery.
 2. **Close the known recovery and budget gaps before exposing controls.**
 
-   - Bind Resume to the actual persisted control intent. An old `--resume`
-     flag must not clear a newer Stop request.
    - Persist cumulative interrupted-training charges. Restarting unfinished
      training must not reset the run's time allowance.
    - Reconcile coordinator and descendant-process ownership after abrupt exit.
@@ -64,6 +63,9 @@ another executor.
      registration and each development report.
    - Reconcile activity with durable outcomes; distinguish paused work,
      exhausted budgets, execution failure and successful experiment completion.
+   - Preserve the verified control-intent fence through desktop integration:
+     a stale Resume cannot clear a new Stop; retrying an old Stop cannot halt
+     an already resumed attempt.
 3. **Connect the desktop.** Extend `ui/src/input-optimization.ts` to accept the
    actual Agent execution states and `agentExecution` record. Update lifecycle
    handling and the launch controller to invoke the existing `drive-agent`
@@ -77,16 +79,23 @@ Do not ask the user to start another real Nomos run to discover whether the
 Agent is connected. Deliver these checkpoints in bounded increments, reporting
 what is component-tested, CLI-integrated and app-verified.
 
-### Preserve the current Stop/Resume work
+### Verified Stop/Resume checkpoint
 
-The working tree adds `stop-agent`, explicit `drive-agent --resume` and
-`reconcile-agent`. Stop intent is persisted before pause acknowledgement;
-reconciliation must not start work or displace a live owner.
+The CLI supports `stop-agent --request-id <UUID>`, explicit
+`drive-agent --resume <EXECUTION_HEAD>` and `reconcile-agent`. Clients reuse the
+Stop UUID for retries; each new Stop changes the head even while paused. Resume
+checks the observed head in the write transaction, rather than adopting a newer
+intent. Stop intent is persisted before pause acknowledgement; reconciliation
+does not start work or displace a live owner.
 
 Focused tests cover queued Stop, an interrupted active Agent call, duplicate
 worker rejection, preservation of completed inspection, conservative unknown
 provider usage, interruptible local/native reads, owned-child termination and
 scientific interruption without falsely failing the candidate.
+The expanded process test also rejects an old Resume after another Stop and
+proves that retrying an old Stop after Resume leaves the new attempt running.
+All four required Rust gates passed on the unchanged executable tree, including
+the 15 managed benchmark tests and the legacy optimization recovery suite.
 
 These tests do not establish every-boundary recovery, safe orphan reconciliation
 or cumulative interrupted-training budgets. Unfinished training may restart;

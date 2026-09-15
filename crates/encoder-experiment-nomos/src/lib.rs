@@ -14,7 +14,9 @@ pub use benchmark::NomosBenchmarkPlan;
 pub use development_evidence::NomosDevelopmentEvidence;
 pub use generated_training::NomosGenerationTemplates;
 pub use managed_training::{NomosTrainingDataset, NomosTrainingDatasetWriter};
-pub use progress::{NativePhase, NativeProgress, ProgressObserver, with_file_progress};
+pub use progress::{
+    NativePhase, NativeProgress, ProgressObserver, with_file_progress, with_stop_probe,
+};
 pub use training_clearance::NomosTrainingClearance;
 pub use training_data::{VerifiedTrainingData, VerifiedTrainingInput};
 
@@ -976,6 +978,7 @@ impl NomosBackend {
         arguments: &[String],
         maximum_seconds: u64,
     ) -> Result<(), EncoderTaskAdapterError> {
+        progress::check_stop()?;
         if maximum_seconds == 0 {
             return Err(adapter_error(
                 "Nomos process requires a positive time limit",
@@ -1037,13 +1040,28 @@ impl NomosBackend {
             }
             Ok::<_, std::io::Error>(tail)
         };
-        let output = tokio::time::timeout(Duration::from_secs(maximum_seconds), async {
+        let work = tokio::time::timeout(Duration::from_secs(maximum_seconds), async {
             let mut sink = tokio::io::sink();
             tokio::try_join!(child.wait(), tokio::io::copy(&mut stdout, &mut sink), drain)
-        })
-        .await
-        .map_err(|_| adapter_error("Nomos process exceeded its finite time limit"))?
-        .map_err(|error| adapter_error(format!("could not start Nomos process: {error}")))?;
+        });
+        let result = tokio::select! {
+            result = work => Some(result),
+            () = progress::wait_for_stop() => None,
+        };
+        if result.as_ref().is_none_or(|result| result.is_err()) {
+            // Await confirmed termination before the parent may acknowledge Stop
+            // or release its lease for a replacement execution.
+            progress::terminate_child(&mut child).await;
+            return Err(adapter_error(if result.is_none() {
+                "Optimization stopped"
+            } else {
+                "Nomos process exceeded its finite time limit"
+            }));
+        }
+        let output = result
+            .expect("present result")
+            .map_err(|_| adapter_error("Nomos process exceeded its finite time limit"))?
+            .map_err(|error| adapter_error(format!("could not start Nomos process: {error}")))?;
         if !output.0.success() {
             let stderr = bounded_text(&output.2, 2_000);
             return Err(adapter_error(format!(
@@ -1382,6 +1400,10 @@ fn bound_source_fingerprint(
 }
 
 impl EncoderTaskBackend for NomosBackend {
+    fn stop_requested(&self) -> bool {
+        progress::stopped()
+    }
+
     fn identity(&self) -> BackendIdentity {
         self.identity.clone()
     }
@@ -3682,11 +3704,12 @@ fn sha256_file(path: &Path) -> Result<String, EncoderTaskAdapterError> {
         .map_err(|error| adapter_error(format!("could not hash Nomos file: {error}")))?;
     let total = file.metadata().map_err(adapter_error)?.len();
     let mut completed = 0;
-    progress::file_progress(path, 0, total);
+    progress::file_progress(path, 0, total)?;
     let mut reader = BufReader::new(file);
     let mut digest = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
+        progress::check_stop()?;
         let read = reader
             .read(&mut buffer)
             .map_err(|error| adapter_error(format!("could not hash Nomos file: {error}")))?;
@@ -3696,10 +3719,10 @@ fn sha256_file(path: &Path) -> Result<String, EncoderTaskAdapterError> {
         digest.update(&buffer[..read]);
         completed += read as u64;
         if completed % (8 * 1024 * 1024) == 0 {
-            progress::file_progress(path, completed, total);
+            progress::file_progress(path, completed, total)?;
         }
     }
-    progress::file_progress(path, completed, total);
+    progress::file_progress(path, completed, total)?;
     Ok(format!("{:x}", digest.finalize()))
 }
 

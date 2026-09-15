@@ -10,6 +10,8 @@ use uuid::Uuid;
 #[serde(rename_all = "snake_case")]
 pub enum AgentExecutionState {
     Running,
+    StopRequested,
+    Paused,
     Interrupted,
     Failed,
     Completed,
@@ -19,6 +21,8 @@ pub enum AgentExecutionState {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AgentExecutionChange {
     Started,
+    StopRequested,
+    Paused,
     Interrupted,
     Failed,
     Completed { completion: BoundIdentity },
@@ -28,6 +32,8 @@ impl AgentExecutionChange {
     pub fn storage_key(&self) -> &'static str {
         match self {
             Self::Started => "started",
+            Self::StopRequested => "stop_requested",
+            Self::Paused => "paused",
             Self::Interrupted => "interrupted",
             Self::Failed => "failed",
             Self::Completed { .. } => "completed",
@@ -56,8 +62,28 @@ impl AgentExecutionEvent {
         change: AgentExecutionChange,
         created_at: DateTime<Utc>,
     ) -> Result<Self, Invalid> {
+        Self::create_with_id(
+            Uuid::new_v4(),
+            run,
+            previous,
+            attempt_id,
+            change,
+            created_at,
+        )
+    }
+
+    /// A control command retains this identity when its response is lost.
+    pub fn create_with_id(
+        id: Uuid,
+        run: BoundIdentity,
+        previous: Option<&Self>,
+        attempt_id: Uuid,
+        change: AgentExecutionChange,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, Invalid> {
+        require(!id.is_nil(), "Execution event needs a non-nil identity")?;
         let mut value = Self {
-            id: Uuid::new_v4(),
+            id,
             run,
             sequence: previous.map_or(Ok(1), |event| {
                 event
@@ -131,12 +157,34 @@ pub fn replay(
                     prior.is_none_or(|v| {
                         matches!(
                             v.state,
-                            AgentExecutionState::Interrupted | AgentExecutionState::Failed
+                            AgentExecutionState::Interrupted
+                                | AgentExecutionState::Failed
+                                | AgentExecutionState::Paused
                         )
                     }) && attempts.insert(event.attempt_id),
                     "Agent execution cannot start while running or after completion",
                 )?;
                 AgentExecutionState::Running
+            }
+            AgentExecutionChange::StopRequested => {
+                require(
+                    prior.is_none_or(|v| {
+                        v.state != AgentExecutionState::Completed
+                            && v.attempt_id == event.attempt_id
+                    }),
+                    "Stop request has no matching unfinished attempt",
+                )?;
+                AgentExecutionState::StopRequested
+            }
+            AgentExecutionChange::Paused => {
+                require(
+                    prior.is_some_and(|v| {
+                        v.state == AgentExecutionState::StopRequested
+                            && v.attempt_id == event.attempt_id
+                    }),
+                    "Pause needs the exact stop request",
+                )?;
+                AgentExecutionState::Paused
             }
             change => {
                 require(
@@ -165,7 +213,9 @@ pub fn replay(
                         completion = Some(selected.clone());
                         AgentExecutionState::Completed
                     }
-                    AgentExecutionChange::Started => unreachable!(),
+                    AgentExecutionChange::Started
+                    | AgentExecutionChange::StopRequested
+                    | AgentExecutionChange::Paused => unreachable!(),
                 }
             }
         };

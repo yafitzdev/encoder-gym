@@ -18,6 +18,96 @@ fn event(
 }
 
 #[test]
+fn stop_requires_acknowledgement_and_resume_preserves_attempt_history() {
+    let run = identity();
+    let initial = Uuid::new_v4();
+    let mut events = vec![event(
+        &run,
+        &[],
+        initial,
+        AgentExecutionChange::StopRequested,
+    )];
+    assert_eq!(replay(&run, &events, &[]).unwrap().unwrap().attempts, 0);
+    let attempt = Uuid::new_v4();
+    let premature = event(&run, &events, attempt, AgentExecutionChange::Started);
+    assert!(replay(&run, &[events.clone(), vec![premature]].concat(), &[]).is_err());
+    events.push(event(&run, &events, initial, AgentExecutionChange::Paused));
+    events.push(event(&run, &events, attempt, AgentExecutionChange::Started));
+    events.push(event(
+        &run,
+        &events,
+        attempt,
+        AgentExecutionChange::StopRequested,
+    ));
+    let late = event(&run, &events, attempt, AgentExecutionChange::Failed);
+    assert!(replay(&run, &[events.clone(), vec![late]].concat(), &[]).is_err());
+    events.push(event(&run, &events, attempt, AgentExecutionChange::Paused));
+    assert_eq!(replay(&run, &events, &[]).unwrap().unwrap().attempts, 1);
+    events.push(event(
+        &run,
+        &events,
+        Uuid::new_v4(),
+        AgentExecutionChange::Started,
+    ));
+    let view = replay(&run, &events, &[]).unwrap().unwrap();
+    assert_eq!(view.attempts, 2);
+    assert_eq!(view.state, AgentExecutionState::Running);
+}
+
+#[test]
+fn distinct_stop_commands_change_the_head_even_while_paused() {
+    let run = identity();
+    let attempt = Uuid::new_v4();
+    let request_id = Uuid::new_v4();
+    let first = AgentExecutionEvent::create_with_id(
+        request_id,
+        run.clone(),
+        None,
+        attempt,
+        AgentExecutionChange::StopRequested,
+        Utc::now(),
+    )
+    .unwrap();
+    let mut events = vec![first];
+    events.push(event(&run, &events, attempt, AgentExecutionChange::Paused));
+    let paused = replay(&run, &events, &[]).unwrap().unwrap();
+    events.push(event(
+        &run,
+        &events,
+        attempt,
+        AgentExecutionChange::StopRequested,
+    ));
+    let newer = replay(&run, &events, &[]).unwrap().unwrap();
+    assert_eq!(newer.state, AgentExecutionState::StopRequested);
+    assert_ne!(newer.head_fingerprint, paused.head_fingerprint);
+    assert_eq!(newer.attempts, 0);
+    // Retrying one command is handled by persistence, never by appending it
+    // again under the same action identity.
+    let duplicate = AgentExecutionEvent::create_with_id(
+        request_id,
+        run.clone(),
+        events.last(),
+        attempt,
+        AgentExecutionChange::StopRequested,
+        Utc::now(),
+    )
+    .unwrap();
+    events.push(duplicate);
+    assert!(replay(&run, &events, &[]).is_err());
+    assert!(
+        AgentExecutionEvent::create_with_id(
+            Uuid::nil(),
+            run,
+            None,
+            attempt,
+            AgentExecutionChange::StopRequested,
+            Utc::now(),
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn failure_and_interruption_retain_history_and_fence_old_attempts() {
     let run = identity();
     let first = Uuid::new_v4();

@@ -111,9 +111,28 @@ exclusive PID/start-time-verified execution lease. Completed retries revalidate
 scientific evidence without adding attempts or repeating completed work.
 The process fixtures exercise failure before iteration completion, failure while
 recording that error, and interruption before parent completion. This recorded
-attempt status is not independently a live-process probe. Durable resumable
-Stop/Resume, proactive dead-worker reconciliation, detailed budget-stop reasons
-and active-child cancellation remain required; permanent Cancel is unchanged.
+attempt status is not independently a live-process probe. The CLI now accepts
+`stop-agent <RUN_ID>`, which persists Stop intent before interrupting work, and
+`drive-agent <RUN_ID> --resume <EXECUTION_HEAD>`, which resumes only the exact
+stopped head the caller observed. `stop-agent` accepts `--request-id <UUID>`;
+clients must reuse it when retrying the same command. A new Stop while paused
+still changes the head, invalidating an older Resume. Retrying an old Stop after
+Resume never stops the new attempt. Compare-and-append checks the original
+observed head inside the write transaction; it must not reload and adopt a newer
+intent between admission and startup. Stop before dispatch is supported. `reconcile-agent`
+records a dead coordinator only after obtaining its exact exclusive execution
+lease, without dispatching any work. A live lease leaves the attempt untouched.
+Permanent Cancel is unchanged.
+
+The existing Agent/generator dispatch fences consume Stop intent. A scoped
+observer propagates it to local/native file reads and native subprocess waits;
+normal Stop confirms the owned child's termination before acknowledging pause.
+Scientific training/evaluation interruption does not append a failed-candidate
+verdict, and completed scientific outputs remain reusable. Unfinished training
+may restart rather than continue an optimizer checkpoint. Full recovery after
+abrupt coordinator death, descendant ownership, cumulative interrupted-training
+time accounting and typed budget outcomes still need complete process coverage.
+The desktop has not yet connected these controls or reconciliation commands.
 
 Agent and Generation activities are now projected from their own persisted
 actions into the existing activity stream, rather than requiring desktop

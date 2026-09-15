@@ -21,6 +21,8 @@ use uuid::Uuid;
 
 #[derive(Debug, Error)]
 pub enum ExperimentRunnerError {
+    #[error("encoder experiment stopped; completed work is preserved")]
+    Stopped,
     #[error(transparent)]
     Domain(#[from] EncoderExperimentError),
     #[error(transparent)]
@@ -402,6 +404,9 @@ where
                 EncoderExperimentError::Validation("candidate step budget overflowed".into())
             })?;
         for _ in 0..maximum_steps {
+            if self.backend.stop_requested() {
+                return Err(ExperimentRunnerError::Stopped);
+            }
             let (project, protocol, events) = self.context(run_id).await?;
             let view = replay_experiment(&project, &protocol, &events)?;
             if !matches!(
@@ -433,6 +438,9 @@ where
                         .await?;
                     }
                     Err(error) => {
+                        if self.backend.stop_requested() {
+                            return Err(ExperimentRunnerError::Stopped);
+                        }
                         self.append(
                             &protocol,
                             &view,
@@ -498,6 +506,9 @@ where
                         .await?;
                     }
                     Err(error) => {
+                        if self.backend.stop_requested() {
+                            return Err(ExperimentRunnerError::Stopped);
+                        }
                         self.append(
                             &protocol,
                             &view,

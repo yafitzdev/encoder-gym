@@ -141,8 +141,21 @@ beside the unchanged fixed-recipe root journal. Ordinary root reads validate
 the completion/iteration lineage through non-recursive database readers before
 projecting Agent-specific states. The CLI acquires the existing exclusive
 execution lease before recovering an abandoned attempt. Provider reservations
-also reject closed execution attempts inside their database transaction. This
-does not yet implement resumable Stop, active-child cancellation or final holdout.
+also reject closed execution attempts inside their database transaction. Stop
+adds ordered requested/paused transitions without changing permanent Cancel.
+Each Stop uses a stable command UUID; retries reuse that exact event. Distinct
+commands change the execution head even while paused. Resume pins the observed
+head, and the local transaction compares that same snapshot before starting,
+so a stale Resume cannot consume a newer Stop. Retrying an old Stop after a
+successful Resume cannot stop the new attempt.
+The CLI holds the same lease while unwinding work; its explicit reconcile
+command obtains that lease before recording interruption and never starts work.
+Scoped cancellation probes stop local/native file reads and owned native child
+processes. The experiment backend's provider-neutral Stop predicate prevents
+new scientific steps and preserves resumable journal state on interruption,
+rather than recording an artificial candidate failure. No subprocess, SQLite
+or provider types enter core. Complete abrupt-process recovery, interrupted
+training-time accounting, desktop wiring and final holdout remain outstanding.
 
 The CLI now transfers each iteration's verified training output into ordinary
 model custody, including development-rejected candidates. The model's producing

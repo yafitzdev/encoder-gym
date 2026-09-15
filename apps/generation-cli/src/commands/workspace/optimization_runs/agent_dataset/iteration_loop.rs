@@ -10,6 +10,7 @@ pub(in crate::commands::workspace::optimization_runs) async fn execute(
     folder: &Path,
     run_id: Uuid,
     runtime: crate::cli::ResearchRuntimeArgs,
+    resume: Option<String>,
 ) -> Result<()> {
     let database_url = format!("sqlite://{}", folder.join("project.sqlite").display());
     let _lease = crate::commands::encoder_optimize::OptimizationExecutionLease::acquire(
@@ -28,13 +29,44 @@ pub(in crate::commands::workspace::optimization_runs) async fn execute(
         .as_ref()
         .context("Run has no Agent authorization")?;
     settings.validate()?;
-    let attempt = optimization_execution::begin_attempt(folder, run_id).await?;
-    let result = run(folder, run_id, runtime, settings.maximum_iterations).await;
+    let attempt = optimization_execution::begin_attempt(folder, run_id, resume.as_deref()).await?;
+    let mut watcher = attempt.map(|_| control::StopWatcher::start(folder, run_id));
+    let signal = watcher
+        .as_ref()
+        .map(|w| w.signal.clone())
+        .unwrap_or_default();
+    let probe: std::sync::Arc<dyn Fn() -> bool + Send + Sync> =
+        std::sync::Arc::new(move || signal.load(std::sync::atomic::Ordering::Acquire));
+    let mut result = project_workspace_local::progress::with_stop_probe(
+        probe.clone(),
+        encoder_experiment_nomos::with_stop_probe(
+            probe,
+            Box::pin(run(folder, run_id, runtime, settings.maximum_iterations)),
+        ),
+    )
+    .await;
+    if let Some(watcher) = &mut watcher {
+        if let Err(error) = watcher.finish().await {
+            result = Err(error.context("Could not observe the run's durable Stop state"));
+        }
+    }
+    if let Some(attempt) = attempt {
+        if acknowledge_pending_stop(folder, run_id, attempt).await? {
+            return paused(run_id);
+        }
+    }
     match result {
         Ok((verified, completed)) => {
             if let Some(attempt) = attempt {
-                optimization_execution::complete_attempt(folder, run_id, attempt, &verified)
-                    .await?;
+                if let Err(error) =
+                    optimization_execution::complete_attempt(folder, run_id, attempt, &verified)
+                        .await
+                {
+                    if acknowledge_pending_stop(folder, run_id, attempt).await? {
+                        return paused(run_id);
+                    }
+                    return Err(error);
+                }
             }
             super::super::super::print(&serde_json::json!({
                 "runId":run_id, "completion":verified, "iterations":completed,
@@ -47,6 +79,9 @@ pub(in crate::commands::workspace::optimization_runs) async fn execute(
                 if let Err(record_error) =
                     optimization_execution::fail_attempt(folder, run_id, attempt).await
                 {
+                    if acknowledge_pending_stop(folder, run_id, attempt).await? {
+                        return paused(run_id);
+                    }
                     return Err(error.context(format!(
                         "Could not persist the execution failure: {record_error}"
                     )));
@@ -55,6 +90,23 @@ pub(in crate::commands::workspace::optimization_runs) async fn execute(
             Err(error)
         }
     }
+}
+
+fn paused(run_id: Uuid) -> Result<()> {
+    super::super::super::print(&serde_json::json!({"runId":run_id, "state":"paused"}))
+}
+
+async fn acknowledge_pending_stop(folder: &Path, run_id: Uuid, attempt: Uuid) -> Result<bool> {
+    let current = optimization_runs::show(folder, run_id).await?;
+    if current.agent_execution.as_ref().is_some_and(|v| {
+        v.state
+            == project_workspace_core::optimization_execution::AgentExecutionState::StopRequested
+            && v.attempt_id == attempt
+    }) {
+        optimization_execution::acknowledge_stop(folder, run_id, attempt).await?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 async fn run(
@@ -70,6 +122,16 @@ async fn run(
     // The bound is immutable. Completion, not an in-memory counter, decides
     // whether to resume an existing iteration, advance, or return a final result.
     for _ in 0..=maximum_iterations {
+        if !optimization_runs::show(folder, run_id)
+            .await?
+            .state
+            .is_terminal()
+        {
+            ensure!(
+                !optimization_execution::stopped(folder, run_id).await?,
+                "Run stopped before the next iteration step"
+            );
+        }
         let completed = optimization_completions::list(folder, run_id).await?;
         let iteration = if let Some(last) = completed.last() {
             let sources =

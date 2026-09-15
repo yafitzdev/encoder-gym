@@ -72,8 +72,9 @@ fn scan(
     let mut payloads = BTreeMap::new();
     let mut record = 0;
     let mut returned_bytes = 0;
-    crate::progress::row_progress(&source.name, 0, source.rows);
+    crate::progress::row_progress(&source.name, 0, source.rows)?;
     loop {
+        crate::progress::check_stop()?;
         let mut line = Vec::new();
         let count = (&mut reader)
             .take(8 * 1_048_576 + 1)
@@ -92,7 +93,7 @@ fn scan(
         }
         record += 1;
         if record % 100 == 0 || record == source.rows {
-            crate::progress::row_progress(&source.name, record, source.rows);
+            crate::progress::row_progress(&source.name, record, source.rows)?;
         }
         // The checksum is computed during this same streaming pass. A bounded
         // read therefore only parses selected records while still proving the
