@@ -9,9 +9,10 @@ it, and uses that result to decide the next bounded iteration.
 
 The production CLI now supports bounded iterations driven by previous results,
 with durable no-change outcomes and completion-write recovery. All four Rust
-gates passed for this component. Finish the root-run lifecycle and interruption
-recovery, followed by one-click
-Overview integration using this same engine. More settings, system
+gates passed for that committed component. A follow-on execution journal is in
+the working tree; it is not yet a completed Stop/Resume implementation or a
+connected desktop journey. Finish run recovery, then connect one-click
+Overview execution using this same engine. More settings, system
 narration, documentation, or UI mockups alone do not complete this goal.
 Preserve the approved GUI rather than redesigning it.
 
@@ -31,6 +32,27 @@ the Agent is connected. Prove that integration through the production execution
 path with deterministic test adapters first. A successfully rejected candidate
 is a completed experiment; improvement itself is not guaranteed.
 
+## Next deliverable
+
+Make the existing Overview execute and display the tested Agent loop. Keep the
+approved `Setup → Status → Report` layout. Deliver in bounded checkpoints:
+
+1. Verify and commit the in-progress execution journal without rebuilding the
+   working loop. Preserve completed, failed and interrupted attempt history.
+2. Finish durable Stop/Resume, worker-liveness reconciliation and explicit budget
+   outcomes. Stopping is not permanent cancellation; resuming must reuse completed
+   work and account conservatively for uncertain calls.
+3. Update the desktop's strict run parser and lifecycle handling, then connect
+   Optimize to the same `drive-agent` coordinator. Preserve historical fixed-run
+   compatibility; do not introduce a second executor.
+4. Prove the rendered journey: actual Agent decisions, targeted generation,
+   inspectable dataset edits, candidate training and comparison, a subsequent
+   evidence-dependent iteration, and Stop/restart recovery.
+
+Do not tell the user to start another Nomos run until that connected path has
+passed deterministic integration tests. These checkpoints are not permission
+to run paid providers, real training or final holdout.
+
 ## Current state — 15 September 2026
 
 The agentic user journey is **not ready yet**. Run 17 demonstrated fixed training
@@ -43,8 +65,9 @@ verify the connected engine before asking the user to try another real run.
 | Agent → generation → dataset publication → native clearance | Committed in `18fc85b`; deterministic production-CLI tests | Preserve and reuse this path |
 | One Agent-directed cycle through training and development evaluation | Committed in `a8bb5c4`; complete-cycle/recovery tests and required Rust gates passed at that checkpoint | Root-run completion and production desktop integration |
 | Candidate registration, exact training-dataset links and benchmark report lookup | Committed in `6d90ead`; focused cycle, lineage and recovery regressions pass | Production Overview/viewer interactions and later-iteration associations |
-| Repeated iterations, best-dataset selection and no-change | `drive-agent`; all four Rust gates and 14 managed benchmark CLI tests pass, including seven Agent-path tests | Root-run lifecycle, final selection handoff and complete interruption recovery |
-| One-click agentic Overview journey | Not connected end to end | Wire the same coordinator, model/report links and iteration activity |
+| Repeated iterations, best-dataset selection and no-change | Committed in `f3d222b`; all four Rust gates and 14 managed benchmark CLI tests pass, including seven Agent-path tests | Resumable run lifecycle, final selection handoff and complete interruption recovery |
+| Root execution attempts and adaptive completion | Uncommitted follow-on: journal-derived Agent states, verified terminal-iteration link, failure and abandoned-attempt recovery; final managed CLI suite passes | Confirm full validation/commit, durable Stop/Resume, liveness reconciliation and explicit budget outcomes |
+| One-click agentic Overview journey | Not connected end to end; strict desktop run parser does not yet accept the new Agent execution states/record | Update parser and lifecycle handling, then wire the same coordinator, model/report links and iteration activity |
 
 ### Bounded CLI loop checkpoint
 
@@ -76,12 +99,42 @@ process was recovered and exited successfully: `cargo fmt-check`,
 the earlier run that overlapped an executable fixture edit; it does not prove
 the remaining root lifecycle, complete recovery or desktop integration.
 
-The next implementation work is root-run lifecycle, budget/stop outcomes and
-recovery at every boundary, then production Overview integration. The root's
-legacy `ready` state is not an adaptive completion status. Final holdout still
+The next implementation work is resumable root-run lifecycle, budget/stop outcomes
+and recovery at every boundary, then production Overview integration. The new
+execution journal projects Agent status separately from the root's legacy
+preparation state. Final holdout still
 needs its separate selected-candidate handoff; adaptive protocols remain
 development-only. Do not rebuild the working loop or ask the user to discover
 these missing integrations by starting another real Nomos run.
+
+### Root execution checkpoint — in progress
+
+`drive-agent` now records an execution attempt before preparation. Its ordinary
+run view distinguishes Agent running, interrupted, failed and completed states.
+Completion pins the last verified terminal iteration, including no-change and
+development rejection; it is not final acceptance or baseline promotion.
+Completed replay preserves the execution history and does not dispatch new work.
+The old fixed-recipe journal and serialized history remain compatible.
+
+Two domain lifecycle tests pass. The final full-suite process has also passed
+all 14 managed benchmark CLI tests, including the added parent-completion
+interruption case: retry saves the parent completion without repeating completed
+Agent, generation, training or evaluation work. UI typecheck, all 125 UI tests,
+nine native-clearance Python tests and rendered Overview fixture checks pass.
+The full Rust process has not yet been confirmed terminal; do not claim all
+gates passed for this working-tree component until its exit result is recorded.
+
+This component does not yet implement durable resumable Stop/Resume or active
+child cancellation. An unclosed attempt is reconciled after exclusive lease
+acquisition on retry; the stored `running` state alone is not evidence of a live
+worker. Add proactive liveness reconciliation and typed budget-stop outcomes.
+Continue toward the same connected Overview goal, not another fixed-run path.
+
+The desktop parser in `ui/src/input-optimization.ts` currently rejects the new
+Agent execution states and `agentExecution` field. Extend and test that contract
+before exposing these runs through Overview. Passing unchanged UI fixture tests
+does not establish compatibility with the new backend payload or prove that
+Optimize invokes the Agent.
 
 ### Committed foundations
 
@@ -238,8 +291,9 @@ and app integration:
    this chain or claim it already implements the whole loop.
 2. **Finish iteration ownership.** Preserve the new candidate registration,
    materialized-version links and receipt-based benchmark projection. Persist
-   root-run progress and interruption/budget outcomes. A finished Agent loop
-   must not leave the root run labeled `ready`. Distinguish successful experiment
+   root-run progress and interruption/budget outcomes. Preserve the in-progress
+   execution journal's completed projection instead of leaving a finished Agent
+   loop labeled `ready`. Distinguish successful experiment
    completion (including rejection/no-change), paused work, exhausted budgets
    and execution errors using persisted facts. Preserve completion,
    selection and multi-iteration/report validation through verified predecessor
@@ -258,7 +312,9 @@ and app integration:
    activity with durable outcomes. Select the best eligible candidate
    deterministically; final holdout is a separate, at-most-once authorization
    after adaptive work ends. Promotion remains manual.
-5. **Connect and verify the existing Overview.** One Optimize action must invoke
+5. **Connect and verify the existing Overview.** First make the strict desktop
+   run parser, state handling and controllers accept the actual Agent execution
+   contract while retaining old run compatibility. One Optimize action must invoke
    this same coordinator. Expose iteration-specific stages and complete activity,
    actual Agent decisions, separate provider usage and linked reports. Add only
    Advanced controls whose settings execution really enforces. Verify rendered
