@@ -82,6 +82,16 @@ async fn cli_agent_loop_stops_at_cumulative_row_budget_before_another_call() {
 }
 
 #[tokio::test]
+async fn cli_agent_run_request_ceiling_stops_before_another_call_and_cannot_retry() {
+    scenario(true, Some("agent_limit")).await;
+}
+
+#[tokio::test]
+async fn cli_generation_run_token_ceiling_stops_before_dispatch_and_cannot_retry() {
+    scenario(true, Some("generation_limit")).await;
+}
+
+#[tokio::test]
 async fn cli_agent_loop_keeps_best_eligible_dataset_but_inspects_latest_result() {
     scenario(true, Some("eligible")).await;
 }
@@ -200,7 +210,7 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
-    let generator = (loop_mode != Some("no_change_first")).then(|| std::thread::spawn(move || {
+    let generator = (!matches!(loop_mode, Some("no_change_first" | "agent_limit" | "generation_limit"))).then(|| std::thread::spawn(move || {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
         let mut stream = loop {
             match listener.accept() {
@@ -254,7 +264,7 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         authentication: ProviderAuthentication::None,
         secret: None,
         limits: ProviderLimits {
-            maximum_requests: 8,
+            maximum_requests: 16,
             maximum_input_tokens: 1_000_000,
             maximum_output_tokens: 100_000,
             maximum_cost_microusd: 0,
@@ -320,6 +330,23 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     }
     settings.training.device = project_workspace_core::OptimizationDevice::Cpu;
     settings.training.maximum_training_rows = Some(1);
+    let mut run_limits = ProviderLimits {
+        maximum_requests: 8,
+        maximum_input_tokens: 900_000,
+        maximum_output_tokens: 90_000,
+        maximum_cost_microusd: 0,
+    };
+    let mut generation_limits = run_limits.clone();
+    if loop_mode == Some("agent_limit") {
+        run_limits.maximum_requests = 1;
+    }
+    if loop_mode == Some("generation_limit") {
+        generation_limits.maximum_input_tokens = 1;
+    }
+    settings.provider_limits = Some(project_workspace_core::OptimizationProviderLimits {
+        advisor: run_limits,
+        generation: generation_limits,
+    });
     if loop_mode == Some("eligible") {
         settings.training.maximum_training_rows = None;
     }
@@ -415,6 +442,56 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
     let before_native = fs::read(root.join("runtime/native-invocations.log")).unwrap();
+    if matches!(loop_mode, Some("agent_limit" | "generation_limit")) {
+        let exhausted = invoke_iteration();
+        assert!(!exhausted.status.success());
+        let expected = if loop_mode == Some("agent_limit") {
+            "Agent request budget exhausted"
+        } else {
+            "Generation token or spend budget exhausted"
+        };
+        assert!(
+            String::from_utf8_lossy(&exhausted.stderr).contains(expected),
+            "{}",
+            String::from_utf8_lossy(&exhausted.stderr)
+        );
+        let stopped = optimization_runs::show(&folder, reserved.id).await.unwrap();
+        assert_eq!(
+            stopped.state,
+            project_workspace_core::ProjectOptimizationRunState::AgentBudgetExhausted
+        );
+        assert_eq!(stopped.agent_execution.as_ref().unwrap().attempts, 1);
+        let calls_before = fs::read(&calls).unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&calls_before).lines().count(),
+            if loop_mode == Some("agent_limit") {
+                1
+            } else {
+                3
+            }
+        );
+        let native_before = fs::read(root.join("runtime/native-invocations.log")).unwrap();
+        assert!(
+            project_workspace_local::optimization_training_time::history(&folder, reserved.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let retry = invoke_iteration();
+        assert!(!retry.status.success());
+        assert!(String::from_utf8_lossy(&retry.stderr).contains("Optimization budget exhausted"));
+        assert_eq!(fs::read(&calls).unwrap(), calls_before);
+        assert_eq!(
+            fs::read(root.join("runtime/native-invocations.log")).unwrap(),
+            native_before
+        );
+        assert_eq!(
+            optimization_runs::show(&folder, reserved.id).await.unwrap(),
+            stopped
+        );
+        assert!(generator.is_none());
+        return;
+    }
     #[cfg(windows)]
     if loop_mode == Some("training_crash") {
         training_time_check::crash(root, &folder, reserved.id, &calls, command).await;

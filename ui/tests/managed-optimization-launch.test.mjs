@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { ManagedOptimizationLaunch } from "../dist/evidence/managed-optimization-launch.js";
-import { fingerprint, setupFixture } from "./optimization-setup-fixture.mjs";
+import { agentPresets, fingerprint, setupFixture } from "./optimization-setup-fixture.mjs";
 
 function fixture() {
   const base = setupFixture(), providerId = randomUUID(), setupId = randomUUID(), launchId = randomUUID();
@@ -48,6 +48,66 @@ function agentRun(wire, state, attemptId = randomUUID(), head = fingerprint) {
   const completion = state === "agent_completed" ? { id: randomUUID(), fingerprint } : null;
   return { ...wire, state, agentExecution: { state: executionState, attemptId, attempts: 1, completion, lastSequence: 2, headFingerprint: head, updatedAt: wire.updatedAt } };
 }
+
+test("presets are a strict core-owned read with no execution or provider credentials", async () => {
+  const f = fixture(), presets = agentPresets(), calls = [];
+  const backend = new ManagedOptimizationLaunch(ports(f, async (...args) => { calls.push(args); return presets; }));
+  assert.deepEqual(await backend.presets(f.projectId), presets);
+  assert.deepEqual(calls, [[["optimization-launch", "owned-project", "presets"]]]);
+  for (const invalid of [{ ...presets, extra: true }, { ...presets, quickTest: presets.standard }]) {
+    await assert.rejects(() => new ManagedOptimizationLaunch(ports(f, async () => invalid)).presets(f.projectId));
+  }
+});
+
+test("Advanced settings reach the same start command and uncertain retries reuse pinned authority", async () => {
+  const f = fixture(), files = [], calls = [], wire = f.run(), authorization = agentAuthorization(f);
+  const settings = structuredClone(authorization.scope.agentic);
+  settings.generationConcurrency = 4; settings.training.device = "cpu"; settings.training.learningRateNanos = 4000;
+  settings.providerLimits = { advisor: { ...f.scope.advisor, maximumRequests: 2 }, generation: { ...f.scope.generation, maximumRequests: 3 } };
+  const options = { id: f.launchId, settings };
+  let saved, requests = 0;
+  const backend = new ManagedOptimizationLaunch(ports(f, async (args, env) => {
+    assert.equal(env, undefined); calls.push(args[2]);
+    if (args[2] === "list") return saved ? [saved] : [];
+    if (args[2] === "preview") {
+      assert.deepEqual(args.slice(0, 6), ["optimization-launch", "owned-project", "preview", "--setup", f.setupId, "--settings-file"]);
+      files.push(args[6]); assert.deepEqual(JSON.parse(await readFile(args[6], "utf8")), settings);
+      const scope = { ...authorization.scope, agentic: settings, ...settings.providerLimits };
+      return { ...f.preview, scope };
+    }
+    assert.deepEqual(args.slice(0, 4), ["optimization-run", "owned-project", "start", "--file"]);
+    files.push(args[4]); const request = JSON.parse(await readFile(args[4], "utf8"));
+    assert.equal(request.id, options.id); assert.deepEqual(request.scope.agentic, settings);
+    if (++requests === 1) { saved = { ...authorization, id: request.id, scope: request.scope }; throw new Error("Lost reply"); }
+    assert.deepEqual(request.scope, saved.scope);
+    return { actionId: randomUUID(), run: wire };
+  }));
+  await assert.rejects(() => backend.start(f.projectId, f.setupId, undefined, undefined, options), /Lost reply/);
+  // A fresh preview would pin a different provider catalog; retry must not.
+  f.workspace.providerCatalog.id = randomUUID();
+  assert.equal((await backend.start(f.projectId, f.setupId, undefined, undefined, options)).run.id, wire.run.id);
+  assert.deepEqual(calls, ["list", "preview", "start", "list", "start"]);
+  for (const file of files) { await assert.rejects(() => access(file)); await assert.rejects(() => access(dirname(file))); }
+  await assert.rejects(() => backend.start(f.projectId, f.setupId, undefined, undefined, { ...options, settings: { ...settings, objective: "Different" } }), /original inputs or settings/);
+});
+
+test("start rejects settings injection, substituted settings and foreign reservation replies", async () => {
+  const f = fixture(), authority = agentAuthorization(f), options = { id: f.launchId, settings: authority.scope.agentic };
+  for (const invalid of [{ ...options, path: "untrusted" }, { ...options, settings: { ...options.settings, command: "untrusted" } }]) {
+    await assert.rejects(() => new ManagedOptimizationLaunch(ports(f, async () => assert.fail("Must not dispatch"))).start(f.projectId, f.setupId, undefined, undefined, invalid));
+  }
+  let foreign = false;
+  const backend = new ManagedOptimizationLaunch(ports(f, async args => {
+    if (args[2] === "list") return [];
+    if (args[2] === "preview") return { ...f.preview, scope: { ...authority.scope, agentic: { ...authority.scope.agentic, objective: foreign ? options.settings.objective : "Substituted" } } };
+    const wire = f.run(); wire.run.launch.id = randomUUID(); return { actionId: randomUUID(), run: wire };
+  }));
+  await assert.rejects(() => backend.start(f.projectId, f.setupId, undefined, undefined, options), /selected Agent settings/);
+  foreign = true;
+  await assert.rejects(() => backend.start(f.projectId, f.setupId, undefined, undefined, options), /differs from its launch/);
+  const mismatch = structuredClone(authority); mismatch.scope.agentic.providerLimits = { advisor: { ...f.scope.advisor, maximumRequests: 1 }, generation: f.scope.generation };
+  await assert.rejects(() => new ManagedOptimizationLaunch(ports(f, async () => [mismatch])).list(f.projectId), /Provider ceilings differ/);
+});
 
 test("Agent history uses an exact read-only command and failures cannot block Stop", async () => {
   const f = fixture(), wire = agentRun(f.run(), "agent_paused"), calls = [];

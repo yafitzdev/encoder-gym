@@ -187,6 +187,12 @@ impl OptimizationLaunchScope {
         match &self.agentic {
             Some(settings) => {
                 settings.validate()?;
+                if let Some(limits) = &settings.provider_limits {
+                    require(
+                        self.advisor == limits.advisor && self.generation == limits.generation,
+                        "Provider ceilings do not match the pinned Agent settings.",
+                    )?;
+                }
                 require(
                     self.limits == settings.execution_limits(development_suites)?
                         && self.final_evaluation == settings.final_authorization(),
@@ -221,6 +227,26 @@ impl OptimizationLaunchScope {
         )
         .map_err(|_| Invalid("Too many development evaluation suites.".into()))?;
         self.limits.validate(development_suites)?;
+        let generation = &providers
+            .provider(ProviderRole::Generation)
+            .ok_or_else(|| Invalid("Generation provider is missing.".into()))?
+            .limits;
+        let advisor = &providers
+            .provider(ProviderRole::Advisor)
+            .ok_or_else(|| Invalid("Advisor provider is missing.".into()))?
+            .limits;
+        if let Some(limits) = self
+            .agentic
+            .as_ref()
+            .and_then(|settings| settings.provider_limits.as_ref())
+        {
+            limits.validate_within(advisor, generation)?;
+        } else {
+            require(
+                self.generation == *generation && self.advisor == *advisor,
+                "Provider ceilings changed from the pinned project limits.",
+            )?;
+        }
         require(
             self.project_id == setup.inputs.project_id
                 && self.project_id == providers.project_id
@@ -229,16 +255,6 @@ impl OptimizationLaunchScope {
                 && self.setup.fingerprint == setup.fingerprint
                 && self.provider_catalog.id == providers.id.to_string()
                 && self.provider_catalog.fingerprint == providers.fingerprint
-                && self.generation
-                    == providers
-                        .provider(ProviderRole::Generation)
-                        .ok_or_else(|| Invalid("Generation provider is missing.".into()))?
-                        .limits
-                && self.advisor
-                    == providers
-                        .provider(ProviderRole::Advisor)
-                        .ok_or_else(|| Invalid("Advisor provider is missing.".into()))?
-                        .limits
                 && setup.inputs.benchmark.id == benchmark.id.to_string()
                 && setup.inputs.benchmark.fingerprint == benchmark.fingerprint
                 && benchmark
@@ -260,6 +276,11 @@ impl OptimizationLaunchScope {
     ) -> Result<Self, Invalid> {
         self.validate_identity()?;
         settings.validate()?;
+        if let Some(limits) = &settings.provider_limits {
+            limits.validate_within(&self.advisor, &self.generation)?;
+            self.advisor = limits.advisor.clone();
+            self.generation = limits.generation.clone();
+        }
         let development_suites =
             self.limits.maximum_development_evaluations / self.limits.maximum_models;
         self.limits = settings.execution_limits(development_suites)?;
@@ -567,6 +588,71 @@ mod tests {
                 .with_agentic_settings(OptimizationAgentSettings::default())
                 .is_err()
         );
+    }
+
+    #[test]
+    fn run_provider_ceilings_are_explicit_bounded_and_fingerprint_compatible() {
+        let (setup, providers, benchmark) = fixture();
+        let original = OptimizationLaunchScope::bind(&setup, &providers, &benchmark)
+            .unwrap()
+            .with_agentic_settings(OptimizationAgentSettings::default())
+            .unwrap();
+        let bytes = serde_json::to_value(&original).unwrap();
+        assert!(bytes["agentic"].get("providerLimits").is_none());
+        let restored: OptimizationLaunchScope = serde_json::from_value(bytes.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&restored).unwrap(), bytes);
+        assert_eq!(restored.reproduce().unwrap(), original.fingerprint);
+        let lower = ProviderLimits {
+            maximum_requests: 2,
+            maximum_input_tokens: 5_000,
+            maximum_output_tokens: 500,
+            maximum_cost_microusd: 0,
+        };
+        let settings = OptimizationAgentSettings {
+            provider_limits: Some(crate::OptimizationProviderLimits {
+                advisor: lower.clone(),
+                generation: lower.clone(),
+            }),
+            ..OptimizationAgentSettings::default()
+        };
+        let limited = original
+            .clone()
+            .with_agentic_settings(settings.clone())
+            .unwrap();
+        limited.validate(&setup, &providers, &benchmark).unwrap();
+        assert_eq!(limited.advisor, lower);
+        assert_eq!(limited.generation, lower);
+        assert_ne!(limited.fingerprint, original.fingerprint);
+        for role in ["advisor", "generation"] {
+            for (key, value) in [
+                ("maximumRequests", 6),
+                ("maximumInputTokens", 10_001),
+                ("maximumOutputTokens", 2_001),
+                ("maximumCostMicrousd", 1),
+            ] {
+                let mut changed = serde_json::to_value(&settings).unwrap();
+                changed["providerLimits"][role][key] = value.into();
+                let changed = serde_json::from_value(changed).unwrap();
+                assert!(original.clone().with_agentic_settings(changed).is_err());
+            }
+        }
+        let mut forged = limited;
+        forged.advisor.maximum_requests += 1;
+        forged.fingerprint = forged.reproduce().unwrap();
+        assert!(forged.validate_identity().is_err());
+        forged.advisor.maximum_requests = 6;
+        forged
+            .agentic
+            .as_mut()
+            .unwrap()
+            .provider_limits
+            .as_mut()
+            .unwrap()
+            .advisor
+            .maximum_requests = 6;
+        forged.fingerprint = forged.reproduce().unwrap();
+        forged.validate_identity().unwrap();
+        assert!(forged.validate(&setup, &providers, &benchmark).is_err());
     }
 
     #[test]

@@ -292,12 +292,13 @@ ipcMain.handle("encoder-gym:save-optimization-setup", (event, value: unknown, re
 ipcMain.handle("encoder-gym:stop-input-preparation", (_event, value: unknown, token: unknown) => inputPreparation.stop(projectId(value), token));
 ipcMain.handle("encoder-gym:finish-input-preparation", (_event, value: unknown, token: unknown) => inputPreparation.finish(projectId(value), token));
 ipcMain.handle("encoder-gym:optimization-launches", (_event, value: unknown) => backend.optimizationLaunch.list(projectId(value)));
+ipcMain.handle("encoder-gym:optimization-agent-presets", (_event, value: unknown) => backend.optimizationLaunch.presets(projectId(value)));
 ipcMain.handle("encoder-gym:preview-optimization-launch", (_event, value: unknown, setup: unknown) => backend.optimizationLaunch.preview(projectId(value), setup));
 ipcMain.handle("encoder-gym:authorize-optimization-launch", (_event, value: unknown, request: unknown) => backend.optimizationLaunch.authorize(projectId(value), request));
-ipcMain.handle("encoder-gym:start-input-optimization", (event, value: unknown, setup: unknown, token: unknown, preparationId: unknown) => {
+ipcMain.handle("encoder-gym:start-input-optimization", (event, value: unknown, setup: unknown, token: unknown, preparationId: unknown, options: unknown) => {
   const id = projectId(value);
   const live = optimizationProgress(event, token);
-  return inputPreparation.command(id, preparationId, signal => trackProjectAction(id, "optimization.start", activityReference("setup", setup), progress => backend.optimizationLaunch.start(id, setup, value => { live(value); progress(value); }, signal), result => [
+  return inputPreparation.command(id, preparationId, signal => trackProjectAction(id, "optimization.start", activityReference("setup", setup), progress => backend.optimizationLaunch.start(id, setup, value => { live(value); progress(value); }, signal, options), result => [
     ...activityReference("run", result.run.id),
   ]));
 });

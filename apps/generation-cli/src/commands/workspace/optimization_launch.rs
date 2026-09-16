@@ -16,6 +16,10 @@ pub(super) async fn execute(
 ) -> Result<()> {
     use WorkspaceOptimizationLaunchCommand::*;
     match command {
+        Presets => super::print(&serde_json::json!({
+            "standard": project_workspace_core::OptimizationAgentSettings::default(),
+            "quickTest": project_workspace_core::OptimizationAgentSettings::quick_test(),
+        })),
         List => super::print(&optimization_launch::list(folder).await?),
         Preview {
             setup,

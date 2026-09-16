@@ -178,7 +178,11 @@ impl OptimizationAgentStore for ProjectAgentStore {
                 .map_err(adapter)?;
             reserve(&mut transaction, &scope, &call, &self.launch.scope.advisor)
                 .await
-                .map_err(adapter)?;
+                .map_err(|error| {
+                    error
+                        .downcast::<OptimizationError>()
+                        .unwrap_or_else(adapter)
+                })?;
             transaction.commit().await.map_err(adapter)?;
             database.close().await.map_err(adapter)?;
             Ok(())
@@ -318,7 +322,7 @@ async fn reserve(
     );
     ensure!(
         history.len() < limits.maximum_requests as usize,
-        "Agent request budget exhausted"
+        OptimizationError::Budget("Agent request budget exhausted".into())
     );
     let mut input = call.input_token_ceiling;
     let mut output = call.output_token_ceiling;
@@ -352,7 +356,7 @@ async fn reserve(
         input <= limits.maximum_input_tokens
             && output <= limits.maximum_output_tokens
             && cost <= limits.maximum_cost_microusd,
-        "Agent token or spend budget exhausted"
+        OptimizationError::Budget("Agent token or spend budget exhausted".into())
     );
     let scope_fingerprint = scope.fingerprint()?;
     let existing: Option<String> = sqlx::query_scalar(

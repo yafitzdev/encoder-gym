@@ -24,6 +24,8 @@ pub enum WorkspaceOptimizationSetupCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum WorkspaceOptimizationLaunchCommand {
+    /// Read core-owned Standard and Quick-test presets without authorizing work.
+    Presets,
     /// Read-only preview of the exact one-click optimization authority.
     Preview {
         #[arg(long)]

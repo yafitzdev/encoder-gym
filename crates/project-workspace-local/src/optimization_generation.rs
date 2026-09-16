@@ -230,7 +230,11 @@ impl OptimizationGenerationStore for ProjectGenerationStore {
                 concurrency,
             )
             .await
-            .map_err(adapter)?;
+            .map_err(|error| {
+                error
+                    .downcast::<OptimizationError>()
+                    .unwrap_or_else(adapter)
+            })?;
             transaction.commit().await.map_err(adapter)?;
             database.close().await.map_err(adapter)?;
             self.activity(&task, &call, ActivityEventState::Started)
@@ -365,7 +369,7 @@ async fn reserve(
     );
     ensure!(
         history.len() < (limits.maximum_requests as usize),
-        "Generation request budget exhausted"
+        OptimizationError::Budget("Generation request budget exhausted".into())
     );
     let mut input = call.input_token_ceiling;
     let mut output = call.output_token_ceiling;
@@ -399,7 +403,7 @@ async fn reserve(
         input <= limits.maximum_input_tokens
             && output <= limits.maximum_output_tokens
             && cost <= limits.maximum_cost_microusd,
-        "Generation token or spend budget exhausted"
+        OptimizationError::Budget("Generation token or spend budget exhausted".into())
     );
     if task_history.is_empty() {
         sqlx::query("INSERT INTO optimization_generation_tasks(id,run_id,iteration,fingerprint,metadata_json) VALUES(?,?,?,?,?)").bind(task.id.to_string()).bind(task.run_id.to_string()).bind(i64::from(task.iteration)).bind(task.fingerprint()?).bind(serde_json::to_string(task)?).execute(&mut *database).await?;

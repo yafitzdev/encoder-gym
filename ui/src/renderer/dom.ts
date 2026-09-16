@@ -128,4 +128,5 @@ function reconcile(previous: Element, next: Element): void {
     if (previous.value !== next.value) previous.value = next.value;
     previous.checked = next.checked;
   }
+  if (previous instanceof HTMLTextAreaElement && next instanceof HTMLTextAreaElement && previous.value !== next.value) previous.value = next.value;
 }

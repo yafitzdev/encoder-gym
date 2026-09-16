@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { OptimizationSetupController } from "../dist/evidence/optimization-setup-controller.js";
-import { setupFixture } from "./optimization-setup-fixture.mjs";
+import { agentPresets, setupFixture } from "./optimization-setup-fixture.mjs";
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 
 test("Stop during input preview interrupts preparation and never starts a run", async () => {
@@ -27,7 +27,7 @@ function fixture(overrides = {}) {
   const f = setupFixture(), history = [], writes = [], runs = [];
   const run = (state = "queued") => ({ id: randomUUID(), projectId: f.projectId, createdAt: new Date().toISOString(), state, attempt: 0, materializationAttempt: 0, experimentAttempt: 0, executionAttempt: 0, finalAttempt: 0, lastSequence: 1, updatedAt: new Date().toISOString() });
   const bridge = { queryDatasets: async () => ({ kind: "list", entries: f.datasets }), queryBenchmarks: async () => ({ kind: "list", versions: f.workspace.benchmarkVersions }),
-    optimizationSetups: async () => [...history], optimizationLaunches: async () => [], previewOptimizationSetup: async () => f.preview,
+    optimizationSetups: async () => [...history], optimizationLaunches: async () => [], optimizationAgentPresets: async () => agentPresets(), previewOptimizationSetup: async () => f.preview,
     finishInputPreparation: async () => {}, stopInputPreparation: async () => {},
     saveOptimizationSetup: async (_, request) => { writes.push(structuredClone(request)); const result = f.saved(request); history.push(result.setup); return result; },
     startInputOptimization: async () => { const value = run(); runs.push(value); return { actionId: randomUUID(), run: value }; },
@@ -40,6 +40,43 @@ function fixture(overrides = {}) {
   const controller = new OptimizationSetupController(f.projectId, f.workspace, bridge, () => {});
   return { ...f, controller, bridge, history, writes, runs, run };
 }
+
+test("core presets control Quick test and invalid settings prevent dispatch", async () => {
+  const f = fixture(); await f.controller.ensure();
+  assert.deepEqual(f.controller.settings, agentPresets().standard);
+  const limits = f.workspace.providerCatalog.providers[0].limits;
+  f.controller.changeSettings({ ...f.controller.settings, objective: "Inspect failed routes", providerLimits: { advisor: { ...limits }, generation: { ...limits } } });
+  f.controller.selectMode("quick_test");
+  assert.deepEqual(f.controller.settings.training, agentPresets().quickTest.training);
+  assert.equal(f.controller.settings.objective, "Inspect failed routes");
+  assert.deepEqual(f.controller.settings.providerLimits.advisor, limits);
+  f.controller.changeSettings({ ...f.controller.settings, generationConcurrency: 17 });
+  assert.equal(f.controller.canOptimize, false); await f.controller.optimize(); assert.equal(f.runs.length, 0);
+  f.controller.selectMode("standard"); assert.equal(f.controller.settings.maximumIterations, 3);
+  f.controller.settings.providerLimits.advisor.maximumRequests++;
+  assert.match(f.controller.settingsError, /project limits/); assert.equal(f.controller.canOptimize, false);
+});
+
+test("uncertain launch retries keep their identity and exact settings across project refresh", async () => {
+  const f = fixture(), requests = [], pending = deferred();
+  await f.controller.ensure(); f.controller.selectMode("quick_test");
+  const limits = f.workspace.providerCatalog.providers[0].limits;
+  f.controller.changeSettings({ ...f.controller.settings, providerLimits: { advisor: { ...limits }, generation: { ...limits } } });
+  f.bridge.startInputOptimization = async (_project, setup, _progress, preparation, options) => {
+    requests.push(structuredClone({ setup, options })); assert.ok(preparation);
+    if (requests.length === 1) return pending.promise;
+    const run = f.run(); f.runs.push(run); return { run };
+  };
+  const starting = f.controller.optimize(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.controller.canEditSettings, false);
+  f.controller.selectMode("standard"); assert.equal(f.controller.settings.mode, "quick_test");
+  pending.reject(new Error("Lost reservation reply")); await starting;
+  assert.equal(f.controller.run, undefined); assert.ok(f.controller.error);
+  f.workspace.providerCatalog.providers[0].limits.maximumRequests = 1;
+  f.controller.refresh(); await f.controller.ensure(); await f.controller.optimize();
+  assert.deepEqual(requests[1], requests[0]); assert.equal(f.runs.length, 1);
+  assert.equal(f.controller.run.state, "baseline_retained");
+});
 test("first setup uses model provenance and new runs use the current project evaluation", async () => {
   const f = fixture(); await f.controller.ensure(); assert.equal(f.controller.datasetId, f.version.id); assert.ok(f.controller.canSave);
   await f.controller.save(); assert.ok(f.controller.saved); assert.equal(f.writes.length, 1); await f.controller.save(); assert.equal(f.writes.length, 1);

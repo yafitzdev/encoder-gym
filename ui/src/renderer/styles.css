@@ -865,3 +865,15 @@ dialog::backdrop { background: #0008; }
 .dataset-dialog{display:flex;flex-direction:column;max-height:calc(100vh - 100px);gap:20px}.dataset-dialog-fields{overflow:auto;min-height:0}.dataset-dialog fieldset{border:0;padding:0;margin:16px 0}.dataset-dialog legend{margin-bottom:12px}.dataset-source-choice{display:flex;align-items:start;gap:12px;margin:12px 0;overflow-wrap:anywhere}.dataset-source-choice input{width:auto;margin-top:4px}.dataset-source-choice small{display:block;color:var(--muted);margin-top:5px}
 .dataset-row-dialog{max-height:calc(100vh - 100px);overflow:auto}.native-row{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.5;max-height:55vh;overflow:auto;padding:16px;border:1px solid var(--line);border-radius:8px}
 @media(max-width:760px){.dataset-row-entry{grid-template-columns:1fr}.dataset-row-entry .inline-group{justify-content:flex-start}.dataset-view .page-heading{gap:16px;flex-wrap:wrap}.dataset-dialog{max-height:calc(100vh - 72px)}}
+/* Run tuning stays subordinate to the five ordinary setup selectors. */
+.optimization-advanced { grid-column: 1 / -1; min-width: 0; border-top: 1px solid var(--line); padding-top: 16px; }
+.optimization-advanced > summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
+.optimization-advanced fieldset { min-width: 0; border: 0; padding: 0; margin: 16px 0; }
+.optimization-advanced legend { font-weight: 600; padding: 0; margin-bottom: 12px; }
+.advanced-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.advanced-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; margin: 12px 0; }
+.advanced-field input, .advanced-field select, .advanced-field textarea { width: 100%; min-width: 0; min-height: 40px; box-sizing: border-box; font: inherit; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 9px 12px; }
+.advanced-field textarea { resize: vertical; }
+.diagnostic-notice { color: var(--text); border-left: 3px solid var(--line); padding-left: 12px; }
+.run-mode-label { display: block; font-size: 12px; font-weight: 400; margin-top: 4px; }
+@media (max-width: 600px) { .advanced-grid { grid-template-columns: minmax(0, 1fr); gap: 0; } }

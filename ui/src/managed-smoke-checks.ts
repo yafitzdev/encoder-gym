@@ -125,7 +125,7 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await nav("models");
   await nav("optimization"); await until("document.querySelector('.focus-setup') && !document.querySelector('.workspace-progress')");
   await check("Overview starts with five concise inputs", "document.querySelectorAll('.focus-field').length === 5 && document.getElementById('optimization-start').disabled && !document.querySelector('.launch-definition')");
-  await check("optimization inputs expose no paths or credentials", "!document.querySelector('.focus-setup input') && !document.querySelector('.focus-setup').textContent.includes('project.sqlite')");
+  await check("optimization inputs expose no paths or credentials", "[...document.querySelectorAll('.focus-setup input')].every(input=>input.type==='number') && !document.querySelector('.focus-setup').textContent.includes('project.sqlite') && !document.querySelector('.focus-setup').textContent.includes('smoke-secret') && !document.querySelector('.optimization-advanced').open");
   await screenshot("managed-readiness");
   await nav("project"); await until("[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Add provider' && !b.disabled)");
   await check("scientific runtime setup is a real project-settings action", "[...document.querySelectorAll('#page button')].some(b=>b.textContent === 'Connect scientific runtime') && !document.getElementById('page').textContent.includes('not implemented')");
@@ -608,6 +608,20 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   }
   window.setContentSize(1440, 960);
   const driveInputRun = harness.backend.optimizationLaunch.drive.bind(harness.backend.optimizationLaunch);
+  await click('#optimization-advanced-draft > summary');
+  const setRunSetting = async (key: string, value: string, event = "change") => evaluate(`(()=>{const input=document.getElementById('optimization-advanced-draft-${key}');input.value=${JSON.stringify(value)};input.dispatchEvent(new Event('${event}',{bubbles:true}))})()`);
+  await setRunSetting('mode', 'quick_test');
+  await setRunSetting('objective', 'Inspect development routing failures', 'input');
+  await setRunSetting('concurrency', '2');
+  await setRunSetting('device', 'cpu');
+  await setRunSetting('batch', '4');
+  await setRunSetting('learning-rate', '0.000004');
+  await setRunSetting('seconds', '90');
+  await setRunSetting('advisor-maximumRequests', '2');
+  await setRunSetting('generation-maximumRequests', '3');
+  await check('Quick test remains one Optimize action with diagnostic restrictions', "!document.getElementById('optimization-start').disabled && document.querySelector('.diagnostic-notice').textContent.includes('No final holdout or promotion')");
+  await screenshot('managed-optimization-advanced');
+  await click('#optimization-advanced-draft > summary');
   let emitOptimizationProgress: Parameters<typeof driveInputRun>[2];
   let activeRunId = "", finishOptimizationStatus!: () => void;
   const optimizationStatusPending = new Promise<void>(resolve => { finishOptimizationStatus = resolve; });
@@ -639,8 +653,13 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   const queued = (await harness.backend.optimizationLaunch.runs(setupProjectId)).find(run => run.id === activeRunId);
   if (!queued) throw new Error("Optimize did not reserve its visible project run");
   const agentLaunch = (await harness.backend.optimizationLaunch.list(setupProjectId)).find(launch => launch.id === queued.launchId);
-  if (agentLaunch?.scope.agentic?.mode !== "standard" || agentLaunch.scope.agentic.maximumIterations !== 3 || agentLaunch.scope.agentic.maximumRowChanges !== 192) throw new Error("Overview did not reserve the standard Agent authority through the real CLI");
-  console.log("PASS Overview reserves standard Agent authority through production IPC and CLI");
+  const settings = agentLaunch?.scope.agentic;
+  if (!agentLaunch || settings?.mode !== "quick_test" || settings.maximumIterations !== 1 || settings.maximumRowChanges !== 8 || settings.maximumAgentTurnsPerIteration !== 4
+    || settings.generationConcurrency !== 2 || settings.objective !== "Inspect development routing failures" || settings.training.device !== "cpu"
+    || settings.training.batchSize !== 4 || settings.training.learningRateNanos !== 4000 || settings.training.maximumSecondsPerIteration !== 90 || settings.training.maximumTrainingRows !== 64
+    || settings.providerLimits?.advisor.maximumRequests !== 2 || settings.providerLimits.generation.maximumRequests !== 3 || agentLaunch.scope.finalEvaluation !== "development_only"
+    || agentLaunch.scope.limits.maximumFinalEvaluations !== 0) throw new Error("Overview did not reserve the selected Quick-test settings through the real CLI");
+  console.log("PASS Overview reserves exact Quick-test settings through production IPC and CLI; drive remains fixture-controlled");
   let finishInputRun!: () => void;
   const inputRunPending = new Promise<void>(resolve => { finishInputRun = resolve; });
   harness.backend.optimizationLaunch.drive = async (projectId, selectedRun, progress) => {

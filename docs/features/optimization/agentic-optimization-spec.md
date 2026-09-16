@@ -7,8 +7,9 @@ transport, an append-only project Agent-call journal, read-only native
 development-failure inspection, bounded concurrent generation, and recoverable
 publication through ordinary imports and dataset versions. Bounded repeated
 iteration is composed through the CLI below. Root lifecycle and desktop dispatch
-are implemented; complete recovery, per-iteration GUI presentation and connected
-app acceptance remain outstanding. The fixed-recipe executor
+are implemented, including ordered iteration/report navigation and immutable
+Advanced/Quick-test settings. Complete recovery and connected app acceptance
+remain outstanding. The fixed-recipe executor
 still explicitly rejects agentic settings; it must not masquerade as an agent run.
 
 The pre-training CLI composition now exists as `workspace optimization-run
@@ -230,7 +231,8 @@ requests inside one local run, not multiple trainers or distributed workers.
 Setup retains the five ordinary input selectors. An Advanced disclosure owns
 an optional user objective, maximum optimization iterations, maximum agent
 turns per iteration, maximum total row additions/removals, generation concurrency,
-and training device, epoch ceiling, batch size, learning rate and time ceiling.
+separate Agent/generator request, input/output token and spend ceilings, and
+training device, epoch ceiling, batch size, learning rate and time ceiling.
 Settings are immutable launch inputs, validated before authorization. The user
 objective cannot alter budgets, acceptance, credential access or evidence roles.
 
@@ -241,6 +243,21 @@ is one model call inside that iteration. Both have independent finite limits.
 Defaults are three iterations, eight agent turns per iteration, 192 total row
 changes and one generation request in flight. Concurrency is configurable from
 one to sixteen. It does not bypass cumulative provider request/token/cost limits.
+
+`optimization-launch <PROJECT> presets` supplies the core-owned Standard and
+Quick-test defaults to the desktop. Optimize sends the exact selected settings
+through the existing settings-file preview and start contracts. An uncertain
+reservation retries its original UUID and settings, not a fresh authorization.
+Historical settings are read-only and never float to current project defaults.
+
+Optional `providerLimits` in settings contains complete `advisor` and
+`generation` limits. Every value must be no greater than its pinned project
+provider limit. Omission preserves historical serialization and fingerprints.
+These are whole-run ceilings; the existing durable provider journals enforce
+them across iterations, retries and unknown outcomes. Provider exhaustion and
+Agent turn exhaustion use the same non-retrying budget-stop state as training
+time exhaustion. Budget ceilings/reservations are not actual usage or spend;
+unpriced costs remain unknown.
 
 Desktop model assignments now persist the exact project connection UUID in the
 non-secret provider revision. `workspace optimization-run <PROJECT> providers

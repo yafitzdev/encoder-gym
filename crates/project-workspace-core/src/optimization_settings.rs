@@ -2,7 +2,7 @@
 //!
 //! These are run inputs, not mutable process preferences. Iterations count
 //! dataset/train/evaluate cycles; model turns count advisor calls per cycle.
-use crate::{Invalid, require};
+use crate::{Invalid, ProviderLimits, require};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,6 +44,37 @@ pub struct OptimizationAgentSettings {
     /// Additions plus removals, across the whole run, including rejected edits.
     pub maximum_row_changes: u32,
     pub training: OptimizationTrainingSettings,
+    /// Optional per-run ceilings; never expand the pinned project's allowances.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_limits: Option<OptimizationProviderLimits>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OptimizationProviderLimits {
+    pub advisor: ProviderLimits,
+    pub generation: ProviderLimits,
+}
+
+impl OptimizationProviderLimits {
+    pub(crate) fn validate_within(
+        &self,
+        advisor: &ProviderLimits,
+        generation: &ProviderLimits,
+    ) -> Result<(), Invalid> {
+        self.advisor.validate()?;
+        self.generation.validate()?;
+        let within = |requested: &ProviderLimits, limit: &ProviderLimits| {
+            requested.maximum_requests <= limit.maximum_requests
+                && requested.maximum_input_tokens <= limit.maximum_input_tokens
+                && requested.maximum_output_tokens <= limit.maximum_output_tokens
+                && requested.maximum_cost_microusd <= limit.maximum_cost_microusd
+        };
+        require(
+            within(&self.advisor, advisor) && within(&self.generation, generation),
+            "Run provider ceilings cannot exceed the pinned project limits.",
+        )
+    }
 }
 
 impl Default for OptimizationAgentSettings {
@@ -63,6 +94,7 @@ impl Default for OptimizationAgentSettings {
                 maximum_seconds_per_iteration: 7_200,
                 maximum_training_rows: None,
             },
+            provider_limits: None,
         }
     }
 }
@@ -85,6 +117,10 @@ impl OptimizationAgentSettings {
     }
 
     pub fn validate(&self) -> Result<(), Invalid> {
+        if let Some(limits) = &self.provider_limits {
+            limits.advisor.validate()?;
+            limits.generation.validate()?;
+        }
         require(
             self.objective.chars().count() <= 4_000
                 && !self

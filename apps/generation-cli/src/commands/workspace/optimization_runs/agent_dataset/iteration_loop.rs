@@ -39,7 +39,7 @@ pub(in crate::commands::workspace::optimization_runs) async fn execute(
             == project_workspace_core::optimization_execution::AgentExecutionState::BudgetExhausted
         })
     {
-        anyhow::bail!("Training time budget exhausted; completed work is preserved");
+        anyhow::bail!("Optimization budget exhausted; completed work is preserved");
     }
     let mut watcher = attempt.map(|_| control::StopWatcher::start(folder, run_id));
     let signal = watcher
@@ -88,7 +88,7 @@ pub(in crate::commands::workspace::optimization_runs) async fn execute(
             if let Some(attempt) = attempt {
                 // Keep the original execution error, even if recording its
                 // failure is itself interrupted. The next lease owner recovers it.
-                let record = if is_training_budget_stop(&error) {
+                let record = if is_budget_stop(&error) {
                     optimization_execution::exhaust_budget(folder, run_id, attempt).await
                 } else {
                     optimization_execution::fail_attempt(folder, run_id, attempt).await
@@ -107,7 +107,7 @@ pub(in crate::commands::workspace::optimization_runs) async fn execute(
     }
 }
 
-fn is_training_budget_stop(error: &anyhow::Error) -> bool {
+fn is_budget_stop(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
         let exhausted = |error: &EncoderTaskAdapterError| {
             matches!(
@@ -116,7 +116,7 @@ fn is_training_budget_stop(error: &anyhow::Error) -> bool {
                     | EncoderTaskAdapterError::TimeLimitExceeded
             )
         };
-        cause
+        matches!(cause.downcast_ref::<encoder_optimization_core::OptimizationError>(), Some(encoder_optimization_core::OptimizationError::Budget(_))) || cause
             .downcast_ref::<EncoderTaskAdapterError>()
             .is_some_and(exhausted)
             || cause

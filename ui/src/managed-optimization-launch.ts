@@ -11,7 +11,7 @@ import type {
 import { inputOptimizationTerminal, parseInputOptimizationRun, parseInputOptimizationRuns, parseInputOptimizationStarted, type InputOptimizationPhase, type InputOptimizationRun, type InputOptimizationStarted } from "./input-optimization.js";
 import type { NativeProgress } from "./managed-control.js";
 import { parseOptimizationHistory } from "./optimization-history.js";
-import { parseOptimizationAgentSettings, type OptimizationAgentSettings } from "./optimization-agent-settings.js";
+import { parseOptimizationAgentSettings, parseOptimizationAgentPresets, parseOptimizationProviderLimits, type OptimizationAgentSettings, type OptimizationAgentPresets } from "./optimization-agent-settings.js";
 
 interface Ports {
   open(projectId: string): Promise<ManagedWorkspace>;
@@ -46,13 +46,7 @@ function bound(value: unknown): { id: string; fingerprint: string } {
   return { id: uuid(item.id), fingerprint: fingerprint(item.fingerprint) };
 }
 function providerLimits(value: unknown): OptimizationProviderLimits {
-  const limits = record(value, "provider limits", ["maximumRequests", "maximumInputTokens", "maximumOutputTokens", "maximumCostMicrousd"]);
-  return {
-    maximumRequests: integer(limits.maximumRequests, "provider request limit"),
-    maximumInputTokens: integer(limits.maximumInputTokens, "provider input-token limit"),
-    maximumOutputTokens: integer(limits.maximumOutputTokens, "provider output-token limit"),
-    maximumCostMicrousd: integer(limits.maximumCostMicrousd, "provider cost limit", true),
-  };
+  return parseOptimizationProviderLimits(value);
 }
 function executionLimits(value: unknown, settings?: OptimizationAgentSettings): OptimizationExecutionLimits {
   const limits = record(value, "execution limits", ["maximumIterations", "maximumModels", "maximumDatasetRowChanges", "maximumTrainingSeconds", "maximumDevelopmentEvaluations", "maximumFinalEvaluations"]);
@@ -74,13 +68,14 @@ function scope(value: unknown, projectId: string): OptimizationLaunchScope {
   const settings = item.agentic === undefined ? undefined : parseOptimizationAgentSettings(item.agentic);
   const finalEvaluation = settings && (settings.mode === "quick_test" || settings.training.maximumTrainingRows !== null) ? "development_only" : "selected_candidate_once";
   if (uuid(item.projectId) !== projectId || item.finalEvaluation !== finalEvaluation) throw new Error("Optimization launch belongs to another project or final-evaluation policy.");
+  const generation = providerLimits(item.generation), advisor = providerLimits(item.advisor);
+  if (settings?.providerLimits && (!same(settings.providerLimits.advisor, advisor) || !same(settings.providerLimits.generation, generation))) throw new Error("Provider ceilings differ from the pinned settings.");
   return {
     projectId,
     setup: bound(item.setup),
     providerCatalog: bound(item.providerCatalog),
     limits: executionLimits(item.limits, settings),
-    generation: providerLimits(item.generation),
-    advisor: providerLimits(item.advisor),
+    generation, advisor,
     finalEvaluation,
     fingerprint: fingerprint(item.fingerprint),
     ...(settings ? { agentic: settings } : {}),
@@ -100,6 +95,10 @@ export class ManagedOptimizationLaunch {
   private pendingStops = new Set<string>();
   private stopRequests = new Map<string, string>();
   constructor(private ports: Ports) {}
+  async presets(projectId: string): Promise<OptimizationAgentPresets> {
+    const workspace = await this.ports.open(projectId);
+    return parseOptimizationAgentPresets(await this.ports.command<unknown>(["optimization-launch", workspace.folder, "presets"]));
+  }
   /** Interrupt this worker without cancelling the durable run or its child identities. */
   async stop(projectId: string, runIdValue: unknown): Promise<void> {
     const runId = uuid(runIdValue);
@@ -167,21 +166,35 @@ export class ManagedOptimizationLaunch {
     });
   }
 
-  async start(projectId: string, setupIdValue: unknown, progress?: (value: NativeProgress) => void, signal?: AbortSignal): Promise<InputOptimizationStarted> {
+  async start(projectId: string, setupIdValue: unknown, progress?: (value: NativeProgress) => void, signal?: AbortSignal, optionsValue?: unknown): Promise<InputOptimizationStarted> {
     const setupId = uuid(setupIdValue);
+    const options = optionsValue === undefined ? undefined : record(optionsValue, "optimization start options", ["id", "settings"]);
+    const retryId = options ? uuid(options.id) : randomUUID();
+    const settings = options ? parseOptimizationAgentSettings(options.settings) : undefined;
     return this.ports.exclusive(projectId, async () => {
       const workspace = await this.ports.open(projectId);
-      const received = await this.ports.command<unknown>(["optimization-launch", workspace.folder, "preview", "--setup", setupId, "--agentic"], undefined, progress, signal);
-      const item = record(received, "optimization launch preview", ["scope", "modelName", "datasetRows", "benchmarkNumber"]);
-      const resolved = scope(item.scope, workspace.manifest.id), current = workspace.providerCatalog;
-      if (!resolved.agentic) throw new Error("The CLI did not return Agent launch authority. Update the backend before starting Optimize.");
-      if (resolved.setup.id !== setupId || !current || resolved.providerCatalog.id !== current.id || resolved.providerCatalog.fingerprint !== current.fingerprint) throw new Error("Optimization inputs or providers changed. Refresh the project.");
-      const request: OptimizationLaunchRequest = { id: randomUUID(), scope: resolved };
-      const directory = await mkdtemp(join(tmpdir(), "encoder-gym-optimization-run-")), file = join(directory, "launch.json");
+      const directory = await mkdtemp(join(tmpdir(), "encoder-gym-optimization-run-")), file = join(directory, "launch.json"), settingsFile = join(directory, "settings.json");
       try {
+        const existing = options ? (await this.list(projectId)).find(item => item.id === retryId) : undefined;
+        let resolved = existing?.scope;
+        if (resolved && (resolved.setup.id !== setupId || !same(resolved.agentic, settings))) throw new Error("Optimization retry differs from its original inputs or settings.");
+        if (!resolved) {
+          if (settings) await writeFile(settingsFile, JSON.stringify(settings), { flag: "wx", mode: 0o600 });
+          const received = await this.ports.command<unknown>(["optimization-launch", workspace.folder, "preview", "--setup", setupId, ...(settings ? ["--settings-file", settingsFile] : ["--agentic"])], undefined, progress, signal);
+          const item = record(received, "optimization launch preview", ["scope", "modelName", "datasetRows", "benchmarkNumber"]);
+          resolved = scope(item.scope, workspace.manifest.id);
+          const current = workspace.providerCatalog;
+          if (!resolved.agentic) throw new Error("The CLI did not return Agent launch authority. Update the backend before starting Optimize.");
+          if (settings && !same(resolved.agentic, settings)) throw new Error("The CLI did not preserve the selected Agent settings.");
+          if (resolved.setup.id !== setupId || !current || resolved.providerCatalog.id !== current.id || resolved.providerCatalog.fingerprint !== current.fingerprint) throw new Error("Optimization inputs or providers changed. Refresh the project.");
+        }
+        const request: OptimizationLaunchRequest = { id: retryId, scope: resolved };
         await writeFile(file, JSON.stringify(request), { flag: "wx", mode: 0o600 });
-        return parseInputOptimizationStarted(await this.ports.command<unknown>(["optimization-run", workspace.folder, "start", "--file", file], undefined, progress, signal), projectId);
+        const started = parseInputOptimizationStarted(await this.ports.command<unknown>(["optimization-run", workspace.folder, "start", "--file", file], undefined, progress, signal), projectId);
+        if (started.run.launchId !== retryId || started.run.setupId !== setupId) throw new Error("Reserved run differs from its launch request.");
+        return started;
       } finally {
+        await unlink(settingsFile).catch(error => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; });
         await unlink(file).catch(error => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; });
         await rmdir(directory);
       }

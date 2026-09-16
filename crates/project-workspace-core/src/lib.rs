@@ -35,7 +35,8 @@ pub use optimization_run::{
     ProjectOptimizationRunView, replay_project_optimization,
 };
 pub use optimization_settings::{
-    OptimizationAgentSettings, OptimizationDevice, OptimizationMode, OptimizationTrainingSettings,
+    OptimizationAgentSettings, OptimizationDevice, OptimizationMode, OptimizationProviderLimits,
+    OptimizationTrainingSettings,
 };
 pub use optimization_setup::{OptimizationInputs, OptimizationSetup};
 pub use training_data::{ModelDatasetLink, ModelTrainingEvidence, TrainingDatasetInput};

@@ -281,6 +281,16 @@ async fn agent_settings_preview_and_authority_are_immutable_and_cannot_run_as_a_
     request(root, &choice, Uuid::new_v4());
     let setup = save(root)["setup"].clone();
     let before = fs::read(folder.join("project.sqlite")).unwrap();
+    let presets = run(root, &["optimization-launch", "project", "presets"]);
+    assert_eq!(
+        presets["standard"],
+        serde_json::to_value(project_workspace_core::OptimizationAgentSettings::default()).unwrap()
+    );
+    assert_eq!(
+        presets["quickTest"],
+        serde_json::to_value(project_workspace_core::OptimizationAgentSettings::quick_test())
+            .unwrap()
+    );
     let standard = run(
         root,
         &[
@@ -379,6 +389,20 @@ async fn agent_settings_preview_and_authority_are_immutable_and_cannot_run_as_a_
         maximum_iterations: 2,
         generation_concurrency: 4,
         objective: "Improve routing without generic regression.".into(),
+        provider_limits: Some(project_workspace_core::OptimizationProviderLimits {
+            advisor: project_workspace_core::ProviderLimits {
+                maximum_requests: 1,
+                maximum_input_tokens: 100,
+                maximum_output_tokens: 50,
+                maximum_cost_microusd: 0,
+            },
+            generation: project_workspace_core::ProviderLimits {
+                maximum_requests: 2,
+                maximum_input_tokens: 200,
+                maximum_output_tokens: 100,
+                maximum_cost_microusd: 0,
+            },
+        }),
         ..Default::default()
     };
     fs::write(
@@ -399,6 +423,14 @@ async fn agent_settings_preview_and_authority_are_immutable_and_cannot_run_as_a_
         ],
     );
     assert_eq!(custom["scope"]["agentic"]["generationConcurrency"], 4);
+    assert_eq!(
+        custom["scope"]["advisor"],
+        custom["scope"]["agentic"]["providerLimits"]["advisor"]
+    );
+    assert_eq!(
+        custom["scope"]["generation"],
+        custom["scope"]["agentic"]["providerLimits"]["generation"]
+    );
     assert_eq!(custom["scope"]["limits"]["maximumModels"], 2);
     assert_eq!(
         custom["scope"]["limits"]["maximumDevelopmentEvaluations"],
@@ -429,6 +461,37 @@ async fn agent_settings_preview_and_authority_are_immutable_and_cannot_run_as_a_
     );
     let history = run(root, &["optimization-launch", "project", "list"]);
     assert_eq!(history, json!([saved["authorization"]]));
+    fs::write(
+        root.join("custom-launch.json"),
+        serde_json::to_vec(&json!({"id":Uuid::new_v4(),"scope":custom["scope"]})).unwrap(),
+    )
+    .unwrap();
+    let custom_saved = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "start",
+            "--file",
+            "custom-launch.json",
+        ],
+    );
+    assert_eq!(
+        run(
+            root,
+            &[
+                "optimization-run",
+                "project",
+                "start",
+                "--file",
+                "custom-launch.json"
+            ]
+        )["run"],
+        custom_saved["run"]
+    );
+    let history = run(root, &["optimization-launch", "project", "list"]);
+    assert_eq!(history.as_array().unwrap().len(), 2);
+    assert_eq!(history[1]["scope"], custom["scope"]);
 }
 
 #[tokio::test]

@@ -8,7 +8,7 @@ export function previewBridge(): EncoderGymBridge {
   const unavailable = async (): Promise<never> => { throw new Error("Open Encoder Gym Studio to manage local project folders."); };
   return {
     optimizationSetups: unavailable, previewOptimizationSetup: unavailable, saveOptimizationSetup: unavailable,
-    optimizationLaunches: unavailable, previewOptimizationLaunch: unavailable, authorizeOptimizationLaunch: unavailable,
+    optimizationLaunches: unavailable, optimizationAgentPresets: unavailable, previewOptimizationLaunch: unavailable, authorizeOptimizationLaunch: unavailable,
     stopInputPreparation: unavailable, finishInputPreparation: unavailable,
     startInputOptimization: unavailable, driveInputOptimization: unavailable, cancelInputOptimization: unavailable, stopInputOptimization: unavailable, inputOptimizationRun: unavailable, inputOptimizationRuns: unavailable,
     queryBenchmarks: unavailable, initializeBenchmark: unavailable, previewBenchmark: unavailable, adoptBenchmark: unavailable,

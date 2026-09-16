@@ -13,14 +13,15 @@ import { runContext } from "./workspace-pages.js";
 import { comparisonTone, newerInputRun, overviewRecords, reportDecision, type OverviewRecord } from "./overview-records.js";
 import { failureReason } from "../presentation-errors.js";
 import { iterationReport } from "./iteration-report.js";
+import { optimizationSettings } from "./optimization-settings.js";
 
 // The standalone renderer verification uses the same keyed replacement rule
 // as the full application shell.
 export { replaceView } from "./dom.js";
 
 type Stage = "setup" | "status" | "report";
-export interface OverviewState { expanded?: string | null; tabs: Map<string, Stage>; iterations: Map<string, number>; activityViews: Map<string, ActivityView>; draft: boolean; launching: boolean }
-export const newOverviewState = (): OverviewState => ({ tabs: new Map(), iterations: new Map(), activityViews: new Map(), draft: false, launching: false });
+export interface OverviewState { expanded?: string | null; tabs: Map<string, Stage>; iterations: Map<string, number>; activityViews: Map<string, ActivityView>; advanced: Set<string>; draft: boolean; launching: boolean }
+export const newOverviewState = (): OverviewState => ({ tabs: new Map(), iterations: new Map(), activityViews: new Map(), advanced: new Set(), draft: false, launching: false });
 
 export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewState, setup: OptimizationSetupController, runs: InputRunsController, actions: Actions, managed?: ManagedRunStatus): HTMLElement {
   const roots = [...(runs.runs ?? [])];
@@ -88,6 +89,8 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     return "Paused";
   }
   function row(id: string, name: string, label: string, record?: OverviewRecord): HTMLElement {
+    const settings = setup.launches?.find(item => item.id === record?.input?.launchId)?.scope.agentic;
+    const diagnostic = settings?.mode === "quick_test" || settings?.training.maximumTrainingRows != null;
     const expanded = state.expanded === id, running = runBusy(record) || id === "draft" && busy;
     const availableReport = !!record?.input?.iterations?.length || !!reportDecision(record ?? { id, name, createdAt: "" }) && !!record?.experiment;
     const availableStatus = !!record || busy;
@@ -97,7 +100,7 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     return h("article", { class: "focus-run" + (expanded ? " expanded" : ""), "data-run-id": id, "data-run-state": record?.input?.state },
       h("button", { type: "button", id: "overview-run-" + id, class: "focus-run-heading", "aria-expanded": String(expanded), "aria-controls": panelId,
         onClick: () => { state.expanded = expanded ? null : id; actions.render(); } },
-      disclosureIndicator(expanded), h("strong", {}, name),
+      disclosureIndicator(expanded), h("strong", {}, name, diagnostic ? h("small", { class: "run-mode-label muted" }, settings?.mode === "quick_test" ? "Quick test" : "Diagnostic") : null),
       h("span", { class: "focus-run-state " + (label === "KEEP" ? "success" : ["REJECT", "Failed"].includes(label) ? "danger" : "muted") }, running ? spinner(`overview-row:${id}`) : null, label),
       record ? h("time", { datetime: record.createdAt }, dateLabel(record.createdAt)) : h("span", {})),
       expanded ? h("div", { id: panelId, class: "focus-run-body" },
@@ -105,7 +108,7 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
           h("button", { type: "button", id: `overview-${id}-${stage}`, disabled: stage === "status" && !availableStatus || stage === "report" && !availableReport,
             class: stage === tab ? "active" : "", "aria-current": stage === tab ? "step" : null,
             onClick: () => { state.tabs.set(id, stage); actions.render(); } }, h("span", { class: "focus-stage-number" }, String(index + 1)), { setup: "Setup", status: "Status", report: "Report" }[stage]))),
-        h("section", { class: "focus-panel", "aria-label": tab }, tab !== "setup" ? iterationSelector(record) : null,
+        h("section", { class: "focus-panel", "aria-label": tab }, tab !== "setup" && diagnostic ? h("p", { class: "diagnostic-notice" }, "Diagnostic run · no final holdout or promotion.") : null, tab !== "setup" ? iterationSelector(record) : null,
           tab === "setup" ? setupPanel(record) : tab === "status" ? statusPanel(record) : record?.input?.iterations?.length
             ? iterationReport(selectedIteration(record), actions) : reportPanel(record!))) : null);
   }
@@ -152,11 +155,19 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
       void setup.optimize().finally(() => { if (!setup.run) state.launching = false; actions.render(); });
     }, "primary");
     start.id = "optimization-start"; start.disabled = !setup.canOptimize || busy;
+    const advisor = setup.workspace.providerCatalog?.providers.find(item => item.role === "advisor");
+    const generation = setup.workspace.providerCatalog?.providers.find(item => item.role === "generation");
+    const settingsId = record?.id ?? "draft";
     return h("div", { class: "focus-setup" },
       selector("optimization-baseline", "Baseline", [["baseline", modelName], ...(!historical ? [["models", "Models…"] as [string, string]] : [])], "baseline", value => { if (value === "models") actions.navigate({ page: "models" }); }),
       selector("optimization-dataset", "Starting Dataset", [["", historical ? "Not recorded" : "Choose dataset"], ...datasets], datasetId, value => setup.select("dataset", value)),
       selector("optimization-benchmark", "Evaluation", [...(!benchmarks.length ? [["", historical ? "Not recorded" : setup.workspace.scientificBinding ? "Project evaluation" : "Choose in Evaluation"] as [string, string]] : []), ...benchmarks, ...(!historical ? [["evaluation", "Evaluation…"] as [string, string]] : [])], benchmarkId, value => { if (value === "evaluation") actions.navigate({ page: "benchmarks" }); }),
       provider("advisor", "LLM agent"), provider("generation", "LLM data generator"),
+      optimizationSettings({ id: `optimization-advanced-${settingsId}`, settings: historical ? launch?.scope.agentic : setup.settings,
+        limits: historical ? launch ? { advisor: launch.scope.advisor, generation: launch.scope.generation } : undefined : advisor && generation ? { advisor: advisor.limits, generation: generation.limits } : undefined,
+        historical, disabled: historical || busy || !setup.canEditSettings, open: state.advanced.has(settingsId),
+        toggle: open => { if (open) state.advanced.add(settingsId); else state.advanced.delete(settingsId); },
+        change: value => setup.changeSettings(value), mode: value => setup.selectMode(value), error: historical ? undefined : setup.settingsError }),
       !historical ? h("div", { class: "focus-controls" }, start) : null);
   }
   function statusPanel(record?: OverviewRecord): HTMLElement {

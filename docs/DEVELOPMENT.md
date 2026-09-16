@@ -176,6 +176,22 @@ rejection of a re-fingerprinted completion. Native fixture counters prove that
 retry does not repeat training, evaluation or provider calls. No production
 fake switch, live provider, GPU or real Nomos workspace is used.
 
+The Agent process cases also run with explicit provider ceilings below their
+project defaults. Dedicated request/token exhaustion scenarios prove that the
+same production coordinator stops before another Agent or generation dispatch,
+persists a terminal budget state, and preserves provider/native counts on retry.
+Pure launch tests reject every over-project dimension and preserve omitted-field
+historical fingerprints; setup CLI tests cover read-only core presets and exact
+settings-file preview/reservation/retry.
+
+Desktop Advanced/Quick-test checks cover strict IPC settings, stable uncertain
+reservation identity, invalid controls, fixed-point learning rates, read-only
+historical settings and narrow layouts. Managed Electron smoke selects a custom
+Quick-test configuration through the rendered controls and checks its exact
+production-CLI authority, including zero final-evaluation allowance. Its drive
+is still fixture-controlled; these checks do not replace connected Agent-loop
+acceptance with real deterministic provider/native adapters.
+
 Agent root execution tests additionally verify failed attempts, recovery of an
 attempt whose worker exited before recording failure, and replay after iteration
 completion but before parent completion. Completed retries preserve the parent

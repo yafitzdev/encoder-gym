@@ -21,15 +21,17 @@ app.whenReady().then(async()=>{
   try{
     await window.loadFile(join(__dirname,'../tests/overview-renderer.html'));
     await check('renderer module loaded','window.fixtureReady');
-    const {setupFixture}=await import('../tests/optimization-setup-fixture.mjs');
+    const {setupFixture,agentPresets}=await import('../tests/optimization-setup-fixture.mjs');
+    const presets=agentPresets();
     const f=setupFixture(); f.benchmark.definition={suites:[{key:'generic_holdout',role:'development'}]};
-    f.workspace.providerCatalog={id:'providers',providers:[{role:'advisor',endpoint:'https://api.deepseek.com',model:'deepseek-chat'},{role:'generation',endpoint:'https://yan.tail85512d.ts.net',model:'generator'}]};
+    f.workspace.providerCatalog.providers[0].model='deepseek-chat';
+    f.workspace.providerCatalog.providers[1].model='generator';
     const saved=f.saved({id:'setup',inputs:f.inputs}).setup;
     const result={report:{suite:'generic_holdout'},checks:[{metric:'mrr',baseline:.895654,candidate:.905654},{metric:'recall_at_2',baseline:.906,candidate:.901},{metric:'loss',baseline:.32,candidate:.25}]};
     const experiment={id:'experiment',createdAt:'2026-09-12T12:00:00Z',baseline:{key:'Nomos baseline'},candidates:[{sequence:1,development:[result]}],directions:{mrr:'higher_is_better',recall_at_2:'higher_is_better',loss:'lower_is_better'},acceptance:{state:'unused'},decision:'retain_baseline',activity:[]};
     const root={id:'root',projectId:f.projectId,setupId:'setup',experimentRunId:'experiment',createdAt:'2026-09-12T12:00:00Z',state:'baseline_retained',lastSequence:5};
     const workspace={managed:f.workspace,runs:[experiment]};
-    await evaluate(`startFixture(${JSON.stringify({workspace,datasets:f.datasets,benchmark:f.benchmark,saved,roots:[root]})})`);
+    await evaluate(`startFixture(${JSON.stringify({workspace,datasets:f.datasets,benchmark:f.benchmark,saved,roots:[root],presets})})`);
     await check('one row per run and report is the default','document.querySelectorAll(".focus-run").length===1 && document.querySelector(".focus-report h2").textContent==="REJECT"');
     await check('positive and negative numbers honor metric direction','document.querySelectorAll(".focus-comparison td.success").length===4 && document.querySelectorAll(".focus-comparison td.danger").length===2');
     await capture('report-dark');
@@ -41,6 +43,24 @@ app.whenReady().then(async()=>{
     await check('selection survives collapsing','document.getElementById("optimization-dataset").value===qa.setup.datasetId');
     await check('disclosure is an SVG with centered stable geometry','document.querySelector(".focus-run.expanded .disclosure-indicator.is-expanded svg path") && document.querySelector(".disclosure-indicator").textContent===""');
     await capture('setup-dark');
+    await click('#optimization-advanced-draft > summary');
+    const setSetting=async(key,value,event='change')=>evaluate(`(()=>{const input=document.getElementById('optimization-advanced-draft-${key}');input.value=${JSON.stringify(value)};input.dispatchEvent(new Event('${event}',{bubbles:true}))})()`);
+    await setSetting('objective','Inspect routing failures','input');
+    await setSetting('mode','quick_test');
+    await check('Quick test uses enforced core preset and explains diagnostic restrictions',`qa.setup.settings.mode==='quick_test' && qa.setup.settings.maximumIterations===1 && qa.setup.settings.training.maximumTrainingRows===64 && document.getElementById('optimization-advanced-draft-iterations').disabled && document.querySelector('.diagnostic-notice').textContent.includes('No final holdout or promotion')`);
+    await setSetting('concurrency','4');await setSetting('learning-rate','0.000004');await setSetting('advisor-maximumRequests','2');
+    await check('settings edits preserve fixed-point values and exact objective',`qa.setup.settings.generationConcurrency===4 && qa.setup.settings.training.learningRateNanos===4000 && qa.setup.settings.providerLimits.advisor.maximumRequests===2 && document.getElementById('optimization-advanced-draft-objective').value==='Inspect routing failures'`);
+    await setSetting('concurrency','17');
+    await check('out-of-range settings disable Optimize',`document.getElementById('optimization-start').disabled && document.querySelector('.optimization-advanced [role=alert]')`);
+    await setSetting('concurrency','4');await evaluate('qa.render()');
+    await check('Advanced remains open across rerenders',`document.getElementById('optimization-advanced-draft').open`);
+    window.setSize(580,1000);await evaluate(`document.getElementById('optimization-advanced-draft').scrollIntoView({block:'start'})`);await capture('advanced-quick-narrow');
+    await check('Advanced settings fit narrow screens',`document.documentElement.scrollWidth<=innerWidth && getComputedStyle(document.querySelector('.advanced-grid')).gridTemplateColumns.split(' ').length===1`);
+    window.setSize(1440,1000);await evaluate(`document.getElementById('optimization-advanced-draft').scrollIntoView({block:'start'})`);await capture('advanced-quick-dark');
+    await evaluate(`document.getElementById('optimization-advanced-draft-advisor-maximumRequests').scrollIntoView({block:'start'})`);await capture('advanced-budgets-dark');
+    await setSetting('mode','standard');
+    await evaluate('qa.setup.changeSettings(structuredClone(qa.setup.presets.standard))');
+    await click('#optimization-advanced-draft > summary');
     await click('#optimization-start');
     await evaluate('new Promise(resolve=>setTimeout(resolve,50))');
     await check('launch replaces draft in-place and opens one Status panel','!qa.state.draft && document.querySelectorAll(".optimization-progress").length===1 && document.querySelector("[data-run-id=new-root] .focus-run-body")');
@@ -123,7 +143,7 @@ app.whenReady().then(async()=>{
     await check('report green remains green under a rejected decision','document.querySelector(".focus-report h2").textContent==="REJECT" && document.querySelector("td.success")');
     await evaluate(`qa.runs.runs.find(run=>run.id==='root').outcome={kind:'baseline_retained'};qa.workspace.runs[0].candidates[0].model={key:'candidate'};qa.state.tabs.set('root','status');qa.render()`);
     await check('stopped candidate registration remains resumable after a decision','document.querySelector("[data-run-id=root] .optimization-progress").textContent.includes("Paused · Saving candidate") && [...document.querySelectorAll("[data-run-id=root] .optimization-status-controls button")].some(button=>button.textContent==="Resume")');
-    await evaluate(`startFixture(${JSON.stringify({workspace,datasets:f.datasets,benchmark:f.benchmark,saved,roots:[root],holdPreparation:true})})`);
+    await evaluate(`startFixture(${JSON.stringify({workspace,datasets:f.datasets,benchmark:f.benchmark,saved,roots:[root],holdPreparation:true,presets})})`);
     await click('#overview-new-run'); await click('#optimization-start');
     await evaluate('new Promise(resolve=>setTimeout(resolve,50))');
     await check('Stop is visible while checking files before a run exists','!qa.setup.run && !!qa.setup.preparationId && [...document.querySelectorAll(".optimization-progress button")].some(button=>button.textContent==="Stop") && document.querySelector(".focus-events").textContent.includes("model.safetensors")');
@@ -134,7 +154,7 @@ app.whenReady().then(async()=>{
       checks:[{reportId:'report-'+number,suite:'development',metric:'loss',direction:'lower_is_better',baseline:.5,candidate:number===1?.3:.7,passed:number===1}]});
     const agentRoot={...root,id:'agent-root',experimentRunId:undefined,state:'agent_running',agentExecution:{lastSequence:1},iterations:[iteration(1),iteration(2)]};
     const agentWorkspace={...workspace,runs:[{...experiment,id:'experiment-1'},{...experiment,id:'experiment-2'}]};
-    await evaluate(`startFixture(${JSON.stringify({workspace:agentWorkspace,datasets:f.datasets,benchmark:f.benchmark,saved,roots:[agentRoot]})});
+    await evaluate(`startFixture(${JSON.stringify({workspace:agentWorkspace,datasets:f.datasets,benchmark:f.benchmark,saved,roots:[agentRoot],presets})});
       qa.runs.runningId='agent-root';qa.runs.activities.set('agent-root',{state:'progress',startedAt:'2026-09-16T12:00:00Z',updatedAt:'2026-09-16T12:05:00Z',stages:[],events:[
         ...Array.from({length:80},(_,i)=>({at:'2026-09-16T12:00:00Z',stage:'training',progress:{phase:'training',iteration:1,subject:'first-'+i}})),
         {at:'2026-09-16T12:05:00Z',stage:'training',progress:{phase:'training',iteration:2,subject:'second'}}]});qa.render()`);
@@ -171,7 +191,7 @@ app.whenReady().then(async()=>{
     await selectIteration(3);await click('#overview-agent-root-status');
     await check('failed iteration names its recorded native stage',`document.querySelector('.optimization-progress-title').textContent==='Training failed'`);
     await evaluate(`qa.runs.runs[0].state='agent_budget_exhausted';qa.render()`);
-    await check('budget-stop iteration is terminal, not falsely paused',`document.querySelector('.optimization-progress-title').textContent==='Training budget exhausted' && ![...document.querySelectorAll('.optimization-status-controls button')].some(node=>node.textContent==='Resume')`);
+    await check('budget-stop iteration is terminal, not falsely paused',`document.querySelector('.optimization-progress-title').textContent==='Optimization budget exhausted' && ![...document.querySelectorAll('.optimization-status-controls button')].some(node=>node.textContent==='Resume')`);
     await evaluate(`qa.runs.runs[0].state='agent_running';qa.render()`);
     await check('reopened running state is unverified, not falsely paused or live',`document.querySelector('.focus-run-state').textContent==='Status unverified' && document.querySelector('.optimization-progress-title').textContent==='Execution status unverified · Training' && !document.querySelector('.focus-run .spinner')`);
     await check('reopened Agent runs expose durable Stop and explicit status refresh',`['Stop','Refresh status','Resume'].every(label=>[...document.querySelectorAll('.optimization-status-controls button')].some(node=>node.textContent===label && !node.disabled))`);
@@ -183,6 +203,13 @@ app.whenReady().then(async()=>{
     await check('durable pause beats stale setup state and an unsettled drive promise',`document.querySelector('[data-run-id="agent-root"]').dataset.runState==='agent_paused' && document.querySelector('.focus-run-state').textContent==='Paused' && !document.querySelector('.focus-run .spinner') && document.querySelector('.optimization-progress-title').textContent==='Paused · Training'`);
     await evaluate(`qa.setup.running=false;qa.setup.run=undefined;qa.runs.runningId=undefined;qa.runs.runs[0].state='agent_interrupted';qa.render()`);
     await check('interruption is not relabeled as a user pause',`document.querySelector('.focus-run-state').textContent==='Interrupted' && document.querySelector('.optimization-progress-title').textContent==='Interrupted · Training'`);
+    const pinnedSettings={...presets.quickTest,objective:'Original objective',providerLimits:{advisor:{maximumRequests:2,maximumInputTokens:500,maximumOutputTokens:100,maximumCostMicrousd:0},generation:{maximumRequests:3,maximumInputTokens:500,maximumOutputTokens:100,maximumCostMicrousd:0}}};
+    await evaluate(`qa.runs.runs[0].launchId='pinned-quick';qa.runs.runs[0].iterations=qa.runs.runs[0].iterations.slice(0,1);qa.state.iterations.clear();qa.setup.launches=[{id:'pinned-quick',scope:{agentic:${JSON.stringify(pinnedSettings)},providerCatalog:{id:'earlier'},...${JSON.stringify(pinnedSettings.providerLimits)}}}];qa.render()`);
+    await click('#overview-agent-root-setup');await click('#optimization-advanced-agent-root > summary');
+    await check('historical Advanced shows immutable launch values, not current defaults',`document.getElementById('optimization-advanced-agent-root-objective').value==='Original objective' && document.getElementById('optimization-advanced-agent-root-advisor-maximumRequests').value==='2' && [...document.querySelectorAll('.optimization-advanced input,.optimization-advanced select,.optimization-advanced textarea')].every(node=>node.disabled) && !document.getElementById('optimization-start') && document.querySelector('.focus-setup').textContent.includes('read only')`);
+    await click('#overview-agent-root-report');
+    await check('Quick-test reports cannot be mistaken for promotion evidence',`document.querySelector('.diagnostic-notice').textContent.includes('no final holdout') && document.querySelector('.focus-run-heading').children.length===4 && document.querySelector('.run-mode-label').textContent==='Quick test'`);
+    await capture('quick-history-390');
     console.log('Overview renderer verification complete.');
   }finally{window.destroy();app.quit()}
 }).catch(error=>{console.error(error);app.exit(1)});

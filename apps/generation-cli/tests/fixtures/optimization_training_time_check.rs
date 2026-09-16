@@ -146,7 +146,7 @@ pub(super) async fn timeout(
     let exhausted = command().output().unwrap();
     assert!(!exhausted.status.success());
     assert!(
-        String::from_utf8_lossy(&exhausted.stderr).contains("Training time budget exhausted"),
+        String::from_utf8_lossy(&exhausted.stderr).contains("Optimization budget exhausted"),
         "{}",
         String::from_utf8_lossy(&exhausted.stderr)
     );

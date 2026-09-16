@@ -44,7 +44,7 @@ const phaseLabels: Record<InputOptimizationPhase, string> = {
   saving_candidate: "Saving candidate", evaluating: "Evaluating", complete: "Complete",
 };
 function projectRun(run: InputOptimizationRun, label: string, workspace: WorkspaceSnapshot, actions: Actions, controller: InputRunsController, setup?: OptimizationSetupController): HTMLElement {
-  const outcome = run.state === "candidate_accepted" ? "Candidate passed" : run.state === "candidate_rejected" ? "Candidate did not pass" : run.state === "baseline_retained" ? "No improvement" : run.state === "agent_completed" ? "Optimization complete" : run.state === "agent_budget_exhausted" ? "Training budget exhausted" : run.state === "cancelled" ? "Cancelled" : undefined;
+  const outcome = run.state === "candidate_accepted" ? "Candidate passed" : run.state === "candidate_rejected" ? "Candidate did not pass" : run.state === "baseline_retained" ? "No improvement" : run.state === "agent_completed" ? "Optimization complete" : run.state === "agent_budget_exhausted" ? "Optimization budget exhausted" : run.state === "cancelled" ? "Cancelled" : undefined;
   const failed = run.state.endsWith("_failed"), terminal = inputOptimizationTerminal(run.state);
   const setupBusy = !!setup?.running && setup.run?.id === run.id;
   const busy = setupBusy || controller.runningId === run.id;

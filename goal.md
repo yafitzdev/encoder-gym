@@ -67,6 +67,23 @@ All four Rust gates, all 149 UI tests, expanded rendered checks (including narro
 recovery controls) and both smoke flows across independent restarts pass. This does not establish
 live worker discovery, every-boundary recovery or connected Agent acceptance.
 
+The Advanced/Quick-test connection uses core-owned presets and the existing
+settings-file preview/start path. Optional per-run provider ceilings can only
+lower pinned project limits; omitted overrides preserve historical fingerprints.
+Uncertain reservation retries preserve the original UUID and settings. Historical
+settings are read-only, and diagnostic runs explicitly exclude final holdout and
+promotion. Provider/Agent budget exhaustion now preserves its typed error through
+the adapters and reaches the same non-retrying root state as training exhaustion.
+This remains component evidence, not completion of the connected journey below.
+
+Verified on the Advanced/settings checkpoint: all four Rust gates pass,
+including 21 managed benchmark CLI scenarios and six setup/authority CLI tests;
+UI typecheck/build, all 155 UI tests, expanded rendered Overview checks, all nine
+native-clearance Python tests and both Electron flows across independent restarts
+pass. The managed smoke verifies custom Quick-test values through real renderer,
+IPC and CLI reservation, but still substitutes its drive. Screenshots were
+inspected at desktop and narrow widths. No live provider or real training ran.
+
 Remaining work identified by inspecting production code:
 
 - Windows CLI startup now establishes kill-on-close job ownership before any
@@ -84,7 +101,8 @@ Remaining work identified by inspecting production code:
   Development KEEP/REJECT, best-so-far selection and final approval are distinct.
   CLI and rendered-fixture coverage is not yet the connected production-path
   acceptance below; full activity/usage/recovery presentation still needs that
-  audit. Advanced/Quick-test controls must use the enforced settings contract.
+  audit. Advanced/Quick-test controls now use the enforced settings contract;
+  connected execution acceptance still must cover their use through the app.
 - The adaptive protocols deliberately have zero sealed allowance; a separate
   at-most-once handoff for the selected Agent candidate is still required.
 - Add a deterministic, connected renderer/IPC/CLI journey, including second-
