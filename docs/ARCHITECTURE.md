@@ -947,6 +947,15 @@ Native progress carries an explicit iteration ordinal through typed telemetry
 and durable activity references; the renderer never assigns iteration membership
 from timestamps. Unscoped setup activity remains separately selectable.
 
+Desktop run observations are monotonic across collection reads, live polls,
+Stop replies and drive completion. The fixed root journal retains cancellation
+precedence; within that root head the independent Agent sequence orders control
+intent. A stale local controller cannot replace a newer paused view. Durable
+paused/terminal states stop presentation spinners even while IPC is settling.
+A reopened stored-running attempt is explicitly unverified, not proof of either
+a live worker or a pause. Stop remains available without starting another worker;
+explicit Resume still uses the existing CLI lease/reconciliation and head fence.
+
 The project-owned optimization setup separately pins the active baseline
 revision/model, a dataset-core version reference and a shared benchmark version.
 The local adapter stores compare-and-append setup history; the CLI previews and

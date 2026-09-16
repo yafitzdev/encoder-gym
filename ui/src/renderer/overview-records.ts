@@ -1,14 +1,9 @@
-import type { InputOptimizationRun } from "../input-optimization.js";
+import { newerInputRun, type InputOptimizationRun } from "../input-optimization.js";
+export { newerInputRun } from "../input-optimization.js";
 import type { RunRecord, WorkspaceSnapshot } from "../workspace.js";
 import type { ManagedRunStatus } from "../managed-control.js";
 
 export interface OverviewRecord { id: string; name: string; createdAt: string; input?: InputOptimizationRun; experiment?: RunRecord; managed?: ManagedRunStatus }
-
-/** Root and Agent journals advance independently; compare both persisted heads. */
-export function newerInputRun(candidate: InputOptimizationRun, previous: InputOptimizationRun): boolean {
-  return candidate.lastSequence > previous.lastSequence || candidate.lastSequence === previous.lastSequence
-    && (candidate.agentExecution?.lastSequence ?? 0) > (previous.agentExecution?.lastSequence ?? 0);
-}
 
 /** Join by persisted identity, never by dates, display names, or list position. */
 export function overviewRecords(workspace: WorkspaceSnapshot, roots: InputOptimizationRun[], managed?: ManagedRunStatus): OverviewRecord[] {

@@ -1,5 +1,5 @@
 import type { EncoderGymBridge } from "../preload.js";
-import type { InputOptimizationRun } from "../input-optimization.js";
+import { inputOptimizationMayBeActive, newerInputRun, observedInputRun, type InputOptimizationRun } from "../input-optimization.js";
 import type { ManagedWorkspace } from "../managed-workspace.js";
 import type { WorkspaceSnapshot } from "../workspace.js";
 import type { NativeProgress } from "../managed-control.js";
@@ -22,7 +22,7 @@ export class InputRunsController {
   activityErrors = new Map<string, unknown>();
   constructor(readonly projectId: string, private bridge: EncoderGymBridge, private render: () => void, private updated?: (workspace: ManagedWorkspace, snapshot?: WorkspaceSnapshot) => void) {}
   async stop(run: InputOptimizationRun): Promise<void> {
-    if (this.runningId !== run.id || this.stoppingId) return;
+    if (run.projectId !== this.projectId || this.stoppingId || this.runningId !== run.id && !inputOptimizationMayBeActive(run)) return;
     this.stoppingId = run.id; this.render();
     try {
       await this.bridge.stopInputOptimization(this.projectId, run.id);
@@ -46,13 +46,15 @@ export class InputRunsController {
     finally { this.activityLoading.delete(runId); this.render(); }
   }
   async ensure(): Promise<void> { if (!this.runs && !this.loading && !this.error) await this.load(); }
-  refresh(): void { if (!this.runningId) { this.epoch++; this.runs = undefined; this.error = undefined; this.loading = false; this.activities.clear(); this.activityLoaded.clear(); this.activityErrors.clear(); this.render(); } }
+  refresh(): void { if (!this.runningId && !this.stoppingId) { this.epoch++; this.runs = undefined; this.error = undefined; this.loading = false; this.activities.clear(); this.activityLoaded.clear(); this.activityErrors.clear(); this.render(); } }
   private async load(): Promise<void> {
     const epoch = this.epoch; this.loading = true; this.error = undefined; this.render();
     try {
       const runs = await this.bridge.inputOptimizationRuns(this.projectId);
       if (epoch === this.epoch) {
-        this.runs = runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        const observed = new Map(this.runs?.map(run => [run.id, run]));
+        for (const run of runs) observed.set(run.id, observedInputRun(observed.get(run.id), run));
+        this.runs = [...observed.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
       }
     } catch (error) { if (epoch === this.epoch) this.error = error; }
     finally { if (epoch === this.epoch) { this.loading = false; this.render(); } }
@@ -65,7 +67,10 @@ export class InputRunsController {
       timer = setTimeout(() => {
         if (settled || epoch !== this.epoch) return;
         void Promise.all([this.bridge.inputOptimizationRun(this.projectId, run.id), this.bridge.projectActivity(this.projectId, 30, run.id)]).then(([value, log]) => {
-          if (!settled && epoch === this.epoch) { this.replace(value); const activity = inputRunActivity(log, run.id); if (activity) this.activities.set(run.id, activity); this.render(); poll(); }
+          if (!settled && epoch === this.epoch) {
+            if (this.replace(value)) { const activity = inputRunActivity(log, run.id); if (activity) this.activities.set(run.id, activity); }
+            this.render(); poll();
+          }
         }, () => { if (!settled && epoch === this.epoch) poll(); });
       }, 1250);
     };
@@ -98,8 +103,11 @@ export class InputRunsController {
     } catch (error) { this.error = error; }
     finally { this.cancellingId = undefined; this.render(); }
   }
-  private replace(run: InputOptimizationRun): void {
+  private replace(run: InputOptimizationRun): boolean {
     const values = this.runs ?? [];
-    this.runs = values.some(value => value.id === run.id) ? values.map(value => value.id === run.id ? run : value) : [run, ...values];
+    const previous = values.find(value => value.id === run.id);
+    if (previous && newerInputRun(previous, run)) return false;
+    this.runs = values.some(value => value.id === run.id) ? values.map(value => value.id === run.id ? observedInputRun(value, run) : value) : [run, ...values];
+    return true;
   }
 }

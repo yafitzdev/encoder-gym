@@ -223,6 +223,15 @@ explicit return to live work, retained rejected-candidate links, direction-aware
 colors, and narrow-window layouts. These rendered fixtures and CLI tests remain
 separate layers, not the required connected production desktop journey.
 
+Desktop recovery regressions also delay collection, polling and drive responses
+across a newer Stop acknowledgement. They verify the paused execution head is
+retained, reopened Agent runs can request Stop without dispatching a worker, and
+foreign-project controls are rejected. Rendered checks distinguish unverified
+stored-running state, pending Stop, acknowledged pause and interruption; durable
+stopped states end spinners even before the local promise settles. These are
+control/presentation regressions, not proof of live worker discovery or complete
+connected restart acceptance.
+
 The desktop repair regressions exercise explicit standard Agent authorization,
 the renderer-observed Resume head, uncertain Stop-reply identity and prepared-run
 executor selection. Fixtures retain the CLI's actual nullable completion field.

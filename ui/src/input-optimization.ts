@@ -47,6 +47,30 @@ export interface InputOptimizationRun {
 
 export interface InputOptimizationStarted { actionId: string; run: InputOptimizationRun }
 
+/** Root and Agent journals advance independently; timestamps are not authority. */
+export function newerInputRun(candidate: InputOptimizationRun, previous: InputOptimizationRun): boolean {
+  return candidate.lastSequence > previous.lastSequence || candidate.lastSequence === previous.lastSequence
+    && (candidate.agentExecution?.lastSequence ?? 0) > (previous.agentExecution?.lastSequence ?? 0);
+}
+
+export function observedInputRun(previous: InputOptimizationRun | undefined, incoming: InputOptimizationRun): InputOptimizationRun {
+  if (!previous || previous.id !== incoming.id) return incoming;
+  if (previous.projectId !== incoming.projectId) throw new Error("Optimization run belongs to another project.");
+  if (newerInputRun(previous, incoming)) return previous;
+  // Control responses need not include the independently read report projection.
+  return !incoming.iterations && previous.iterations ? { ...incoming, iterations: previous.iterations } : incoming;
+}
+
+/** An unsettled desktop promise is not evidence that stopped work is still running. */
+export function inputOptimizationWorking(run: InputOptimizationRun, locallyOwned: boolean): boolean {
+  return locallyOwned && !inputOptimizationTerminal(run.state) && !run.state.endsWith("_failed")
+    && run.state !== "agent_paused" && run.state !== "agent_interrupted";
+}
+
+export function inputOptimizationMayBeActive(run: InputOptimizationRun): boolean {
+  return run.state === "agent_running" || run.state === "agent_stopping";
+}
+
 const states = new Set<InputOptimizationState>([
   "queued", "preparing", "ready", "preparation_failed", "materializing", "materialized", "materialization_failed",
   "attaching_experiment", "ready_to_run", "experiment_attachment_failed", "optimizing", "ready_for_final_evaluation",

@@ -6,7 +6,7 @@ import type { WorkspaceSnapshot } from "../workspace.js";
 import type { OptimizationLaunchAuthorization } from "../optimization-launch.js";
 import type { NativeProgress } from "../managed-control.js";
 import type { OptimizationInputs, OptimizationSetup, OptimizationSetupRequest } from "../optimization-setup.js";
-import { inputOptimizationPhase, inputOptimizationTerminal, type InputOptimizationPhase, type InputOptimizationRun } from "../input-optimization.js";
+import { inputOptimizationPhase, inputOptimizationTerminal, newerInputRun, observedInputRun, type InputOptimizationPhase, type InputOptimizationRun } from "../input-optimization.js";
 import { appendLiveActivity, inputRunActivity, inputRunStageLabel, type InputRunActivity, type InputRunActivityEntry } from "./input-run-activity.js";
 
 /** Per-project input selection. Running experiments have a separate controller. */
@@ -47,7 +47,7 @@ export class OptimizationSetupController {
       if (runId) {
         await this.bridge.stopInputOptimization(this.projectId, runId);
         const observed = await this.bridge.inputOptimizationRun(this.projectId, runId);
-        if (this.run?.id === runId) this.run = observed;
+        if (this.run?.id === runId) this.run = observedInputRun(this.run, observed);
         this.render();
       }
     }
@@ -186,16 +186,21 @@ export class OptimizationSetupController {
           if (settled || epoch !== this.epoch || !this.run) return;
           void Promise.all([this.bridge.inputOptimizationRun(this.projectId, this.run.id), this.bridge.projectActivity(this.projectId, 30, this.run.id)]).then(([run, log]) => {
             if (!settled && epoch === this.epoch) {
-              this.run = run;
-              const observed = inputRunActivity(log, run.id);
-              if (observed) this.activity = observed;
+              if (!this.run || !newerInputRun(this.run, run)) {
+                this.run = observedInputRun(this.run, run);
+                const observed = inputRunActivity(log, run.id);
+                if (observed) this.activity = observed;
+              }
               this.render(); poll();
             }
           }, () => { if (!settled && epoch === this.epoch) poll(); });
         }, 1250);
       };
       poll();
-      try { this.run = await this.bridge.driveInputOptimization(this.projectId, this.run.id, progress, resumeHead); }
+      try {
+        const observed = await this.bridge.driveInputOptimization(this.projectId, this.run.id, progress, resumeHead);
+        this.run = observedInputRun(this.run, observed);
+      }
       finally { settled = true; if (timer) clearTimeout(timer); }
       if (epoch !== this.epoch) return;
       this.activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30, this.run.id), this.run.id);
@@ -211,7 +216,8 @@ export class OptimizationSetupController {
         if (!this.stopping) this.error = error;
         if (this.run) {
           const existing = this.run;
-          this.run = await this.bridge.inputOptimizationRun(this.projectId, existing.id).catch(() => existing);
+          const observed = await this.bridge.inputOptimizationRun(this.projectId, existing.id).catch(() => existing);
+          this.run = observedInputRun(this.run, observed);
           this.activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30, existing.id).catch(() => ({ project_id: this.projectId, actions: [] })), existing.id) ?? this.activity;
         }
       }
@@ -250,7 +256,8 @@ export class OptimizationSetupController {
     if (!this.canCancel || !this.run) return;
     const run = this.run; this.cancelling = true; this.error = undefined; this.render();
     try {
-      this.run = await this.bridge.cancelInputOptimization(this.projectId, run.id);
+      const cancelled = await this.bridge.cancelInputOptimization(this.projectId, run.id);
+      this.run = observedInputRun(this.run, cancelled);
       this.render();
       this.activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30, run.id), run.id) ?? this.activity;
     } catch (error) { this.error = error; }

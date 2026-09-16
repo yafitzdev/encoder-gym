@@ -296,6 +296,14 @@ candidate was selected as best, received final approval, or was promoted.
 Rendered fixtures verify this presentation; a connected production-path
 desktop journey is still required for overall acceptance.
 
+Run observations retain the newest durable root/Agent control heads when polls,
+Stop replies and drive responses arrive out of order. Stored running state after
+reopening is labeled unverified instead of paused; Stop can target that existing
+run without starting a coordinator. Pending Stop remains distinct from an
+acknowledged pause, and terminal/paused states outrank an unsettled desktop
+promise for spinner presentation. Live worker discovery and the connected
+restart journey remain separate acceptance requirements.
+
 One expandable run keeps Setup → Status → Report. Status displays an iteration
 selector above that iteration's stage strip and activity. Finished iterations
 remain inspectable; selecting history never snaps back to live updates.

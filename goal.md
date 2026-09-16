@@ -57,6 +57,16 @@ at desktop and narrow widths. No provider, runtime or dependency was added.
 The smoke driver is still fixture-controlled; none of the connected-journey
 acceptance boxes below are claimed by these separate layers.
 
+The desktop control-observation repair prevents late collection, poll and drive
+responses from overwriting a newer Stop acknowledgement, and prevents stale
+setup state from winning over the run collection. Reopened Agent runs expose
+Stop without dispatching a new worker. Stored-running state is explicitly
+unverified; pending Stop, acknowledged pause and interruption remain distinct.
+Durable stopped states end spinners even while desktop IPC is still settling.
+All four Rust gates, all 149 UI tests, expanded rendered checks (including narrow
+recovery controls) and both smoke flows across independent restarts pass. This does not establish
+live worker discovery, every-boundary recovery or connected Agent acceptance.
+
 Remaining work identified by inspecting production code:
 
 - Windows CLI startup now establishes kill-on-close job ownership before any

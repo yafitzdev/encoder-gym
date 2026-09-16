@@ -1,6 +1,6 @@
 import type { NativeProgress } from "../managed-control.js";
 import type { OptimizationIteration } from "../optimization-history.js";
-import { inputOptimizationPhase, type InputOptimizationRun } from "../input-optimization.js";
+import { inputOptimizationPhase, inputOptimizationWorking, type InputOptimizationRun } from "../input-optimization.js";
 import { spinner } from "./components.js";
 import { h } from "./dom.js";
 import { inputRunStageDetail, inputRunStageLabel, mergedActivity, presentedActivity, stagedActivity, type InputRunActivity, type InputRunActivityEntry, type InputRunStageContext } from "./input-run-activity.js";
@@ -44,7 +44,8 @@ export function pendingInputRunProgress(progress?: NativeProgress, animationKey 
 export function inputRunProgress(options: InputRunProgressOptions): HTMLElement {
   const { run, startedAt, activity, context } = options;
   const scoped = options.iteration !== undefined, iteration = options.iteration;
-  const running = options.running && (!scoped || !!iteration && !iteration.completed && iteration.number === run.iterations?.at(-1)?.number);
+  const rootRunning = inputOptimizationWorking(run, options.running) || !!options.registrationPending && options.running && run.state !== "cancelled";
+  const running = rootRunning && (!scoped || !!iteration && !iteration.completed && iteration.number === run.iterations?.at(-1)?.number);
   const phase = scoped ? iteration?.completed ? "complete" : "checking_inputs" : options.registrationPending ? "saving_candidate" : inputOptimizationPhase(run.state);
   const failed = run.state.endsWith("_failed") && (!scoped || !!iteration && !iteration.completed);
   const rootResult = options.registrationPending ? undefined : run.state === "candidate_accepted" ? "Candidate passed"
@@ -65,15 +66,18 @@ export function inputRunProgress(options: InputRunProgressOptions): HTMLElement 
   const active = visiblePhase === "complete" ? phases.length : Math.max(0, phases.indexOf(visiblePhase));
   const activeProgress: NativeProgress = progress ?? { phase: fallback[phase] };
   const phaseLabel = visiblePhase === "complete" ? "Complete" : labels[visiblePhase];
-  const current = result ?? (failed ? `${scoped ? phaseLabel : labels[phase as keyof typeof labels] ?? phaseLabel} failed` : running ? phaseLabel : `Paused · ${phaseLabel}`);
+  const current = result ?? (failed ? `${scoped ? phaseLabel : labels[phase as keyof typeof labels] ?? phaseLabel} failed`
+    : run.state === "agent_stopping" ? `Stop requested · ${phaseLabel}`
+    : run.state === "agent_running" && !rootRunning ? `Execution status unverified · ${phaseLabel}`
+    : run.state === "agent_interrupted" ? `Interrupted · ${phaseLabel}` : running ? phaseLabel : `Paused · ${phaseLabel}`);
   const selected = options.navigation?.view.stage ?? (visiblePhase === "complete" ? events.at(-1)?.stage ?? "evaluating" : visiblePhase);
   const selectedEvents = events.filter(event => event.stage === selected);
   return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": String(running) },
     progressSteps(active, failed, selected, options.navigation, running ? options.animationKey ?? `run-progress:${run.id}` : undefined),
     activityStream(selectedEvents.length || events.length || scoped ? selectedEvents : selected === visiblePhase ? [{ at: activity?.updatedAt ?? new Date().toISOString(), progress: activeProgress }] : [], context,
       running && selected === events.at(-1)?.stage, selected, options.navigation,
-      h("div", { class: "optimization-status-controls" }, options.running && startedAt ? h("span", { class: "muted" }, "Elapsed ", h("span", { "data-elapsed-start": String(startedAt) })) : null, options.controls),
-      running ? undefined : current));
+      h("div", { class: "optimization-status-controls" }, rootRunning && startedAt ? h("span", { class: "muted" }, "Elapsed ", h("span", { "data-elapsed-start": String(startedAt) })) : null, options.controls),
+      running && run.state !== "agent_stopping" ? undefined : current));
 }
 
 function activityStream(events: InputRunActivityEntry[], context: InputRunStageContext | undefined, running: boolean, selected: OptimizationStage, navigation?: ActivityNavigation, controls?: HTMLElement, status?: string): HTMLElement {

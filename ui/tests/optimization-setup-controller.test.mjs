@@ -192,3 +192,18 @@ test("verification details arrive during setup before any run exists", async () 
   assert.equal(f.controller.liveProgress.subject, "model.safetensors");
   pending.reject(new Error("fixture complete")); await saving;
 });
+
+test("Optimize retains a newer Stop acknowledgement when an older drive response arrives", async () => {
+  const active = deferred();
+  const f = fixture({ driveInputOptimization: async () => active.promise, stopInputOptimization: async () => {} });
+  await f.controller.ensure(); const optimizing = f.controller.optimize();
+  await new Promise(resolve => setImmediate(resolve));
+  const before = { ...f.controller.run, state: "agent_running", agentExecution: { lastSequence: 1 } };
+  f.controller.run = before;
+  const paused = { ...before, state: "agent_paused", agentExecution: { lastSequence: 3 } };
+  f.bridge.inputOptimizationRun = async () => paused;
+  await f.controller.stop();
+  active.resolve(before); await optimizing;
+  assert.equal(f.controller.run.state, "agent_paused");
+  assert.equal(f.controller.run.agentExecution.lastSequence, 3);
+});

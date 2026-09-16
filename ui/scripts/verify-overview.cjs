@@ -172,6 +172,17 @@ app.whenReady().then(async()=>{
     await check('failed iteration names its recorded native stage',`document.querySelector('.optimization-progress-title').textContent==='Training failed'`);
     await evaluate(`qa.runs.runs[0].state='agent_budget_exhausted';qa.render()`);
     await check('budget-stop iteration is terminal, not falsely paused',`document.querySelector('.optimization-progress-title').textContent==='Training budget exhausted' && ![...document.querySelectorAll('.optimization-status-controls button')].some(node=>node.textContent==='Resume')`);
+    await evaluate(`qa.runs.runs[0].state='agent_running';qa.render()`);
+    await check('reopened running state is unverified, not falsely paused or live',`document.querySelector('.focus-run-state').textContent==='Status unverified' && document.querySelector('.optimization-progress-title').textContent==='Execution status unverified · Training' && !document.querySelector('.focus-run .spinner')`);
+    await check('reopened Agent runs expose durable Stop and explicit status refresh',`['Stop','Refresh status','Resume'].every(label=>[...document.querySelectorAll('.optimization-status-controls button')].some(node=>node.textContent===label && !node.disabled))`);
+    await check('recovery controls fit a narrow window',`[...document.querySelectorAll('.optimization-status-controls button')].every(node=>{const r=node.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth})`);
+    await capture('recovery-390');
+    await evaluate(`qa.runs.runs[0].state='agent_stopping';qa.runs.runningId='agent-root';qa.render()`);
+    await check('Stop intent remains visible while owned work unwinds',`document.querySelector('.focus-run-state').textContent==='Stop requested' && document.querySelector('.optimization-progress-title').textContent==='Stop requested · Training' && !!document.querySelector('.optimization-progress .spinner')`);
+    await evaluate(`qa.runs.runs[0].state='agent_paused';qa.runs.runs[0].agentExecution.lastSequence=3;qa.setup.run={...qa.runs.runs[0],state:'agent_running',agentExecution:{lastSequence:1}};qa.setup.running=true;qa.render()`);
+    await check('durable pause beats stale setup state and an unsettled drive promise',`document.querySelector('[data-run-id="agent-root"]').dataset.runState==='agent_paused' && document.querySelector('.focus-run-state').textContent==='Paused' && !document.querySelector('.focus-run .spinner') && document.querySelector('.optimization-progress-title').textContent==='Paused · Training'`);
+    await evaluate(`qa.setup.running=false;qa.setup.run=undefined;qa.runs.runningId=undefined;qa.runs.runs[0].state='agent_interrupted';qa.render()`);
+    await check('interruption is not relabeled as a user pause',`document.querySelector('.focus-run-state').textContent==='Interrupted' && document.querySelector('.optimization-progress-title').textContent==='Interrupted · Training'`);
     console.log('Overview renderer verification complete.');
   }finally{window.destroy();app.quit()}
 }).catch(error=>{console.error(error);app.exit(1)});

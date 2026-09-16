@@ -104,3 +104,79 @@ test("a late Stop reply refreshes its durable pause after the drive has already 
   assert.equal(controller.runs[0], paused);
   assert.equal(controller.stoppingId, undefined);
 });
+
+test("a reopened Agent run can be stopped without starting another worker", async () => {
+  const projectId = randomUUID(), value = run(projectId, "agent_running");
+  const paused = { ...value, state: "agent_paused", agentExecution: { lastSequence: 3 } };
+  let stops = 0;
+  const controller = new InputRunsController(projectId, {
+    stopInputOptimization: async (id, runId) => { assert.equal(id, projectId); assert.equal(runId, value.id); stops++; },
+    inputOptimizationRun: async () => paused,
+  }, () => {});
+  controller.retain(value);
+  await controller.stop(value);
+  assert.equal(stops, 1);
+  assert.equal(controller.runs[0], paused);
+  assert.equal(controller.runningId, undefined);
+  await controller.stop({ ...value, projectId: randomUUID() });
+  assert.equal(stops, 1, "foreign project controls are rejected");
+});
+
+test("a delayed drive response cannot replace a newer durable Stop acknowledgement", async () => {
+  const projectId = randomUUID(), value = run(projectId, "agent_running");
+  value.agentExecution = { lastSequence: 1 };
+  const paused = { ...value, state: "agent_paused", agentExecution: { lastSequence: 3 } };
+  let finish;
+  const controller = new InputRunsController(projectId, {
+    driveInputOptimization: async () => new Promise(resolve => { finish = resolve; }),
+    stopInputOptimization: async () => {},
+    inputOptimizationRun: async () => paused,
+    selectProject: async () => ({ content: { state: "ready", workspace: {} } }),
+    projectActivity: async () => ({ actions: [] }),
+  }, () => {});
+  const driving = controller.resume(value);
+  await controller.stop(value);
+  finish(value); await driving;
+  assert.equal(controller.runs[0].state, "agent_paused");
+  controller.retain(value);
+  assert.equal(controller.runs[0].agentExecution.lastSequence, 3);
+});
+
+test("a poll started before Stop cannot roll its acknowledgement backwards", async context => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const projectId = randomUUID(), value = run(projectId, "agent_running");
+  value.agentExecution = { lastSequence: 1 };
+  const paused = { ...value, state: "agent_paused", agentExecution: { lastSequence: 3 } };
+  let finish, oldRead, reads = 0;
+  const controller = new InputRunsController(projectId, {
+    driveInputOptimization: async () => new Promise(resolve => { finish = resolve; }),
+    stopInputOptimization: async () => {},
+    inputOptimizationRun: async () => ++reads === 1 ? new Promise(resolve => { oldRead = resolve; }) : paused,
+    projectActivity: async () => ({ actions: [] }),
+    selectProject: async () => ({ content: { state: "ready", workspace: {} } }),
+  }, () => {});
+  const driving = controller.resume(value);
+  context.mock.timers.tick(1250);
+  await controller.stop(value);
+  oldRead(value); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(controller.runs[0].state, "agent_paused");
+  finish(paused); await driving;
+});
+
+test("an earlier collection read cannot overwrite a Stop acknowledgement or drop retained runs", async () => {
+  const projectId = randomUUID(), value = run(projectId, "agent_running");
+  value.agentExecution = { lastSequence: 1 };
+  const paused = { ...value, state: "agent_paused", agentExecution: { lastSequence: 3 } };
+  const another = run(projectId);
+  let release;
+  const controller = new InputRunsController(projectId, {
+    inputOptimizationRuns: async () => new Promise(resolve => { release = resolve; }),
+    stopInputOptimization: async () => {}, inputOptimizationRun: async () => paused,
+  }, () => {});
+  const loading = controller.ensure();
+  controller.retain(another);
+  await controller.stop(value);
+  release([value]); await loading;
+  assert.equal(controller.runs.find(item => item.id === value.id).state, "agent_paused");
+  assert.ok(controller.runs.some(item => item.id === another.id));
+});

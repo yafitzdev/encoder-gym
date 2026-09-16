@@ -1,6 +1,6 @@
 import type { WorkspaceSnapshot } from "../workspace.js";
 import type { ManagedRunStatus } from "../managed-control.js";
-import { inputOptimizationTerminal } from "../input-optimization.js";
+import { inputOptimizationMayBeActive, inputOptimizationTerminal, inputOptimizationWorking } from "../input-optimization.js";
 import type { Actions } from "./actions.js";
 import type { InputRunsController } from "./input-runs-controller.js";
 import type { OptimizationSetupController } from "./optimization-setup-controller.js";
@@ -27,7 +27,7 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
   if (setup.run) {
     const index = roots.findIndex(run => run.id === setup.run!.id);
     if (index < 0) roots.push(setup.run);
-    else if (setup.running || newerInputRun(setup.run, roots[index]!)) roots[index] = setup.run;
+    else if (!newerInputRun(roots[index]!, setup.run) && (setup.running || newerInputRun(setup.run, roots[index]!))) roots[index] = setup.run;
   }
   const records = overviewRecords(workspace, roots, managed);
   if (state.launching && setup.run) {
@@ -61,7 +61,11 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
   page.setAttribute("data-live-view", "overview");
   return page;
 
-  function runBusy(record?: OverviewRecord): boolean { return !!record?.input && (runs.runningId === record.id || setup.running && setup.run?.id === record.id); }
+  function runBusy(record?: OverviewRecord): boolean {
+    if (!record?.input) return false;
+    const owned = runs.runningId === record.id || setup.running && setup.run?.id === record.id;
+    return inputOptimizationWorking(record.input, owned) || owned && record.input.state !== "cancelled" && needsRegistration(record);
+  }
   function needsRegistration(record: OverviewRecord): boolean {
     const experimentId = record.input?.experimentRunId ?? record.experiment?.id;
     return !!record.input?.outcome && !!experimentId && !!workspace.managed?.modelCatalog
@@ -69,6 +73,7 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
       && !workspace.managed.modelCatalog.artifacts.some(model => model.producingRun?.id === experimentId);
   }
   function runLabel(record: OverviewRecord): string {
+    if (record.input?.state === "agent_stopping") return "Stop requested";
     if (runBusy(record)) return "Running";
     if (needsRegistration(record)) return "Paused";
     const decision = reportDecision(record);
@@ -76,6 +81,8 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     if (record.input?.state === "cancelled") return "Cancelled";
     if (record.input?.state === "agent_completed") return "Complete";
     if (record.input?.state === "agent_budget_exhausted") return "Budget exhausted";
+    if (record.input?.state === "agent_running") return "Status unverified";
+    if (record.input?.state === "agent_interrupted") return "Interrupted";
     if (record.input?.state.endsWith("_failed")) return "Failed";
     if (record.experiment?.candidates.some(candidate => candidate.failure)) return "Failed";
     return "Paused";
@@ -172,7 +179,7 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
       return h("div", {}, h("h2", {}, runLabel(record)), h("ol", { class: "focus-events" }, ...(record.experiment?.activity.slice(-5).reverse().map(event => h("li", {}, h("time", {}, clock(event.at)), event.kind.replaceAll("_", " "))) ?? [])),
         record.managed && !["completed", "cancelled", "failed"].includes(record.managed.state) ? button("Continue", () => actions.navigate({ page: "optimization" }), "primary") : null);
     }
-    const run = record.input, setupBusy = setup.running && setup.run?.id === run.id, running = runBusy(record);
+    const run = record.input, setupBusy = setup.running && setup.run?.id === run.id && !newerInputRun(run, setup.run), running = runBusy(record);
     if (!running) void runs.ensureActivity(run.id);
     const activity = setupBusy ? setup.activity : runs.activities.get(run.id) ?? (setup.run?.id === run.id ? setup.activity : undefined);
     const context = runContext(run, workspace, setup), stopping = setupBusy ? setup.stopping : runs.stoppingId === run.id;
@@ -184,6 +191,8 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     const stop = button(stopping ? "Stopping…" : "Stop", () => { void (setupBusy ? setup.stop() : runs.stop(run)); }, "secondary");
     stop.disabled = stopping;
     const resume = button("Resume", () => { void runs.resume(run); }, "primary"); resume.disabled = busy;
+    const unobserved = inputOptimizationMayBeActive(run) && !running;
+    const refresh = button("Refresh status", () => runs.refresh(), "secondary"); refresh.disabled = busy || stopping;
     return h("div", { class: "focus-status" },
       runs.activityErrors.has(run.id) ? failureNotice(runs.activityErrors.get(run.id)) : null,
       activity?.failure ? h("div", { class: "operation-failure", role: "alert" }, failureNotice(activity.failure.message)) : null,
@@ -192,7 +201,8 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
         liveProgressAt: setupBusy ? setup.liveProgressAt : runs.runningId === run.id ? runs.liveProgressAt : undefined,
         liveEvents: setupBusy ? setup.liveEvents : runs.runningId === run.id ? runs.liveEvents : [],
         registrationPending: needsRegistration(record), animationKey: `overview-progress:${run.id}`, navigation,
-        controls: running ? stop : !inputOptimizationTerminal(run.state) || needsRegistration(record) ? resume : undefined }));
+        controls: running ? stop : unobserved ? h("div", { class: "focus-controls" }, stop, refresh, resume)
+          : !inputOptimizationTerminal(run.state) || needsRegistration(record) ? resume : undefined }));
   }
 }
 
