@@ -44,6 +44,7 @@ pub(super) mod tests {
         let backend = NomosBackend {
             root: root.clone(),
             python: root.join("must-not-run-python"),
+            native_package: NativePackage::Nomos,
             manifest: crate::tests::manifest_with_named_suites(),
             baseline_override: None,
             training_override: None,

@@ -82,28 +82,62 @@ const DEVELOPMENT_OBSERVER_SCHEMA_VERSION: u32 = 1;
 const DENSE_TEXT_VERSION: &str = "dense-text.v3";
 const REPAIR_TRAINING_RECEIPT_SCHEMA: &str = "encoder-gym-nomos-repair-training-receipt.v1";
 const REPAIR_TRAINING_RECEIPT_NAME: &str = "encoder_gym_repair_training_receipt.json";
-const DEVELOPMENT_OBSERVER_SOURCES: [&str; 5] = [
-    "tools/collect_encoder_gym_development_observations.py",
-    "tools/evaluate_dense_router.py",
-    "fitz_tool/dense_router.py",
-    "fitz_tool/embedding_backend.py",
-    "fitz_tool/onnx_encoder.py",
-];
 const REPAIR_DELTA_ADAPTER_NAME: &str = "nomos-native-repair-delta";
 const REPAIR_DELTA_ADAPTER_PROTOCOL: &str = "nomos-native-repair-delta-v1";
-const REPAIR_DELTA_SOURCES: [&str; 6] = [
-    "tools/generate_encoder_gym_repair_delta_v1.py",
-    "fitz_tool/encoder_gym_repair_delta_v1.py",
-    "fitz_tool/dense_router.py",
-    "fitz_tool/generic_contracts.py",
-    "fitz_tool/router_v2.py",
-    "fitz_tool/scaling_matrix_v1.py",
-];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativePackage {
+    Nomos,
+    /// Existing isolated runtimes may predate the source-package rename. They
+    /// remain immutable, valid execution inputs for already-authorized runs.
+    PreRenameFitzTool,
+}
+
+impl NativePackage {
+    fn detect(root: &Path) -> Result<Self, EncoderTaskAdapterError> {
+        if root.join("nomos").is_dir() {
+            Ok(Self::Nomos)
+        } else if root.join("fitz_tool").is_dir() {
+            Ok(Self::PreRenameFitzTool)
+        } else {
+            Err(adapter_error("Nomos native package is missing: nomos"))
+        }
+    }
+
+    const fn module(self) -> &'static str {
+        match self {
+            Self::Nomos => "nomos",
+            Self::PreRenameFitzTool => "fitz_tool",
+        }
+    }
+}
+
+fn development_observer_sources(package: NativePackage) -> Vec<String> {
+    vec![
+        "tools/collect_encoder_gym_development_observations.py".into(),
+        "tools/evaluate_dense_router.py".into(),
+        format!("{}/dense_router.py", package.module()),
+        format!("{}/embedding_backend.py", package.module()),
+        format!("{}/onnx_encoder.py", package.module()),
+    ]
+}
+
+fn repair_delta_sources(package: NativePackage) -> Vec<String> {
+    vec![
+        "tools/generate_encoder_gym_repair_delta_v1.py".into(),
+        format!("{}/encoder_gym_repair_delta_v1.py", package.module()),
+        format!("{}/dense_router.py", package.module()),
+        format!("{}/generic_contracts.py", package.module()),
+        format!("{}/router_v2.py", package.module()),
+        format!("{}/scaling_matrix_v1.py", package.module()),
+    ]
+}
 
 #[derive(Debug, Clone)]
 pub struct NomosBackend {
     root: PathBuf,
     python: PathBuf,
+    native_package: NativePackage,
     manifest: NomosExperimentManifest,
     baseline_override: Option<ModelArtifactIdentity>,
     training_override: Option<NomosTrainingDataset>,
@@ -148,10 +182,11 @@ impl NomosBackend {
             configuration_fingerprint,
         )
         .map_err(adapter_error)?;
+        let native_package = NativePackage::detect(&root)?;
         let observer_source_revision = git_output_at(&root, ["rev-parse", "HEAD"])?;
         let mut observer_sources = BTreeMap::new();
-        for relative in DEVELOPMENT_OBSERVER_SOURCES {
-            let path = root.join(relative);
+        for relative in development_observer_sources(native_package) {
+            let path = root.join(&relative);
             if !path.is_file() {
                 return Err(adapter_error(format!(
                     "Nomos development observer source is missing: {relative}"
@@ -173,21 +208,21 @@ impl NomosBackend {
             observer_configuration_fingerprint,
         )
         .map_err(adapter_error)?;
-        let mut repair_delta_sources = BTreeMap::new();
-        for relative in REPAIR_DELTA_SOURCES {
-            let path = root.join(relative);
+        let mut repair_delta_source_hashes = BTreeMap::new();
+        for relative in repair_delta_sources(native_package) {
+            let path = root.join(&relative);
             if !path.is_file() {
                 return Err(adapter_error(format!(
                     "Nomos repair-delta adapter source is missing: {relative}"
                 )));
             }
-            repair_delta_sources.insert(relative, prefixed(&sha256_file(&path)?));
+            repair_delta_source_hashes.insert(relative, prefixed(&sha256_file(&path)?));
         }
         let repair_delta_configuration_fingerprint = artifact_core::fingerprint(&json!({
             "adapter": REPAIR_DELTA_ADAPTER_NAME,
             "protocol": REPAIR_DELTA_ADAPTER_PROTOCOL,
             "source_revision": observer_source_revision,
-            "sources": repair_delta_sources,
+            "sources": repair_delta_source_hashes,
         }))
         .map_err(adapter_error)?;
         let repair_delta_identity = BackendIdentity::new(
@@ -199,6 +234,7 @@ impl NomosBackend {
         Ok(Self {
             root,
             python: python.into(),
+            native_package,
             manifest,
             baseline_override: None,
             training_override: None,
@@ -4065,6 +4101,25 @@ mod tests {
         assert!(validate_relative("data/generated/train.jsonl").is_ok());
         assert!(validate_relative("../nomos/data.jsonl").is_err());
         assert!(validate_relative("C:\\Users\\source.jsonl").is_err());
+    }
+
+    #[test]
+    fn nomos_is_canonical_while_pre_rename_runtimes_remain_openable() {
+        let canonical = tempfile::tempdir().unwrap();
+        fs::create_dir(canonical.path().join("nomos")).unwrap();
+        fs::create_dir(canonical.path().join("fitz_tool")).unwrap();
+        let package = NativePackage::detect(canonical.path()).unwrap();
+        assert_eq!(package, NativePackage::Nomos);
+        assert!(development_observer_sources(package).contains(&"nomos/dense_router.py".into()));
+
+        let pre_rename = tempfile::tempdir().unwrap();
+        fs::create_dir(pre_rename.path().join("fitz_tool")).unwrap();
+        let package = NativePackage::detect(pre_rename.path()).unwrap();
+        assert_eq!(package, NativePackage::PreRenameFitzTool);
+        assert!(
+            repair_delta_sources(package)
+                .contains(&"fitz_tool/encoder_gym_repair_delta_v1.py".into())
+        );
     }
 
     #[test]

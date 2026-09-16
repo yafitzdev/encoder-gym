@@ -97,11 +97,29 @@ class ClearanceTests(unittest.TestCase):
 
     def test_native_exception_and_stderr_cannot_disclose_protected_data(self):
         request = self.request([row("a", "alpha")], [row("z", "protected")])
+        package = self.root / "nomos"
+        package.mkdir()
+        code = "import sys\nprint('NEVER_DISCLOSE_HOLDOUT', file=sys.stderr)\nraise ValueError('NEVER_DISCLOSE_HOLDOUT')\n"
+        path = package / "dense_router.py"
+        path.write_text(code, encoding="utf-8")
+        request["nativePackage"] = "nomos"
+        request["sources"] = {"nomos/dense_router.py": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()}
+        (self.root / "request.json").write_text(json.dumps(request), encoding="utf-8")
+        completed = subprocess.run([sys.executable, "-B", "-c", Path(SPEC.origin).read_text(encoding="utf-8"), "request.json"],
+                                   cwd=self.root, capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(completed.stderr.strip(), "Native training qualification could not verify its inputs.")
+        self.assertFalse((self.root / "result.json").exists())
+
+    def test_pre_rename_native_package_remains_redacted_and_importable(self):
+        request = self.request([row("a", "alpha")], [row("z", "protected")])
         package = self.root / "fitz_tool"
         package.mkdir()
         code = "import sys\nprint('NEVER_DISCLOSE_HOLDOUT', file=sys.stderr)\nraise ValueError('NEVER_DISCLOSE_HOLDOUT')\n"
         path = package / "dense_router.py"
         path.write_text(code, encoding="utf-8")
+        request["nativePackage"] = "fitz_tool"
         request["sources"] = {"fitz_tool/dense_router.py": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()}
         (self.root / "request.json").write_text(json.dumps(request), encoding="utf-8")
         completed = subprocess.run([sys.executable, "-B", "-c", Path(SPEC.origin).read_text(encoding="utf-8"), "request.json"],

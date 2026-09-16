@@ -6,6 +6,7 @@ never leave this process; only aggregate clearance facts are written.
 
 import hashlib
 import contextlib
+import importlib
 import json
 import os
 from pathlib import Path
@@ -133,12 +134,15 @@ def main():
         raise ValueError("Request exceeds audit bound")
     request = json.loads(request_path.read_text(encoding="utf-8"))
     verify_sources(root, request["sources"])
+    native_package = request.get("nativePackage")
+    if native_package not in {"nomos", "fitz_tool"}:
+        raise ValueError("Unsupported native package")
     # Reuse the actual native validator and text renderer. Never pass their
     # diagnostic strings through: these can quote protected rows.
     with open(os.devnull, "w", encoding="utf-8") as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
-        from fitz_tool.dense_router import query_document
-        from fitz_tool.generic_contracts import validate_decision_state_v2
-        result = audit(root, request, query_document, validate_decision_state_v2)
+        dense_router = importlib.import_module(native_package + ".dense_router")
+        contracts = importlib.import_module(native_package + ".generic_contracts")
+        result = audit(root, request, dense_router.query_document, contracts.validate_decision_state_v2)
     verify_sources(root, request["sources"])
     output = request_path.with_name("result.json")
     with output.open("x", encoding="utf-8") as stream:

@@ -658,6 +658,7 @@ mod tests {
         NomosBackend {
             root: root.to_path_buf(),
             python: root.join("python-must-not-run"),
+            native_package: NativePackage::Nomos,
             manifest: crate::tests::manifest_with_named_suites(),
             baseline_override: None,
             training_override: None,

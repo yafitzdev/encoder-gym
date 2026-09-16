@@ -123,8 +123,8 @@ impl NomosBackend {
             inputs.insert(input.key.clone(), input.clone());
         }
         let mut sources = BTreeMap::new();
-        for relative in REPAIR_DELTA_SOURCES {
-            let path = self.resolve_existing(relative)?;
+        for relative in repair_delta_sources(self.native_package) {
+            let path = self.resolve_existing(&relative)?;
             sources.insert(relative, prefixed(&sha256_file(&path)?));
         }
         let mut request = json!({
@@ -132,6 +132,7 @@ impl NomosBackend {
             "projectFingerprint":project.fingerprint, "benchmarkFingerprint":benchmark.fingerprint,
             "dataset":dataset, "rows":dataset.rows, "training":dataset.artifact,
             "benchmarkInputs":inputs.into_values().collect::<Vec<_>>(), "sources":sources,
+            "nativePackage":self.native_package.module(),
         });
         let fingerprint = artifact_core::fingerprint(&request).map_err(adapter_error)?;
         request["fingerprint"] = fingerprint.clone().into();

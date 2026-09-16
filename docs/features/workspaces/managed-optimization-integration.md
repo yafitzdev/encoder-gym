@@ -41,6 +41,12 @@ Nomos workspace is not that runtime. `nomos` is a source repository and must
 never be selected as a substitute. A real launch remains unavailable until an
 explicit, verified runtime and scientific-store binding exists.
 
+The canonical native Python package is `nomos`. An isolated runtime bound before
+that package rename may retain its original `fitz_tool` package path; the
+compiled adapter recognizes that layout only as a pre-rename runtime so an
+already-authorized run can replay its exact immutable binding. New runtimes and
+ordinary test fixtures use `nomos`.
+
 For Agent-authorized launches the desktop delegates execution to the workspace
 CLI's single `drive-agent` coordinator. Its Stop control records `stop-agent`
 intent with a stable request UUID; it does not terminate the coordinator before

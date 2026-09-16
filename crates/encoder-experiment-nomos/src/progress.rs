@@ -148,6 +148,7 @@ mod tests {
         let backend = NomosBackend {
             root: temp.path().to_owned(),
             python: std::env::current_exe().unwrap(),
+            native_package: NativePackage::Nomos,
             manifest: crate::tests::manifest_with_named_suites(),
             baseline_override: None,
             training_override: None,
