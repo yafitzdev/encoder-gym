@@ -10,6 +10,8 @@ mod database_access;
 mod document;
 #[path = "../../src/presentation.rs"]
 mod presentation;
+#[path = "../../src/process_ownership.rs"]
+mod process_ownership;
 #[path = "../../src/training_examples.rs"]
 mod training_examples;
 
@@ -35,6 +37,7 @@ use std::{
 use workflow_core::benchmark_generation::BenchmarkGeneration;
 
 fn main() -> anyhow::Result<()> {
+    process_ownership::initialize()?;
     match std::thread::Builder::new()
         .stack_size(16 * 1_048_576)
         .spawn(run)?

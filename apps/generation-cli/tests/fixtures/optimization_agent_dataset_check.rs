@@ -111,6 +111,12 @@ async fn cli_agent_training_deadline_exhausts_budget_without_repeating_native_wo
     scenario(true, Some("training_timeout")).await;
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn cli_agent_crash_stops_native_descendants_and_retains_unknown_training_charge() {
+    scenario(true, Some("training_crash")).await;
+}
+
 async fn scenario(complete: bool, loop_mode: Option<&str>) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
@@ -296,7 +302,11 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
             2
         } else if matches!(
             mode,
-            "stop_resume" | "training_stop" | "training_settlement" | "training_timeout"
+            "stop_resume"
+                | "training_stop"
+                | "training_settlement"
+                | "training_timeout"
+                | "training_crash"
         ) {
             1
         } else {
@@ -405,6 +415,12 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
     let before_native = fs::read(root.join("runtime/native-invocations.log")).unwrap();
+    #[cfg(windows)]
+    if loop_mode == Some("training_crash") {
+        training_time_check::crash(root, &folder, reserved.id, &calls, command).await;
+        generator.unwrap().join().unwrap();
+        return;
+    }
     if loop_mode == Some("training_timeout") {
         training_time_check::timeout(root, &folder, reserved.id, &calls, command).await;
         generator.unwrap().join().unwrap();

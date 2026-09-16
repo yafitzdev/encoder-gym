@@ -89,6 +89,10 @@ workflow-core.workspace = true
 synthetic-data-sqlite = { path = "../../crates/generation-sqlite" }
 tempfile.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+win32job = "2.0.3"
+winsafe = { version = "0.0.23", features = ["kernel"] }
+
 [lints]
 workspace = true
 

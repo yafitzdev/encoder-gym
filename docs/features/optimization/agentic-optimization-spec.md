@@ -147,8 +147,16 @@ Stop retains its command UUID after an uncertain reply and uses a distinct UUID
 for a later confirmed action. Resume carries the paused head displayed in the
 renderer through IPC; main-process reads cannot adopt a newer Stop intent.
 Concurrent stale-lease recovery is serialized with a separate per-run SQLite
-lock. Descendant polling still leaves a spawn/observation crash window and does
-not establish complete abrupt-process recovery.
+lock. Windows CLI startup additionally establishes an anonymous kill-on-close
+job before any dispatch. Descendants inherit membership at spawn, so abrupt
+coordinator death stops even unobserved children; the job handle is not inherited.
+The finite Agent coordinator drains remaining members before a terminal attempt
+or Stop acknowledgement. Process-handle cleanup checks job membership (or the
+exact legacy creation time), and lease child identities publish atomically.
+Other platforms retain polling-based recovery. Windows process tests cover
+death before a child's first instruction, reparented descendants and actual
+CLI training interruption with conservative unknown charges; this is not yet
+every-boundary recovery or connected desktop acceptance.
 
 Native training now reserves remaining time immediately before fresh process
 dispatch, through an experiment-core accounting port backed by the project

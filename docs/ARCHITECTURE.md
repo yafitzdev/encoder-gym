@@ -182,8 +182,19 @@ mechanism remains operational custody in the CLI adapter and does not leak
 process types into domain contracts. Stale-owner inspection and replacement
 are serialized by a separate per-run SQLite write lock. That lock database is
 not deleted, avoiding split lock identities between concurrent recoverers.
-Observed descendants are not a substitute for guaranteed spawn-time ownership;
-the unobserved-child crash window still requires closure and acceptance coverage.
+On Windows, the CLI joins one anonymous kill-on-close Job Object before starting
+application work. Its non-inherited handle lives until process teardown; job
+membership is inherited at child creation, including by grandchildren. Thus
+abrupt coordinator death also stops unobserved or reparented children. After
+the finite Agent coordinator returns, it drains remaining job members before
+closing the root attempt or acknowledging Stop. Cleanup opens process handles
+and rechecks membership, avoiding numeric-PID termination races. Legacy lease
+cleanup verifies creation time on the same handle it terminates. Child identity
+files are synced and published atomically, never exposed half-written.
+This is an operational CLI adapter, not a domain dependency or another worker.
+Other platforms still use recorded-child recovery without the Windows
+spawn-time guarantee. Abrupt-death coverage of every artifact boundary remains
+separate acceptance work.
 
 The CLI now transfers each iteration's verified training output into ordinary
 model custody, including development-rejected candidates and trained outputs

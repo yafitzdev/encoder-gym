@@ -12,6 +12,15 @@ use uuid::Uuid;
 #[tokio::main]
 async fn main() -> Result<()> {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
+    if arguments
+        .first()
+        .is_some_and(|value| value == "--held-native-descendant")
+    {
+        let ready = PathBuf::from(arguments.get(1).context("Missing descendant handshake")?);
+        fs::write(ready, std::process::id().to_string())?;
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        return Ok(());
+    }
     if arguments.first().is_some_and(|value| value == "-c") {
         return native_clearance(&arguments);
     }
@@ -138,7 +147,28 @@ fn native_evaluation(arguments: &[String]) -> Result<()> {
     match module.as_str() {
         "tools.train_dense_triplet_router" => {
             if let Some(ready) = env::var_os("ENCODER_FIXTURE_TRAINING_HOLD") {
-                fs::write(ready, "native training started")?;
+                let ready = PathBuf::from(ready);
+                let descendant_ready = ready.with_extension("descendant");
+                let mut descendant = std::process::Command::new(env::current_exe()?)
+                    .arg("--held-native-descendant")
+                    .arg(&descendant_ready)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()?;
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                while !descendant_ready.exists() {
+                    if std::time::Instant::now() >= deadline {
+                        let _ = descendant.kill();
+                        let _ = descendant.wait();
+                        anyhow::bail!("Native descendant did not start");
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                fs::write(
+                    ready,
+                    serde_json::to_vec(&[std::process::id(), descendant.id()])?,
+                )?;
                 std::thread::sleep(std::time::Duration::from_secs(30));
                 anyhow::bail!("The held fixture trainer was not stopped");
             }

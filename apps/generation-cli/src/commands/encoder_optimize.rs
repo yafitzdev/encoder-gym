@@ -259,6 +259,25 @@ impl Drop for OptimizationExecutionLease {
             let _ = observer.join();
         }
         if matches!(read_execution_lease(&self.directory), Ok(ref owner) if owner == &self.owner) {
+            // A failed cleanup must not release ownership before process exit
+            // closes the lifetime job. Keep the lease for exclusive recovery.
+            if !matches!(
+                crate::process_ownership::has_contained_descendants(),
+                Ok(false)
+            ) {
+                return;
+            }
+            let Ok(children) = read_execution_children(&self.directory, &self.owner) else {
+                return;
+            };
+            let system = process_system();
+            if children.iter().any(|child| {
+                system
+                    .process(Pid::from_u32(child.process_id))
+                    .is_some_and(|process| process.start_time() == child.process_started_at)
+            }) {
+                return;
+            }
             let _ = remove_execution_lease_directory(&self.directory);
         }
     }
@@ -354,17 +373,25 @@ fn record_execution_children(directory: &Path, owner: &ExecutionLeaseOwner) -> a
             "{EXECUTION_CHILD_PREFIX}{}-{}{EXECUTION_CHILD_SUFFIX}",
             child.process_id, child.process_started_at
         ));
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-        {
-            Ok(mut file) => {
-                file.write_all(&serde_json::to_vec(&child)?)?;
-                file.sync_all()?;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error.into()),
+        if path.try_exists()? {
+            continue;
+        }
+        // Never expose empty/partial identities to status or recovery readers.
+        // Stage beside the lease (not inside its strict contents), sync, then
+        // atomically publish without replacing an existing immutable record.
+        let mut staged = tempfile::Builder::new()
+            .prefix(".encoder-optimization-child-")
+            .tempfile_in(
+                directory
+                    .parent()
+                    .context("lease directory has no parent")?,
+            )?;
+        staged.write_all(&serde_json::to_vec(&child)?)?;
+        staged.as_file().sync_all()?;
+        match staged.persist_noclobber(path) {
+            Ok(_) => {}
+            Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.error.into()),
         }
     }
     Ok(())
@@ -418,8 +445,12 @@ fn terminate_execution_children(
         .into_iter()
         .map(|child| (Pid::from_u32(child.process_id), child.process_started_at))
         .collect::<Vec<_>>();
+    #[cfg(not(windows))]
     let system = process_system();
     for (pid, started_at) in &pending {
+        #[cfg(windows)]
+        crate::process_ownership::terminate_recorded(pid.as_u32(), *started_at)?;
+        #[cfg(not(windows))]
         if let Some(process) = system
             .process(*pid)
             .filter(|process| process.start_time() == *started_at)
@@ -2933,6 +2964,11 @@ surprise = true
 
     #[tokio::test]
     async fn optimization_execution_lease_blocks_a_live_duplicate_and_releases_cleanly() {
+        if crate::process_ownership::isolate_lease_test(
+            "commands::encoder_optimize::tests::optimization_execution_lease_blocks_a_live_duplicate_and_releases_cleanly",
+        ) {
+            return;
+        }
         let directory = tempfile::tempdir().unwrap();
         let database = directory.path().join("scientific.sqlite");
         let url = format!("sqlite://{}", database.to_string_lossy().replace('\\', "/"));
@@ -2954,6 +2990,11 @@ surprise = true
 
     #[tokio::test]
     async fn optimization_execution_lease_recovers_an_atomically_published_stale_owner() {
+        if crate::process_ownership::isolate_lease_test(
+            "commands::encoder_optimize::tests::optimization_execution_lease_recovers_an_atomically_published_stale_owner",
+        ) {
+            return;
+        }
         let directory = tempfile::tempdir().unwrap();
         let database = directory.path().join("scientific.sqlite");
         let url = format!("sqlite://{}", database.to_string_lossy().replace('\\', "/"));
@@ -2988,6 +3029,11 @@ surprise = true
 
     #[tokio::test]
     async fn optimization_execution_lease_serializes_recovery_before_reading_the_owner() {
+        if crate::process_ownership::isolate_lease_test(
+            "commands::encoder_optimize::tests::optimization_execution_lease_serializes_recovery_before_reading_the_owner",
+        ) {
+            return;
+        }
         let directory = tempfile::tempdir().unwrap();
         let run_id = Uuid::new_v4();
         let database = directory.path().join("scientific.sqlite");
@@ -3025,6 +3071,11 @@ surprise = true
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn optimization_execution_lease_concurrent_recoverers_preserve_the_winner() {
+        if crate::process_ownership::isolate_lease_test(
+            "commands::encoder_optimize::tests::optimization_execution_lease_concurrent_recoverers_preserve_the_winner",
+        ) {
+            return;
+        }
         let directory = tempfile::tempdir().unwrap();
         let run_id = Uuid::new_v4();
         let url = format!(
@@ -3076,6 +3127,43 @@ surprise = true
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn optimization_execution_lease_drop_preserves_live_child_custody() {
+        if crate::process_ownership::isolate_lease_test(
+            "commands::encoder_optimize::tests::optimization_execution_lease_drop_preserves_live_child_custody",
+        ) {
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("scientific.sqlite");
+        let url = format!("sqlite://{}", database.to_string_lossy().replace('\\', "/"));
+        let run_id = Uuid::new_v4();
+        let lease = OptimizationExecutionLease::acquire(&url, run_id)
+            .await
+            .unwrap();
+        let path = lease.directory.clone();
+        let owner = lease.owner.clone();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "process_ownership::tests::ownership_fixture",
+                "--ignored",
+            ])
+            .current_dir(directory.path())
+            .env("ENCODER_OWNERSHIP_FIXTURE_MODE", "leaf")
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let recorded = record_execution_children(&path, &owner);
+        drop(lease);
+        let retained = read_execution_lease(&path);
+        child.kill().unwrap();
+        child.wait().unwrap();
+        recorded.unwrap();
+        assert_eq!(retained.unwrap(), owner, "live child custody was discarded");
     }
 
     #[tokio::test]

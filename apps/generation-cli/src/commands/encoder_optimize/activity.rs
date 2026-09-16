@@ -134,6 +134,11 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn activity_follows_the_exact_lease_and_never_claims_a_dead_process_is_running() {
+        if crate::process_ownership::isolate_lease_test(
+            "commands::encoder_optimize::activity::tests::activity_follows_the_exact_lease_and_never_claims_a_dead_process_is_running",
+        ) {
+            return;
+        }
         let root = tempfile::tempdir().unwrap();
         let database = root.path().join("scientific.sqlite");
         let url = format!("sqlite://{}", database.to_string_lossy().replace('\\', "/"));

@@ -20,14 +20,14 @@ At that commit the desktop had a `drive-agent` branch, but its new-run preview
 selected legacy authority; Resume also adopted the latest head instead of the
 head the user observed. Those were integration defects, not completed acceptance.
 
-The current repair checkpoint addresses new-run Agent authority, renderer-to-CLI
+The `74e7ac7` repair checkpoint addresses new-run Agent authority, renderer-to-CLI
 Resume fencing, prepared-run executor selection, Stop retry identity, concurrent
 stale-lease takeover, and trained-model custody after evaluation persistence
 failure. It also fixes canonical Windows paths in Agent lease commands, nullable
 CLI completion fields, late Stop acknowledgements and independent Agent-journal
 ordering in Overview. Old Stop retries no longer hide a newer attempt's failure.
 
-Verified on the repair checkpoint's executable tree:
+Verified on that repair checkpoint's executable tree:
 
 - `cargo fmt-check`, `cargo check-all`, `cargo lint`, and `cargo test-all` pass,
   including all 18 managed benchmark CLI tests with canonical project paths.
@@ -40,11 +40,24 @@ Verified on the repair checkpoint's executable tree:
 - Rendered Overview regression checks and all nine native-clearance Python
   tests pass. These do not establish the missing connected Agent-loop journey.
 
+The subsequent Windows process-ownership checkpoint passes all four Rust gates,
+including all 19 managed benchmark CLI scenarios. Its process tests cover
+unobserved suspended/reparented descendants, Stop before coordinator exit,
+legacy creation-time mismatch, and lease retention while children remain alive.
+The recorded-child recovery test also passes when explicitly enabled. UI
+typecheck/build, all 136 UI tests, and both Electron flows across independent
+restarts pass. The desktop smoke drive remains fixture-controlled: this is
+recovery and compatibility evidence, not full connected-loop acceptance.
+
 Remaining work identified by inspecting production code:
 
-- Child-process polling does not establish spawn-time ownership: abrupt death
-  between spawn and observation can leave an unrecorded child. Complete this
-  before claiming safe descendant recovery or every-boundary restart coverage.
+- Windows CLI startup now establishes kill-on-close job ownership before any
+  dispatch; inherited membership closes the unobserved-child spawn/crash gap.
+  Process tests cover suspended and reparented children, and the actual CLI
+  training-crash regression preserves unknown budget charges without repeated
+  native work. Stop drains owned descendants before acknowledgement. Other
+  platforms still use polling; every-artifact-boundary restart coverage remains
+  unfinished. Do not equate the focused Windows tests with that broader claim.
 - Overview still lacks independently selectable Agent iterations and their
   reports/artifact links. Advanced/Quick-test controls also need to use the
   enforced Agent settings contract.

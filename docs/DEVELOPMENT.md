@@ -218,7 +218,17 @@ CLI Agent journeys use canonical project paths, including Windows extended-path
 prefixes. A held first development-report write proves that a completed trained
 checkpoint and its dataset link are already in ordinary model custody. Separate
 lease tests serialize concurrent stale-owner recovery through a per-run SQLite
-lock. This does not close the unobserved-descendant spawn/crash window.
+lock. Windows CLI startup now establishes kill-on-close Job Object ownership
+before dispatch, independently of that observer. Actual process tests kill the
+coordinator while a child is still suspended before its first instruction and
+after a grandchild is reparented. Another verifies Stop drains descendants while
+the coordinator remains alive. A production-CLI regression kills a held fixture
+trainer's coordinator, verifies trainer and grandchild termination without a
+recovery command, then proves the full unknown training charge is retained and
+retry cannot dispatch beyond the budget. These tests use temporary projects,
+local fixtures and safe Windows APIs, not paid providers or real Nomos training.
+Other platforms still lack this spawn-time guarantee. Full abrupt-death coverage
+at every artifact boundary and connected desktop-loop acceptance remain open.
 
 The existing Electron smoke suite now checks that Optimize reserves standard
 Agent authority and Stop actually persists an acknowledged Agent pause, then

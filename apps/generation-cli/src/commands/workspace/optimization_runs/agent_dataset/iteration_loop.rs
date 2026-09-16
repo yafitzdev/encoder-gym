@@ -56,6 +56,7 @@ pub(in crate::commands::workspace::optimization_runs) async fn execute(
         ),
     )
     .await;
+    crate::process_ownership::quiesce().await?;
     if let Some(watcher) = &mut watcher {
         if let Err(error) = watcher.finish().await {
             result = Err(error.context("Could not observe the run's durable Stop state"));

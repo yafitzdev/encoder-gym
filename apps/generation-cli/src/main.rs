@@ -3,6 +3,7 @@ mod commands;
 mod database_access;
 mod document;
 mod presentation;
+mod process_ownership;
 mod training_examples;
 
 use anyhow::Context;
@@ -15,6 +16,7 @@ use synthetic_data_sqlite::SqliteStore;
 use tracing_subscriber::EnvFilter;
 
 fn main() -> anyhow::Result<()> {
+    process_ownership::initialize()?;
     // Windows gives the process main thread a comparatively small stack. Clap's
     // feature-oriented command tree and deeply verified provenance traversal
     // are both finite but intentionally broad, so run the application on one
