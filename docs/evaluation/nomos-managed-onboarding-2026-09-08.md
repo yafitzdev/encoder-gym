@@ -9,7 +9,7 @@ as New/Open/import, not through a special Nomos presentation path.
 - Managed root: `C:\Users\yanfi\EncoderGym\Projects\Nomos`
 - Project ID: `0dd64b24-47d2-4cfb-9523-6c0b65dc4a46`
 - Created: `2026-09-08T00:04:25.780824600Z`
-- Source repository: `C:\Users\yanfi\PycharmProjects\fitz-tool`
+- Source repository: `C:\Users\yanfi\PycharmProjects\nomos`
 - Source revision: `14e0a1667431982ee00ee07108e7d82351fa28eb`
 - Baseline source: `artifacts/nomos_bge_contrast_replay_ablation`
 - Format: sentence-transformers / BERT; 11 files, 134,211,908 bytes, including
@@ -57,7 +57,7 @@ synth workspace verify C:\Users\yanfi\EncoderGym\Projects\Nomos
 The workspace no longer needs the original checkpoint or input paths to open
 or verify. Keep the whole managed folder together when moving it.
 The app-library entry now points to the managed folder using the manifest's
-stable project ID. The old `fitz-tool` connection was replaced without deleting
+stable project ID. The old `nomos` connection was replaced without deleting
 source files or creating a duplicate Nomos entry. A recoverable library backup
 is at `%APPDATA%\@encoder-gym\ui\projects.json.before-managed-nomos.json`.
 

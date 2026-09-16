@@ -84,19 +84,19 @@ const REPAIR_TRAINING_RECEIPT_NAME: &str = "encoder_gym_repair_training_receipt.
 const DEVELOPMENT_OBSERVER_SOURCES: [&str; 5] = [
     "tools/collect_encoder_gym_development_observations.py",
     "tools/evaluate_dense_router.py",
-    "fitz_tool/dense_router.py",
-    "fitz_tool/embedding_backend.py",
-    "fitz_tool/onnx_encoder.py",
+    "nomos/dense_router.py",
+    "nomos/embedding_backend.py",
+    "nomos/onnx_encoder.py",
 ];
 const REPAIR_DELTA_ADAPTER_NAME: &str = "nomos-native-repair-delta";
 const REPAIR_DELTA_ADAPTER_PROTOCOL: &str = "nomos-native-repair-delta-v1";
 const REPAIR_DELTA_SOURCES: [&str; 6] = [
     "tools/generate_encoder_gym_repair_delta_v1.py",
-    "fitz_tool/encoder_gym_repair_delta_v1.py",
-    "fitz_tool/dense_router.py",
-    "fitz_tool/generic_contracts.py",
-    "fitz_tool/router_v2.py",
-    "fitz_tool/scaling_matrix_v1.py",
+    "nomos/encoder_gym_repair_delta_v1.py",
+    "nomos/dense_router.py",
+    "nomos/generic_contracts.py",
+    "nomos/router_v2.py",
+    "nomos/scaling_matrix_v1.py",
 ];
 
 #[derive(Debug, Clone)]
@@ -4232,7 +4232,7 @@ mod tests {
     #[test]
     fn paths_cannot_escape_the_isolated_workspace() {
         assert!(validate_relative("data/generated/train.jsonl").is_ok());
-        assert!(validate_relative("../fitz-tool/data.jsonl").is_err());
+        assert!(validate_relative("../nomos/data.jsonl").is_err());
         assert!(validate_relative("C:\\Users\\source.jsonl").is_err());
     }
 

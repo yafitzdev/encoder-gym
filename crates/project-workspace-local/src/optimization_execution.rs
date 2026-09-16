@@ -29,7 +29,10 @@ pub async fn begin_attempt(
 ) -> Result<Option<Uuid>> {
     let mut view = optimization_runs::show(folder, run_id).await?;
     if let Some(previous) = view.agent_execution.clone() {
-        if previous.state == AgentExecutionState::Completed {
+        if matches!(
+            previous.state,
+            AgentExecutionState::Completed | AgentExecutionState::BudgetExhausted
+        ) {
             return Ok(None);
         }
         if let Some(expected) = resume {
@@ -184,6 +187,22 @@ pub async fn fail_attempt(
 ) -> Result<AgentExecutionView> {
     let view = optimization_runs::show(folder, run_id).await?;
     append(folder, &view, attempt, AgentExecutionChange::Failed, None).await
+}
+
+pub async fn exhaust_budget(
+    folder: &Path,
+    run_id: Uuid,
+    attempt: Uuid,
+) -> Result<AgentExecutionView> {
+    let view = optimization_runs::show(folder, run_id).await?;
+    append(
+        folder,
+        &view,
+        attempt,
+        AgentExecutionChange::BudgetExhausted,
+        None,
+    )
+    .await
 }
 
 /// The caller first replays original scientific journals through the normal
@@ -351,6 +370,9 @@ pub(crate) async fn project(
             AgentExecutionState::Paused => ProjectOptimizationRunState::AgentPaused,
             AgentExecutionState::Interrupted => ProjectOptimizationRunState::AgentInterrupted,
             AgentExecutionState::Failed => ProjectOptimizationRunState::AgentFailed,
+            AgentExecutionState::BudgetExhausted => {
+                ProjectOptimizationRunState::AgentBudgetExhausted
+            }
             AgentExecutionState::Completed => ProjectOptimizationRunState::AgentCompleted,
         };
     }

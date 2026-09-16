@@ -34,6 +34,13 @@ pub(super) async fn timeout(
         TrainingAttemptOutcome::TimedOut
     );
     assert!(before[0].charge_millis() >= 1_000);
+    let stopped = run(
+        root,
+        &["optimization-run", "project", "show", &run_id.to_string()],
+    );
+    assert_eq!(stopped["state"], "agent_budget_exhausted");
+    assert_eq!(stopped["agentExecution"]["state"], "budget_exhausted");
+    assert_eq!(stopped["agentExecution"]["attempts"], 1);
     let native = fs::read(root.join("runtime/native-invocations.log")).unwrap();
     let exhausted = command().output().unwrap();
     assert!(!exhausted.status.success());

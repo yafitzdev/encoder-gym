@@ -32,6 +32,16 @@ pub(super) fn worker_status(database: &Path, run_id: Uuid) -> serde_json::Value 
         .process(pid)
         .filter(|process| process.start_time() == owner.process_started_at)
     else {
+        let Ok(children) = read_execution_children(&directory, &owner) else {
+            return serde_json::json!({"state":"unavailable"});
+        };
+        if children.iter().any(|child| {
+            system
+                .process(Pid::from_u32(child.process_id))
+                .is_some_and(|process| process.start_time() == child.process_started_at)
+        }) {
+            return serde_json::json!({"state":"orphaned"});
+        }
         return serde_json::json!({"state":"interrupted"});
     };
     let mut ids = std::collections::HashSet::from([pid]);

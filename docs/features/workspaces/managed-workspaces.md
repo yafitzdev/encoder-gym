@@ -49,7 +49,7 @@ inspection rather than overwritten on retry.
 For a copied baseline containing `nomos_training_manifest.json`:
 
 ```powershell
-synth workspace backfill-nomos C:\EncoderGym\Projects\Nomos --source-root C:\source\fitz-tool
+synth workspace backfill-nomos C:\EncoderGym\Projects\Nomos --source-root C:\source\nomos
 ```
 
 Only relative inputs named in that copied manifest are imported. The adapter
@@ -165,7 +165,7 @@ snapshot operation so committed WAL state is included, hashes the standalone
 copy, publishes it below `runs/` under its content identity, and records the
 hash and byte count in the binding. The selected source database is opened
 read-only and remains separate and unchanged. Neither path starts training,
-evaluates a model, or calls a provider. The source `fitz-tool` repository is not
+evaluates a model, or calls a provider. The source `nomos` repository is not
 a valid runtime.
 
 `workspace readiness` is passive: it reopens and rehashes the managed project,

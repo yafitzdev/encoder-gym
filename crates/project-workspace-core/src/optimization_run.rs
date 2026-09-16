@@ -1493,6 +1493,7 @@ pub enum ProjectOptimizationRunState {
     AgentPaused,
     AgentInterrupted,
     AgentFailed,
+    AgentBudgetExhausted,
     AgentCompleted,
 }
 
@@ -1574,6 +1575,7 @@ impl ProjectOptimizationRunState {
                 | Self::CandidateAccepted
                 | Self::CandidateRejected
                 | Self::Cancelled
+                | Self::AgentBudgetExhausted
                 | Self::AgentCompleted
         )
     }

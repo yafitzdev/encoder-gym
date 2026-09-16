@@ -129,10 +129,18 @@ observer propagates it to local/native file reads and native subprocess waits;
 normal Stop confirms the owned child's termination before acknowledging pause.
 Scientific training/evaluation interruption does not append a failed-candidate
 verdict, and completed scientific outputs remain reusable. Unfinished training
-may restart rather than continue an optimizer checkpoint. Full recovery after
-abrupt coordinator death, descendant ownership and root budget-stop presentation
-still need complete process coverage.
-The desktop has not yet connected these controls or reconciliation commands.
+may restart rather than continue an optimizer checkpoint. The coordinator lease
+records exact PID/start-time identities for observed descendant processes. A
+successor that finds a dead coordinator stops and waits for those exact children
+before it replaces the lease or records the root attempt as interrupted; a live
+descendant is projected as `orphaned`, not as a stopped worker. Root execution
+records a native time-limit or exhausted allowance
+as a distinct terminal `budget_exhausted` event; normal run projection exposes
+`agent_budget_exhausted`, and another `drive-agent` call cannot create a retry
+attempt or dispatch more work.
+The desktop uses the same `drive-agent`, `stop-agent`, and `reconcile-agent`
+commands. Stop persists a stable request identity without aborting the owning
+coordinator, and Resume supplies the exact paused execution head.
 
 Native training now reserves remaining time immediately before fresh process
 dispatch, through an experiment-core accounting port backed by the project
@@ -146,8 +154,9 @@ Artifact reuse does not dispatch another trainer or alter candidate identities.
 Accounting failures and exhausted time leave scientific work resumable rather
 than writing a failed-candidate verdict. The CLI exposes these facts with
 `workspace optimization-run <PROJECT> training-time <RUN_ID>`. Root execution
-still records these errors as failed attempts; a dedicated budget-stop view is
-remaining integration work, not an implemented desktop state.
+records exhausted time as a dedicated terminal budget-stop view. Accounting-
+integrity failures remain retryable execution failures because verified
+completed artifacts may still be adopted after the persistence issue is fixed.
 
 Agent and Generation activities are now projected from their own persisted
 actions into the existing activity stream, rather than requiring desktop

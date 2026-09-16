@@ -45,6 +45,8 @@ export function inputRunProgress(options: InputRunProgressOptions): HTMLElement 
   const result = options.registrationPending ? undefined : run.state === "candidate_accepted" ? "Candidate passed"
     : run.state === "candidate_rejected" ? "Candidate did not pass"
     : run.state === "baseline_retained" ? "No improvement"
+    : run.state === "agent_completed" ? "Optimization complete"
+    : run.state === "agent_budget_exhausted" ? "Training budget exhausted"
     : run.state === "cancelled" ? "Cancelled" : undefined;
   const progress = options.registrationPending && !running ? { phase: "registering_candidate" as const } : running ? options.liveProgress ?? activity?.progress : activity?.progress;
   const observed = progress?.phase;

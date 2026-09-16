@@ -37,9 +37,16 @@ The compiled Nomos adapter has an additional dependency that custody cannot
 infer. `NomosBackend` opens a clean, no-remote, isolated Git checkout containing
 the experiment marker, native manifest, pinned Python modules, baseline and
 support-model trees, native datasets, and suite configuration. The managed
-Nomos workspace is not that runtime. `fitz-tool` is a source repository and must
+Nomos workspace is not that runtime. `nomos` is a source repository and must
 never be selected as a substitute. A real launch remains unavailable until an
 explicit, verified runtime and scientific-store binding exists.
+
+For Agent-authorized launches the desktop delegates execution to the workspace
+CLI's single `drive-agent` coordinator. Its Stop control records `stop-agent`
+intent with a stable request UUID; it does not terminate the coordinator before
+the coordinator has unwound owned work. App restart first invokes
+`reconcile-agent`, and explicit Resume is fenced by the last observed execution
+head. Legacy fixed-recipe runs retain their existing staged command path.
 
 ## Object and ownership map
 

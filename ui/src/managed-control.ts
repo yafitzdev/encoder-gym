@@ -87,7 +87,7 @@ export interface PreparedOptimizationChoice {
 }
 
 export interface ManagedRunStatus {
-  worker?: { state: "running" | "idle" | "interrupted" | "unavailable"; started_at?: string; memory_bytes?: number; cpu_milliseconds?: number };
+  worker?: { state: "running" | "idle" | "orphaned" | "interrupted" | "unavailable"; started_at?: string; memory_bytes?: number; cpu_milliseconds?: number };
   activity?: RunActivity;
   timeline?: Array<{ at: string; label: string }>;
   run_id: string;

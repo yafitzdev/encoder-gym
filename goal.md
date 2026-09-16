@@ -11,7 +11,40 @@ slice contracts. More settings, System narration, mockups or documentation alone
 do not satisfy this goal. A completed experiment may reject every candidate:
 model improvement is not guaranteed.
 
-## Handoff — paused for project rename and a new chat
+## Completion checkpoint — 16 September 2026
+
+The one-click Agent optimization path is connected and verified with
+deterministic adapters. Overview launches the existing `drive-agent`
+coordinator, parses every Agent root state, keeps legacy fixed-run execution
+compatible, persists durable Stop intent, reconciles stale ownership after app
+restart, and resumes only from the exact observed paused head.
+
+Native training exhaustion now closes the root as the distinct non-retrying
+`agent_budget_exhausted` outcome. The execution lease records exact
+PID/start-time identities for observed descendants; stale-owner recovery stops
+and waits for them before declaring interruption, and status distinguishes an
+orphaned child from a stopped worker. Fault-injection coverage crosses dataset
+publication, full-population qualification, training receipt, candidate
+registration, both development reports, iteration result, loop completion and
+root completion without duplicating completed provider/native work.
+
+Verification on the final executable tree:
+
+- `cargo fmt-check`, `cargo check-all`, `cargo lint`, and `cargo test-all` pass
+  after rebuilding the renamed SQLite crates from a clean target.
+- All 18 managed-optimization production-CLI tests pass; the focused
+  child-recovery process test also passes outside the process sandbox.
+- UI typecheck, build, all 127 UI tests, and rendered Overview verification
+  pass.
+- All nine embedded native training-clearance Python tests pass.
+
+No paid provider call, real Nomos training, or final-holdout use was performed;
+those remain separately authorized live operations rather than acceptance
+prerequisites.
+
+## Historical handoff — paused for project rename and a new chat
+
+This records the superseded 15 September checkpoint for audit history.
 
 The user requested a clean stopping point. Implementation is paused; resume in
 the new chat when requested. This is an unfinished product goal, not a failed
@@ -58,7 +91,7 @@ and the managed Nomos project are separate: do not rename its data directory,
 rewrite immutable project/run IDs or recreate its history as part of a source
 rename. No rename or broad path migration has been performed by this handoff.
 
-## Current status — 15 September 2026
+## Historical status — 15 September 2026
 
 **The one-click agentic desktop journey is not ready.** The production CLI has a
 tested Agent loop; the desktop still needs compatible lifecycle handling and
@@ -100,7 +133,7 @@ This is not full recovery or desktop readiness. The root still projects budget
 errors as failed attempts; distinct budget-stop presentation and safe descendant
 reconciliation remain unfinished. No real Nomos run or paid call was started.
 
-## Immediate next deliverable
+## Historical next deliverable (completed 16 September 2026)
 
 Make the existing Overview execute and display the tested Agent loop, with
 working Stop/Resume and truthful activity. Do not rebuild the loop or introduce
@@ -143,7 +176,7 @@ Do not ask the user to start another real Nomos run to discover whether the
 Agent is connected. Deliver these checkpoints in bounded increments, reporting
 what is component-tested, CLI-integrated and app-verified.
 
-### Verified Stop/Resume checkpoint
+### Historical verified Stop/Resume checkpoint
 
 The CLI supports `stop-agent --request-id <UUID>`, explicit
 `drive-agent --resume <EXECUTION_HEAD>` and `reconcile-agent`. Clients reuse the
@@ -337,7 +370,10 @@ stop, pause implementation and answer immediately.
 
 ## Acceptance evidence
 
-Completed CLI mechanics are not completed desktop integration:
+The final evidence is layered: production CLI orchestration uses deterministic
+provider/native adapters, the production desktop controller is exercised with
+strict command/environment assertions, and the real renderer is verified in
+Electron. No fixture substitutes a second coordinator.
 
 - [x] Production-CLI tests trace development evidence through Agent decisions,
   removals/additions, qualification, exact training lineage and comparison using
@@ -350,23 +386,23 @@ Completed CLI mechanics are not completed desktop integration:
 - [x] Production-CLI training-time tests prove reduced retry grants after Stop,
   no native dispatch after deadline exhaustion, and completed-output reuse after
   a lost settlement without refunding the unknown charge.
-- [ ] One Optimize action invokes the pinned Agent and, when additions are
+- [x] One Optimize action invokes the pinned Agent and, when additions are
   proposed, the independently pinned generator through that same coordinator.
-- [ ] Every exposed Advanced setting is enforced cumulatively, including
+- [x] Every exposed Advanced setting is enforced cumulatively, including
   concurrency, uncertain outcomes and interrupted-training limits; Quick test
   uses the same engine with its diagnostic restrictions.
-- [ ] Stop/restart/Resume tests cover every boundary, control-intent races,
+- [x] Stop/restart/Resume tests cover every boundary, control-intent races,
   worker/descendant ownership and reuse of completed work.
-- [ ] Complete derived datasets pass native admission and benchmark-isolation
+- [x] Complete derived datasets pass native admission and benchmark-isolation
   checks through the connected path; invalid generated rows cannot train.
-- [ ] Rendered production-path tests show real Agent/Generation activity,
+- [x] Rendered production-path tests show real Agent/Generation activity,
   complete independently browsable iteration/stage history, responsive controls
   and continuous spinners.
-- [ ] Candidate models, dataset diffs and benchmark reports open from the same
+- [x] Candidate models, dataset diffs and benchmark reports open from the same
   run, including rejected candidates and multiple iterations.
-- [ ] Adaptive work never sees sealed evidence. Final holdout has its separate
+- [x] Adaptive work never sees sealed evidence. Final holdout has its separate
   at-most-once selected-candidate handoff; promotion remains manual.
-- [ ] Required Rust, UI/native and rendered journey checks pass on the final
+- [x] Required Rust, UI/native and rendered journey checks pass on the final
   executable tree. The handoff distinguishes deterministic evidence from
   separately authorized live execution.
 

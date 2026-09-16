@@ -192,6 +192,7 @@ function runPanel(run: ManagedRunStatus, state: OptimizationPageState, actions: 
       terminalReason ? h("p", { class: "terminal-reason" }, terminalReason) : null,
       run.state === "failed" && terminalReason ? tag("No automatic continuation", "danger") : null,
       progress && progress.total_units > 0 ? tag(`${progress.completed_units} / ${progress.total_units} completed`, "accent") : null,
+      !terminal && run.worker?.state === "orphaned" ? h("p", { class: "stage-caution" }, "A child process outlived its worker. Recovery must stop it before this run can continue.") : null,
       !terminal && run.worker?.state === "interrupted" ? h("p", { class: "stage-caution" }, "The worker stopped. Review the run before continuing.") : null) : null,
     !working && state.statusError ? h("p", { class: "run-connection-warning", role: "alert" }, "Live updates unavailable. ", state.statusError) : null,
     next || !terminal && !busy ? h("div", { class: "run-actions" }, next, !terminal && !busy ? button("Cancel before next stage", actions.cancel, "secondary") : null) : null,
@@ -232,6 +233,7 @@ function launchSummary(state: OptimizationPageState, readiness: ManagedReadiness
     if (run.state === "completed") return { title: "Run completed", label: "Complete", tone: "success" };
     if (runIsWorking(run, state.executing)) return { title: "Running", label: state.statusError ? "Updates unavailable" : "In progress", tone: state.statusError ? "warning" : "neutral" };
     if (run.worker?.state === "unavailable" || state.statusError) return { title: "Status unavailable", label: "Refresh needed", tone: "warning" };
+    if (run.worker?.state === "orphaned") return { title: "Recovery required", label: "Child still running", tone: "warning" };
     if (run.worker?.state === "interrupted") return { title: "Run stopped", label: "Needs attention", tone: "warning" };
     if (run.next_command === "authorize-sealed") return { title: "Waiting for approval", label: "Training complete", tone: "warning" };
     return { title: "Ready to continue", label: run.state === "planned" ? "Prepared" : "Waiting", tone: "neutral" };

@@ -4,7 +4,22 @@ export type InputOptimizationState =
   | "attaching_experiment" | "ready_to_run" | "experiment_attachment_failed"
   | "optimizing" | "ready_for_final_evaluation" | "baseline_retained"
   | "execution_failed" | "evaluating_final" | "candidate_accepted"
-  | "candidate_rejected" | "final_evaluation_failed" | "cancelled";
+  | "candidate_rejected" | "final_evaluation_failed" | "cancelled"
+  | "agent_running" | "agent_stopping" | "agent_paused"
+  | "agent_interrupted" | "agent_failed" | "agent_budget_exhausted"
+  | "agent_completed";
+
+export type AgentExecutionState = "running" | "stop_requested" | "paused" | "interrupted" | "failed" | "budget_exhausted" | "completed";
+
+export interface AgentExecution {
+  state: AgentExecutionState;
+  attemptId: string;
+  attempts: number;
+  completion?: { id: string; fingerprint: string };
+  lastSequence: number;
+  headFingerprint: string;
+  updatedAt: string;
+}
 
 export type InputOptimizationPhase = "checking_inputs" | "preparing_data" | "starting" | "training" | "saving_candidate" | "evaluating" | "complete";
 
@@ -16,6 +31,7 @@ export interface InputOptimizationRun {
   experimentRunId?: string;
   createdAt: string;
   state: InputOptimizationState;
+  agentExecution?: AgentExecution;
   attempt: number;
   materializationAttempt: number;
   experimentAttempt: number;
@@ -34,9 +50,10 @@ const states = new Set<InputOptimizationState>([
   "queued", "preparing", "ready", "preparation_failed", "materializing", "materialized", "materialization_failed",
   "attaching_experiment", "ready_to_run", "experiment_attachment_failed", "optimizing", "ready_for_final_evaluation",
   "baseline_retained", "execution_failed", "evaluating_final", "candidate_accepted", "candidate_rejected", "final_evaluation_failed",
-  "cancelled",
+  "cancelled", "agent_running", "agent_stopping", "agent_paused", "agent_interrupted", "agent_failed", "agent_budget_exhausted", "agent_completed",
 ]);
-const runKeys = ["run", "state", "attempt", "preparation", "materializationAttempt", "materialization", "experimentAttempt", "experiment", "executionAttempt", "outcome", "finalAttempt", "finalResult", "failureCode", "lastSequence", "headFingerprint", "updatedAt"];
+const agentStates = new Set<AgentExecutionState>(["running", "stop_requested", "paused", "interrupted", "failed", "budget_exhausted", "completed"]);
+const runKeys = ["run", "agentExecution", "state", "attempt", "preparation", "materializationAttempt", "materialization", "experimentAttempt", "experiment", "executionAttempt", "outcome", "finalAttempt", "finalResult", "failureCode", "lastSequence", "headFingerprint", "updatedAt"];
 
 function record(value: unknown, label: string, keys?: string[]): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid ${label}.`);
@@ -77,6 +94,23 @@ export function parseInputOptimizationRun(value: unknown, expectedProjectId: str
     attempt: integer(item.attempt), materializationAttempt: integer(item.materializationAttempt), experimentAttempt: integer(item.experimentAttempt),
     executionAttempt: integer(item.executionAttempt), finalAttempt: integer(item.finalAttempt), lastSequence: integer(item.lastSequence), updatedAt: instant(item.updatedAt),
   };
+  if (item.agentExecution !== undefined) {
+    const execution = record(item.agentExecution, "Agent execution", ["state", "attemptId", "attempts", "completion", "lastSequence", "headFingerprint", "updatedAt"]);
+    if (typeof execution.state !== "string" || !agentStates.has(execution.state as AgentExecutionState)) throw new Error("Invalid Agent execution state.");
+    const state = execution.state as AgentExecutionState;
+    const completion = execution.completion === undefined ? undefined : bound(execution.completion);
+    if ((state === "completed") !== !!completion) throw new Error("Invalid Agent execution completion.");
+    run.agentExecution = {
+      state, attemptId: uuid(execution.attemptId), attempts: integer(execution.attempts),
+      ...(completion ? { completion } : {}), lastSequence: integer(execution.lastSequence),
+      headFingerprint: fingerprint(execution.headFingerprint), updatedAt: instant(execution.updatedAt),
+    };
+    const projected: Record<AgentExecutionState, InputOptimizationState> = {
+      running: "agent_running", stop_requested: "agent_stopping", paused: "agent_paused",
+      interrupted: "agent_interrupted", failed: "agent_failed", budget_exhausted: "agent_budget_exhausted", completed: "agent_completed",
+    };
+    if (run.state !== "cancelled" && run.state !== projected[state]) throw new Error("Agent execution projection changed.");
+  } else if (run.state.startsWith("agent_")) throw new Error("Agent execution state is missing.");
   if (item.failureCode !== undefined) {
     if (typeof item.failureCode !== "string" || !/^[a-z0-9_.-]{1,80}$/.test(item.failureCode)) throw new Error("Invalid optimization failure.");
     run.failureCode = item.failureCode;
@@ -127,12 +161,12 @@ export function inputOptimizationPhase(state: InputOptimizationState): InputOpti
   if (["queued", "preparing", "preparation_failed"].includes(state)) return "checking_inputs";
   if (["ready", "materializing", "materialized", "materialization_failed"].includes(state)) return "preparing_data";
   if (["attaching_experiment", "ready_to_run", "experiment_attachment_failed"].includes(state)) return "starting";
-  if (["optimizing", "execution_failed"].includes(state)) return "training";
+  if (["optimizing", "execution_failed", "agent_running", "agent_stopping", "agent_paused", "agent_interrupted", "agent_failed"].includes(state)) return "training";
   if (state === "ready_for_final_evaluation" || state === "evaluating_final" || state === "final_evaluation_failed") return "evaluating";
-  if (state === "baseline_retained" || state === "candidate_accepted" || state === "candidate_rejected") return "complete";
+  if (state === "baseline_retained" || state === "candidate_accepted" || state === "candidate_rejected" || state === "agent_completed" || state === "agent_budget_exhausted") return "complete";
   return "saving_candidate";
 }
 
 export function inputOptimizationTerminal(state: InputOptimizationState): boolean {
-  return state === "baseline_retained" || state === "candidate_accepted" || state === "candidate_rejected" || state === "cancelled";
+  return state === "baseline_retained" || state === "candidate_accepted" || state === "candidate_rejected" || state === "cancelled" || state === "agent_completed" || state === "agent_budget_exhausted";
 }

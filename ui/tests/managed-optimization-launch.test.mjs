@@ -7,7 +7,7 @@ import { ManagedOptimizationLaunch } from "../dist/evidence/managed-optimization
 import { fingerprint, setupFixture } from "./optimization-setup-fixture.mjs";
 
 function fixture() {
-  const base = setupFixture(), providerId = randomUUID(), setupId = randomUUID();
+  const base = setupFixture(), providerId = randomUUID(), setupId = randomUUID(), launchId = randomUUID();
   base.workspace.providerCatalog = { id: providerId, projectId: base.projectId, sequence: 1, providers: [], actor: "operator", reason: "fixture", createdAt: new Date().toISOString(), fingerprint };
   const provider = maximumRequests => ({ maximumRequests, maximumInputTokens: 10_000, maximumOutputTokens: 2_000, maximumCostMicrousd: 0 });
   const scope = { projectId: base.projectId, setup: { id: setupId, fingerprint }, providerCatalog: { id: providerId, fingerprint },
@@ -16,17 +16,36 @@ function fixture() {
   const preview = { scope, modelName: "Baseline", datasetRows: 10, benchmarkNumber: 1 };
   const authorization = id => ({ id, scope, authorizedBy: "local-operator", createdAt: new Date().toISOString(), fingerprint });
   const run = (state = "queued", extra = {}) => ({
-    run: { id: randomUUID(), projectId: base.projectId, launch: { id: randomUUID(), fingerprint }, setup: { id: setupId, fingerprint }, createdAt: new Date().toISOString(), fingerprint },
+    run: { id: randomUUID(), projectId: base.projectId, launch: { id: launchId, fingerprint }, setup: { id: setupId, fingerprint }, createdAt: new Date().toISOString(), fingerprint },
     state, attempt: 0, materializationAttempt: 0, experimentAttempt: 0, executionAttempt: 0, finalAttempt: 0,
     lastSequence: 1, headFingerprint: fingerprint, updatedAt: new Date().toISOString(), ...extra,
   });
-  return { ...base, setupId, scope, preview, authorization, run };
+  return { ...base, setupId, launchId, scope, preview, authorization, run };
 }
 function ports(f, command, exclusive = async (_id, work) => work()) {
   return {
     open: async id => { assert.equal(id, f.projectId); return f.workspace; }, command, exclusive,
     exclusiveRun: async (_id, _runId, work) => work(new AbortController().signal), abortRun: () => {},
   };
+}
+function executionPorts(f, command) {
+  return ports(f, async (...args) => args[0][0] === "optimization-launch" && args[0][2] === "list" ? [f.authorization(f.launchId)] : command(...args));
+}
+function agentAuthorization(f) {
+  const value = f.authorization(f.launchId);
+  value.scope.agentic = {
+    mode: "quick_test", objective: "Inspect development failures.", maximumIterations: 1, maximumAgentTurnsPerIteration: 4,
+    generationConcurrency: 1, maximumRowChanges: 8,
+    training: { device: "auto", maximumEpochs: 1, batchSize: 8, learningRateNanos: 3_000, maximumSecondsPerIteration: 120, maximumTrainingRows: 64 },
+  };
+  value.scope.limits = { maximumIterations: 1, maximumModels: 1, maximumDatasetRowChanges: 8, maximumTrainingSeconds: 120, maximumDevelopmentEvaluations: 2, maximumFinalEvaluations: 0 };
+  value.scope.finalEvaluation = "development_only";
+  return value;
+}
+function agentRun(wire, state, attemptId = randomUUID(), head = fingerprint) {
+  const executionState = state.replace("agent_", "");
+  const completion = state === "agent_completed" ? { id: randomUUID(), fingerprint } : undefined;
+  return { ...wire, state, agentExecution: { state: executionState, attemptId, attempts: 1, ...(completion ? { completion } : {}), lastSequence: 2, headFingerprint: head, updatedAt: wire.updatedAt } };
 }
 
 test("optimization launch preview and history are exact project-owned reads", async () => {
@@ -122,14 +141,14 @@ test("one-click optimization drives recoverable stages, forwards exact work, and
     finalResult: { run: { id: randomUUID(), fingerprint }, outcomeFingerprint: fingerprint, experimentRun: { id: randomUUID(), fingerprint }, kind: "candidate_rejected", model: { id: randomUUID(), fingerprint }, finalReport: { id: randomUUID(), fingerprint }, createdAt: new Date().toISOString(), fingerprint },
   });
   wire.finalResult.experimentRun = wire.outcome.experimentRun;
-  const configured = new ManagedOptimizationLaunch({ ...ports(f, async (args, env, progress) => {
+  const configured = new ManagedOptimizationLaunch({ ...executionPorts(f, async (args, env, progress) => {
     calls.push({ args, env });
     if (args[2] === "materialize") progress?.({ phase: "writing_training_rows", completed: 40, total: 100 });
     return args[2] === "show" ? wire : { actionId: randomUUID(), run: wire };
   }), environment: () => environment });
   const result = await configured.drive(f.projectId, wire.run.id, (phase, native) => { phases.push(phase); if (native) details.push(native); });
   assert.equal(result.state, "candidate_rejected");
-  assert.deepEqual(calls.map(call => call.args[2]), ["prepare", "materialize", "attach", "execute", "register", "show", "finalize", "show"]);
+  assert.deepEqual(calls.map(call => call.args[2]), ["show", "prepare", "materialize", "attach", "execute", "register", "show", "finalize", "show"]);
   assert.deepEqual(calls.filter(call => call.env).map(call => call.args[2]), ["execute", "finalize"]);
   assert.deepEqual(phases, ["checking_inputs", "preparing_data", "preparing_data", "starting", "training", "saving_candidate", "evaluating", "complete"]);
   assert.deepEqual(details, [{ phase: "writing_training_rows", completed: 40, total: 100 }]);
@@ -137,7 +156,7 @@ test("one-click optimization drives recoverable stages, forwards exact work, and
 
 test("a development result that retains the baseline skips sealed evaluation", async () => {
   const f = fixture(), wire = f.run("baseline_retained", { outcome: { run: { id: randomUUID(), fingerprint }, experimentFingerprint: fingerprint, experimentRun: { id: randomUUID(), fingerprint }, kind: "baseline_retained", createdAt: new Date().toISOString(), fingerprint } }), commands = [];
-  const backend = new ManagedOptimizationLaunch({ ...ports(f, async args => { commands.push(args[2]); return args[2] === "show" ? wire : {}; }), environment: () => ({}) });
+  const backend = new ManagedOptimizationLaunch({ ...executionPorts(f, async args => { commands.push(args[2]); return args[2] === "show" ? wire : {}; }), environment: () => ({}) });
   assert.equal((await backend.drive(f.projectId, wire.run.id)).state, "baseline_retained");
   assert.ok(!commands.includes("finalize"));
 });
@@ -172,7 +191,7 @@ test("Stop interrupts the in-flight work without cancelling the run and Resume k
   const waiting = new Promise((_resolve, reject) => { finish = () => reject(new Error("Worker interrupted")); });
   const started = new Promise(resolve => { entered = resolve; });
   let first = true;
-  const backend = new ManagedOptimizationLaunch({ ...ports(f, async args => {
+  const backend = new ManagedOptimizationLaunch({ ...executionPorts(f, async args => {
     calls.push(args);
     if (args[2] === "prepare" && first) { first = false; entered(); await waiting; }
     if (args[2] === "register") wire.state = "baseline_retained";
@@ -200,9 +219,60 @@ test("attached child identity is projected before execution and foreign children
 
 test("Stop during worker startup is not lost before the first command", async () => {
   const f = fixture(), wire = f.run("queued"), commands = [];
-  const backend = new ManagedOptimizationLaunch(ports(f, async args => { commands.push(args[2]); return wire; }));
+  const backend = new ManagedOptimizationLaunch(executionPorts(f, async args => { commands.push(args[2]); return wire; }));
   await backend.stop(f.projectId, wire.run.id);
   const stopped = await backend.drive(f.projectId, wire.run.id);
   assert.equal(stopped.id, wire.run.id);
-  assert.deepEqual(commands, ["show", "show"]);
+  assert.deepEqual(commands, ["show", "show", "show"]);
+});
+
+test("Agent execution is parsed, driven by the existing coordinator, and receives only pinned provider credentials", async () => {
+  const f = fixture(), queued = f.run("queued"), completed = agentRun(queued, "agent_completed"), calls = [], phases = [];
+  let done = false;
+  const environment = { SYNTH_ADVISOR_API_KEY: "agent-secret", SYNTH_OPENAI_API_KEY: "generator-secret" };
+  const backend = new ManagedOptimizationLaunch({ ...ports(f, async (args, env) => {
+    calls.push({ args, env });
+    if (args[0] === "optimization-launch") return [agentAuthorization(f)];
+    if (args[2] === "drive-agent") { done = true; return { runId: queued.run.id }; }
+    if (args[2] === "show") return done ? completed : queued;
+    throw new Error(`Unexpected command ${args.join(" ")}`);
+  }), environment: () => environment });
+  const result = await backend.drive(f.projectId, queued.run.id, phase => phases.push(phase));
+  assert.equal(result.state, "agent_completed");
+  assert.equal(result.agentExecution.completion.id, completed.agentExecution.completion.id);
+  const drive = calls.find(call => call.args[2] === "drive-agent");
+  assert.deepEqual(drive.args, ["optimization-run", "owned-project", "drive-agent", queued.run.id]);
+  assert.deepEqual(drive.env, environment);
+  assert.deepEqual(phases, ["training", "complete"]);
+  assert.ok(!calls.some(call => ["prepare", "materialize", "attach", "execute", "register", "finalize"].includes(call.args[2])));
+});
+
+test("Agent Stop is durable, does not kill the coordinator, and Resume pins the observed paused head", async () => {
+  const f = fixture(), queued = f.run("queued"), attempt = randomUUID(), pausedHead = `sha256:${"b".repeat(64)}`;
+  let current = queued, release, entered, aborts = 0;
+  const waiting = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  const calls = [];
+  const backend = new ManagedOptimizationLaunch({ ...ports(f, async args => {
+    calls.push(args);
+    if (args[0] === "optimization-launch") return [agentAuthorization(f)];
+    if (args[2] === "show") return current;
+    if (args[2] === "drive-agent") {
+      if (args.includes("--resume")) { current = agentRun(queued, "agent_completed", randomUUID()); return { runId: queued.run.id }; }
+      current = agentRun(queued, "agent_running", attempt); entered(); await waiting; return { runId: queued.run.id, state: "paused" };
+    }
+    if (args[2] === "stop-agent") {
+      assert.equal(args[4], "--request-id"); assert.match(args[5], /^[0-9a-f-]{36}$/);
+      current = agentRun(queued, "agent_paused", attempt, pausedHead); release(); return current.agentExecution;
+    }
+    throw new Error(`Unexpected command ${args.join(" ")}`);
+  }), environment: () => ({}), abortRun: () => { aborts++; } });
+  const driving = backend.drive(f.projectId, queued.run.id);
+  await started;
+  await backend.stop(f.projectId, queued.run.id);
+  assert.equal((await driving).state, "agent_paused");
+  assert.equal(aborts, 0, "durable Agent Stop must let the owner unwind and acknowledge pause");
+  assert.equal((await backend.drive(f.projectId, queued.run.id)).state, "agent_completed");
+  const resumed = calls.find(args => args[2] === "drive-agent" && args.includes("--resume"));
+  assert.deepEqual(resumed.slice(-2), ["--resume", pausedHead]);
 });

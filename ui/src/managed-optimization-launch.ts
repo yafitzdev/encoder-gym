@@ -97,14 +97,25 @@ function same(a: unknown, b: unknown): boolean { return JSON.stringify(a) === JS
 export class ManagedOptimizationLaunch {
   private active = new Map<string, { runId: string; stop: boolean }>();
   private pendingStops = new Set<string>();
+  private stopRequests = new Map<string, string>();
   constructor(private ports: Ports) {}
   /** Interrupt this worker without cancelling the durable run or its child identities. */
   async stop(projectId: string, runIdValue: unknown): Promise<void> {
     const runId = uuid(runIdValue);
+    const run = await this.show(projectId, runId);
+    if (inputOptimizationTerminal(run.state)) return;
+    const workspace = await this.ports.open(projectId);
+    if (await this.isAgentRun(projectId, run)) {
+      const key = `${projectId}:${runId}`;
+      const requestId = this.stopRequests.get(key) ?? randomUUID();
+      this.stopRequests.set(key, requestId);
+      await this.ports.command<unknown>(["optimization-run", workspace.folder, "stop-agent", runId, "--request-id", requestId]);
+      const active = this.active.get(projectId);
+      if (active?.runId === runId) active.stop = true;
+      return;
+    }
     let active = this.active.get(projectId);
     if (active?.runId !== runId) {
-      const run = await this.show(projectId, runId);
-      if (inputOptimizationTerminal(run.state)) return;
       active = this.active.get(projectId);
       if (active?.runId !== runId) {
         this.pendingStops.add(`${projectId}:${runId}`);
@@ -198,6 +209,7 @@ export class ManagedOptimizationLaunch {
       const workspace = await this.ports.open(projectId);
       const execution = { runId, stop: this.pendingStops.delete(`${projectId}:${runId}`) };
       this.active.set(projectId, execution);
+      this.stopRequests.delete(`${projectId}:${runId}`);
       const stage = async (phase: InputOptimizationPhase, command: string, native = false): Promise<void> => {
         if (execution.stop) throw stopped;
         progress?.(phase);
@@ -205,6 +217,24 @@ export class ManagedOptimizationLaunch {
           value => progress?.(phase, value), signal);
       };
       try {
+        let agentRun = await this.show(projectId, runId);
+        if (await this.isAgentRun(projectId, agentRun)) {
+          if (agentRun.state === "agent_running" || agentRun.state === "agent_stopping") {
+            await this.ports.command<unknown>(["optimization-run", workspace.folder, "reconcile-agent", runId]);
+            agentRun = await this.show(projectId, runId);
+          }
+          if (inputOptimizationTerminal(agentRun.state)) return agentRun;
+          const args = ["optimization-run", workspace.folder, "drive-agent", runId];
+          if (agentRun.state === "agent_paused") {
+            if (!agentRun.agentExecution) throw new Error("Paused Agent run has no execution head.");
+            args.push("--resume", agentRun.agentExecution.headFingerprint);
+          }
+          progress?.("training");
+          await this.ports.command<unknown>(args, await this.ports.environment?.(projectId, workspace, runId), value => progress?.("training", value), signal);
+          agentRun = await this.show(projectId, runId);
+          if (inputOptimizationTerminal(agentRun.state)) progress?.("complete");
+          return agentRun;
+        }
         await stage("checking_inputs", "prepare");
         await stage("preparing_data", "materialize");
         await stage("starting", "attach");
@@ -225,6 +255,14 @@ export class ManagedOptimizationLaunch {
         this.active.delete(projectId);
       }
     });
+  }
+
+  private async isAgentRun(projectId: string, run: InputOptimizationRun): Promise<boolean> {
+    if (run.agentExecution) return true;
+    if (run.state !== "queued") return false;
+    const launch = (await this.list(projectId)).find(item => item.id === run.launchId);
+    if (!launch) throw new Error("Optimization launch authority is missing.");
+    return launch.scope.agentic !== undefined;
   }
 }
 const stopped = Symbol("stopped at durable stage boundary");

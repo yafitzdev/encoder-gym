@@ -73,6 +73,8 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     const decision = reportDecision(record);
     if (decision) return decision;
     if (record.input?.state === "cancelled") return "Cancelled";
+    if (record.input?.state === "agent_completed") return "Complete";
+    if (record.input?.state === "agent_budget_exhausted") return "Budget exhausted";
     if (record.input?.state.endsWith("_failed")) return "Failed";
     if (record.experiment?.candidates.some(candidate => candidate.failure)) return "Failed";
     return "Paused";

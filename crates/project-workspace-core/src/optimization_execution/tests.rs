@@ -141,6 +141,27 @@ fn failure_and_interruption_retain_history_and_fence_old_attempts() {
 }
 
 #[test]
+fn budget_exhaustion_is_terminal_and_cannot_be_retried_or_stopped() {
+    let run = identity();
+    let attempt = Uuid::new_v4();
+    let mut events = vec![event(&run, &[], attempt, AgentExecutionChange::Started)];
+    events.push(event(
+        &run,
+        &events,
+        attempt,
+        AgentExecutionChange::BudgetExhausted,
+    ));
+    let exhausted = replay(&run, &events, &[]).unwrap().unwrap();
+    assert_eq!(exhausted.state, AgentExecutionState::BudgetExhausted);
+    assert_eq!(exhausted.attempts, 1);
+
+    let restarted = event(&run, &events, Uuid::new_v4(), AgentExecutionChange::Started);
+    assert!(replay(&run, &[events.clone(), vec![restarted]].concat(), &[]).is_err());
+    let stopped = event(&run, &events, attempt, AgentExecutionChange::StopRequested);
+    assert!(replay(&run, &[events, vec![stopped]].concat(), &[]).is_err());
+}
+
+#[test]
 fn completion_requires_exact_terminal_iteration_and_cannot_restart() {
     let run = identity();
     let attempt = Uuid::new_v4();

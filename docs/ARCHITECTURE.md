@@ -166,8 +166,16 @@ elapsed time after the owned process has stopped; unknown outcomes retain the
 full grant. Reusing verified artifacts bypasses dispatch, not input validation.
 No candidate/protocol identity changes on retry. The read-only `training-time`
 command reports the same persisted facts. Budget/accounting errors propagate
-without a false scientific rejection; the root lifecycle still needs a distinct
-budget-stop projection before desktop integration.
+without a false scientific rejection. Native time-limit and exhaustion outcomes
+close the root lifecycle with a distinct non-retrying budget-stop projection;
+accounting-integrity failures remain recoverable execution failures.
+
+The local execution lease also records exact PID/start-time identities for
+observed child processes. Stale-owner takeover terminates and waits for those
+exact descendants before replacing the lease, while status reports a surviving
+child as orphaned rather than claiming that work has stopped. This recovery
+mechanism remains operational custody in the CLI adapter and does not leak
+process types into domain contracts.
 
 The CLI now transfers each iteration's verified training output into ordinary
 model custody, including development-rejected candidates. The model's producing

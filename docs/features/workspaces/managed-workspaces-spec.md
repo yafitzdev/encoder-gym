@@ -71,13 +71,13 @@ delete behavior. No Hugging Face placeholder controls.
 
 Create a separate managed Nomos workspace from the retained local
 `nomos_bge_contrast_replay_ablation` checkpoint in the user-designated
-`fitz-tool` source. Backfill its two final-stage inputs named by the checkpoint's
+`nomos` source. Backfill its two final-stage inputs named by the checkpoint's
 `nomos_training_manifest.json`, preserving native rows and original bytes.
 Verify manifest-declared counts and training partition. Record this as the
 final-stage training data, not a reconstruction of all ancestor pretraining.
 Do not attach old experiment runs to the new identity or consume sealed data.
 Replace the existing Nomos source-folder connection with the managed project
-without deleting or modifying anything in `fitz-tool`.
+without deleting or modifying anything in `nomos`.
 
 ## Completion evidence
 

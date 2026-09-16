@@ -7,6 +7,12 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{Duration, Instant},
 };
 
 use anyhow::Context;
@@ -54,7 +60,7 @@ use encoder_repair_core::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sysinfo::{Pid, System};
+use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 use uuid::Uuid;
 use workflow_core::benchmark_generation::{BenchmarkGenerationState, BenchmarkGenerationView};
 
@@ -82,6 +88,8 @@ const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const MAX_MANIFEST_BYTES: u64 = 1_048_576;
 const EXECUTION_LEASE_SCHEMA_VERSION: u32 = 1;
 const MAX_EXECUTION_LEASE_BYTES: u64 = 4_096;
+const EXECUTION_CHILD_PREFIX: &str = "child-";
+const EXECUTION_CHILD_SUFFIX: &str = ".json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -92,10 +100,21 @@ struct ExecutionLeaseOwner {
     nonce: Uuid,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExecutionLeaseChild {
+    schema_version: u32,
+    owner_nonce: Uuid,
+    process_id: u32,
+    process_started_at: u64,
+}
+
 #[derive(Debug)]
 pub(crate) struct OptimizationExecutionLease {
     directory: PathBuf,
     owner: ExecutionLeaseOwner,
+    observer_stop: Arc<AtomicBool>,
+    observer: Option<thread::JoinHandle<()>>,
 }
 
 impl OptimizationExecutionLease {
@@ -154,7 +173,7 @@ impl OptimizationExecutionLease {
             file.sync_all()?;
             drop(file);
             match fs::rename(&staged, &directory) {
-                Ok(()) => return Ok(Some(Self { directory, owner })),
+                Ok(()) => return Ok(Some(Self::owned(directory, owner))),
                 Err(_error) if directory.is_dir() => {
                     fs::remove_file(&owner_path)?;
                     fs::remove_dir(&staged)?;
@@ -162,6 +181,7 @@ impl OptimizationExecutionLease {
                     if execution_owner_is_active(&current) {
                         return Ok(None);
                     }
+                    terminate_execution_children(&directory, &current)?;
                     let stale = parent.join(format!(
                         ".encoder-optimization-{run_id}.lease-stale-{}",
                         Uuid::new_v4()
@@ -184,10 +204,33 @@ impl OptimizationExecutionLease {
         }
         anyhow::bail!("optimization execution ownership changed repeatedly; inspect run status")
     }
+
+    fn owned(directory: PathBuf, owner: ExecutionLeaseOwner) -> Self {
+        let observer_stop = Arc::new(AtomicBool::new(false));
+        let stop = observer_stop.clone();
+        let observed_directory = directory.clone();
+        let observed_owner = owner.clone();
+        let observer = thread::spawn(move || {
+            while !stop.load(Ordering::Acquire) {
+                let _ = record_execution_children(&observed_directory, &observed_owner);
+                thread::sleep(Duration::from_millis(50));
+            }
+        });
+        Self {
+            directory,
+            owner,
+            observer_stop,
+            observer: Some(observer),
+        }
+    }
 }
 
 impl Drop for OptimizationExecutionLease {
     fn drop(&mut self) {
+        self.observer_stop.store(true, Ordering::Release);
+        if let Some(observer) = self.observer.take() {
+            let _ = observer.join();
+        }
         if matches!(read_execution_lease(&self.directory), Ok(ref owner) if owner == &self.owner) {
             let _ = remove_execution_lease_directory(&self.directory);
         }
@@ -201,14 +244,20 @@ fn read_execution_lease(directory: &Path) -> anyhow::Result<ExecutionLeaseOwner>
         directory_metadata.is_dir() && !directory_metadata.file_type().is_symlink(),
         "optimization execution lease is not a plain local directory"
     );
-    let mut entries = fs::read_dir(directory)
+    let entries = fs::read_dir(directory)
         .context("could not inspect optimization execution lease")?
         .collect::<Result<Vec<_>, _>>()?;
     anyhow::ensure!(
-        entries.len() == 1
-            && entries
-                .pop()
-                .is_some_and(|entry| entry.file_name() == "owner.json"),
+        entries
+            .iter()
+            .any(|entry| entry.file_name() == "owner.json")
+            && entries.iter().all(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                name == "owner.json"
+                    || (name.starts_with(EXECUTION_CHILD_PREFIX)
+                        && name.ends_with(EXECUTION_CHILD_SUFFIX))
+            }),
         "optimization execution lease has unexpected contents"
     );
     let owner_path = directory.join("owner.json");
@@ -228,15 +277,157 @@ fn read_execution_lease(directory: &Path) -> anyhow::Result<ExecutionLeaseOwner>
 }
 
 fn remove_execution_lease_directory(directory: &Path) -> anyhow::Result<()> {
-    fs::remove_file(directory.join("owner.json"))?;
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        anyhow::ensure!(metadata.is_file(), "optimization lease contains a non-file");
+        fs::remove_file(entry.path())?;
+    }
     fs::remove_dir(directory)?;
     Ok(())
 }
 
+fn record_execution_children(directory: &Path, owner: &ExecutionLeaseOwner) -> anyhow::Result<()> {
+    let system = process_system();
+    let owner_pid = Pid::from_u32(owner.process_id);
+    if system
+        .process(owner_pid)
+        .is_none_or(|process| process.start_time() != owner.process_started_at)
+    {
+        return Ok(());
+    }
+    let mut owned = std::collections::HashSet::from([owner_pid]);
+    loop {
+        let before = owned.len();
+        for (pid, process) in system.processes() {
+            if process.start_time() >= owner.process_started_at
+                && process
+                    .parent()
+                    .is_some_and(|parent| owned.contains(&parent))
+            {
+                owned.insert(*pid);
+            }
+        }
+        if before == owned.len() {
+            break;
+        }
+    }
+    owned.remove(&owner_pid);
+    for pid in owned {
+        let Some(process) = system.process(pid) else {
+            continue;
+        };
+        let child = ExecutionLeaseChild {
+            schema_version: EXECUTION_LEASE_SCHEMA_VERSION,
+            owner_nonce: owner.nonce,
+            process_id: pid.as_u32(),
+            process_started_at: process.start_time(),
+        };
+        let path = directory.join(format!(
+            "{EXECUTION_CHILD_PREFIX}{}-{}{EXECUTION_CHILD_SUFFIX}",
+            child.process_id, child.process_started_at
+        ));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+        {
+            Ok(mut file) => {
+                file.write_all(&serde_json::to_vec(&child)?)?;
+                file.sync_all()?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+fn read_execution_children(
+    directory: &Path,
+    owner: &ExecutionLeaseOwner,
+) -> anyhow::Result<Vec<ExecutionLeaseChild>> {
+    let mut children = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == "owner.json" {
+            continue;
+        }
+        anyhow::ensure!(
+            name.starts_with(EXECUTION_CHILD_PREFIX) && name.ends_with(EXECUTION_CHILD_SUFFIX),
+            "optimization execution lease has unexpected contents"
+        );
+        let metadata = fs::symlink_metadata(entry.path())?;
+        anyhow::ensure!(
+            metadata.is_file()
+                && !metadata.file_type().is_symlink()
+                && metadata.len() <= MAX_EXECUTION_LEASE_BYTES,
+            "optimization execution child identity is invalid"
+        );
+        let child: ExecutionLeaseChild = serde_json::from_slice(&fs::read(entry.path())?)?;
+        anyhow::ensure!(
+            child.schema_version == EXECUTION_LEASE_SCHEMA_VERSION
+                && child.owner_nonce == owner.nonce
+                && name
+                    == format!(
+                        "{EXECUTION_CHILD_PREFIX}{}-{}{EXECUTION_CHILD_SUFFIX}",
+                        child.process_id, child.process_started_at
+                    ),
+            "optimization execution child identity is invalid"
+        );
+        children.push(child);
+    }
+    Ok(children)
+}
+
+fn terminate_execution_children(
+    directory: &Path,
+    owner: &ExecutionLeaseOwner,
+) -> anyhow::Result<()> {
+    let children = read_execution_children(directory, owner)?;
+    let mut pending = children
+        .into_iter()
+        .map(|child| (Pid::from_u32(child.process_id), child.process_started_at))
+        .collect::<Vec<_>>();
+    let system = process_system();
+    for (pid, started_at) in &pending {
+        if let Some(process) = system
+            .process(*pid)
+            .filter(|process| process.start_time() == *started_at)
+        {
+            let _ = process.kill();
+        }
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let current = process_system();
+        pending.retain(|(pid, started_at)| {
+            current
+                .process(*pid)
+                .is_some_and(|process| process.start_time() == *started_at)
+        });
+        if pending.is_empty() {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "owned optimization child processes did not stop: {:?}",
+            pending
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
 fn process_started_at(process_id: u32) -> Option<u64> {
-    System::new_all()
+    process_system()
         .process(Pid::from_u32(process_id))
         .map(sysinfo::Process::start_time)
+}
+
+fn process_system() -> System {
+    System::new_with_specifics(RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing()))
 }
 
 fn execution_owner_is_active(owner: &ExecutionLeaseOwner) -> bool {
@@ -2756,5 +2947,67 @@ surprise = true
         assert_ne!(lease.owner, stale);
         drop(lease);
         assert!(!lease_directory.exists());
+    }
+
+    #[test]
+    #[ignore = "requires permission to terminate a process by exact PID identity"]
+    fn optimization_execution_lease_stops_recorded_children_before_recovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("scientific.sqlite");
+        let url = format!("sqlite://{}", database.to_string_lossy().replace('\\', "/"));
+        let run_id = Uuid::new_v4();
+        let mut lease = OptimizationExecutionLease::acquire(&url, run_id).unwrap();
+        let mut child = if cfg!(windows) {
+            std::process::Command::new("powershell")
+                .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30"])
+                .spawn()
+                .unwrap()
+        } else {
+            std::process::Command::new("sleep")
+                .arg("30")
+                .spawn()
+                .unwrap()
+        };
+        let child_id = child.id();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if read_execution_children(&lease.directory, &lease.owner)
+                .unwrap()
+                .iter()
+                .any(|owned| owned.process_id == child_id)
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "child process was not recorded by its execution lease"
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+
+        lease.observer_stop.store(true, Ordering::Release);
+        lease.observer.take().unwrap().join().unwrap();
+        let mut absent_process_id = u32::MAX;
+        while process_started_at(absent_process_id).is_some() {
+            absent_process_id -= 1;
+        }
+        let stale = ExecutionLeaseOwner {
+            process_id: absent_process_id,
+            process_started_at: 0,
+            ..lease.owner.clone()
+        };
+        fs::write(
+            lease.directory.join("owner.json"),
+            serde_json::to_vec(&stale).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            activity::worker_status(&database, run_id)["state"],
+            "orphaned"
+        );
+
+        let replacement = OptimizationExecutionLease::acquire(&url, run_id).unwrap();
+        child.wait().unwrap();
+        drop(replacement);
     }
 }

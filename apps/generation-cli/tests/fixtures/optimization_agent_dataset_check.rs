@@ -25,6 +25,37 @@ fn native_row(id: &str, question: &str) -> Value {
     json!({"schema_version":"decision-state.v2","decision_state_id":id,"question":question,"evaluation_partition":"train","accepted":true,"task_kind":"route","previous_candidate_ids":[],"legal_candidate_ids":["a","b"],"label":{"acceptable_tools":["a"],"hard_negative_tools":["b"]},"tool_registry":{"registry_id":"r","registry_fingerprint":"sha256:registry","tools":[tool("a"),tool("b")]}})
 }
 
+async fn install_trigger(database: &Path, statement: &str) {
+    let mut connection = SqliteConnection::connect(&format!("sqlite://{}", database.display()))
+        .await
+        .unwrap();
+    sqlx::query(statement)
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    connection.close().await.unwrap();
+}
+
+async fn drop_trigger(database: &Path, name: &str) {
+    let mut connection = SqliteConnection::connect(&format!("sqlite://{}", database.display()))
+        .await
+        .unwrap();
+    sqlx::query(&format!("DROP TRIGGER {name}"))
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    connection.close().await.unwrap();
+}
+
+fn assert_injected(output: std::process::Output, message: &str) {
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(message),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[tokio::test]
 async fn cli_agent_inspects_generates_qualifies_and_replays_exact_dataset_without_training() {
     scenario(false, None).await;
@@ -397,6 +428,72 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         return;
     }
     if complete && loop_mode.is_none() {
+        let project_database = folder.join("project.sqlite");
+        let scientific_database = folder.join("runs/scientific.sqlite");
+
+        install_trigger(
+            &project_database,
+            "CREATE TRIGGER interrupt_dataset_publication BEFORE INSERT ON optimization_dataset_publications BEGIN SELECT RAISE(ABORT, 'injected dataset publication interruption'); END",
+        )
+        .await;
+        assert_injected(
+            invoke_iteration(),
+            "injected dataset publication interruption",
+        );
+        drop_trigger(&project_database, "interrupt_dataset_publication").await;
+
+        install_trigger(
+            &project_database,
+            "CREATE TRIGGER interrupt_dataset_qualification BEFORE INSERT ON project_activity_events WHEN NEW.operation='optimization.qualification' AND NEW.state='succeeded' BEGIN SELECT RAISE(ABORT, 'injected dataset qualification interruption'); END",
+        )
+        .await;
+        assert_injected(
+            invoke_iteration(),
+            "injected dataset qualification interruption",
+        );
+        drop_trigger(&project_database, "interrupt_dataset_qualification").await;
+
+        install_trigger(
+            &scientific_database,
+            "CREATE TRIGGER interrupt_training_receipt BEFORE INSERT ON encoder_experiment_events WHEN json_extract(NEW.artifact_json,'$.event.kind')='candidate_training_completed' BEGIN SELECT RAISE(ABORT, 'injected training receipt interruption'); END",
+        )
+        .await;
+        assert_injected(invoke_iteration(), "injected training receipt interruption");
+        drop_trigger(&scientific_database, "interrupt_training_receipt").await;
+
+        install_trigger(
+            &scientific_database,
+            "CREATE TRIGGER interrupt_first_development_report BEFORE INSERT ON encoder_experiment_events WHEN json_extract(NEW.artifact_json,'$.event.kind')='candidate_development_suite_completed' AND (SELECT COUNT(*) FROM encoder_experiment_events WHERE json_extract(artifact_json,'$.event.kind')='candidate_development_suite_completed')=0 BEGIN SELECT RAISE(ABORT, 'injected first development report interruption'); END",
+        )
+        .await;
+        assert_injected(
+            invoke_iteration(),
+            "injected first development report interruption",
+        );
+        drop_trigger(&scientific_database, "interrupt_first_development_report").await;
+
+        install_trigger(
+            &scientific_database,
+            "CREATE TRIGGER interrupt_second_development_report BEFORE INSERT ON encoder_experiment_events WHEN json_extract(NEW.artifact_json,'$.event.kind')='candidate_development_suite_completed' AND (SELECT COUNT(*) FROM encoder_experiment_events WHERE json_extract(artifact_json,'$.event.kind')='candidate_development_suite_completed')=1 BEGIN SELECT RAISE(ABORT, 'injected second development report interruption'); END",
+        )
+        .await;
+        assert_injected(
+            invoke_iteration(),
+            "injected second development report interruption",
+        );
+        drop_trigger(&scientific_database, "interrupt_second_development_report").await;
+
+        install_trigger(
+            &project_database,
+            "CREATE TRIGGER interrupt_candidate_registration BEFORE INSERT ON model_artifacts WHEN NEW.origin='trained' BEGIN SELECT RAISE(ABORT, 'injected candidate registration interruption'); END",
+        )
+        .await;
+        assert_injected(
+            invoke_iteration(),
+            "injected candidate registration interruption",
+        );
+        drop_trigger(&project_database, "interrupt_candidate_registration").await;
+
         let mut db = SqliteConnection::connect(&format!(
             "sqlite://{}",
             folder.join("project.sqlite").display()

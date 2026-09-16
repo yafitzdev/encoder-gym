@@ -1,6 +1,8 @@
 //! Finite composition of the existing per-iteration execution. No nested CLI
 //! processes or alternate trainer/generator path.
 use super::*;
+use encoder_experiment_core::ports::EncoderTaskAdapterError;
+use encoder_experiment_runner::ExperimentRunnerError;
 use project_workspace_core::optimization_loop::IterationCompletion;
 use project_workspace_local::{
     optimization_completions, optimization_execution, optimization_iterations,
@@ -30,6 +32,14 @@ pub(in crate::commands::workspace::optimization_runs) async fn execute(
         .context("Run has no Agent authorization")?;
     settings.validate()?;
     let attempt = optimization_execution::begin_attempt(folder, run_id, resume.as_deref()).await?;
+    if attempt.is_none()
+        && view.agent_execution.as_ref().is_some_and(|execution| {
+            execution.state
+            == project_workspace_core::optimization_execution::AgentExecutionState::BudgetExhausted
+        })
+    {
+        anyhow::bail!("Training time budget exhausted; completed work is preserved");
+    }
     let mut watcher = attempt.map(|_| control::StopWatcher::start(folder, run_id));
     let signal = watcher
         .as_ref()
@@ -76,9 +86,12 @@ pub(in crate::commands::workspace::optimization_runs) async fn execute(
             if let Some(attempt) = attempt {
                 // Keep the original execution error, even if recording its
                 // failure is itself interrupted. The next lease owner recovers it.
-                if let Err(record_error) =
+                let record = if is_training_budget_stop(&error) {
+                    optimization_execution::exhaust_budget(folder, run_id, attempt).await
+                } else {
                     optimization_execution::fail_attempt(folder, run_id, attempt).await
-                {
+                };
+                if let Err(record_error) = record {
                     if acknowledge_pending_stop(folder, run_id, attempt).await? {
                         return paused(run_id);
                     }
@@ -90,6 +103,26 @@ pub(in crate::commands::workspace::optimization_runs) async fn execute(
             Err(error)
         }
     }
+}
+
+fn is_training_budget_stop(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        let exhausted = |error: &EncoderTaskAdapterError| {
+            matches!(
+                error,
+                EncoderTaskAdapterError::TrainingBudgetExhausted
+                    | EncoderTaskAdapterError::TimeLimitExceeded
+            )
+        };
+        cause
+            .downcast_ref::<EncoderTaskAdapterError>()
+            .is_some_and(exhausted)
+            || cause
+                .downcast_ref::<ExperimentRunnerError>()
+                .is_some_and(|error| {
+                    matches!(error, ExperimentRunnerError::Adapter(adapter) if exhausted(adapter))
+                })
+    })
 }
 
 fn paused(run_id: Uuid) -> Result<()> {

@@ -14,6 +14,7 @@ pub enum AgentExecutionState {
     Paused,
     Interrupted,
     Failed,
+    BudgetExhausted,
     Completed,
 }
 
@@ -25,6 +26,7 @@ pub enum AgentExecutionChange {
     Paused,
     Interrupted,
     Failed,
+    BudgetExhausted,
     Completed { completion: BoundIdentity },
 }
 
@@ -36,6 +38,7 @@ impl AgentExecutionChange {
             Self::Paused => "paused",
             Self::Interrupted => "interrupted",
             Self::Failed => "failed",
+            Self::BudgetExhausted => "budget_exhausted",
             Self::Completed { .. } => "completed",
         }
     }
@@ -169,8 +172,10 @@ pub fn replay(
             AgentExecutionChange::StopRequested => {
                 require(
                     prior.is_none_or(|v| {
-                        v.state != AgentExecutionState::Completed
-                            && v.attempt_id == event.attempt_id
+                        !matches!(
+                            v.state,
+                            AgentExecutionState::Completed | AgentExecutionState::BudgetExhausted
+                        ) && v.attempt_id == event.attempt_id
                     }),
                     "Stop request has no matching unfinished attempt",
                 )?;
@@ -196,6 +201,7 @@ pub fn replay(
                 match change {
                     AgentExecutionChange::Interrupted => AgentExecutionState::Interrupted,
                     AgentExecutionChange::Failed => AgentExecutionState::Failed,
+                    AgentExecutionChange::BudgetExhausted => AgentExecutionState::BudgetExhausted,
                     AgentExecutionChange::Completed {
                         completion: selected,
                     } => {

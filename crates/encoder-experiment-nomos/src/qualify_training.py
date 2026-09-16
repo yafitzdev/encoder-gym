@@ -136,8 +136,8 @@ def main():
     # Reuse the actual native validator and text renderer. Never pass their
     # diagnostic strings through: these can quote protected rows.
     with open(os.devnull, "w", encoding="utf-8") as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
-        from fitz_tool.dense_router import query_document
-        from fitz_tool.generic_contracts import validate_decision_state_v2
+        from nomos.dense_router import query_document
+        from nomos.generic_contracts import validate_decision_state_v2
         result = audit(root, request, query_document, validate_decision_state_v2)
     verify_sources(root, request["sources"])
     output = request_path.with_name("result.json")
