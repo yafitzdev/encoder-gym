@@ -97,12 +97,12 @@ class ClearanceTests(unittest.TestCase):
 
     def test_native_exception_and_stderr_cannot_disclose_protected_data(self):
         request = self.request([row("a", "alpha")], [row("z", "protected")])
-        package = self.root / "nomos"
+        package = self.root / "fitz_tool"
         package.mkdir()
         code = "import sys\nprint('NEVER_DISCLOSE_HOLDOUT', file=sys.stderr)\nraise ValueError('NEVER_DISCLOSE_HOLDOUT')\n"
         path = package / "dense_router.py"
         path.write_text(code, encoding="utf-8")
-        request["sources"] = {"nomos/dense_router.py": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()}
+        request["sources"] = {"fitz_tool/dense_router.py": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()}
         (self.root / "request.json").write_text(json.dumps(request), encoding="utf-8")
         completed = subprocess.run([sys.executable, "-B", "-c", Path(SPEC.origin).read_text(encoding="utf-8"), "request.json"],
                                    cwd=self.root, capture_output=True, text=True, timeout=10)

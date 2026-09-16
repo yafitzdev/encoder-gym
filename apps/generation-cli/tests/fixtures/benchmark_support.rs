@@ -150,14 +150,14 @@ pub async fn initial_benchmark_fixture(
     for relative in [
         "tools/collect_encoder_gym_development_observations.py",
         "tools/evaluate_dense_router.py",
-        "nomos/dense_router.py",
-        "nomos/embedding_backend.py",
-        "nomos/onnx_encoder.py",
+        "fitz_tool/dense_router.py",
+        "fitz_tool/embedding_backend.py",
+        "fitz_tool/onnx_encoder.py",
         "tools/generate_encoder_gym_repair_delta_v1.py",
-        "nomos/encoder_gym_repair_delta_v1.py",
-        "nomos/generic_contracts.py",
-        "nomos/router_v2.py",
-        "nomos/scaling_matrix_v1.py",
+        "fitz_tool/encoder_gym_repair_delta_v1.py",
+        "fitz_tool/generic_contracts.py",
+        "fitz_tool/router_v2.py",
+        "fitz_tool/scaling_matrix_v1.py",
     ] {
         let path = runtime.join(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
