@@ -325,7 +325,7 @@ impl NomosBackend {
         self.verify_no_remote()?;
         self.verify_clean_worktree()?;
         let revision = self.git_output(["rev-parse", "HEAD"])?;
-        let manifest_fingerprint = sha256_file(&self.root.join(EXPERIMENT_MANIFEST_NAME))?;
+        let manifest_fingerprint = git_blob_sha256_at(&self.root, EXPERIMENT_MANIFEST_NAME)?;
         let runtime_source_fingerprint = artifact_core::fingerprint(&json!({
             "experiment_revision": revision,
             "manifest_sha256": manifest_fingerprint,
@@ -3485,6 +3485,23 @@ fn git_output_at<const N: usize>(
         .map_err(|_| adapter_error("Git inspection returned non-UTF-8 output"))
 }
 
+fn git_blob_sha256_at(root: &Path, relative: &str) -> Result<String, EncoderTaskAdapterError> {
+    validate_relative(relative)?;
+    let object = format!("HEAD:{}", relative.replace('\\', "/"));
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["cat-file", "blob", object.as_str()])
+        .output()
+        .map_err(|error| adapter_error(format!("could not inspect isolated Git blob: {error}")))?;
+    if !output.status.success() {
+        return Err(adapter_error(
+            "could not inspect committed isolated Nomos manifest",
+        ));
+    }
+    Ok(format!("{:x}", Sha256::digest(output.stdout)))
+}
+
 fn evaluation_model_root(
     root: &Path,
     model: &ModelArtifactIdentity,
@@ -4119,6 +4136,57 @@ mod tests {
         assert!(
             repair_delta_sources(package)
                 .contains(&"fitz_tool/encoder_gym_repair_delta_v1.py".into())
+        );
+    }
+
+    #[test]
+    fn committed_manifest_identity_ignores_checkout_line_endings() {
+        let repository = tempfile::tempdir().unwrap();
+        let git = |arguments: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repository.path())
+                .args(arguments)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {arguments:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            output
+        };
+        git(&["init", "--quiet"]);
+        git(&["config", "user.name", "Encoder Gym Test"]);
+        git(&["config", "user.email", "encoder-gym@example.invalid"]);
+        git(&["config", "core.autocrlf", "true"]);
+        let manifest = repository.path().join(EXPERIMENT_MANIFEST_NAME);
+        let committed = b"{\n  \"schema_version\": 4\n}\n";
+        fs::write(
+            repository.path().join(".gitattributes"),
+            "*.json text eol=crlf\n",
+        )
+        .unwrap();
+        fs::write(&manifest, committed).unwrap();
+        git(&["add", ".gitattributes", EXPERIMENT_MANIFEST_NAME]);
+        git(&["commit", "--quiet", "-m", "fixture"]);
+
+        fs::remove_file(&manifest).unwrap();
+        git(&["checkout-index", "--force", "--", EXPERIMENT_MANIFEST_NAME]);
+        assert!(
+            fs::read(&manifest)
+                .unwrap()
+                .windows(2)
+                .any(|pair| pair == b"\r\n")
+        );
+        git(&["diff", "--quiet", "--", EXPERIMENT_MANIFEST_NAME]);
+        assert_ne!(
+            sha256_file(&manifest).unwrap(),
+            git_blob_sha256_at(repository.path(), EXPERIMENT_MANIFEST_NAME).unwrap()
+        );
+        assert_eq!(
+            git_blob_sha256_at(repository.path(), EXPERIMENT_MANIFEST_NAME).unwrap(),
+            format!("{:x}", Sha256::digest(committed))
         );
     }
 

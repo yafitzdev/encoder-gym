@@ -112,7 +112,7 @@ print(json.dumps({'version':'.'.join(map(str,sys.version_info[:3])),'major':sys.
     println!(
         "{}",
         serde_json::json!({
-            "version":"3.10.11", "major":3, "minor":10,
+            "version":"3.11.11", "major":3, "minor":11,
             "modules":{
                 "torch":true, "sentence_transformers":true, "transformers":true,
                 "datasets":true, "accelerate":true, "numpy":true, "sklearn":true,

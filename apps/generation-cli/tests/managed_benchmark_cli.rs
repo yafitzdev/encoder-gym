@@ -46,6 +46,80 @@ mod optimization_iteration_check;
 mod optimization_agent_dataset_check;
 
 #[tokio::test]
+async fn executable_path_rebind_reuses_the_exact_existing_scientific_store() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let executable = env!("CARGO_BIN_EXE_synth-benchmark-fixture");
+    let (folder, _) = initial_benchmark_fixture(root, Path::new(executable)).await;
+    let before = project_workspace_local::open_workspace(&folder, true)
+        .await
+        .unwrap();
+    let before_binding = before.scientific_binding.unwrap();
+    let store = SqliteExperimentStore::connect_read_only(&format!(
+        "sqlite://{}",
+        folder.join(&before_binding.store.database_path).display()
+    ))
+    .await
+    .unwrap();
+    let before_inventory = store.inventory().await.unwrap();
+    store.pool().close().await;
+
+    let preview = run(
+        root,
+        &[
+            "preview-nomos-binding",
+            "project",
+            "--runtime",
+            "runtime",
+            "--python",
+            executable,
+        ],
+    );
+    assert_eq!(preview["store"]["action"], "reuse_verified_bound_store");
+    assert_eq!(
+        preview["store"]["databasePath"],
+        before_binding.store.database_path
+    );
+
+    let rebound = run(
+        root,
+        &[
+            "bind-nomos",
+            "project",
+            "--runtime",
+            "runtime",
+            "--python",
+            executable,
+            "--reason",
+            "Update moved interpreter path",
+        ],
+    );
+    assert_eq!(
+        rebound["scientificBinding"]["previousBindingId"],
+        before_binding.id.to_string()
+    );
+    assert_eq!(
+        rebound["scientificBinding"]["store"]["databasePath"],
+        before_binding.store.database_path
+    );
+
+    let after = project_workspace_local::open_workspace(&folder, true)
+        .await
+        .unwrap();
+    let after_binding = after.scientific_binding.unwrap();
+    assert_eq!(after_binding.previous_binding_id, Some(before_binding.id));
+    assert_eq!(after_binding.store, before_binding.store);
+    let store = SqliteExperimentStore::connect_read_only(&format!(
+        "sqlite://{}",
+        folder.join(&after_binding.store.database_path).display()
+    ))
+    .await
+    .unwrap();
+    assert_eq!(store.inventory().await.unwrap(), before_inventory);
+    store.pool().close().await;
+}
+
+#[tokio::test]
 async fn benchmark_initialize_evaluates_the_baseline_once_and_replays_without_native_work() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();

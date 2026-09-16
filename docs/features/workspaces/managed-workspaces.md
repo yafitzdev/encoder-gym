@@ -156,14 +156,18 @@ the confirmation states that mutation and network boundary before it runs.
 Installer output is not relayed into application errors where authenticated
 index URLs could leak.
 
-Without a history selection, the binding command repeats every check, rejects
-an incomplete interpreter, and initializes a new production scientific store
-at `runs/scientific.sqlite`. With a history selection it additionally requires
-the current schema, a complete SQLite integrity check, and the exact current
-runtime project snapshot. It then uses SQLite's transactionally consistent
-snapshot operation so committed WAL state is included, hashes the standalone
-copy, publishes it below `runs/` under its content identity, and records the
-hash and byte count in the binding. The selected source database is opened
+Without a history selection, the binding command repeats every check and
+rejects an incomplete interpreter. If the project already has an exact current
+binding, the command integrity-checks and reuses that contained scientific
+store; this permits an executable-path rebind after a local source-directory
+rename without discarding scientific history. Otherwise it initializes a new
+production scientific store at `runs/scientific.sqlite`. With a history
+selection it additionally requires the current schema, a complete SQLite
+integrity check, and the exact current runtime project snapshot. It then uses
+SQLite's transactionally consistent snapshot operation so committed WAL state
+is included, hashes the standalone copy, publishes it below `runs/` under its
+content identity, and records the hash and byte count in the binding. The
+selected source database is opened
 read-only and remains separate and unchanged. Neither path starts training,
 evaluates a model, or calls a provider. The source `nomos` repository is not
 a valid runtime.

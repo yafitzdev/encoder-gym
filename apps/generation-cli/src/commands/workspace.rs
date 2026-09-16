@@ -1927,7 +1927,7 @@ async fn preview_nomos_binding(
             action: if imported_history.is_some() {
                 "import_verified_history"
             } else if existing_store_path.is_some() {
-                "extend_existing_store_for_promoted_baseline"
+                "reuse_verified_bound_store"
             } else if default_store_path.exists() {
                 "verify_existing_store"
             } else {
@@ -1967,7 +1967,17 @@ async fn verify_nomos_binding(
         && runtime_baseline.bytes == active_model.bytes
         && runtime_baseline.format == active_model.format
     {
-        (backend, current_project, None)
+        if history_database.is_none() {
+            if let Some((project, store_path)) =
+                resolve_current_nomos_binding(&workspace, &backend, &current_project).await?
+            {
+                (backend, project, Some(store_path))
+            } else {
+                (backend, current_project, None)
+            }
+        } else {
+            (backend, current_project, None)
+        }
     } else {
         anyhow::ensure!(
             history_database.is_none(),
@@ -2023,6 +2033,42 @@ async fn verify_nomos_binding(
         history,
         existing_store,
     })
+}
+
+async fn resolve_current_nomos_binding(
+    workspace: &project_workspace_local::ManagedWorkspace,
+    backend: &NomosBackend,
+    current_project: &ExternalProjectSnapshot,
+) -> anyhow::Result<Option<(ExternalProjectSnapshot, PathBuf)>> {
+    let Some(binding) = workspace.scientific_binding.as_ref() else {
+        return Ok(None);
+    };
+    let catalog = workspace
+        .model_catalog
+        .as_ref()
+        .context("The existing scientific binding has no model catalog.")?;
+    let identity = backend.identity();
+    if binding.baseline_revision_id != catalog.active_baseline_revision_id
+        || binding.adapter.key != identity.name
+        || binding.adapter.protocol != identity.protocol_version
+        || binding.adapter.configuration_fingerprint != identity.configuration_fingerprint
+    {
+        return Ok(None);
+    }
+
+    let store = open_bound_store(&workspace.folder, binding).await?;
+    store.verify_integrity().await?;
+    let project = load_bound_project(&store, binding).await?;
+    if project.source_revision != current_project.source_revision
+        || project.source_fingerprint != current_project.source_fingerprint
+    {
+        store.pool().close().await;
+        return Ok(None);
+    }
+    backend.verify_current_snapshot(project.clone()).await?;
+    store.pool().close().await;
+    let store_path = bound_store_path(Path::new(&workspace.folder), binding)?;
+    Ok(Some((project, store_path)))
 }
 
 async fn resolve_promoted_nomos_baseline(
