@@ -77,6 +77,25 @@ pub(super) async fn assert_loop(
         _ => "iteration_limit",
     };
     assert_eq!(first["completion"]["end"], expected_end);
+    // Poll the consent scenario independently of the already-large loop fixture
+    // so their debug-build stack frames do not accumulate on Windows.
+    let consent_root = root.to_path_buf();
+    let consent_folder = folder.to_path_buf();
+    let consent_mode = mode.to_owned();
+    tokio::task::spawn_blocking(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(super::final_check::assert_final_consent(
+                &consent_root,
+                &consent_folder,
+                run_id,
+                &consent_mode,
+            ));
+    })
+    .await
+    .unwrap();
     if mode == "no_change_first" {
         let completions = optimization_completions::list(folder, run_id)
             .await

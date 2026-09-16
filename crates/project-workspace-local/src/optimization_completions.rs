@@ -159,6 +159,27 @@ pub async fn finish(
     number: u32,
     scientific: &[IterationScientificEvidence],
 ) -> Result<IterationCompletion> {
+    Box::pin(complete(folder, run_id, number, scientific, true)).await
+}
+
+/// Replay existing completions against all original journals without migrating
+/// or writing the project database. Missing completions are never synthesized.
+pub async fn verify_completed(
+    folder: &Path,
+    run_id: Uuid,
+    number: u32,
+    scientific: &[IterationScientificEvidence],
+) -> Result<IterationCompletion> {
+    Box::pin(complete(folder, run_id, number, scientific, false)).await
+}
+
+async fn complete(
+    folder: &Path,
+    run_id: Uuid,
+    number: u32,
+    scientific: &[IterationScientificEvidence],
+    create: bool,
+) -> Result<IterationCompletion> {
     let view = optimization_runs::show(folder, run_id).await?;
     let launch = optimization_launch::list(folder)
         .await?
@@ -174,11 +195,13 @@ pub async fn finish(
     for iteration in iterations.iter().take(number as usize) {
         execution::training(folder, run_id, iteration.id).await?;
     }
-    let mut db = connect(folder, false, false).await?;
-    sqlx::migrate!("./migrations").run(&mut db).await?;
+    let mut db = connect(folder, !create, false).await?;
+    if create {
+        sqlx::migrate!("./migrations").run(&mut db).await?;
+    }
     let existing = read(&mut db, run_id).await?;
     ensure!(
-        existing.len() + 1 >= number as usize,
+        existing.len() + usize::from(create) >= number as usize,
         "Cannot skip an iteration completion"
     );
     let mut completed = Vec::new();

@@ -53,6 +53,18 @@ pub enum WorkspaceOptimizationLaunchCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum WorkspaceOptimizationRunCommand {
+    /// Preview the closed Agent loop's selected full-data checkpoint; never uses holdout.
+    PreviewFinalAgent { run_id: Uuid },
+    /// Read the separate immutable final-holdout consent; never executes evaluation.
+    FinalAgentAuthorization { run_id: Uuid },
+    /// Explicitly authorize the exact final preview once; does not execute evaluation.
+    AuthorizeFinalAgent {
+        run_id: Uuid,
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long, default_value = "local-operator")]
+        authorized_by: String,
+    },
     /// Run/resume the authorized finite Agent loop through development; never uses final holdout.
     DriveAgent {
         run_id: Uuid,

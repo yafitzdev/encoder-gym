@@ -136,6 +136,18 @@ limit and reuses the same inspection, generation, qualification, training and
 registration functions. Complete per-iteration desktop presentation and
 connected end-to-end acceptance remain outstanding.
 
+`project-workspace-core::optimization_final` binds post-loop final consent to
+the last completion and its development-selected full-data checkpoint. It
+consumes the existing completion and scientific replay contracts, not a new
+selection algorithm. `project-workspace-local::optimization_final` revalidates
+all completed journals and persists one append-only grant per root, with
+schema upgrade and grant creation under the same SQLite write transaction.
+The CLI's separate preview/authorize/read commands use the pinned scientific
+store and benchmark. Preview is read-only even before the consent migration;
+the serialized handoff contains identities, never sealed scores or rows. It
+does not alter the adaptive protocols, dispatch final evaluation or promote.
+Final execution/recovery and desktop consent are not implemented by this grant.
+
 `project-workspace-core::optimization_execution` owns only the coordinator's
 execution-attempt transitions and a terminal-iteration reference, not another
 optimization algorithm. The project adapter persists that hash-chained journal

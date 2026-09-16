@@ -103,6 +103,30 @@ completion substitutions are rejected. This does not yet establish recovery at
 every interruption boundary, separately authorized final holdout, or the
 production Overview coordinator.
 
+Final consent is now a separate, row-free handoff after the adaptive loop closes:
+
+- `workspace optimization-run <PROJECT> preview-final-agent <RUN_ID>` reads the
+  exact selected full-data candidate, checkpoint and unchanged benchmark. It
+  replays every completed iteration from its original scientific journal,
+  including unselected candidates, and never writes or migrates the project.
+- `authorize-final-agent <RUN_ID> --file <REQUEST> --authorized-by <ACTOR>` saves
+  explicit consent for that preview. The strict JSON request contains a stable
+  UUID `id` and the exact preview as `scope`. A changed preview is rejected;
+  response-loss retries reuse the same grant. One immutable grant is permitted
+  per root, including across competing requests.
+- `final-agent-authorization <RUN_ID>` reads and revalidates the saved grant.
+  It exposes identities, not protected rows, predictions or baseline scores.
+
+The last completion and selected iteration are distinct: an earlier winner
+remains the final candidate even when later results regress or stop without
+changes. A terminal budget stop may retain an earlier eligible completion;
+running, paused, interrupted, failed, diagnostic and no-winner runs cannot
+authorize holdout. Authorization timestamps cannot precede adaptive closure.
+The iteration protocols retain their original zero sealed allowance and are
+never rewritten. These commands do not execute evaluation or promote a model.
+At-most-once final dispatch/recovery and desktop consent remain separate work;
+this handoff alone does not establish the full final-holdout acceptance path.
+
 The same CLI coordinator now journals root execution attempts before input
 preparation, recording failure, interruption and exact adaptive completion.
 Normal run show/list returns a separate `agentExecution` view and Agent-specific
@@ -125,6 +149,13 @@ intent between admission and startup. Stop before dispatch is supported. `reconc
 records a dead coordinator only after obtaining its exact exclusive execution
 lease, without dispatching any work. A live lease leaves the attempt untouched.
 Permanent Cancel is unchanged.
+
+Recorded-child recovery rechecks exact process identities before termination.
+On Windows, transient termination-access failures while a child exits are
+rechecked within the same finite cleanup deadline, not treated as either an
+immediate failed recovery or proof of death. A still-live or unqueryable child
+continues to block lease takeover. An exited child needs no new termination
+handle.
 
 The existing Agent/generator dispatch fences consume Stop intent. A scoped
 observer propagates it to local/native file reads and native subprocess waits;

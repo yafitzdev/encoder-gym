@@ -84,6 +84,31 @@ pass. The managed smoke verifies custom Quick-test values through real renderer,
 IPC and CLI reservation, but still substitutes its drive. Screenshots were
 inspected at desktop and narrow widths. No live provider or real training ran.
 
+The final-consent checkpoint adds a separate row-free, immutable grant for the
+closed Agent loop's deterministic full-data winner. Preview replays all original
+completed scientific journals without migration or writes. Consent pins the
+last completion separately from the selected iteration, original checkpoint,
+benchmark, protocol and adaptive execution head. Exact retries reuse one grant;
+competing authority, changed scope, diagnostic runs and unfinished adaptive work
+are rejected. First-use migration and grant creation share one write transaction.
+This is consent only: final dispatch/recovery, desktop consent and manual
+promotion remain unfinished, and no final-holdout acceptance box is claimed.
+
+Validation also exposed a Windows recorded-child recovery race: an exiting
+process could deny a new termination handle. Recovery now verifies exact
+identity/liveness before attempting termination and rechecks transient failures
+within the existing deadline. Unknown creation time is not treated as PID reuse,
+and unresolved live children still prevent takeover.
+
+Verified for this checkpoint: all four Rust gates, including 21 managed benchmark
+CLI scenarios and six setup/authority CLI tests; the focused Windows exited-child
+and recorded-child recovery tests; UI typecheck/build and all 155 UI tests; all
+nine native-clearance Python tests; rendered Overview checks; and both Electron
+flows across independent restarts pass. The consent regression exercises the
+production CLI, including concurrent first requests on an older schema. The
+desktop smoke still substitutes its drive, so it is not connected-loop acceptance.
+No dependency, provider, real training run or final-holdout use was added.
+
 Remaining work identified by inspecting production code:
 
 - Windows CLI startup now establishes kill-on-close job ownership before any
@@ -103,8 +128,10 @@ Remaining work identified by inspecting production code:
   acceptance below; full activity/usage/recovery presentation still needs that
   audit. Advanced/Quick-test controls now use the enforced settings contract;
   connected execution acceptance still must cover their use through the app.
-- The adaptive protocols deliberately have zero sealed allowance; a separate
-  at-most-once handoff for the selected Agent candidate is still required.
+- The adaptive protocols deliberately have zero sealed allowance. Separate
+  selected-candidate consent is implemented; at-most-once final dispatch,
+  completed-result recovery, desktop consent and manual promotion are still
+  required. Never turn the consent grant into permission for repeated execution.
 - Add a deterministic, connected renderer/IPC/CLI journey, including second-
   iteration evidence and Stop/app-restart/Resume. The existing renderer fixture
   and mocked desktop-controller tests are not that journey.

@@ -13,6 +13,8 @@ use project_workspace_local::{
 };
 use sqlx::{Connection, SqliteConnection};
 use std::io::{Read, Write};
+#[path = "optimization_agent_final_check.rs"]
+mod final_check;
 #[path = "optimization_agent_loop_check.rs"]
 mod loop_check;
 #[path = "optimization_agent_stop_check.rs"]

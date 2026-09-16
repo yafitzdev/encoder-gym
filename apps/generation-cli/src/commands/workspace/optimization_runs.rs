@@ -26,6 +26,7 @@ use std::path::Path;
 use uuid::Uuid;
 
 mod agent_dataset;
+mod final_authorization;
 mod history;
 mod iteration_inputs;
 
@@ -71,6 +72,13 @@ fn candidate_reasoning(candidate: &TrainingCandidate) -> Result<String> {
 pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunCommand) -> Result<()> {
     use WorkspaceOptimizationRunCommand::*;
     match command {
+        PreviewFinalAgent { run_id } => final_authorization::preview(folder, run_id).await,
+        FinalAgentAuthorization { run_id } => final_authorization::show(folder, run_id).await,
+        AuthorizeFinalAgent {
+            run_id,
+            file,
+            authorized_by,
+        } => final_authorization::authorize(folder, run_id, &file, &authorized_by).await,
         DriveAgent {
             run_id,
             runtime,

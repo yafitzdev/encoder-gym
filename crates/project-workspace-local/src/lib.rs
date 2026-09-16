@@ -11,6 +11,7 @@ pub mod optimization_agent;
 pub mod optimization_completions;
 pub mod optimization_dataset;
 pub mod optimization_execution;
+pub mod optimization_final;
 pub mod optimization_generation;
 pub mod optimization_iteration_execution;
 pub mod optimization_iterations;
