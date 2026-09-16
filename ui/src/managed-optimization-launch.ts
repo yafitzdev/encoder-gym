@@ -10,6 +10,7 @@ import type {
 } from "./optimization-launch.js";
 import { inputOptimizationTerminal, parseInputOptimizationRun, parseInputOptimizationRuns, parseInputOptimizationStarted, type InputOptimizationPhase, type InputOptimizationRun, type InputOptimizationStarted } from "./input-optimization.js";
 import type { NativeProgress } from "./managed-control.js";
+import { parseOptimizationHistory } from "./optimization-history.js";
 import { parseOptimizationAgentSettings, type OptimizationAgentSettings } from "./optimization-agent-settings.js";
 
 interface Ports {
@@ -102,7 +103,7 @@ export class ManagedOptimizationLaunch {
   /** Interrupt this worker without cancelling the durable run or its child identities. */
   async stop(projectId: string, runIdValue: unknown): Promise<void> {
     const runId = uuid(runIdValue);
-    const run = await this.show(projectId, runId);
+    const run = await this.readRun(projectId, runId);
     if (inputOptimizationTerminal(run.state)) return;
     const workspace = await this.ports.open(projectId);
     if (await this.isAgentRun(projectId, run)) {
@@ -189,12 +190,28 @@ export class ManagedOptimizationLaunch {
 
   async show(projectId: string, runIdValue: unknown): Promise<InputOptimizationRun> {
     const runId = uuid(runIdValue), workspace = await this.ports.open(projectId);
+    return this.withHistory(workspace, parseInputOptimizationRun(await this.ports.command<unknown>(["optimization-run", workspace.folder, "show", runId]), projectId));
+  }
+
+  /** Stop/Resume authority must not depend on availability of report rendering. */
+  private async readRun(projectId: string, runId: string): Promise<InputOptimizationRun> {
+    const workspace = await this.ports.open(projectId);
     return parseInputOptimizationRun(await this.ports.command<unknown>(["optimization-run", workspace.folder, "show", runId]), projectId);
   }
 
   async runs(projectId: string): Promise<InputOptimizationRun[]> {
     const workspace = await this.ports.open(projectId);
-    return parseInputOptimizationRuns(await this.ports.command<unknown>(["optimization-run", workspace.folder, "list"]), projectId);
+    const runs = parseInputOptimizationRuns(await this.ports.command<unknown>(["optimization-run", workspace.folder, "list"]), projectId);
+    // Each read opens an owned CLI process; do not fan out one worker per old run.
+    const history: InputOptimizationRun[] = [];
+    for (const run of runs) history.push(await this.withHistory(workspace, run));
+    return history;
+  }
+
+  private async withHistory(workspace: ManagedWorkspace, run: InputOptimizationRun): Promise<InputOptimizationRun> {
+    if (!run.agentExecution) return run;
+    const history = await this.ports.command<unknown>(["optimization-run", workspace.folder, "history", run.id]);
+    return { ...run, iterations: parseOptimizationHistory(history, run.projectId, run.id) };
   }
 
   async cancel(projectId: string, runIdValue: unknown): Promise<InputOptimizationRun> {
@@ -221,11 +238,11 @@ export class ManagedOptimizationLaunch {
           value => progress?.(phase, value), signal);
       };
       try {
-        let agentRun = await this.show(projectId, runId);
+        let agentRun = await this.readRun(projectId, runId);
         if (await this.isAgentRun(projectId, agentRun)) {
           if (agentRun.state === "agent_running" || agentRun.state === "agent_stopping") {
             await this.ports.command<unknown>(["optimization-run", workspace.folder, "reconcile-agent", runId]);
-            agentRun = await this.show(projectId, runId);
+            agentRun = await this.readRun(projectId, runId);
           }
           if (inputOptimizationTerminal(agentRun.state)) return agentRun;
           const args = ["optimization-run", workspace.folder, "drive-agent", runId];

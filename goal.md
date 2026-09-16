@@ -49,6 +49,14 @@ typecheck/build, all 136 UI tests, and both Electron flows across independent
 restarts pass. The desktop smoke drive remains fixture-controlled: this is
 recovery and compatibility evidence, not full connected-loop acceptance.
 
+The iteration-history/report checkpoint passes all four Rust gates, including
+the 19 managed benchmark CLI scenarios with new history assertions. UI
+typecheck/build, all 142 UI tests, expanded rendered Overview checks and both
+desktop smoke flows across independent restarts pass. Screenshots were inspected
+at desktop and narrow widths. No provider, runtime or dependency was added.
+The smoke driver is still fixture-controlled; none of the connected-journey
+acceptance boxes below are claimed by these separate layers.
+
 Remaining work identified by inspecting production code:
 
 - Windows CLI startup now establishes kill-on-close job ownership before any
@@ -58,9 +66,15 @@ Remaining work identified by inspecting production code:
   native work. Stop drains owned descendants before acknowledgement. Other
   platforms still use polling; every-artifact-boundary restart coverage remains
   unfinished. Do not equate the focused Windows tests with that broader claim.
-- Overview still lacks independently selectable Agent iterations and their
-  reports/artifact links. Advanced/Quick-test controls also need to use the
-  enforced Agent settings contract.
+- Overview now reads ordered iteration custody and original development
+  comparisons through `optimization-run history`. It joins scientific children
+  under one run, supports independent iteration/stage selection and scroll
+  restoration, and links rejected models, exact datasets/diffs and benchmark
+  results. Native training telemetry retains explicit iteration identity.
+  Development KEEP/REJECT, best-so-far selection and final approval are distinct.
+  CLI and rendered-fixture coverage is not yet the connected production-path
+  acceptance below; full activity/usage/recovery presentation still needs that
+  audit. Advanced/Quick-test controls must use the enforced settings contract.
 - The adaptive protocols deliberately have zero sealed allowance; a separate
   at-most-once handoff for the selected Agent candidate is still required.
 - Add a deterministic, connected renderer/IPC/CLI journey, including second-

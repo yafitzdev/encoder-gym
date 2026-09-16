@@ -25,6 +25,14 @@ test("report colors respect direction; verdict never follows positive numbers", 
   assert.equal(reportDecision({ input: { state: "ready_for_final_evaluation" }, experiment: { acceptance: { state: "unused" } } }), undefined);
 });
 
+test("multiple Agent iteration experiments belong to one root without fabricated final approval", () => {
+  const createdAt = "2026-09-16T12:00:00Z";
+  const root = { id: "root", createdAt, lastSequence: 1, state: "agent_completed", iterations: [{ experimentRunId: "one" }, { experimentRunId: "two" }] };
+  const records = overviewRecords({ runs: [{ id: "one", createdAt }, { id: "two", createdAt }, { id: "unrelated", createdAt }] }, [root]);
+  assert.equal(records.length, 2);
+  assert.equal(reportDecision(records.find(record => record.id === "root")), undefined);
+});
+
 test("Overview keeps the newest Agent journal even when the fixed root sequence is unchanged", () => {
   const base = { id: "root", createdAt: "2026-09-16T12:00:00Z", lastSequence: 1 };
   const running = { ...base, state: "agent_running", agentExecution: { lastSequence: 1 } };

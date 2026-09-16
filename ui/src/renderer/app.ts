@@ -64,7 +64,23 @@ export function mount(): void {
     if (target && main.contains(target)) target.focus({ preventScroll: true }); else focusHeading();
   };
 
+  let navigationRevision = 0;
   function navigate(location: Location): void {
+    const revision = ++navigationRevision;
+    if (location.refreshProject && workspace()?.managed && selection.selectedId) {
+      const id = selection.selectedId, owner = view, origin = view.history.current;
+      const current = () => revision === navigationRevision && selection.selectedId === id && view === owner && view.history.current === origin;
+      // A newly registered iteration artifact may precede the run's final
+      // workspace refresh. Read current custody without restarting its drive.
+      void bridge.selectProject(id).then(latest => {
+        if (!current()) return;
+        if (latest.content.state !== "ready") throw new Error("Could not reopen the project artifact inventory.");
+        opened = latest;
+        if (location.page === "dataset") view.datasets?.refresh();
+        navigate({ ...location, refreshProject: undefined });
+      }).catch(error => { if (current()) { operationError = error; render(); } });
+      return;
+    }
     if (workspace()?.managed) {
       if (location.page === "runs" || location.page === "run") {
         if (location.id) view.overview.expanded = location.id;

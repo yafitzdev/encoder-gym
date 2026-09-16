@@ -19,7 +19,7 @@ export interface InputRunActivity {
 export function appendLiveActivity(events: InputRunActivityEntry[], progress: NativeProgress, at = Date.now()): void {
   const entry = { at: new Date(at).toISOString(), progress, ...(progress.narrative ? { narrative: progress.narrative } : {}) };
   const previous = events.at(-1);
-  if (previous && !previous.label && previous.progress.runStage === progress.runStage && previous.progress.phase === progress.phase && previous.progress.subject === progress.subject
+  if (previous && !previous.label && previous.progress.iteration === progress.iteration && previous.progress.runStage === progress.runStage && previous.progress.phase === progress.phase && previous.progress.subject === progress.subject
     && JSON.stringify(previous.narrative) === JSON.stringify(progress.narrative)) events[events.length - 1] = entry;
   else events.push(entry);
 }
@@ -55,6 +55,7 @@ export function inputRunActivity(log: ProjectActivityLog, runId: string): InputR
     unit: event.references?.find(item => item.kind === "progress_unit")?.id,
     narrative: event.narrative,
     runStage: event.references?.find(item => item.kind === "run_stage")?.id,
+    iteration: iterationReference(event.references),
   }) ?? { phase: "checking_files" };
   const failure = action.events.findLast(event => event.state === "failed")?.failure;
   // Older records predate explicit stage references. Their CLI action intervals
@@ -72,14 +73,14 @@ export function inputRunActivity(log: ProjectActivityLog, runId: string): InputR
     currentStage = explicit ?? (command && command !== "training" ? command : taskStage(projected.progress.phase) ?? currentStage);
     const previous = result.at(-1);
     if (!projected.narrative && !previous?.narrative && previous?.progress.phase === projected.progress.phase
-      && previous.progress.subject === projected.progress.subject && previous.stage === currentStage) result[result.length - 1] = { ...projected, stage: currentStage };
+      && previous.progress.iteration === projected.progress.iteration && previous.progress.subject === projected.progress.subject && previous.stage === currentStage) result[result.length - 1] = { ...projected, stage: currentStage };
     else result.push({ ...projected, stage: currentStage });
     return result;
   }, []);
   for (const span of spans) {
     const stage = operationStages[span.operation]!;
     for (const event of span.events.filter(event => event.state !== "progress")) {
-      events.push({ at: event.created_at, stage, progress: { phase: "checking_files" },
+      events.push({ at: event.created_at, stage, progress: { phase: "checking_files", iteration: iterationReference(event.references ?? span.references) },
         label: `${stageLabels[stage]} · ${event.state === "started" ? "Started" : event.state === "succeeded" ? "Complete" : "Failed"}` });
     }
   }
@@ -94,6 +95,13 @@ export function inputRunActivity(log: ProjectActivityLog, runId: string): InputR
     stages: [...new Set(progressEvents.map(event => event.stage!))],
     events,
   };
+}
+
+function iterationReference(references?: { kind: string; id: string }[]): number | undefined {
+  const value = references?.find(item => item.kind === "iteration")?.id;
+  if (!value || !/^[1-9][0-9]*$/.test(value)) return undefined;
+  const iteration = Number(value);
+  return Number.isSafeInteger(iteration) && iteration <= 0xffff_ffff ? iteration : undefined;
 }
 
 /** Group live and historical steps without mistaking a checksum for a new stage. */
@@ -163,6 +171,7 @@ export const inputRunStageLabel = (stage: string): string => ({
 }[stage] ?? stage.replaceAll("_", " "));
 
 export interface InputRunStageContext {
+  candidate?: string;
   model: string;
   dataset: string;
   datasetRows?: number;
@@ -192,9 +201,9 @@ export function inputRunStageDetail(progress: NativeProgress, context: InputRunS
     writing_training_rows: data,
     checking_materialized_project: `${context.model} + ${context.dataset}`,
     loading_evaluation_protocol: context.evaluation,
-    creating_candidate: `${context.model} → Candidate 1`,
+    creating_candidate: `${context.model} → ${context.candidate ?? "Candidate 1"}`,
     creating_experiment: `${context.evaluation} · ${context.developmentSuites.length} development suites`,
-    registering_candidate: "Candidate 1",
+    registering_candidate: context.candidate ?? "Candidate 1",
     development_decision: "",
     final_decision: "",
     optimization_complete: "",
@@ -202,8 +211,8 @@ export function inputRunStageDetail(progress: NativeProgress, context: InputRunS
     checking_training_data: data,
     loading_model: context.model,
     preparing_batches: data,
-    training: "Candidate 1",
-    saving_checkpoint: "Candidate 1",
+    training: context.candidate ?? "Candidate 1",
+    saving_checkpoint: context.candidate ?? "Candidate 1",
     evaluating_retrieval: `${context.evaluation} · ${suites}`,
     evaluating_agent: `${context.evaluation} · ${suites}`,
   }[progress.phase] ?? context.evaluation);

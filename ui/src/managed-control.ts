@@ -117,6 +117,7 @@ export interface ManagedRunStatus {
 }
 
 export interface NativeProgress {
+  iteration?: number;
   runStage?: import("./optimization-stages.js").OptimizationStage;
   phase:
     | "verifying_file" | "verifying_rows"

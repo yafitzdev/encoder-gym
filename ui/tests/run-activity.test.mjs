@@ -6,6 +6,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const wire = value => `ENCODER_GYM_PROGRESS ${JSON.stringify(value)}\n`;
+test("iteration telemetry accepts only a bounded explicit ordinal", () => {
+  const progress = { phase: "training", iteration: 2 };
+  assert.deepEqual(parseProgress(wire(progress)), progress);
+  for (const iteration of [0, -1, 1.5, "2", Number.MAX_SAFE_INTEGER, null]) assert.equal(parseProgress(wire({ ...progress, iteration })), undefined);
+});
 test("detailed progress admits bounded filenames and bytes, not paths or payloads", () => {
   const progress = { phase: "verifying_file", subject: "model.safetensors", unit: "bytes", completed: 8 * 1024 * 1024, total: 2 * 1024 * 1024 * 1024 };
   assert.deepEqual(parseProgress(wire(progress)), progress);

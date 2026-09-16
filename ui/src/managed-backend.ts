@@ -203,9 +203,10 @@ export class ManagedBackend {
     await this.appendProjectActivity(projectId, { action_id: actionId, operation, source, state: "started", ...(references.length ? { references } : {}), created_at: createdAt });
     return actionId;
   }
-  progressProjectActivity(projectId: string, actionId: string, operation: string, stage: string, completed?: number, total?: number, subject?: string, unit?: string, narrative?: ProjectActivityNarrative, runStage?: NativeProgress["runStage"]): Promise<ProjectActivityEvent> {
+  progressProjectActivity(projectId: string, actionId: string, operation: string, stage: string, completed?: number, total?: number, subject?: string, unit?: string, narrative?: ProjectActivityNarrative, runStage?: NativeProgress["runStage"], iteration?: number): Promise<ProjectActivityEvent> {
     const references = [...(subject ? [{ kind: "progress_subject", id: subject }] : []), ...(unit ? [{ kind: "progress_unit", id: unit }] : [])];
     if (runStage) references.push({ kind: "run_stage", id: runStage });
+    if (iteration !== undefined) references.push({ kind: "iteration", id: String(iteration) });
     return this.appendProjectActivity(projectId, { action_id: actionId, operation, source: "desktop", state: "progress", stage, references, ...(completed !== undefined && total !== undefined ? { completed, total } : {}), ...(narrative ? { narrative } : {}), created_at: new Date().toISOString() });
   }
   succeedProjectActivity(projectId: string, actionId: string, operation: string, references: ProjectActivityReference[] = []): Promise<ProjectActivityEvent> {

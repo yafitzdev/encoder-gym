@@ -32,6 +32,7 @@ export interface InputOptimizationRun {
   createdAt: string;
   state: InputOptimizationState;
   agentExecution?: AgentExecution;
+  iterations?: import("./optimization-history.js").OptimizationIteration[];
   attempt: number;
   materializationAttempt: number;
   experimentAttempt: number;

@@ -12,14 +12,15 @@ import type { OptimizationStage } from "../optimization-stages.js";
 import { runContext } from "./workspace-pages.js";
 import { comparisonTone, newerInputRun, overviewRecords, reportDecision, type OverviewRecord } from "./overview-records.js";
 import { failureReason } from "../presentation-errors.js";
+import { iterationReport } from "./iteration-report.js";
 
 // The standalone renderer verification uses the same keyed replacement rule
 // as the full application shell.
 export { replaceView } from "./dom.js";
 
 type Stage = "setup" | "status" | "report";
-export interface OverviewState { expanded?: string | null; tabs: Map<string, Stage>; activityViews: Map<string, ActivityView>; draft: boolean; launching: boolean }
-export const newOverviewState = (): OverviewState => ({ tabs: new Map(), activityViews: new Map(), draft: false, launching: false });
+export interface OverviewState { expanded?: string | null; tabs: Map<string, Stage>; iterations: Map<string, number>; activityViews: Map<string, ActivityView>; draft: boolean; launching: boolean }
+export const newOverviewState = (): OverviewState => ({ tabs: new Map(), iterations: new Map(), activityViews: new Map(), draft: false, launching: false });
 
 export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewState, setup: OptimizationSetupController, runs: InputRunsController, actions: Actions, managed?: ManagedRunStatus): HTMLElement {
   const roots = [...(runs.runs ?? [])];
@@ -81,9 +82,9 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
   }
   function row(id: string, name: string, label: string, record?: OverviewRecord): HTMLElement {
     const expanded = state.expanded === id, running = runBusy(record) || id === "draft" && busy;
-    const availableReport = !!reportDecision(record ?? { id, name, createdAt: "" }) && !!record?.experiment;
+    const availableReport = !!record?.input?.iterations?.length || !!reportDecision(record ?? { id, name, createdAt: "" }) && !!record?.experiment;
     const availableStatus = !!record || busy;
-    let tab = state.tabs.get(id) ?? (record && needsRegistration(record) ? "status" : availableReport ? "report" : record ? "status" : "setup");
+    let tab = state.tabs.get(id) ?? (record && needsRegistration(record) ? "status" : availableReport && (!record?.input?.agentExecution || inputOptimizationTerminal(record.input.state)) ? "report" : record ? "status" : "setup");
     if (tab === "report" && !availableReport || tab === "status" && !availableStatus) tab = "setup";
     const panelId = "overview-panel-" + id;
     return h("article", { class: "focus-run" + (expanded ? " expanded" : ""), "data-run-id": id, "data-run-state": record?.input?.state },
@@ -97,7 +98,26 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
           h("button", { type: "button", id: `overview-${id}-${stage}`, disabled: stage === "status" && !availableStatus || stage === "report" && !availableReport,
             class: stage === tab ? "active" : "", "aria-current": stage === tab ? "step" : null,
             onClick: () => { state.tabs.set(id, stage); actions.render(); } }, h("span", { class: "focus-stage-number" }, String(index + 1)), { setup: "Setup", status: "Status", report: "Report" }[stage]))),
-        h("section", { class: "focus-panel", "aria-label": tab }, tab === "setup" ? setupPanel(record) : tab === "status" ? statusPanel(record) : reportPanel(record!))) : null);
+        h("section", { class: "focus-panel", "aria-label": tab }, tab !== "setup" ? iterationSelector(record) : null,
+          tab === "setup" ? setupPanel(record) : tab === "status" ? statusPanel(record) : record?.input?.iterations?.length
+            ? iterationReport(selectedIteration(record), actions) : reportPanel(record!))) : null);
+  }
+  function selectedIteration(record: OverviewRecord) {
+    const history = record.input?.iterations;
+    return history?.find(item => item.number === (state.iterations.get(record.id) ?? history.at(-1)?.number));
+  }
+  function iterationSelector(record?: OverviewRecord): HTMLElement | null {
+    const history = record?.input?.iterations;
+    if (!record || !history?.length) return null;
+    const selected = state.iterations.get(record.id) ?? history.at(-1)!.number;
+    const selector = h("select", { id: `overview-${record.id}-iteration`, value: String(selected), onChange: (event: Event) => {
+      state.iterations.set(record.id, Number((event.target as HTMLSelectElement).value)); actions.render();
+    } }, h("option", { value: "0", selected: selected === 0 }, "Run setup"), ...history.map(item => h("option", { value: String(item.number), selected: item.number === selected }, `Iteration ${item.number}${item.selected ? " · Best so far" : ""}`)));
+    return h("div", { class: "focus-controls iteration-navigation" }, h("label", { for: selector.id }, "Iteration"), selector,
+      state.iterations.has(record.id) ? button(runBusy(record) ? "Live iteration" : "Latest iteration", () => {
+        state.iterations.delete(record.id);
+        state.activityViews.delete(`${record.id}:${history.at(-1)!.number}`); actions.render();
+      }, "ghost small") : null);
   }
   function setupPanel(record?: OverviewRecord): HTMLElement {
     const saved = record?.input ? setup.data?.history.find(item => item.id === record.input!.setupId) : undefined;
@@ -133,10 +153,15 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
       !historical ? h("div", { class: "focus-controls" }, start) : null);
   }
   function statusPanel(record?: OverviewRecord): HTMLElement {
-    const key = record?.id ?? "draft";
+    const iteration = record?.input?.iterations?.length ? selectedIteration(record) ?? null : undefined;
+    const key = (record?.id ?? "draft") + (iteration !== undefined ? `:${iteration?.number ?? 0}` : "");
     let view = state.activityViews.get(key);
     if (!view) { view = { scroll: {} }; state.activityViews.set(key, view); }
-    const navigation = { key: `overview-${key}`, view, change: (stage?: OptimizationStage) => { view.stage = stage; actions.render(); } };
+    const navigation = { key: `overview-${key}`, view, change: (stage?: OptimizationStage) => {
+      view.stage = stage;
+      if (record && iteration && stage) state.iterations.set(record.id, iteration.number);
+      actions.render();
+    } };
     if (!record?.input) {
       if (!record) {
         const stop = button(setup.stopping ? "Stopping…" : "Stop", () => { void setup.stop(); }, "secondary");
@@ -151,13 +176,18 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     if (!running) void runs.ensureActivity(run.id);
     const activity = setupBusy ? setup.activity : runs.activities.get(run.id) ?? (setup.run?.id === run.id ? setup.activity : undefined);
     const context = runContext(run, workspace, setup), stopping = setupBusy ? setup.stopping : runs.stoppingId === run.id;
+    if (iteration) {
+      context.candidate = `Iteration ${iteration.number} candidate`;
+      context.model = workspace.managed?.modelCatalog?.artifacts.find(model => model.id === iteration.startingModelId)?.name ?? "Recorded starting model";
+      context.dataset = `Iteration ${iteration.number} · ${iteration.trainingDatasetVersionId ? "Training dataset" : "Input dataset"}`;
+    }
     const stop = button(stopping ? "Stopping…" : "Stop", () => { void (setupBusy ? setup.stop() : runs.stop(run)); }, "secondary");
     stop.disabled = stopping;
     const resume = button("Resume", () => { void runs.resume(run); }, "primary"); resume.disabled = busy;
     return h("div", { class: "focus-status" },
       runs.activityErrors.has(run.id) ? failureNotice(runs.activityErrors.get(run.id)) : null,
       activity?.failure ? h("div", { class: "operation-failure", role: "alert" }, failureNotice(activity.failure.message)) : null,
-      inputRunProgress({ run, running, activity, startedAt: activity ? Date.parse(activity.startedAt) : setup.startedAt, context,
+      inputRunProgress({ run, running, activity, iteration, startedAt: activity ? Date.parse(activity.startedAt) : setup.startedAt, context,
         liveProgress: setupBusy ? setup.liveProgress : runs.runningId === run.id ? runs.liveProgress : undefined,
         liveProgressAt: setupBusy ? setup.liveProgressAt : runs.runningId === run.id ? runs.liveProgressAt : undefined,
         liveEvents: setupBusy ? setup.liveEvents : runs.runningId === run.id ? runs.liveEvents : [],

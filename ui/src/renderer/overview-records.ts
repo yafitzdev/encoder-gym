@@ -16,6 +16,7 @@ export function overviewRecords(workspace: WorkspaceSnapshot, roots: InputOptimi
   for (const run of roots) if (!unique.has(run.id) || newerInputRun(run, unique.get(run.id)!)) unique.set(run.id, run);
   const linked = new Set<string>();
   const rows: Omit<OverviewRecord, "name">[] = [...unique.values()].map(input => {
+    for (const iteration of input.iterations ?? []) if (iteration.experimentRunId) linked.add(iteration.experimentRunId);
     const experiment = workspace.runs.find(run => run.id === input.experimentRunId || run.optimizationId === input.id);
     if (experiment) linked.add(experiment.id);
     return { id: input.id, createdAt: input.createdAt, input, experiment };

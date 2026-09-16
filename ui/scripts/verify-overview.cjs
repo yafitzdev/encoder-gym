@@ -130,6 +130,48 @@ app.whenReady().then(async()=>{
     await evaluate('[...document.querySelectorAll(".optimization-progress button")].find(button=>button.textContent==="Stop").click()');
     await evaluate('new Promise(resolve=>setTimeout(resolve,50))');
     await check('early Stop returns to editable setup without a run or error','!qa.setup.run && !qa.setup.preparationId && !qa.setup.error && !document.querySelector(".focus-run .spinner") && !document.getElementById("optimization-start").disabled');
+    const iteration = number => ({id:'iteration-'+number,number,createdAt:'2026-09-16T12:00:00Z',startingModelId:'original-model',inputDatasetVersionId:'input-'+number,benchmarkVersionId:'benchmark',experimentRunId:'experiment-'+number,qualifiedDatasetVersionId:'qualified-'+number,trainingDatasetVersionId:'training-'+number,modelId:'model-'+number,completed:number===1,noChange:false,selected:number===1,developmentPassed:number===1?true:null,
+      checks:[{reportId:'report-'+number,suite:'development',metric:'loss',direction:'lower_is_better',baseline:.5,candidate:number===1?.3:.7,passed:number===1}]});
+    const agentRoot={...root,id:'agent-root',experimentRunId:undefined,state:'agent_running',agentExecution:{lastSequence:1},iterations:[iteration(1),iteration(2)]};
+    const agentWorkspace={...workspace,runs:[{...experiment,id:'experiment-1'},{...experiment,id:'experiment-2'}]};
+    await evaluate(`startFixture(${JSON.stringify({workspace:agentWorkspace,datasets:f.datasets,benchmark:f.benchmark,saved,roots:[agentRoot]})});
+      qa.runs.runningId='agent-root';qa.runs.activities.set('agent-root',{state:'progress',startedAt:'2026-09-16T12:00:00Z',updatedAt:'2026-09-16T12:05:00Z',stages:[],events:[
+        ...Array.from({length:80},(_,i)=>({at:'2026-09-16T12:00:00Z',stage:'training',progress:{phase:'training',iteration:1,subject:'first-'+i}})),
+        {at:'2026-09-16T12:05:00Z',stage:'training',progress:{phase:'training',iteration:2,subject:'second'}}]});qa.render()`);
+    await check('Agent experiments stay inside one root with iteration selector above stages',`document.querySelectorAll('.focus-run').length===1 && document.querySelector('select[id$="-iteration"]').value==='2' && document.querySelector('.iteration-navigation').compareDocumentPosition(document.querySelector('.optimization-progress-steps')) & Node.DOCUMENT_POSITION_FOLLOWING`);
+    const selectIteration=async number=>evaluate(`(()=>{const select=document.getElementById('overview-agent-root-iteration');select.value='${number}';select.dispatchEvent(new Event('change',{bubbles:true}))})()`);
+    await selectIteration(1);
+    await click('[id="overview-agent-root:1-stage-training"]');
+    await check('historical iteration isolates activity and stops its spinner',`document.querySelectorAll('.focus-events li').length===80 && !document.querySelector('.focus-events').textContent.includes('second') && !document.querySelector('.optimization-progress .spinner') && [...document.querySelectorAll('.focus-event-kind')].every(node=>node.textContent==='Training')`);
+    await evaluate(`document.querySelector('.focus-events').scrollTop=400;document.querySelector('.focus-events').dispatchEvent(new Event('scroll'));
+      qa.runs.runs[0].iterations[1].completed=true;qa.runs.runs[0].iterations[1].developmentPassed=false;
+      qa.runs.runs[0].iterations.push(${JSON.stringify(iteration(3))});
+      qa.runs.activities.get('agent-root').events.push({at:'2026-09-16T12:06:00Z',stage:'training',progress:{phase:'training',iteration:3,subject:'third'}});qa.render()`);
+    await check('new iterations do not steal selected stage or scroll',`document.getElementById('overview-agent-root-iteration').value==='1' && document.querySelector('.focus-events').scrollTop===400 && document.querySelector('[id="overview-agent-root:1-stage-training"]').getAttribute('aria-pressed')==='true'`);
+    await selectIteration(2);await click('[id="overview-agent-root:2-stage-training"]');await selectIteration(1);
+    await check('returning to an iteration restores its own stage and scroll',`document.querySelector('.focus-events').scrollTop===400 && document.querySelectorAll('.focus-events li').length===80`);
+    await evaluate(`[...document.querySelectorAll('.iteration-navigation button')].find(node=>node.textContent==='Live iteration').click()`);
+    await check('explicit Live iteration returns to current work',`document.getElementById('overview-agent-root-iteration').value==='3' && document.querySelector('.focus-events').textContent.includes('third') && !!document.querySelector('.optimization-progress .spinner')`);
+    await click('#overview-agent-root-report');await selectIteration(2);
+    await check('rejected iteration retains original baseline, model, dataset and report navigation',`document.querySelector('.focus-report h2').textContent==='Development · REJECT' && document.querySelectorAll('.focus-report td.danger').length===2 && document.querySelector('.focus-report').textContent.includes('original baseline')`);
+    for(const [label,page,id,tab] of [['View model','model','model-2',undefined],['Dataset changes','dataset','qualified-2','changes'],['Training dataset','dataset','training-2','rows'],['Evaluation reports','benchmarks','benchmark','results']]) {
+      await evaluate(`[...document.querySelectorAll('.focus-report button')].find(node=>node.textContent==='${label}').click()`);
+      await check('ordinary viewer link: '+label,`lastNavigation.refreshProject===true && lastNavigation.page==='${page}' && lastNavigation.id==='${id}'${tab?` && lastNavigation.tab==='${tab}'`:''}`);
+    }
+    await capture('iteration-report-light');
+    await selectIteration(1);
+    await check('development selection is distinct from final approval',`document.querySelector('.focus-report h2').textContent==='Development · KEEP' && document.querySelector('.focus-report').textContent.includes('Final approval and promotion are separate') && document.querySelectorAll('.focus-report td.success').length===2`);
+    await evaluate(`Object.assign(qa.runs.runs[0].iterations[2],{completed:true,noChange:true,developmentPassed:null,modelId:null,trainingDatasetVersionId:null,qualifiedDatasetVersionId:null,experimentRunId:null,checks:[]});qa.runs.runs[0].state='agent_completed';qa.runs.runningId=undefined;qa.render()`);
+    await selectIteration(3);
+    await check('no-change iteration has no fabricated verdict or model',`document.querySelector('.focus-report h2').textContent==='No change proposed' && ![...document.querySelectorAll('.focus-report button')].some(node=>node.textContent==='View model')`);
+    await selectIteration(2);await click('#overview-run-agent-root');await click('#overview-run-agent-root');
+    await check('iteration and Report selection survive collapsing the run',`document.getElementById('overview-agent-root-iteration').value==='2' && document.querySelector('.focus-report h2').textContent==='Development · REJECT'`);
+    for(const width of [760,390]) {window.setContentSize(width,900);await capture('iteration-report-'+width);await check('iteration report fits '+width,`document.documentElement.scrollWidth<=innerWidth && [...document.querySelectorAll('.iteration-navigation > *, .focus-report .focus-controls > *')].every(node=>{const r=node.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth})`)}
+    await evaluate(`Object.assign(qa.runs.runs[0].iterations[2],{completed:false,noChange:false});qa.runs.runs[0].state='agent_failed';qa.render()`);
+    await selectIteration(3);await click('#overview-agent-root-status');
+    await check('failed iteration names its recorded native stage',`document.querySelector('.optimization-progress-title').textContent==='Training failed'`);
+    await evaluate(`qa.runs.runs[0].state='agent_budget_exhausted';qa.render()`);
+    await check('budget-stop iteration is terminal, not falsely paused',`document.querySelector('.optimization-progress-title').textContent==='Training budget exhausted' && ![...document.querySelectorAll('.optimization-status-controls button')].some(node=>node.textContent==='Resume')`);
     console.log('Overview renderer verification complete.');
   }finally{window.destroy();app.quit()}
 }).catch(error=>{console.error(error);app.exit(1)});

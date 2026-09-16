@@ -92,6 +92,21 @@ pub(super) async fn assert_loop(
             .unwrap();
         assert_eq!(inventory.model_catalog.as_ref().unwrap().artifacts.len(), 1);
         assert!(inventory.model_dataset_links.is_empty());
+        let history = run(
+            root,
+            &[
+                "optimization-run",
+                "project",
+                "history",
+                &run_id.to_string(),
+            ],
+        );
+        assert_eq!(history["iterations"].as_array().unwrap().len(), 1);
+        let iteration = &history["iterations"][0];
+        assert_eq!(iteration["noChange"], true);
+        assert_eq!(iteration["completed"], true);
+        assert!(iteration["modelId"].is_null() && iteration["developmentPassed"].is_null());
+        assert!(iteration["checks"].as_array().unwrap().is_empty());
         assert_eq!(execute(), *first);
         assert_eq!(fs::read(root.join("agent-calls.jsonl")).unwrap(), calls);
         assert_eq!(
@@ -280,6 +295,101 @@ pub(super) async fn assert_loop(
             .all(|model| model["reports"].as_array().unwrap().len() == 2)
     );
     assert!(!reports.to_string().contains("99999.125"));
+    let history = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "history",
+            &run_id.to_string(),
+        ],
+    );
+    assert_eq!(history["runId"], run_id.to_string());
+    assert_eq!(history["projectId"], inventory.manifest.id.to_string());
+    let rows = history["iterations"].as_array().unwrap();
+    assert_eq!(rows.len(), count);
+    for (index, row) in rows.iter().enumerate() {
+        assert_eq!(row["id"], inputs[index].id.to_string());
+        assert_eq!(row["number"], index + 1);
+        assert_eq!(
+            row["inputDatasetVersionId"],
+            inputs[index].dataset.id.to_string()
+        );
+        assert_eq!(row["startingModelId"], inputs[0].starting_model.id);
+        assert_eq!(row["benchmarkVersionId"], benchmark.id.to_string());
+        assert_eq!(row["completed"], true);
+        assert_eq!(row["selected"], mode == "eligible" && index == 0);
+        if index >= full_cycles {
+            assert_eq!(row["noChange"], true);
+            assert!(row["modelId"].is_null() && row["developmentPassed"].is_null());
+            continue;
+        }
+        assert_eq!(row["noChange"], false);
+        let training = optimization_iteration_execution::training(folder, run_id, inputs[index].id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            row["trainingDatasetVersionId"],
+            training.training_dataset.id.to_string()
+        );
+        assert_eq!(
+            row["qualifiedDatasetVersionId"],
+            training.qualified_dataset.id.to_string()
+        );
+        assert_eq!(
+            row["experimentRunId"],
+            training.experiment_run_id.to_string()
+        );
+        let model = candidates
+            .iter()
+            .find(|model| model["modelId"] == row["modelId"])
+            .unwrap();
+        let mut checks = 0;
+        let mut passed = true;
+        for report in model["reports"].as_array().unwrap() {
+            for context in report["contexts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|context| context["runId"] == row["experimentRunId"])
+            {
+                passed &= context["assessment"]["verdict"] == "passed";
+                for gate in context["assessment"]["gates"].as_array().unwrap() {
+                    checks += 1;
+                    let check = row["checks"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|check| {
+                            check["reportId"] == report["result"]["report_id"]
+                                && check["metric"] == gate["key"]
+                        })
+                        .unwrap();
+                    assert_eq!(check["baseline"], gate["baseline"]);
+                    assert_eq!(check["candidate"], gate["candidate"]);
+                    assert_eq!(check["passed"], gate["passed"]);
+                }
+            }
+        }
+        assert!(checks > 0);
+        assert_eq!(row["developmentPassed"], passed);
+        assert_eq!(row["checks"].as_array().unwrap().len(), checks);
+    }
+    assert!(!history.to_string().contains("99999.125"));
+    assert!(!history.to_string().contains("NEVER_DISCLOSE_HOLDOUT"));
+    assert_eq!(
+        run(
+            root,
+            &[
+                "optimization-run",
+                "project",
+                "history",
+                &run_id.to_string()
+            ]
+        ),
+        history
+    );
     let versions = dataset_versions::list(folder).await.unwrap();
     let again = execute();
     assert_eq!(again, *first);

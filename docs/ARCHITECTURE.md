@@ -934,6 +934,19 @@ baseline, benchmark, protocol and journal binding before using the common
 development-only projector. It does not create a replacement scientific binding,
 search arbitrary co-located projects, or rewrite the baseline context.
 
+`optimization-run history` composes those same verified development projections
+with ordered iteration inputs, training custody and completion receipts. Its
+row-free response links each iteration to its original model, input/full/trainer
+dataset versions, saved model and original-baseline gate values. Development
+gate verdicts and best-so-far selection remain distinct from final approval.
+The desktop validates this closed response and joins child experiments by exact
+identity. Stop/Resume authority reads do not depend on report availability.
+Artifact links refresh the project inventory before ordinary viewer navigation,
+fencing late responses against project/navigation changes without restarting work.
+Native progress carries an explicit iteration ordinal through typed telemetry
+and durable activity references; the renderer never assigns iteration membership
+from timestamps. Unscoped setup activity remains separately selectable.
+
 The project-owned optimization setup separately pins the active baseline
 revision/model, a dataset-core version reference and a shared benchmark version.
 The local adapter stores compare-and-append setup history; the CLI previews and

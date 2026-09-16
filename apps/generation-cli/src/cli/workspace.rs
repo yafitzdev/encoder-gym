@@ -73,6 +73,8 @@ pub enum WorkspaceOptimizationRunCommand {
     TrainingTime { run_id: Uuid },
     /// Read immutable iteration inputs and development report references.
     Iterations { run_id: Uuid },
+    /// Read iteration custody and original development comparisons; never executes work.
+    History { run_id: Uuid },
     /// Pin the first Agent iteration from already-verified inputs and saved development evidence.
     BindIteration { run_id: Uuid },
     /// Execute the pinned Agent and generator, publishing its dataset edits without training.

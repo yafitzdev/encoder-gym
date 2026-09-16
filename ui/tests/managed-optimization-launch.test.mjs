@@ -24,7 +24,8 @@ function fixture() {
 }
 function ports(f, command, exclusive = async (_id, work) => work()) {
   return {
-    open: async id => { assert.equal(id, f.projectId); return f.workspace; }, command, exclusive,
+    open: async id => { assert.equal(id, f.projectId); return f.workspace; },
+    command: async (...args) => args[0][2] === "history" ? { projectId: f.projectId, runId: args[0][3], iterations: [] } : command(...args), exclusive,
     exclusiveRun: async (_id, _runId, work) => work(new AbortController().signal), abortRun: () => {},
   };
 }
@@ -47,6 +48,25 @@ function agentRun(wire, state, attemptId = randomUUID(), head = fingerprint) {
   const completion = state === "agent_completed" ? { id: randomUUID(), fingerprint } : null;
   return { ...wire, state, agentExecution: { state: executionState, attemptId, attempts: 1, completion, lastSequence: 2, headFingerprint: head, updatedAt: wire.updatedAt } };
 }
+
+test("Agent history uses an exact read-only command and failures cannot block Stop", async () => {
+  const f = fixture(), wire = agentRun(f.run(), "agent_paused"), calls = [];
+  let foreign = false;
+  const backend = new ManagedOptimizationLaunch({ ...ports(f, async () => {}), command: async args => {
+    calls.push(args);
+    if (args[2] === "show") return wire;
+    if (args[2] === "history") return { projectId: f.projectId, runId: foreign ? randomUUID() : wire.run.id, iterations: [] };
+    if (args[2] === "stop-agent") return {};
+    throw new Error("Unexpected command");
+  } });
+  assert.deepEqual((await backend.show(f.projectId, wire.run.id)).iterations, []);
+  assert.deepEqual(calls.at(-1), ["optimization-run", "owned-project", "history", wire.run.id]);
+  foreign = true;
+  await assert.rejects(() => backend.show(f.projectId, wire.run.id), /another run/);
+  calls.length = 0;
+  await backend.stop(f.projectId, wire.run.id);
+  assert.deepEqual(calls.map(args => args[2]), ["show", "stop-agent"]);
+});
 
 test("optimization launch preview and history are exact project-owned reads", async () => {
   const f = fixture(), calls = [], authorization = f.authorization(randomUUID());

@@ -13,6 +13,18 @@ impl ProgressObserver for ProgressOutput {
     }
 }
 
+/// Preserve the exact iteration on native telemetry through desktop journaling.
+#[derive(Debug)]
+pub(crate) struct IterationProgressOutput(pub u32);
+impl ProgressObserver for IterationProgressOutput {
+    fn observe(&self, progress: NativeProgress) {
+        if let Ok(mut json) = serde_json::to_value(&progress) {
+            json["iteration"] = self.0.into();
+            eprintln!("ENCODER_GYM_PROGRESS {json}");
+        }
+    }
+}
+
 pub(super) fn worker_status(database: &Path, run_id: Uuid) -> serde_json::Value {
     let Some(parent) = database.parent() else {
         return serde_json::json!({"state":"unavailable"});

@@ -285,6 +285,17 @@ authority. It never feeds another iteration. The baseline is not auto-promoted.
 
 ## Presentation
 
+The read-only `optimization-run history` command projects existing iteration
+custody and the shared development-only benchmark reports. Overview consumes
+that closed projection for its iteration selector, original-baseline gate
+comparisons and ordinary model/dataset/benchmark navigation. Each iteration
+retains its selected stage and scroll during live updates; returning to live
+work is explicit. Native telemetry carries the iteration ordinal, and unscoped
+run setup remains separate. Development gate acceptance does not imply the
+candidate was selected as best, received final approval, or was promoted.
+Rendered fixtures verify this presentation; a connected production-path
+desktop journey is still required for overall acceptance.
+
 One expandable run keeps Setup → Status → Report. Status displays an iteration
 selector above that iteration's stage strip and activity. Finished iterations
 remain inspectable; selecting history never snaps back to live updates.

@@ -3,6 +3,17 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { appendLiveActivity, inputRunActivity, inputRunStageDetail, inputRunStageLabel, mergedActivity, presentedActivity, stagedActivity, optimizationStages } from "../dist/evidence/input-run-activity.js";
 
+test("iteration identity survives durable and live activity without merging adjacent iterations", () => {
+  const live = [];
+  appendLiveActivity(live, { phase: "training", iteration: 1 }, 1_000);
+  appendLiveActivity(live, { phase: "training", iteration: 2 }, 2_000);
+  assert.equal(live.length, 2);
+  const log = { actions: [{ action_id: "root", operation: "optimization.run", state: "progress", started_at: "2026-09-16T00:00:00Z",
+    references: [{ kind: "run", id: "run" }], events: [1, 2].map(iteration => ({ state: "progress", stage: "training", created_at: `2026-09-16T00:00:0${iteration}Z`,
+      references: [{ kind: "iteration", id: String(iteration) }, { kind: "run_stage", id: "training" }] })) }] };
+  assert.deepEqual(inputRunActivity(log, "run").events.map(event => event.progress.iteration), [1, 2]);
+});
+
 test("activity keeps recorded timestamps on redraw and compacts live file counters", () => {
   const at = "2026-09-14T10:00:00.000Z";
   const progress = { phase: "verifying_file", subject: "model.safetensors", completed: 1, total: 4 };

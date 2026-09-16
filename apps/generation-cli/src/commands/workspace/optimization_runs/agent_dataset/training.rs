@@ -110,7 +110,9 @@ pub(super) async fn complete(
         let backend = base
             .with_training_dataset(native.clone())?
             .with_progress_observer(std::sync::Arc::new(
-                crate::commands::encoder_optimize::activity::ProgressOutput,
+                crate::commands::encoder_optimize::activity::IterationProgressOutput(
+                    iteration.scope.iteration,
+                ),
             ));
         let fresh = backend.project_snapshot()?;
         super::super::verify_runtime_baseline(

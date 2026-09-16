@@ -16,7 +16,8 @@ const phases = new Set([
 export function validateNativeProgress(input: unknown): NativeProgress | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) return;
   const value = input as Record<string, unknown>;
-  if (!phases.has(value.phase as string) || Object.keys(value).some(key => !["phase", "completed", "total", "subject", "unit", "narrative", "runStage"].includes(key))) return;
+  if (!phases.has(value.phase as string) || Object.keys(value).some(key => !["phase", "completed", "total", "subject", "unit", "narrative", "runStage", "iteration"].includes(key))) return;
+  if (value.iteration !== undefined && (!Number.isSafeInteger(value.iteration) || (value.iteration as number) < 1 || (value.iteration as number) > 0xffff_ffff)) return;
   if (value.runStage !== undefined && !isOptimizationStage(value.runStage)) return;
   if (value.subject !== undefined && (typeof value.subject !== "string" || !/^[a-zA-Z0-9._ -]{1,160}$/.test(value.subject))) return;
   if (typeof value.subject === "string" && /\bBearer\b|\bsk-|\bhf_[a-z0-9]/i.test(value.subject)) return;
@@ -29,6 +30,7 @@ export function validateNativeProgress(input: unknown): NativeProgress | undefin
   const narrative = value.narrative === undefined ? undefined : validateNarrative(value.narrative);
   if (value.narrative !== undefined && !narrative) return;
   return { phase: value.phase as NativeProgress["phase"],
+    ...(value.iteration !== undefined ? { iteration: value.iteration as number } : {}),
     ...(isOptimizationStage(value.runStage) ? { runStage: value.runStage } : {}),
     ...(value.completed !== undefined ? { completed: value.completed as number, total: value.total as number } : {}),
     ...(value.subject !== undefined ? { subject: value.subject as string } : {}),

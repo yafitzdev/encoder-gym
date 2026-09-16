@@ -211,6 +211,18 @@ The runner's `development_only_iteration_cannot_authorize_or_execute_holdout`
 regression separately proves zero-allowance adaptive protocols cannot acquire
 sealed authorization even when a candidate passes development.
 
+The loop fixtures also exercise the read-only `optimization-run history` command:
+multiple candidates (including rejected ones), best-so-far selection, no-change
+iterations, exact full/trainer dataset identities, and original-baseline values
+matched to the shared benchmark reader. Repeated reads do not add provider or
+native invocations, and sealed sentinels remain absent. Desktop parser tests
+reject foreign runs, invalid ordering, unrecognized fields and inconsistent
+custody; report-read errors do not block Stop. `npm run verify:overview` checks
+independent iteration/stage selection, scroll restoration during live updates,
+explicit return to live work, retained rejected-candidate links, direction-aware
+colors, and narrow-window layouts. These rendered fixtures and CLI tests remain
+separate layers, not the required connected production desktop journey.
+
 The desktop repair regressions exercise explicit standard Agent authorization,
 the renderer-observed Resume head, uncertain Stop-reply identity and prepared-run
 executor selection. Fixtures retain the CLI's actual nullable completion field.

@@ -1,4 +1,5 @@
 import type { NativeProgress } from "../managed-control.js";
+import type { OptimizationIteration } from "../optimization-history.js";
 import { inputOptimizationPhase, type InputOptimizationRun } from "../input-optimization.js";
 import { spinner } from "./components.js";
 import { h } from "./dom.js";
@@ -27,6 +28,8 @@ export interface InputRunProgressOptions {
   liveEvents?: InputRunActivityEntry[];
   controls?: HTMLElement;
   navigation?: ActivityNavigation;
+  /** null selects unscoped run setup; undefined preserves legacy run activity. */
+  iteration?: OptimizationIteration | null;
 }
 
 export function pendingInputRunProgress(progress?: NativeProgress, animationKey = "pending-run", events: InputRunActivityEntry[] = [], controls?: HTMLElement, running = true, navigation?: ActivityNavigation): HTMLElement {
@@ -39,33 +42,37 @@ export function pendingInputRunProgress(progress?: NativeProgress, animationKey 
 
 /** The single live-status presentation shared by Optimize and Runs. */
 export function inputRunProgress(options: InputRunProgressOptions): HTMLElement {
-  const { run, running, startedAt, activity, context } = options;
-  const phase = options.registrationPending ? "saving_candidate" : inputOptimizationPhase(run.state);
-  const failed = run.state.endsWith("_failed");
-  const result = options.registrationPending ? undefined : run.state === "candidate_accepted" ? "Candidate passed"
+  const { run, startedAt, activity, context } = options;
+  const scoped = options.iteration !== undefined, iteration = options.iteration;
+  const running = options.running && (!scoped || !!iteration && !iteration.completed && iteration.number === run.iterations?.at(-1)?.number);
+  const phase = scoped ? iteration?.completed ? "complete" : "checking_inputs" : options.registrationPending ? "saving_candidate" : inputOptimizationPhase(run.state);
+  const failed = run.state.endsWith("_failed") && (!scoped || !!iteration && !iteration.completed);
+  const rootResult = options.registrationPending ? undefined : run.state === "candidate_accepted" ? "Candidate passed"
     : run.state === "candidate_rejected" ? "Candidate did not pass"
     : run.state === "baseline_retained" ? "No improvement"
     : run.state === "agent_completed" ? "Optimization complete"
     : run.state === "agent_budget_exhausted" ? "Training budget exhausted"
     : run.state === "cancelled" ? "Cancelled" : undefined;
+  const result = scoped ? iteration === null ? "Run setup activity" : iteration?.noChange ? "No change proposed" : iteration?.completed ? "Iteration complete" : rootResult : rootResult;
   const progress = options.registrationPending && !running ? { phase: "registering_candidate" as const } : running ? options.liveProgress ?? activity?.progress : activity?.progress;
   const observed = progress?.phase;
-  const events = stagedActivity(mergedActivity(activity, options.liveEvents ?? [], progress, options.liveProgressAt));
+  const events = stagedActivity(mergedActivity(activity, options.liveEvents ?? [], progress, options.liveProgressAt))
+    .filter(event => !scoped || event.progress.iteration === iteration?.number);
   // Checksums are steps within the current stage, never a reason to jump back.
-  const tasks = [...(activity?.stages ?? []), ...events.map(event => event.progress.phase), ...(observed ? [observed] : [])];
+  const tasks = [...(!scoped ? activity?.stages ?? [] : []), ...events.map(event => event.progress.phase), ...(!scoped && observed ? [observed] : [])];
   const stagePhase = events.at(-1)?.stage ?? tasks.reverse().map(taskStage).find(value => value !== undefined);
   const visiblePhase = options.registrationPending ? "saving_candidate" : phase === "complete" ? phase : stagePhase ?? phase;
   const active = visiblePhase === "complete" ? phases.length : Math.max(0, phases.indexOf(visiblePhase));
   const activeProgress: NativeProgress = progress ?? { phase: fallback[phase] };
   const phaseLabel = visiblePhase === "complete" ? "Complete" : labels[visiblePhase];
-  const current = result ?? (failed ? `${labels[phase as keyof typeof labels] ?? phaseLabel} failed` : running ? phaseLabel : `Paused · ${phaseLabel}`);
+  const current = result ?? (failed ? `${scoped ? phaseLabel : labels[phase as keyof typeof labels] ?? phaseLabel} failed` : running ? phaseLabel : `Paused · ${phaseLabel}`);
   const selected = options.navigation?.view.stage ?? (visiblePhase === "complete" ? events.at(-1)?.stage ?? "evaluating" : visiblePhase);
   const selectedEvents = events.filter(event => event.stage === selected);
   return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": String(running) },
     progressSteps(active, failed, selected, options.navigation, running ? options.animationKey ?? `run-progress:${run.id}` : undefined),
-    activityStream(selectedEvents.length || events.length ? selectedEvents : selected === visiblePhase ? [{ at: activity?.updatedAt ?? new Date().toISOString(), progress: activeProgress }] : [], context,
+    activityStream(selectedEvents.length || events.length || scoped ? selectedEvents : selected === visiblePhase ? [{ at: activity?.updatedAt ?? new Date().toISOString(), progress: activeProgress }] : [], context,
       running && selected === events.at(-1)?.stage, selected, options.navigation,
-      h("div", { class: "optimization-status-controls" }, running && startedAt ? h("span", { class: "muted" }, "Elapsed ", h("span", { "data-elapsed-start": String(startedAt) })) : null, options.controls),
+      h("div", { class: "optimization-status-controls" }, options.running && startedAt ? h("span", { class: "muted" }, "Elapsed ", h("span", { "data-elapsed-start": String(startedAt) })) : null, options.controls),
       running ? undefined : current));
 }
 
@@ -75,7 +82,9 @@ function activityStream(events: InputRunActivityEntry[], context: InputRunStageC
   const list = h("ol", { class: "focus-events", id: listId, "aria-label": `${labels[selected]} activity`,
     onScroll: (event: Event) => { if (navigation) navigation.view.scroll[selected] = (event.target as HTMLElement).scrollTop; } }, ...visibleEvents.slice().reverse().map((event, index) => {
       const narrative = event.narrative, live = running && index === 0;
-      const actor = narrative ? ({ agent: "Agent", generation: "Generation", system: "System" })[narrative.origin] : "System";
+      const actor = narrative ? ({ agent: "Agent", generation: "Generation", system: "System" })[narrative.origin]
+        : ["training", "loading_model", "preparing_batches", "saving_checkpoint"].includes(event.progress.phase) ? "Training"
+        : ["evaluating_retrieval", "evaluating_agent", "development_decision", "final_decision"].includes(event.progress.phase) ? "Evaluation" : "System";
       const narrativeKind = narrative ? ({ intent: "Intent", reasoning: "Reason", action: "Action", observation: "Result", decision: "Decision", next_step: "Next" })[narrative.kind] : undefined;
       const detail = narrative || event.label ? "" : context ? inputRunStageDetail(event.progress, context) : event.progress.subject ?? "";
       return h("li", { "data-key": `${selected}:${visibleEvents.length - index}`, "data-activity-stage": selected, "aria-current": live ? "true" : null,

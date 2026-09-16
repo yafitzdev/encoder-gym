@@ -168,7 +168,7 @@ async fn initialize(folder: &Path, expected_parent: Option<Uuid>) -> Result<()> 
 mod iteration_results;
 mod optimization_results;
 
-async fn results(
+pub(super) async fn results(
     folder: &Path,
     version_id: Uuid,
 ) -> Result<project_workspace_core::benchmark_results::ProjectBenchmarkResults> {

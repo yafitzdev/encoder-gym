@@ -22,6 +22,8 @@
 .focus-field select { width: 100%; min-width: 0; min-height: 44px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 9px 14px; text-overflow: ellipsis; }
 .focus-field select:disabled { opacity: 1; color: var(--muted); }
 .focus-controls { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+.iteration-navigation, .focus-report .focus-controls { justify-content: flex-start; flex-wrap: wrap; align-items: center; margin: 20px 0; }
+.iteration-navigation select { max-width: 100%; min-width: 0; padding: 8px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
 .focus-status .optimization-progress { margin: 0; border: 0; padding: 0; background: transparent; width: 100%; max-width: none; }
 .focus-status .optimization-progress-steps { margin-top: 0; }
 .focus-activity-title { margin: 28px 0 0; font-size: 14px; letter-spacing: .02em; }

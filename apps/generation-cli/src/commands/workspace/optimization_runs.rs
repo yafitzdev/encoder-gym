@@ -26,6 +26,7 @@ use std::path::Path;
 use uuid::Uuid;
 
 mod agent_dataset;
+mod history;
 mod iteration_inputs;
 
 fn emit_progress(phase: &str, completed: Option<u64>, total: Option<u64>) {
@@ -94,6 +95,7 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunComm
         Iterations { run_id } => super::print(
             &project_workspace_local::optimization_iterations::list(folder, run_id).await?,
         ),
+        History { run_id } => super::print(&history::read(folder, run_id).await?),
         Providers { run_id } => super::print(&optimization_runs::providers(folder, run_id).await?),
         List => super::print(&optimization_runs::list(folder).await?),
         Show { run_id } => super::print(&optimization_runs::show(folder, run_id).await?),
