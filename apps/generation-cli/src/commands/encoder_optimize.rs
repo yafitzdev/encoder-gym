@@ -447,10 +447,8 @@ fn terminate_execution_children(
         .collect::<Vec<_>>();
     #[cfg(not(windows))]
     let system = process_system();
+    #[cfg(not(windows))]
     for (pid, started_at) in &pending {
-        #[cfg(windows)]
-        crate::process_ownership::terminate_recorded(pid.as_u32(), *started_at)?;
-        #[cfg(not(windows))]
         if let Some(process) = system
             .process(*pid)
             .filter(|process| process.start_time() == *started_at)
@@ -459,21 +457,37 @@ fn terminate_execution_children(
         }
     }
     let deadline = Instant::now() + Duration::from_secs(5);
+    let mut termination_errors = Vec::<String>::new();
     loop {
         let current = process_system();
         pending.retain(|(pid, started_at)| {
-            current
-                .process(*pid)
-                .is_some_and(|process| process.start_time() == *started_at)
+            current.process(*pid).is_some_and(|process| {
+                // An unavailable creation time is not proof of PID reuse.
+                process.start_time() == 0 || process.start_time() == *started_at
+            })
         });
         if pending.is_empty() {
             return Ok(());
         }
         anyhow::ensure!(
             Instant::now() < deadline,
-            "owned optimization child processes did not stop: {:?}",
-            pending
+            "owned optimization child processes did not stop: {:?}; termination errors: {:?}",
+            pending,
+            termination_errors
         );
+        termination_errors.clear();
+        #[cfg(windows)]
+        for (pid, started_at) in &pending {
+            // A process can exit between enumeration and OpenProcess, which
+            // Windows may report as Access Denied while its object unwinds.
+            // Recheck its identity/liveness within the same bounded deadline;
+            // never turn an access failure into evidence that cleanup succeeded.
+            if let Err(error) =
+                crate::process_ownership::terminate_recorded(pid.as_u32(), *started_at)
+            {
+                termination_errors.push(format!("{}: {error}", pid.as_u32()));
+            }
+        }
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -3230,5 +3244,49 @@ surprise = true
             .unwrap();
         child.wait().unwrap();
         drop(replacement);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn optimization_execution_lease_retires_exited_children_without_opening_them() {
+        if crate::process_ownership::isolate_lease_test(
+            "commands::encoder_optimize::tests::optimization_execution_lease_retires_exited_children_without_opening_them",
+        ) {
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("scientific.sqlite");
+        let url = format!("sqlite://{}", database.to_string_lossy().replace('\\', "/"));
+        let mut lease = OptimizationExecutionLease::acquire(&url, Uuid::new_v4())
+            .await
+            .unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "process_ownership::tests::ownership_fixture",
+                "--ignored",
+            ])
+            .env("ENCODER_OWNERSHIP_FIXTURE_MODE", "leaf")
+            .current_dir(directory.path())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let recorded = record_execution_children(&lease.directory, &lease.owner);
+        lease.observer_stop.store(true, Ordering::Release);
+        lease.observer.take().unwrap().join().unwrap();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        recorded.unwrap();
+        assert!(
+            read_execution_children(&lease.directory, &lease.owner)
+                .unwrap()
+                .iter()
+                .any(|record| record.process_id == child.id())
+        );
+        // Retain Child's OS handle while recovering the exited process object.
+        // It may no longer be openable with TERMINATE access, and needs no kill.
+        terminate_execution_children(&lease.directory, &lease.owner).unwrap();
+        drop(child);
+        drop(lease);
     }
 }
