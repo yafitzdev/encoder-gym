@@ -33,7 +33,7 @@ pub(super) async fn authorize(
     )
 }
 
-async fn history(
+pub(super) async fn history(
     folder: &Path,
     run_id: Uuid,
 ) -> Result<Vec<optimization_completions::IterationScientificEvidence>> {

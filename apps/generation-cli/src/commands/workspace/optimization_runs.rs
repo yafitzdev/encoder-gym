@@ -27,6 +27,7 @@ use uuid::Uuid;
 
 mod agent_dataset;
 mod final_authorization;
+mod final_execution;
 mod history;
 mod iteration_inputs;
 
@@ -72,6 +73,11 @@ fn candidate_reasoning(candidate: &TrainingCandidate) -> Result<String> {
 pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunCommand) -> Result<()> {
     use WorkspaceOptimizationRunCommand::*;
     match command {
+        FinalizeAgent {
+            run_id,
+            authorization_id,
+        } => final_execution::execute(folder, run_id, authorization_id).await,
+        FinalAgentResult { run_id } => final_execution::show(folder, run_id).await,
         PreviewFinalAgent { run_id } => final_authorization::preview(folder, run_id).await,
         FinalAgentAuthorization { run_id } => final_authorization::show(folder, run_id).await,
         AuthorizeFinalAgent {

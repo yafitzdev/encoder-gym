@@ -146,7 +146,16 @@ The CLI's separate preview/authorize/read commands use the pinned scientific
 store and benchmark. Preview is read-only even before the consent migration;
 the serialized handoff contains identities, never sealed scores or rows. It
 does not alter the adaptive protocols, dispatch final evaluation or promote.
-Final execution/recovery and desktop consent are not implemented by this grant.
+Final execution/recovery is composed separately by the CLI. The experiment-core
+backend port provides read-only completed-evaluation recovery; Nomos shares its
+normalization path with dispatch but never fills missing evidence in recovery
+mode. The workspace core binds reserved report/assessment IDs and reuses
+experiment-core assessment policy. The local adapter atomically reserves one
+dispatch and stores a row-free immutable final receipt. Native scientific reports
+remain outside presentation custody; completed CLI reads reconstruct their
+normalized identities and deterministic verdict. The original adaptive journal
+and zero-sealed protocol remain unchanged. Desktop consent and manual promotion
+are not implemented by this CLI contract.
 
 `project-workspace-core::optimization_execution` owns only the coordinator's
 execution-attempt transitions and a terminal-iteration reference, not another

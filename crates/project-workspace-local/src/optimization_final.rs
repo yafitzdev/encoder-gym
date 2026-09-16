@@ -164,7 +164,10 @@ pub fn authorize<'a>(
     })
 }
 
-async fn read(db: &mut SqliteConnection, run_id: Uuid) -> Result<Option<AgentFinalAuthorization>> {
+pub(crate) async fn read(
+    db: &mut SqliteConnection,
+    run_id: Uuid,
+) -> Result<Option<AgentFinalAuthorization>> {
     let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='optimization_agent_final_authorizations'")
         .fetch_one(&mut *db).await?;
     if exists == 0 {

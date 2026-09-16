@@ -124,8 +124,29 @@ running, paused, interrupted, failed, diagnostic and no-winner runs cannot
 authorize holdout. Authorization timestamps cannot precede adaptive closure.
 The iteration protocols retain their original zero sealed allowance and are
 never rewritten. These commands do not execute evaluation or promote a model.
-At-most-once final dispatch/recovery and desktop consent remain separate work;
-this handoff alone does not establish the full final-holdout acceptance path.
+`finalize-agent <RUN_ID> --authorization-id <GRANT_ID>` consumes that separate
+grant, under the normal project and scientific execution leases. Before native
+dispatch it verifies the original runtime, selected training materialization and
+checkpoint bytes, then atomically reserves the only dispatch and the final report
+and assessment UUIDs. A failed reservation cannot start work. Once reserved, an
+allowance cannot be reused, including when a process died before native dispatch.
+
+Only the transaction that creates the dispatch may invoke evaluation. Every
+retry uses the backend's read-only completed-evidence recovery port; a missing
+retrieval report, agent report or required trace leaves the outcome unknown.
+Recovery cannot run a missing stage. Complete native evidence can reconstruct
+the same reserved report and assessment after a lost project receipt. Acceptance
+uses the original scientific metric contract and baseline final reference.
+
+`final-agent-result <RUN_ID>` returns authorized, outcome-unknown or completed
+custody, not an unverified claim of a live worker. Completed reads and retries
+re-normalize native evidence and reproduce the deterministic assessment before
+returning its decision. Scientific scores remain in the native evidence store;
+the immutable project receipt contains only identities, normalization timestamps
+and the acceptance boolean. Neither command projects scores into adaptive
+history, changes an iteration protocol/journal or promotes the baseline.
+Desktop consent/execution and manual promotion remain separate work; these CLI
+contracts alone do not establish connected app acceptance.
 
 The same CLI coordinator now journals root execution attempts before input
 preparation, recording failure, interruption and exact adaptive completion.

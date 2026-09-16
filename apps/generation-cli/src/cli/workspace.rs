@@ -53,6 +53,14 @@ pub enum WorkspaceOptimizationLaunchCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum WorkspaceOptimizationRunCommand {
+    /// Use exact separate consent once; retries only recover completed native evidence.
+    FinalizeAgent {
+        run_id: Uuid,
+        #[arg(long)]
+        authorization_id: Uuid,
+    },
+    /// Read verified final outcome without dispatching or repairing missing evidence.
+    FinalAgentResult { run_id: Uuid },
     /// Preview the closed Agent loop's selected full-data checkpoint; never uses holdout.
     PreviewFinalAgent { run_id: Uuid },
     /// Read the separate immutable final-holdout consent; never executes evaluation.

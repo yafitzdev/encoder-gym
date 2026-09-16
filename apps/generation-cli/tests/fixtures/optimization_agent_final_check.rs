@@ -1,5 +1,7 @@
 //! Actual consent CLI over a completed production loop, with offline providers.
 use super::*;
+#[path = "optimization_agent_final_execution_check.rs"]
+mod execution_check;
 use project_workspace_core::optimization_final::{
     AgentFinalAuthorization, AgentFinalScope, SelectedFinalEvidence,
 };
@@ -183,11 +185,17 @@ pub(super) async fn assert_final_consent(root: &Path, folder: &Path, run_id: Uui
     let mut db = SqliteConnection::connect(&format!("sqlite://{}", database.display()))
         .await
         .unwrap();
-    sqlx::query("DROP TABLE optimization_agent_final_authorizations")
-        .execute(&mut db)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM _sqlx_migrations WHERE version=23")
+    for table in [
+        "optimization_agent_final_results",
+        "optimization_agent_final_dispatches",
+        "optimization_agent_final_authorizations",
+    ] {
+        sqlx::query(&format!("DROP TABLE {table}"))
+            .execute(&mut db)
+            .await
+            .unwrap();
+    }
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version>=23")
         .execute(&mut db)
         .await
         .unwrap();
@@ -337,6 +345,18 @@ pub(super) async fn assert_final_consent(root: &Path, folder: &Path, run_id: Uui
             .unwrap()
             .is_empty()
     );
+    db.close().await.unwrap();
+    Box::pin(execution_check::assert_execution(
+        root,
+        folder,
+        run_id,
+        &grant,
+        &scientific,
+    ))
+    .await;
+    let mut db = SqliteConnection::connect(&format!("sqlite://{}", database.display()))
+        .await
+        .unwrap();
     // Rehashing a changed scope and every normalized column does not make it consent.
     sqlx::query("DROP TRIGGER immutable_agent_final_authorization_update")
         .execute(&mut db)

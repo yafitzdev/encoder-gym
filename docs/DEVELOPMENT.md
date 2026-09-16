@@ -176,6 +176,17 @@ rejection of a re-fingerprinted completion. Native fixture counters prove that
 retry does not repeat training, evaluation or provider calls. No production
 fake switch, live provider, GPU or real Nomos workspace is used.
 
+The eligible-winner case also exercises separate final consent and
+`finalize-agent` through the production CLI. Failed reservation leaves native
+counts unchanged; failure saving the final receipt leaves the allowance consumed.
+Missing retrieval/agent/trace evidence and malformed output cannot trigger a
+replacement evaluation. Restoring complete fixture evidence recovers the same
+reserved report/assessment IDs without additional native calls. Completed reads
+reject changed metrics and even a rehashed project verdict; project receipts and
+CLI output exclude sealed scores. Adaptive scientific bytes, history, Agent
+calls and the baseline remain unchanged. This is deterministic CLI evidence,
+not desktop final-consent or live-holdout acceptance.
+
 The Agent process cases also run with explicit provider ceilings below their
 project defaults. Dedicated request/token exhaustion scenarios prove that the
 same production coordinator stops before another Agent or generation dispatch,

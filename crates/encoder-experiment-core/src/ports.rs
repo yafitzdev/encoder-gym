@@ -77,6 +77,20 @@ pub trait EncoderTaskBackend: Send + Sync {
         suite_key: String,
         maximum_seconds: u64,
     ) -> BoxFuture<'_, Result<EvaluationReport, EncoderTaskAdapterError>>;
+
+    /// Reconstruct a completed evaluation from verified native evidence only.
+    /// Never starts work, fills a missing component, or writes an artifact.
+    /// Missing/incomplete evidence (and unsupported recovery) returns None;
+    /// malformed or changed evidence is an error, not permission to redispatch.
+    fn recover_evaluation(
+        &self,
+        _project: ExternalProjectSnapshot,
+        _model: ModelArtifactIdentity,
+        _contract: MetricContract,
+        _suite_key: String,
+    ) -> BoxFuture<'_, Result<Option<EvaluationReport>, EncoderTaskAdapterError>> {
+        Box::pin(async { Ok(None) })
+    }
 }
 
 /// Append-only persistence for immutable experiment artifacts and event journals.

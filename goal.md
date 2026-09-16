@@ -109,6 +109,24 @@ production CLI, including concurrent first requests on an older schema. The
 desktop smoke still substitutes its drive, so it is not connected-loop acceptance.
 No dependency, provider, real training run or final-holdout use was added.
 
+The final-execution checkpoint connects separate consent to an at-most-once CLI
+dispatch. Report and assessment identities are reserved before native work;
+every retry can only recover complete saved native evidence. Missing or partial
+evidence leaves the allowance consumed and the outcome unknown. A lost project
+receipt recovers the same identities without another evaluation. The receipt is
+row-free: protected scores stay in native scientific evidence, and completed
+reads reconstruct the original deterministic assessment before exposing its
+decision. Adaptive protocols/journals, Agent inputs and the baseline remain
+unchanged. Desktop consent/execution and manual promotion remain unfinished.
+
+Verified for this checkpoint: all four Rust gates pass, including all 21 managed
+benchmark CLI scenarios with failed-reservation, lost-receipt, missing-evidence,
+reserved-identity and tampered-verdict assertions. UI typecheck/build, all 155 UI
+tests, all nine native-clearance tests, rendered Overview checks and both
+desktop smoke flows across independent restarts pass. Desktop/narrow screenshots
+were inspected. The smoke drive remains fixture-controlled; this is not the
+connected Agent journey. No live provider, real training or real holdout ran.
+
 Remaining work identified by inspecting production code:
 
 - Windows CLI startup now establishes kill-on-close job ownership before any
@@ -129,9 +147,10 @@ Remaining work identified by inspecting production code:
   audit. Advanced/Quick-test controls now use the enforced settings contract;
   connected execution acceptance still must cover their use through the app.
 - The adaptive protocols deliberately have zero sealed allowance. Separate
-  selected-candidate consent is implemented; at-most-once final dispatch,
-  completed-result recovery, desktop consent and manual promotion are still
-  required. Never turn the consent grant into permission for repeated execution.
+  selected-candidate consent, at-most-once CLI final dispatch and read-only
+  completed-result recovery are implemented. Desktop consent and manual
+  promotion are still required. Never turn the consent grant into permission
+  for repeated execution.
 - Add a deterministic, connected renderer/IPC/CLI journey, including second-
   iteration evidence and Stop/app-restart/Resume. The existing renderer fixture
   and mocked desktop-controller tests are not that journey.
