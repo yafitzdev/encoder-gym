@@ -214,6 +214,12 @@ export class OptimizationSetupController {
         this.phase = undefined;
         this.render();
       }
+      // A new reservation is not in the history loaded before Optimize. Read
+      // its persisted mode/limits before presenting the run or dispatching it.
+      // In particular, Quick test must never momentarily look promotion-ready.
+      const launches = await this.bridge.optimizationLaunches(this.projectId);
+      if (epoch !== this.epoch) return;
+      this.launches = launches;
       if (this.stopping) return;
       if (this.preparationId) {
         await this.bridge.finishInputPreparation(this.projectId, this.preparationId);

@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { overviewRecords, comparisonTone, reportDecision } from "../dist/evidence/overview-records.js";
+import { overviewRecords, comparisonTone, reportDecision, projectOptimizationWorking } from "../dist/evidence/overview-records.js";
+
+test("sidebar activity respects durable Agent closure while mutation custody remains owned", () => {
+  const running = { id:"run", state:"agent_running", lastSequence:1, agentExecution:{lastSequence:1} };
+  const setup = { running:true, run:running };
+  const runs = { runningId:"run", runs:[running], final:{} };
+  assert.equal(projectOptimizationWorking(setup,runs),true);
+  for (const state of ["agent_paused","agent_interrupted","agent_completed","agent_budget_exhausted","agent_failed"]) {
+    runs.runs=[{...running,state,agentExecution:{lastSequence:2}}];
+    assert.equal(projectOptimizationWorking(setup,runs),false,state);
+  }
+  runs.final.busyRun="run"; assert.equal(projectOptimizationWorking(setup,runs),true);
+  assert.equal(projectOptimizationWorking({saving:true}),true);
+  assert.equal(projectOptimizationWorking(undefined,{runningId:"legacy",runs:[{id:"legacy",state:"baseline_retained"}],final:{}}),true);
+});
 
 test("Overview joins scientific children by exact identity and numbers roots consistently", () => {
   const createdAt = "2026-09-13T12:00:00Z";

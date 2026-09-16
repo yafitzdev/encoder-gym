@@ -187,6 +187,19 @@ CLI output exclude sealed scores. Adaptive scientific bytes, history, Agent
 calls and the baseline remain unchanged. This is deterministic CLI evidence,
 not desktop final-consent or live-holdout acceptance.
 
+The final scenarios additionally exercise explicit accepted/rejected manual
+promotion. Tests reject substituted model lineage, altered cached training
+metadata, wrong receipt/baseline authority and changed retry actors. Accepted
+promotion reuses ordinary model/dataset custody, appends one baseline revision
+and resolves the checkpoint through the next-run runtime-binding preview.
+Historical development reports remain visible after a candidate becomes the
+active baseline. The native fixture handles the exact offline Python capability
+probe without dispatching scientific work. Desktop final-boundary tests cover
+strict row-free parsing, private consent-file cleanup, stable uncertain retries,
+saved-grant recovery, project/run ownership, Stop during verification and
+explicit promotion. These component regressions are supplemented by the connected
+desktop journey below; they are not substitutes for its rendered controls.
+
 The Agent process cases also run with explicit provider ceilings below their
 project defaults. Dedicated request/token exhaustion scenarios prove that the
 same production coordinator stops before another Agent or generation dispatch,
@@ -275,8 +288,33 @@ trainer's coordinator, verifies trainer and grandchild termination without a
 recovery command, then proves the full unknown training charge is retained and
 retry cannot dispatch beyond the budget. These tests use temporary projects,
 local fixtures and safe Windows APIs, not paid providers or real Nomos training.
-Other platforms still lack this spawn-time guarantee. Full abrupt-death coverage
-at every artifact boundary and connected desktop-loop acceptance remain open.
+Other platforms still lack this spawn-time guarantee. The Windows
+`cli_agent_recovers_abrupt_death_at_each_artifact_boundary_without_repeating_work`
+regression additionally kills the production CLI at nine durable boundaries:
+dataset publication, qualification, training completion, both development reports,
+model registration, iteration result, iteration completion and root completion.
+A test-only SQLite trigger holds each target write transaction while the test kills
+its exact owned coordinator. No production fault-injection switch is added. After
+each restart provider bytes remain unchanged; final native counts prove one
+qualification/training and one execution of each development report. Completed
+replay preserves all artifact identities. This complements the active-training
+kill test rather than promising optimizer-state continuation.
+
+`npm run verify:agent` from `ui/` builds the production CLI, test-only native fixture,
+real Pi adapter and desktop, then runs seven independent Electron launches against
+a loopback OpenAI-compatible server. It never substitutes a bridge, backend or
+drive method. Actual rendered Optimize/Stop/Resume performs two training iterations
+and an evidence-dependent no-change third iteration. It verifies pinned independent
+Agent/generator models, preserved interrupted-call charges, completed-inspection
+reuse, ordinary artifact navigation and real Agent/Generation activity. Later
+launches explicitly consent to final evaluation, inject a lost final receipt,
+recover its reserved identities without native redispatch, manually promote and
+reopen that single promotion. Separate projects exercise Quick test and reject an
+injected sealed-partition field before it can enter the trainer dataset. Request
+canaries ensure adaptive calls never see protected evidence. Evidence, logs and
+desktop/narrow screenshots stay in a fresh temporary directory printed on success.
+All provider and scientific responses are deterministic; this proves connected
+execution and custody, not real model quality or a live holdout result.
 
 The existing Electron smoke suite now checks that Optimize reserves standard
 Agent authority and Stop actually persists an acknowledged Agent pause, then

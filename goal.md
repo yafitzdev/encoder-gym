@@ -11,9 +11,54 @@ slice contracts. More settings, System narration, mockups or documentation alone
 do not satisfy this goal. A completed experiment may reject every candidate:
 model improvement is not guaranteed.
 
-## Completion audit — 16 September 2026
+## Completed connected implementation — 16 September 2026
 
-**The overall goal is not complete.** The previous completion claim in
+The local app now runs the finite Agent workflow through the production CLI and
+real Pi adapter. One Optimize action reaches development inspection, justified
+dataset edits, the independently pinned generator, native qualification,
+training, development evaluation and evidence-dependent subsequent iterations.
+Stop/restart/Resume preserves completed work and conservative interrupted-call
+charges. Reports expose the selected winner, rejected candidates, exact dataset
+diffs and ordinary model/benchmark viewers.
+
+Final acceptance is a separate rendered action: review, explicit one-use consent,
+saved-result recovery after response loss, and accepted-only manual promotion.
+Quick test uses the same engine but excludes that authority. Report controls wait
+for the persisted launch mode. Durable Agent completion/pause ends both stage and
+sidebar spinners without prematurely releasing mutation locks.
+
+`npm run verify:agent` in `ui/` is the connected acceptance entry point. Its seven
+Electron launches use real renderer/IPC/backend/CLI/Pi orchestration with loopback
+model responses and a deterministic native executable; no drive method is mocked.
+They cover two trained candidates (including a rejection), no-change completion,
+Stop/restart/Resume, exact interrupted-call custody, artifact navigation, final
+receipt loss and recovery without redispatch, manual promotion/restart, Quick
+mode and rejection of generated sealed-partition authority before training.
+
+Windows process tests additionally kill the real coordinator at nine durable
+artifact boundaries and verify no repeated completed provider/native work. They
+complement active-training interruption and descendant-ownership tests. Terminal
+Pi sessions are reaped, scientific leases wait for contained work to settle, and
+empty Windows jobs cannot be held by stale/reused child PIDs.
+
+Final executable-tree verification passes: `cargo fmt-check`, `cargo check-all`,
+`cargo lint`, and `cargo test-all`, including all 23 managed benchmark scenarios
+and six setup/authority tests. UI typecheck/build and all 172 UI tests, all 14 Pi
+adapter tests, all nine native-clearance Python tests, rendered Overview checks,
+both legacy/managed Electron flows across independent restarts, and the seven-
+phase connected Agent journey pass. The separately enabled exact-PID child
+recovery regression also passes. Desktop and narrow screenshots were inspected.
+No dependency or provider stack was added. The historical checkpoints below
+record earlier gaps; they are not the current implementation status.
+
+This is deterministic local acceptance, not evidence of real model improvement.
+No paid provider call, real Nomos training or real holdout was run. Those remain
+separately authorized operations. Other platforms retain recorded-child recovery;
+the Windows spawn-time containment guarantee is not claimed for them.
+
+## Historical completion audit — 16 September 2026
+
+At this earlier checkpoint, the overall goal was not complete. The completion claim in
 `14f2fb0` overstated layered component evidence as connected app acceptance.
 The production CLI has the finite Agent loop and native budget-stop state.
 At that commit the desktop had a `drive-agent` branch, but its new-run preview
@@ -127,7 +172,18 @@ desktop smoke flows across independent restarts pass. Desktop/narrow screenshots
 were inspected. The smoke drive remains fixture-controlled; this is not the
 connected Agent journey. No live provider, real training or real holdout ran.
 
-Remaining work identified by inspecting production code:
+The subsequent repair/promotion checkpoint adds an explicit final-accepted
+promotion command using existing baseline revisions and registered model custody.
+It replays native final evidence, verifies training/development/model lineage,
+preserves exact retry identity, and resolves the promoted checkpoint for a later
+runtime binding. The row-free desktop bridge supports explicit review, consent,
+recovery, Stop and promotion without calling any of them from Optimize or reads.
+Repairs include the incomplete preview bridge/type import, cancellation during
+final preflight, the deterministic Python capability-probe fixture, and historical
+report assertions after promotion. The rendered final controls are not yet wired;
+this is not a completed app journey.
+
+At that checkpoint, remaining work identified by inspecting production code was:
 
 - Windows CLI startup now establishes kill-on-close job ownership before any
   dispatch; inherited membership closes the unobserved-child spawn/crash gap.
@@ -148,9 +204,10 @@ Remaining work identified by inspecting production code:
   connected execution acceptance still must cover their use through the app.
 - The adaptive protocols deliberately have zero sealed allowance. Separate
   selected-candidate consent, at-most-once CLI final dispatch and read-only
-  completed-result recovery are implemented. Desktop consent and manual
-  promotion are still required. Never turn the consent grant into permission
-  for repeated execution.
+  completed-result recovery and manual CLI promotion are implemented. The typed
+  desktop boundary exists, but rendered consent, execution/recovery and manual
+  promotion controls are still required. Never turn the consent grant into
+  permission for repeated execution.
 - Add a deterministic, connected renderer/IPC/CLI journey, including second-
   iteration evidence and Stop/app-restart/Resume. The existing renderer fixture
   and mocked desktop-controller tests are not that journey.
@@ -254,7 +311,7 @@ This is not full recovery or desktop readiness. The root still projects budget
 errors as failed attempts; distinct budget-stop presentation and safe descendant
 reconciliation remain unfinished. No real Nomos run or paid call was started.
 
-## Current next deliverable
+## Historical next deliverable (superseded by the connected implementation)
 
 Make the existing Overview execute and display the tested Agent loop, with
 working Stop/Resume and truthful activity. Do not rebuild the loop or introduce
@@ -491,10 +548,10 @@ stop, pause implementation and answer immediately.
 
 ## Acceptance evidence
 
-Existing evidence is layered: production CLI orchestration uses deterministic
-provider/native adapters, controller tests assert fixed commands and credentials,
-and Electron fixture tests check the renderer. Connected production-path
-acceptance remains required; do not treat these separate layers as its substitute.
+Evidence includes connected production-path Electron/IPC/CLI/Pi acceptance,
+production-CLI process/crash regressions, core/accounting tests, native-clearance
+tests and rendered interaction checks. The connected test does not substitute a
+desktop drive; only model responses and native scientific work are deterministic.
 
 - [x] Production-CLI tests trace development evidence through Agent decisions,
   removals/additions, qualification, exact training lineage and comparison using
@@ -503,27 +560,28 @@ acceptance remains required; do not treat these separate layers as its substitut
   unchanged baseline/benchmark and genuine no-change completion.
 - [x] Production-CLI Stop/Resume tests prove durable control intent, stale-command
   rejection and reuse of completed inspection after an interrupted Agent call
-  (`9ea9dc4`). This is narrower than every-boundary recovery below.
+  (`9ea9dc4`). This complements the artifact-boundary recovery coverage below.
 - [x] Production-CLI training-time tests prove reduced retry grants after Stop,
   no native dispatch after deadline exhaustion, and completed-output reuse after
   a lost settlement without refunding the unknown charge.
-- [ ] One Optimize action invokes the pinned Agent and, when additions are
+- [x] One Optimize action invokes the pinned Agent and, when additions are
   proposed, the independently pinned generator through that same coordinator.
-- [ ] Every exposed Advanced setting is enforced cumulatively, including
+- [x] Every exposed Advanced setting is enforced cumulatively, including
   concurrency, uncertain outcomes and interrupted-training limits; Quick test
   uses the same engine with its diagnostic restrictions.
-- [ ] Stop/restart/Resume tests cover every boundary, control-intent races,
-  worker/descendant ownership and reuse of completed work.
-- [ ] Complete derived datasets pass native admission and benchmark-isolation
+- [x] Stop/restart/Resume tests cover provider and scientific-artifact boundaries
+  on Windows, control-intent races, worker/descendant ownership and completed-work
+  reuse. The abrupt-kill regression names its nine exact artifact boundaries.
+- [x] Complete derived datasets pass native admission and benchmark-isolation
   checks through the connected path; invalid generated rows cannot train.
-- [ ] Rendered production-path tests show real Agent/Generation activity,
+- [x] Rendered production-path tests show real Agent/Generation activity,
   complete independently browsable iteration/stage history, responsive controls
   and continuous spinners.
-- [ ] Candidate models, dataset diffs and benchmark reports open from the same
+- [x] Candidate models, dataset diffs and benchmark reports open from the same
   run, including rejected candidates and multiple iterations.
-- [ ] Adaptive work never sees sealed evidence. Final holdout has its separate
+- [x] Adaptive work never sees sealed evidence. Final holdout has its separate
   at-most-once selected-candidate handoff; promotion remains manual.
-- [ ] Required Rust, UI/native and rendered journey checks pass on the final
+- [x] Required Rust, UI/native and rendered journey checks pass on the final
   executable tree. The handoff distinguishes deterministic evidence from
   separately authorized live execution.
 

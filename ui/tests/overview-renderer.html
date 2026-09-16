@@ -9,6 +9,7 @@ window.startFixture = initial => {
   const bridge = {
     queryDatasets: async () => ({kind:'list',entries:datasets}), queryBenchmarks:async()=>({kind:'list',versions:[benchmark]}),
     optimizationSetups:async()=>[saved], optimizationLaunches:async()=>[], optimizationAgentPresets:async()=>initial.presets,
+    agentFinalResult:async()=>null,
     finishInputPreparation:async()=>{},stopInputPreparation:async()=>stopPreparation?.(),
     previewOptimizationSetup:async(_id,_selection,receive)=>{receive({phase:'verifying_file',subject:'model.safetensors',completed:1,total:10});return new Promise((_resolve,reject)=>{stopPreparation=()=>reject(new Error('Run cancelled.'))})},
     inputOptimizationRuns:async()=>roots, projectActivity:async()=>({project_id:saved.inputs.projectId,actions:[]}),

@@ -16,6 +16,7 @@
     "build": "node scripts/build.mjs",
     "start": "npm run build:backend && npm run build && electron .",
     "smoke": "npm run build:backend && npm run build:test-fixtures && npm run build && node scripts/smoke.mjs",
+    "verify:agent": "npm run build:backend && npm run build:test-fixtures && npm --prefix ../adapters/research-agent-pi run build && npm run typecheck && npm run build && node scripts/agent-journey.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "verify:overview": "npm run typecheck && npm run build && electron scripts/verify-overview.cjs",
     "check": "npm run build:backend && npm run typecheck && npm run build && npm test",

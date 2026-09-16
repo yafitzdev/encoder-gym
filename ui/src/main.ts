@@ -9,6 +9,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { runSmokeChecks } from "./smoke-checks.js";
 import { runManagedSmokeChecks } from "./managed-smoke-checks.js";
+import { runAgentJourney } from "./agent-journey-checks.js";
 import { checkCurrentManaged } from "./current-managed-check.js";
 import { ManagedBackend, datasetPurpose, managedSnapshot } from "./managed-backend.js";
 import { CredentialStore } from "./credential-store.js";
@@ -304,6 +305,22 @@ ipcMain.handle("encoder-gym:start-input-optimization", (event, value: unknown, s
 });
 ipcMain.handle("encoder-gym:input-optimization-run", (_event, value: unknown, run: unknown) => backend.optimizationLaunch.show(projectId(value), run));
 ipcMain.handle("encoder-gym:input-optimization-runs", (_event, value: unknown) => backend.optimizationLaunch.runs(projectId(value)));
+ipcMain.handle("encoder-gym:agent-final-result", (_event, value: unknown, run: unknown) => backend.optimizationFinal.read(projectId(value), run));
+ipcMain.handle("encoder-gym:review-agent-final", (_event, value: unknown, run: unknown) => backend.optimizationFinal.review(projectId(value), run));
+for (const operation of ["authorize", "recover"] as const) {
+  ipcMain.handle(`encoder-gym:${operation}-agent-final`, (event, value: unknown, run: unknown, token: unknown, authority: unknown) => {
+    const id = projectId(value), live = optimizationProgress(event, token);
+    return trackProjectAction(id, "optimization.final_evaluation", activityReference("run", run), progress =>
+      backend.optimizationFinal[operation](id, run, authority, native => {
+        const value = { ...native, runStage: "evaluating" as const }; live(value); progress(value);
+      }), result => [...activityReference("run", run), ...activityReference("report", result.execution.result?.report.id)]);
+  });
+}
+ipcMain.handle("encoder-gym:stop-agent-final", (_event, value: unknown, run: unknown) => backend.optimizationFinal.stop(projectId(value), run));
+ipcMain.handle("encoder-gym:promote-agent-final", (_event, value: unknown, run: unknown, request: unknown) => {
+  const id = projectId(value);
+  return trackProjectAction(id, "model.promote", activityReference("run", run), () => backend.optimizationFinal.promote(id, run, request));
+});
 ipcMain.handle("encoder-gym:drive-input-optimization", (event, value: unknown, run: unknown, token: unknown, resumeHead: unknown) => {
   const id = projectId(value), phases: Record<InputOptimizationPhase, NativeProgress["phase"]> = {
     checking_inputs: "checking_model", preparing_data: "loading_training_rows", starting: "loading_evaluation_protocol", training: "checking_files",
@@ -566,6 +583,7 @@ if (smokeTest || verifyCurrent) {
     try {
       await window.loadFile(join(directory, "renderer", "index.html"));
       if (verifyCurrent) await checkCurrentManaged(window, join(directory, "..", "qa"), registry, backend);
+      else if (process.argv.includes("--smoke-agent")) await runAgentJourney(window, registry, backend);
       else await (process.argv.includes("--smoke-managed") ? runManagedSmokeChecks : runSmokeChecks)(window, join(directory, "..", "qa"), { registry, backend, chooseFolder: path => { smokeFolderChoice = path; }, restart: process.argv.includes("--smoke-restart") });
       window.destroy(); app.quit();
     } catch (error) { console.error(error); window.destroy(); app.exit(1); }

@@ -8,8 +8,12 @@ development-failure inspection, bounded concurrent generation, and recoverable
 publication through ordinary imports and dataset versions. Bounded repeated
 iteration is composed through the CLI below. Root lifecycle and desktop dispatch
 are implemented, including ordered iteration/report navigation and immutable
-Advanced/Quick-test settings. Complete recovery and connected app acceptance
-remain outstanding. The fixed-recipe executor
+Advanced/Quick-test settings and explicit post-loop final consent, recovery and
+manual promotion. Offline connected Electron acceptance exercises the real
+renderer/IPC/CLI/Pi path with deterministic loopback provider and native responses.
+Windows abrupt-death regressions cover nine durable artifact boundaries; other
+platforms retain recorded-child recovery without Windows spawn-time containment.
+The fixed-recipe executor
 still explicitly rejects agentic settings; it must not masquerade as an agent run.
 
 The pre-training CLI composition now exists as `workspace optimization-run
@@ -99,9 +103,8 @@ process tests cover changed second-iteration evidence and proposals, selection
 of an earlier better dataset, first/later no-change, row-limit termination, and
 interruption after scientific completion but before the completion record.
 Retry reuses provider work, datasets, models and reports; re-fingerprinted
-completion substitutions are rejected. This does not yet establish recovery at
-every interruption boundary, separately authorized final holdout, or the
-production Overview coordinator.
+completion substitutions are rejected. Separate process-crash, post-loop final
+and connected Overview tests extend this component evidence as described below.
 
 Final consent is now a separate, row-free handoff after the adaptive loop closes:
 
@@ -145,8 +148,25 @@ returning its decision. Scientific scores remain in the native evidence store;
 the immutable project receipt contains only identities, normalization timestamps
 and the acceptance boolean. Neither command projects scores into adaptive
 history, changes an iteration protocol/journal or promotes the baseline.
-Desktop consent/execution and manual promotion remain separate work; these CLI
-contracts alone do not establish connected app acceptance.
+`promote-final-agent <RUN_ID> --expected-baseline-revision <REVISION_ID>
+--expected-final-receipt <FINGERPRINT>` is a separate manual action. It replays
+the original development and final evidence, validates the full-data training
+binding and registered checkpoint lineage, and appends an ordinary baseline
+revision only for a final-accepted candidate. Exact retries reuse that revision;
+changed requests, stale baseline authority and final rejection fail closed.
+Promotion performs no evaluation or model duplication. Subsequent runtime
+binding resolves the original accepted checkpoint through its final decision.
+
+The typed desktop bridge now exposes explicit review, consent, execution,
+read-only result lookup, recovery, owned-worker Stop and manual promotion.
+Consent uses a main-process-owned scope and stable retry UUID, not renderer
+authority fields. Recovery supplies the exact saved grant to the existing CLI;
+unknown outcomes cannot acquire another allowance. Stop also cancels preflight
+verification before dispatch. Report exposes explicit review, one-use consent,
+Stop, saved-result recovery and accepted-only manual promotion. Reads and Optimize
+never authorize holdout. The controller reloads saved custody after uncertain
+replies; restart uses the same grant and reserved report identities. Quick tests
+never show final controls, and launch authority is loaded before desktop dispatch.
 
 The same CLI coordinator now journals root execution attempts before input
 preparation, recording failure, interruption and exact adaptive completion.
@@ -208,8 +228,12 @@ or Stop acknowledgement. Process-handle cleanup checks job membership (or the
 exact legacy creation time), and lease child identities publish atomically.
 Other platforms retain polling-based recovery. Windows process tests cover
 death before a child's first instruction, reparented descendants and actual
-CLI training interruption with conservative unknown charges; this is not yet
-every-boundary recovery or connected desktop acceptance.
+CLI training interruption with conservative unknown charges. Another process test
+kills the production coordinator at publication, qualification, training completion,
+both development reports, model registration and the result/completion/root writes;
+retry reuses completed provider and scientific work. Scientific stages drain their
+owned job before lease release, and terminal Pi sessions are reaped immediately.
+An empty initialized job takes precedence over stale recorded child PIDs.
 
 Native training now reserves remaining time immediately before fresh process
 dispatch, through an experiment-core accounting port backed by the project
@@ -230,8 +254,8 @@ completed artifacts may still be adopted after the persistence issue is fixed.
 Agent and Generation activities are now projected from their own persisted
 actions into the existing activity stream, rather than requiring desktop
 re-emission under `optimization.run`. Generation has an explicit origin and
-per-call action identity. Renderer tests verify inline attribution separately
-from the CLI test; this is not yet a one-click app integration test.
+per-call action identity. In addition to renderer and CLI regressions, the connected
+Electron journey opens these actual Agent/Generation activities from the same run.
 
 The Agent runner reserves one call before each one-turn Pi session, retains
 completed tool results for continuation, and rejects edits referencing
@@ -362,16 +386,20 @@ retains its selected stage and scroll during live updates; returning to live
 work is explicit. Native telemetry carries the iteration ordinal, and unscoped
 run setup remains separate. Development gate acceptance does not imply the
 candidate was selected as best, received final approval, or was promoted.
-Rendered fixtures verify this presentation; a connected production-path
-desktop journey is still required for overall acceptance.
+Rendered fixtures verify stage/iteration interaction and narrow layouts. The
+connected production-path journey additionally opens actual candidate, dataset
+diff and benchmark viewers after evidence-dependent iterations.
 
 Run observations retain the newest durable root/Agent control heads when polls,
 Stop replies and drive responses arrive out of order. Stored running state after
 reopening is labeled unverified instead of paused; Stop can target that existing
 run without starting a coordinator. Pending Stop remains distinct from an
 acknowledged pause, and terminal/paused states outrank an unsettled desktop
-promise for spinner presentation. Live worker discovery and the connected
-restart journey remain separate acceptance requirements.
+promise for both stage and sidebar spinner presentation. Mutation locks remain
+held until owned IPC settles; a completed or paused run is not labeled running
+just because that response is pending. Stored state is not live worker discovery. The
+connected restart journey requires explicit Resume against the displayed saved
+head and verifies that completed inspection is not repeated.
 
 One expandable run keeps Setup → Status → Report. Status displays an iteration
 selector above that iteration's stage strip and activity. Finished iterations

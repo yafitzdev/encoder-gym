@@ -133,8 +133,10 @@ normal store. Later Agent inputs bind the preceding result and best eligible
 full dataset without changing the original baseline, benchmark or model
 starting checkpoint. The CLI bounds continuation by the immutable iteration
 limit and reuses the same inspection, generation, qualification, training and
-registration functions. Complete per-iteration desktop presentation and
-connected end-to-end acceptance remain outstanding.
+registration functions. Overview consumes the same ordered iteration/report
+custody, with independent historical-stage navigation and ordinary artifact links.
+The offline connected Electron acceptance invokes this production composition
+through real IPC and Pi sessions, not a substituted desktop drive.
 
 `project-workspace-core::optimization_final` binds post-loop final consent to
 the last completion and its development-selected full-data checkpoint. It
@@ -154,8 +156,22 @@ experiment-core assessment policy. The local adapter atomically reserves one
 dispatch and stores a row-free immutable final receipt. Native scientific reports
 remain outside presentation custody; completed CLI reads reconstruct their
 normalized identities and deterministic verdict. The original adaptive journal
-and zero-sealed protocol remain unchanged. Desktop consent and manual promotion
-are not implemented by this CLI contract.
+and zero-sealed protocol remain unchanged.
+
+`project-workspace-core::optimization_final_promotion` validates the selected
+development result, full-data training binding, final decision and exact
+registered model lineage. The explicit `promote-final-agent` CLI command
+reconstructs final acceptance from saved native evidence and uses the existing
+compare-and-append baseline promotion contract. It reuses the registered model;
+it neither dispatches evaluation nor changes scientific history. A typed final
+decision locator lets ordinary runtime rebinding resolve that accepted model.
+The desktop's strict, row-free final bridge pins a main-process review token,
+keeps consent retry identity, shares the project execution lock and propagates
+Stop through preflight and dispatch. No Optimize or read path invokes it
+automatically. The Report panel explicitly reviews and authorizes one evaluation,
+recovers the exact saved grant after restart, and separately offers promotion only
+after final acceptance. Unknown outcomes cannot acquire another allowance.
+Quick-test reports exclude these controls, using the persisted launch authority.
 
 `project-workspace-core::optimization_execution` owns only the coordinator's
 execution-attempt transitions and a terminal-iteration reference, not another
@@ -179,8 +195,9 @@ new scientific steps and preserves resumable journal state on interruption,
 rather than recording an artificial candidate failure. No subprocess, SQLite
 or provider types enter core. The renderer supplies the paused head it displayed
 through typed IPC; main-process refresh never substitutes a newer Stop head.
-Complete abrupt-process recovery, per-iteration desktop presentation and final
-holdout handoff remain outstanding.
+The separate post-loop final handoff never reopens adaptive execution. Connected
+desktop acceptance covers Stop/restart/Resume and final-receipt recovery; Windows
+process tests additionally kill the real coordinator at nine artifact boundaries.
 
 `encoder-experiment-core::training_budget` owns cumulative native-training time
 and its narrow reserve/finish port. `project-workspace-local` implements this
@@ -211,11 +228,16 @@ the finite Agent coordinator returns, it drains remaining job members before
 closing the root attempt or acknowledging Stop. Cleanup opens process handles
 and rechecks membership, avoiding numeric-PID termination races. Legacy lease
 cleanup verifies creation time on the same handle it terminates. Child identity
-files are synced and published atomically, never exposed half-written.
+files are synced and published atomically, never exposed half-written. Scientific
+stages drain their contained descendants before releasing their lease. An
+initialized, empty Job Object is authoritative: stale recorded PIDs cannot turn
+unrelated status readers into purported surviving workers. One-turn Pi sessions
+are explicitly reaped on terminal messages rather than relying on Drop cleanup.
 This is an operational CLI adapter, not a domain dependency or another worker.
 Other platforms still use recorded-child recovery without the Windows
-spawn-time guarantee. Abrupt-death coverage of every artifact boundary remains
-separate acceptance work.
+spawn-time guarantee. The Windows regression interrupts dataset publication,
+qualification, training completion, both development reports, model registration,
+iteration result/completion and root completion, and verifies completed-work reuse.
 
 The CLI now transfers each iteration's verified training output into ordinary
 model custody, including development-rejected candidates and trained outputs

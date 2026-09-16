@@ -37,18 +37,19 @@ fn job() -> anyhow::Result<&'static win32job::Job> {
 /// Prevent a lease destructor from advertising idle while contained children
 /// are still unwinding. An uninitialized/test or non-Windows process falls back
 /// to the lease's recorded-child check; an ownership/query error fails closed.
-pub(crate) fn has_contained_descendants() -> anyhow::Result<bool> {
+pub(crate) fn contained_descendants() -> anyhow::Result<Option<bool>> {
     #[cfg(windows)]
     if let Some(job) = JOB.get() {
         let job = job
             .as_ref()
             .map_err(|error| anyhow::anyhow!(error.clone()))?;
-        return Ok(job
-            .query_process_id_list()?
-            .into_iter()
-            .any(|pid| pid != std::process::id() as usize));
+        return Ok(Some(
+            job.query_process_id_list()?
+                .into_iter()
+                .any(|pid| pid != std::process::id() as usize),
+        ));
     }
-    Ok(false)
+    Ok(None)
 }
 
 /// Called only after the finite coordinator has returned and can no longer

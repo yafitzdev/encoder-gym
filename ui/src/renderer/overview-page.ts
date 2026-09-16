@@ -14,6 +14,7 @@ import { comparisonTone, newerInputRun, overviewRecords, reportDecision, type Ov
 import { failureReason } from "../presentation-errors.js";
 import { iterationReport } from "./iteration-report.js";
 import { optimizationSettings } from "./optimization-settings.js";
+import { optimizationFinalPanel } from "./optimization-final-panel.js";
 
 // The standalone renderer verification uses the same keyed replacement rule
 // as the full application shell.
@@ -35,7 +36,7 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     if (state.expanded === "draft") state.expanded = setup.run.id;
     state.tabs.set(setup.run.id, "status"); state.launching = false; state.draft = false;
   }
-  const busy = !!setup.preparationId || setup.running || setup.saving || setup.initializingEvaluation || !!runs.runningId;
+  const busy = !!setup.preparationId || setup.running || setup.saving || setup.initializingEvaluation || !!runs.runningId || !!runs.final?.busyRun;
   if (state.expanded === undefined && runs.runs && setup.data) {
     state.draft = !records.length;
     state.expanded = records[0]?.id ?? "draft";
@@ -110,7 +111,7 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
             onClick: () => { state.tabs.set(id, stage); actions.render(); } }, h("span", { class: "focus-stage-number" }, String(index + 1)), { setup: "Setup", status: "Status", report: "Report" }[stage]))),
         h("section", { class: "focus-panel", "aria-label": tab }, tab !== "setup" && diagnostic ? h("p", { class: "diagnostic-notice" }, "Diagnostic run · no final holdout or promotion.") : null, tab !== "setup" ? iterationSelector(record) : null,
           tab === "setup" ? setupPanel(record) : tab === "status" ? statusPanel(record) : record?.input?.iterations?.length
-            ? iterationReport(selectedIteration(record), actions) : reportPanel(record!))) : null);
+            ? h("div", {}, iterationReport(selectedIteration(record), actions), settings ? optimizationFinalPanel(record.input, runs.final, workspace.managed!, actions, diagnostic, !!setup.running || !!runs.runningId) : null) : reportPanel(record!))) : null);
   }
   function selectedIteration(record: OverviewRecord) {
     const history = record.input?.iterations;

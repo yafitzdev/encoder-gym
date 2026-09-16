@@ -13,6 +13,8 @@ use project_workspace_local::{
 };
 use sqlx::{Connection, SqliteConnection};
 use std::io::{Read, Write};
+#[path = "optimization_agent_crash_check.rs"]
+mod crash_check;
 #[path = "optimization_agent_final_check.rs"]
 mod final_check;
 #[path = "optimization_agent_loop_check.rs"]
@@ -99,6 +101,11 @@ async fn cli_agent_loop_keeps_best_eligible_dataset_but_inspects_latest_result()
 }
 
 #[tokio::test]
+async fn cli_agent_final_rejection_cannot_promote_a_development_winner() {
+    scenario(true, Some("eligible_rejected")).await;
+}
+
+#[tokio::test]
 async fn cli_agent_loop_can_finish_first_analysis_without_edits_or_training() {
     scenario(true, Some("no_change_first")).await;
 }
@@ -125,11 +132,23 @@ async fn cli_agent_training_deadline_exhausts_budget_without_repeating_native_wo
 
 #[cfg(windows)]
 #[tokio::test]
+async fn cli_agent_recovers_abrupt_death_at_each_artifact_boundary_without_repeating_work() {
+    scenario(true, Some("crash_boundaries")).await;
+}
+
+#[cfg(windows)]
+#[tokio::test]
 async fn cli_agent_crash_stops_native_descendants_and_retains_unknown_training_charge() {
     scenario(true, Some("training_crash")).await;
 }
 
 async fn scenario(complete: bool, loop_mode: Option<&str>) {
+    let final_rejected = loop_mode == Some("eligible_rejected");
+    let loop_mode = if final_rejected {
+        Some("eligible")
+    } else {
+        loop_mode
+    };
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let (folder, project) = initial_benchmark_fixture(
@@ -172,6 +191,13 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         fs::write(path, serde_json::to_vec(&saved).unwrap()).unwrap();
     }
     if loop_mode == Some("eligible") {
+        if final_rejected {
+            fs::write(
+                root.join("runtime/runs/fixture-final-rejected"),
+                "reject final",
+            )
+            .unwrap();
+        }
         // Only the test-native executable interprets this fixture setting.
         fs::write(
             root.join("runtime/runs/fixture-eligible-candidates"),
@@ -319,6 +345,7 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
                 | "training_settlement"
                 | "training_timeout"
                 | "training_crash"
+                | "crash_boundaries"
         ) {
             1
         } else {
@@ -444,6 +471,11 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
     let before_native = fs::read(root.join("runtime/native-invocations.log")).unwrap();
+    if loop_mode == Some("crash_boundaries") {
+        crash_check::exercise(root, &folder, reserved.id, &calls, command).await;
+        generator.unwrap().join().unwrap();
+        return;
+    }
     if matches!(loop_mode, Some("agent_limit" | "generation_limit")) {
         let exhausted = invoke_iteration();
         assert!(!exhausted.status.success());

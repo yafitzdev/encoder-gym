@@ -27,6 +27,7 @@ import { scientificRuntimeDialog } from "./scientific-runtime-dialog.js";
 import { renderActivity, type ActivityPageActions, type ActivityPageState } from "./activity-page.js";
 import { InputRunsController } from "./input-runs-controller.js";
 import { renderOverview, newOverviewState, type OverviewState } from "./overview-page.js";
+import { projectOptimizationWorking } from "./overview-records.js";
 
 const element = (id: string): HTMLElement => { const found = document.getElementById(id); if (!found) throw new Error("Missing #" + id); return found; };
 interface ProjectView { history: NavigationHistory; overview: OverviewState; models: ModelPageState; details: Map<string, DetailState>; optimization: OptimizationPageState; providers: ProviderPageState; activity: ActivityPageState; baselineBusy: boolean; datasets?: DatasetController; benchmarks?: BenchmarkController; setup?: OptimizationSetupController; inputRuns?: InputRunsController }
@@ -86,7 +87,7 @@ export function mount(): void {
         if (location.id) view.overview.expanded = location.id;
         location = { page: "overview" };
       } else if (location.page === "optimization" && location.tab === "setup") {
-        if (!view.setup?.running && !view.inputRuns?.runningId) {
+        if (!view.setup?.running && !view.inputRuns?.runningId && !view.inputRuns?.final.busyRun) {
           if (view.setup?.run) view.inputRuns?.retain(view.setup.run);
           view.setup?.newDraft(); view.overview.draft = true; view.overview.expanded = "draft"; view.overview.tabs.set("draft", "setup");
         }
@@ -546,7 +547,7 @@ export function mount(): void {
     const runCount = projectRunIds.size + (data?.runs.filter(run => !run.optimizationId || !projectRunIds.has(run.optimizationId)).length ?? 0)
       + (view.optimization.run && !linkedOptimizationIds.has(view.optimization.run.run_id) && !projectRunIds.has(view.optimization.run.run_id) ? 1 : 0);
     const activePage = data?.managed && ["overview", "runs", "run", "optimization"].includes(current.page) ? "overview" : ["model", "candidate", "baseline", "compare"].includes(current.page) ? "models" : current.page === "run" ? "runs" : current.page === "dataset" ? "datasets" : current.page;
-    const projectRunActive = !!view.setup?.preparationId || !!view.setup?.running || !!view.setup?.saving || !!view.setup?.initializingEvaluation || !!view.inputRuns?.runningId;
+    const projectRunActive = projectOptimizationWorking(view.setup, view.inputRuns);
     const focus = document.activeElement, focusId = focus?.id;
     const caret = focus instanceof HTMLInputElement && ["text", "search"].includes(focus.type) ? [focus.selectionStart, focus.selectionEnd] : undefined;
     const scroll = main.scrollTop;
@@ -557,7 +558,7 @@ export function mount(): void {
     const nextProjectNav = document.createDocumentFragment();
     nextProjectNav.append(...collection.projects.map(p => {
       const expanded = p.id === project?.id && !collapsedProjects.has(p.id);
-      const projectView = views.get(p.id), backgroundActive = !!projectView?.setup?.preparationId || !!projectView?.setup?.running || !!projectView?.setup?.saving || !!projectView?.setup?.initializingEvaluation || !!projectView?.inputRuns?.runningId;
+      const projectView = views.get(p.id), backgroundActive = projectOptimizationWorking(projectView?.setup, projectView?.inputRuns);
       return h("section", { class: "project-folder" + (p.id === project?.id ? " selected-project" : "") + (expanded ? " expanded-project" : "") },
       h("button", { type: "button", id: "project-" + p.id, disabled: collectionBusy, class: "project-folder-button", title: p.source.kind === "folder" ? p.source.path : "Recorded example", "data-project-id": p.id, "aria-expanded": String(expanded), onClick: () => {
         if (p.id === selection.selectedId) { collapsedProjects.has(p.id) ? collapsedProjects.delete(p.id) : collapsedProjects.add(p.id); render(); }

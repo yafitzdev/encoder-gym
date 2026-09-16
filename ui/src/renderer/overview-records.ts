@@ -1,9 +1,23 @@
-import { newerInputRun, type InputOptimizationRun } from "../input-optimization.js";
+import { inputOptimizationWorking, newerInputRun, observedInputRun, type InputOptimizationRun } from "../input-optimization.js";
+import type { OptimizationSetupController } from "./optimization-setup-controller.js";
+import type { InputRunsController } from "./input-runs-controller.js";
 export { newerInputRun } from "../input-optimization.js";
 import type { RunRecord, WorkspaceSnapshot } from "../workspace.js";
 import type { ManagedRunStatus } from "../managed-control.js";
 
 export interface OverviewRecord { id: string; name: string; createdAt: string; input?: InputOptimizationRun; experiment?: RunRecord; managed?: ManagedRunStatus }
+
+/** Sidebar activity is not the mutation lock: durable Agent closure wins over IPC. */
+export function projectOptimizationWorking(setup?: Pick<OptimizationSetupController, "run" | "running" | "preparationId" | "saving" | "initializingEvaluation">,
+  runs?: Pick<InputRunsController, "runs" | "runningId" | "final">): boolean {
+  const working = (id?: string): boolean => {
+    let run = runs?.runs?.find(value => value.id === id);
+    if (setup?.run && setup.run.id === id) run = observedInputRun(run, setup.run);
+    return !run?.state.startsWith("agent_") || inputOptimizationWorking(run, true);
+  };
+  return !!setup?.preparationId || !!setup?.saving || !!setup?.initializingEvaluation || !!runs?.final.busyRun
+    || !!setup?.running && working(setup.run?.id) || !!runs?.runningId && working(runs.runningId);
+}
 
 /** Join by persisted identity, never by dates, display names, or list position. */
 export function overviewRecords(workspace: WorkspaceSnapshot, roots: InputOptimizationRun[], managed?: ManagedRunStatus): OverviewRecord[] {

@@ -14,6 +14,7 @@ import { ManagedDatasets } from "./managed-datasets.js";
 import { ManagedBenchmarks } from "./managed-benchmarks.js";
 import { ManagedOptimizationSetup } from "./managed-optimization-setup.js";
 import { ManagedOptimizationLaunch } from "./managed-optimization-launch.js";
+import { ManagedOptimizationFinal } from "./managed-optimization-final.js";
 import { providerCredentialBinding } from "./provider-credentials.js";
 import type { AppendProjectActivity, ProjectActivityEvent, ProjectActivityExport, ProjectActivityLog, ProjectActivityNarrative, ProjectActivityReference, ProjectActivitySource } from "./project-activity.js";
 
@@ -138,7 +139,15 @@ export class ManagedBackend {
   readonly benchmarks: ManagedBenchmarks;
   readonly optimizationSetup: ManagedOptimizationSetup;
   readonly optimizationLaunch: ManagedOptimizationLaunch;
+  readonly optimizationFinal: ManagedOptimizationFinal;
   constructor(readonly executable: string, private registry: ProjectRegistry, private executor: CommandExecutor = executeCommand, private options: ManagedBackendOptions = {}) {
+    this.optimizationFinal = new ManagedOptimizationFinal({
+      open: id => this.openRegistered(id),
+      command: (args, progress, signal) => this.command(args, undefined, progress, signal),
+      exclusive: (id, run) => this.exclusiveProject(id, run),
+      exclusiveRun: (id, runId, run) => this.exclusiveOptimizationRun(id, runId, run),
+      abortRun: (id, runId) => this.abortOptimizationRun(id, runId),
+    });
     this.datasetVersions = new ManagedDatasets({ open: id => this.openRegistered(id), command: args => this.command(args), exclusive: (id, run) => this.exclusiveProject(id, run) });
     this.benchmarks = new ManagedBenchmarks({ open: id => this.openRegistered(id), command: (args, progress, signal) => this.command(args, undefined, progress, signal), exclusive: (id, run) => this.exclusiveProject(id, run) });
     this.optimizationSetup = new ManagedOptimizationSetup({ open: id => this.openRegistered(id), command: (args, progress, signal) => this.command(args, undefined, progress, signal), exclusive: (id, run) => this.exclusiveProject(id, run) });

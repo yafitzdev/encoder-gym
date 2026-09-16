@@ -53,6 +53,18 @@ pub enum WorkspaceOptimizationLaunchCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum WorkspaceOptimizationRunCommand {
+    /// Manually promote the exact checkpoint that passed separate final acceptance.
+    PromoteFinalAgent {
+        run_id: Uuid,
+        #[arg(long)]
+        expected_baseline_revision: Uuid,
+        #[arg(long)]
+        expected_final_receipt: String,
+        #[arg(long, default_value = "local-operator")]
+        actor: String,
+        #[arg(long, default_value = "Promote final-accepted Agent candidate")]
+        reason: String,
+    },
     /// Use exact separate consent once; retries only recover completed native evidence.
     FinalizeAgent {
         run_id: Uuid,

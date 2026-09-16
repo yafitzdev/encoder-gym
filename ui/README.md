@@ -143,10 +143,20 @@ save and list commands. It pins the current baseline, training dataset version
 and shared benchmark version in immutable project history. The project-header
 Optimize screen now selects those inputs and opens their common artifact viewers.
 It preserves exact versions across restart and exact request IDs across save
-retries. The automatic executor is not connected yet; saving configuration does
-not run the older reviewed recipe or authorize spending. Existing run controls
-remain accessible from Runs. See
+retries. **Optimize** invokes the finite Agent coordinator using those pinned
+inputs and independent Agent/generator models. Saving configuration alone does
+not execute a run. **Stop** preserves a durable resumable head; after restart,
+**Resume** continues that exact run without repeating completed work. Advanced
+settings are immutable after reservation. Quick test uses the same engine but
+cannot authorize final holdout or promotion. See
 [optimization launch](../docs/features/optimization/optimization-launch-spec.md).
+
+The completed standard run's **Report → Final acceptance** separately reviews
+the selected full-data candidate and asks for one-use evaluation consent. An
+interrupted or lost result consumes its allowance; **Recover saved final result**
+only reads existing evidence and cannot repeat evaluation. An accepted result
+enables **Promote accepted candidate** as a separate manual action. Reading a
+report, running Optimize or passing development never grants that consent.
 
 Managed onboarding calls the project-owned `synth workspace` commands. It
 accepts self-contained BERT-family safetensors encoder bundles, preserving
@@ -294,9 +304,20 @@ path out of renderer state. Restoring the screen does not repeat native replay.
 ```powershell
 npm run check   # Rust CLI build, TypeScript, UI build, deterministic Node tests
 npm run smoke   # Legacy + managed actual Electron interaction and restart checks
+npm run verify:agent  # Connected renderer -> IPC -> CLI -> real Pi, offline fixtures
 ```
 
-The smoke test launches four hidden Electron processes: legacy and managed
+The Agent journey launches seven hidden Electron processes with a temporary
+profile and projects. A loopback provider drives real Pi sessions through
+inspection, dataset edits, two native training/development cycles and no-change
+completion. It verifies Stop/restart/Resume, real activity and artifact viewers,
+explicit final consent, lost-receipt recovery without repeated evaluation, manual
+promotion, Quick-test restrictions and rejected generated authority. Only model
+responses and native scientific execution are deterministic adapters; no desktop
+drive method is replaced. No external model, download, GPU or real Nomos state
+is used. Logs and screenshots remain in the printed temporary evidence folder.
+
+The older smoke test launches four hidden Electron processes: legacy and managed
 flows each get their own temporary profile and an independent restart. Legacy
 checks register classification and similarity fixture
 folders, switches and reopens them after process restart, and checks rename,

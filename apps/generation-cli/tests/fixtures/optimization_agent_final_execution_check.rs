@@ -3,6 +3,8 @@ use super::*;
 use project_workspace_core::optimization_final_execution::AgentFinalReceipt;
 use project_workspace_local::optimization_final_execution as custody;
 use std::collections::BTreeSet;
+#[path = "optimization_agent_final_promotion_check.rs"]
+mod promotion_check;
 
 fn files(root: &Path) -> BTreeSet<std::path::PathBuf> {
     let mut result = BTreeSet::new();
@@ -150,7 +152,34 @@ pub(super) async fn assert_execution(
         .unwrap()
         .unwrap();
     let development = project_workspace_core::optimization_iteration_execution::IterationDevelopmentResult::from_journal(&training, &source.project, &source.protocol, &source.events).unwrap();
-    assert_domain(grant, &dispatch, source, development.output.model);
+    let domain_result = assert_domain(grant, &dispatch, source, development.output.model);
+    let workspace = project_workspace_local::open_workspace(folder, true)
+        .await
+        .unwrap();
+    let catalog = workspace.model_catalog.as_ref().unwrap();
+    promotion_check::assert_lineage(
+        project_workspace_core::optimization_final_promotion::AgentFinalPromotionEvidence {
+            authorization: grant,
+            dispatch: &dispatch,
+            result: &domain_result,
+            training: &training,
+            project: &source.project,
+            protocol: &source.protocol,
+            events: &source.events,
+            model: catalog
+                .artifacts
+                .iter()
+                .find(|model| model.source_model.as_ref() == Some(&grant.scope.model))
+                .unwrap(),
+            baseline: catalog
+                .baseline_revisions
+                .iter()
+                .find(|baseline| {
+                    baseline.id.to_string() == grant.scope.comparison_baseline_revision.id
+                })
+                .unwrap(),
+        },
+    );
     assert_eq!(receipt.report.id, dispatch.report_id.to_string());
     assert_eq!(receipt.assessment.id, dispatch.assessment_id.to_string());
     assert_eq!(
@@ -282,6 +311,10 @@ pub(super) async fn assert_execution(
         ),
         history
     );
+    Box::pin(promotion_check::assert_promotion(
+        root, folder, run_id, grant, &receipt,
+    ))
+    .await;
 }
 
 fn assert_domain(
@@ -289,7 +322,7 @@ fn assert_domain(
     dispatch: &project_workspace_core::optimization_final_execution::AgentFinalDispatch,
     source: &optimization_completions::IterationScientificEvidence,
     model: encoder_experiment_core::domain::ModelArtifactIdentity,
-) {
+) -> project_workspace_core::optimization_final_execution::AgentFinalResult {
     use encoder_experiment_core::{
         domain::EvidenceRole,
         metrics::{CandidateVerdict, EvaluationReport},
@@ -359,4 +392,12 @@ fn assert_domain(
             .validate(grant, dispatch, &source.project, &source.protocol)
             .is_err()
     );
+    // Pure promotion-policy fixture, independent of the native final verdict.
+    // Improving the only strict-improvement gate leaves all other gates equal.
+    let mut passing = report;
+    *passing.metrics.get_mut("mrr").unwrap() += 0.1;
+    passing.fingerprint = passing.reproduce_fingerprint().unwrap();
+    let accepted = create(passing).unwrap();
+    assert!(accepted.accepted());
+    accepted
 }

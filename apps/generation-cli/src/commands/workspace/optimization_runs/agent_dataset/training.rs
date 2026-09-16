@@ -288,6 +288,10 @@ pub(super) async fn complete(
     }
     .await;
     store.pool().close().await;
+    // All work in this scientific stage has settled. Drain owned processes
+    // before dropping its lease; otherwise a still-unwinding child keeps that
+    // lease alive and the next iteration conflicts with its own coordinator.
+    crate::process_ownership::quiesce().await?;
     result
 }
 

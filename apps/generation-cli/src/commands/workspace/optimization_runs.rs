@@ -28,6 +28,7 @@ use uuid::Uuid;
 mod agent_dataset;
 mod final_authorization;
 mod final_execution;
+pub(super) mod final_promotion;
 mod history;
 mod iteration_inputs;
 
@@ -73,6 +74,23 @@ fn candidate_reasoning(candidate: &TrainingCandidate) -> Result<String> {
 pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunCommand) -> Result<()> {
     use WorkspaceOptimizationRunCommand::*;
     match command {
+        PromoteFinalAgent {
+            run_id,
+            expected_baseline_revision,
+            expected_final_receipt,
+            actor,
+            reason,
+        } => {
+            final_promotion::execute(
+                folder,
+                run_id,
+                expected_baseline_revision,
+                &expected_final_receipt,
+                actor,
+                reason,
+            )
+            .await
+        }
         FinalizeAgent {
             run_id,
             authorization_id,

@@ -222,6 +222,7 @@ impl ResearchAgentSession for PiProcessSession {
                 OutputMessage::Completed { run_id } => {
                     self.validate_run(run_id)?;
                     self.completed = true;
+                    self.child.kill().await.map_err(adapter_error)?;
                     Ok(ResearchAgentMessage::Completed)
                 }
                 OutputMessage::Failed { run_id, message } => {
@@ -229,6 +230,7 @@ impl ResearchAgentSession for PiProcessSession {
                         self.validate_run(run_id)?;
                     }
                     self.completed = true;
+                    self.child.kill().await.map_err(adapter_error)?;
                     Ok(ResearchAgentMessage::Failed { message })
                 }
             }
@@ -482,6 +484,44 @@ fn adapter_error(error: impl std::fmt::Display) -> ResearchAdapterError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn terminal_messages_reap_the_owned_sidecar_before_returning() {
+        for kind in ["completed", "failed"] {
+            let run_id = Uuid::new_v4();
+            let message = serde_json::json!({"type":kind,"runId":run_id,"message":"fixture"});
+            let mut child = Command::new("node")
+                .args([
+                    "-e",
+                    "console.log(process.argv[1]);setInterval(()=>{},1000)",
+                ])
+                .arg(message.to_string())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap();
+            let mut session = PiProcessSession {
+                run_id,
+                stdin: child.stdin.take().unwrap(),
+                lines: BufReader::new(child.stdout.take().unwrap()).lines(),
+                child,
+                completed: false,
+            };
+            let result = tokio::time::timeout(Duration::from_secs(10), session.next_message())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(matches!(
+                result,
+                ResearchAgentMessage::Completed | ResearchAgentMessage::Failed { .. }
+            ));
+            assert!(
+                session.child.try_wait().unwrap().is_some(),
+                "Terminal result returned with a live sidecar"
+            );
+        }
+    }
 
     #[test]
     fn protocol_decodes_tool_arguments_without_exposing_pi_types() {

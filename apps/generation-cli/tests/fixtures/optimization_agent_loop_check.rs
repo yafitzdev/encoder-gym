@@ -305,7 +305,20 @@ pub(super) async fn assert_loop(
         .as_array()
         .unwrap()
         .iter()
-        .filter(|model| model["isBaseline"] == false)
+        // A candidate may now be the active baseline after explicit promotion;
+        // historical reports still belong to every exact trained artifact.
+        .filter(|model| {
+            inventory
+                .model_catalog
+                .as_ref()
+                .unwrap()
+                .artifacts
+                .iter()
+                .any(|artifact| {
+                    artifact.origin == project_workspace_core::ModelOrigin::Trained
+                        && model["modelId"] == artifact.id.to_string()
+                })
+        })
         .collect();
     assert_eq!(candidates.len(), full_cycles);
     assert!(
@@ -314,6 +327,20 @@ pub(super) async fn assert_loop(
             .all(|model| model["reports"].as_array().unwrap().len() == 2)
     );
     assert!(!reports.to_string().contains("99999.125"));
+    assert!(!reports.to_string().contains("99999.225"));
+    for model in reports["models"].as_array().unwrap() {
+        assert_eq!(
+            model["isBaseline"],
+            model["modelId"]
+                == inventory
+                    .model_catalog
+                    .as_ref()
+                    .unwrap()
+                    .active_model()
+                    .id
+                    .to_string()
+        );
+    }
     let history = run(
         root,
         &[

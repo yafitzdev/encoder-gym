@@ -1,5 +1,6 @@
 //! Offline desktop acceptance seed, excluded from the production executable.
 mod benchmark_support;
+mod desktop_agent_seed;
 use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use encoder_experiment_core::{
@@ -12,6 +13,15 @@ use uuid::Uuid;
 #[tokio::main]
 async fn main() -> Result<()> {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
+    if arguments
+        .first()
+        .is_some_and(|value| value == "--agent-project")
+    {
+        return desktop_agent_seed::create(&arguments[1..]).await;
+    }
+    if arguments.first().is_some_and(|value| value == "-B") {
+        return native_capabilities(&arguments);
+    }
     if arguments
         .first()
         .is_some_and(|value| value == "--held-native-descendant")
@@ -91,6 +101,28 @@ async fn main() -> Result<()> {
 
 // Deterministic native adapter boundary, not an alternative production path.
 // Python tests separately exercise the embedded complete-population algorithm.
+fn native_capabilities(arguments: &[String]) -> Result<()> {
+    const SCRIPT: &str = r#"import importlib.util,json,sys
+names=['torch','sentence_transformers','transformers','datasets','accelerate','numpy','sklearn','psutil','onnxruntime_genai']
+print(json.dumps({'version':'.'.join(map(str,sys.version_info[:3])),'major':sys.version_info[0],'minor':sys.version_info[1],'modules':{name:importlib.util.find_spec(name) is not None for name in names}}))"#;
+    ensure!(
+        arguments == ["-B", "-c", SCRIPT],
+        "Unexpected native capability program"
+    );
+    println!(
+        "{}",
+        serde_json::json!({
+            "version":"3.10.11", "major":3, "minor":10,
+            "modules":{
+                "torch":true, "sentence_transformers":true, "transformers":true,
+                "datasets":true, "accelerate":true, "numpy":true, "sklearn":true,
+                "psutil":true, "onnxruntime_genai":true,
+            },
+        })
+    );
+    Ok(())
+}
+
 fn native_clearance(arguments: &[String]) -> Result<()> {
     ensure!(
         arguments.get(1).map(String::as_str)
@@ -204,7 +236,16 @@ fn native_evaluation(arguments: &[String]) -> Result<()> {
             let input = argument(arguments, "--input")?;
             let output = PathBuf::from(argument(arguments, "--output")?);
             let mrr = if input.contains("holdout") {
-                99_999.125
+                if PathBuf::from("runs/fixture-eligible-candidates").exists()
+                    && !PathBuf::from("runs/fixture-final-rejected").exists()
+                    && PathBuf::from(argument(arguments, "--model")?)
+                        .join("nomos_training_manifest.json")
+                        .is_file()
+                {
+                    99_999.225
+                } else {
+                    99_999.125
+                }
             } else if PathBuf::from("runs/fixture-eligible-candidates").exists() {
                 let manifest: serde_json::Value = serde_json::from_slice(&fs::read(
                     PathBuf::from(argument(arguments, "--model")?)
@@ -212,6 +253,8 @@ fn native_evaluation(arguments: &[String]) -> Result<()> {
                 )?)?;
                 if manifest["unique_trainable_rows"] == 2 {
                     0.95
+                } else if PathBuf::from("runs/fixture-reject-smaller-candidate").exists() {
+                    0.70
                 } else {
                     0.76
                 }

@@ -6,13 +6,20 @@ import type { DatasetQuery, DatasetQueryResult, DatasetMutation, DatasetMutation
 import type { BenchmarkAdoption, BenchmarkAdoptionResult, BenchmarkInitializationResult, BenchmarkPreview, BenchmarkQuery, BenchmarkQueryResult } from "./benchmark-workspace.js";
 import type { ManagedBaselineRestorationRequest, ManagedOptimizationRequest, ManagedOptimizationResult, ManagedPromotionRequest, ManagedProviderStatus, ManagedReadiness, NativePathChoice, NativeProgress, NomosBindingPreview, OptimizationManifestChoice, PreparedOptimizationChoice, ProviderRole, ProviderSettingsRequest } from "./managed-control.js";
 import type { OpenedProject, ProjectCollection } from "./projects.js";
-import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, ModelChoice } from "./managed-workspace.js";
+import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice, ModelChoice, ManagedWorkspace } from "./managed-workspace.js";
 import type { ProjectActivityExport, ProjectActivityLog } from "./project-activity.js";
 import type { InputOptimizationRun, InputOptimizationStarted } from "./input-optimization.js";
 import type { ProjectProviderConnections, ProviderAssignmentRequest } from "./provider-connections.js";
 import type { OptimizationAgentPresets, OptimizationStartOptions } from "./optimization-agent-settings.js";
+import type { AgentFinalView, AgentFinalReview, AgentFinalPromotionRequest } from "./optimization-final.js";
 
 export interface EncoderGymBridge {
+  agentFinalResult(id: string, runId: string): Promise<AgentFinalView | null>;
+  reviewAgentFinal(id: string, runId: string): Promise<AgentFinalReview>;
+  authorizeAgentFinal(id: string, runId: string, reviewToken: string, progress?: (value: NativeProgress) => void): Promise<AgentFinalView>;
+  recoverAgentFinal(id: string, runId: string, authorizationId: string, progress?: (value: NativeProgress) => void): Promise<AgentFinalView>;
+  stopAgentFinal(id: string, runId: string): Promise<void>;
+  promoteAgentFinal(id: string, runId: string, request: AgentFinalPromotionRequest): Promise<ManagedWorkspace>;
   optimizationSetups(id: string): Promise<OptimizationSetup[]>;
   previewOptimizationSetup(id: string, request: OptimizationSelection, progress?: (value: NativeProgress) => void, preparationId?: string): Promise<OptimizationSetupPreview>;
   saveOptimizationSetup(id: string, request: OptimizationSetupRequest, progress?: (value: NativeProgress) => void, preparationId?: string): Promise<OptimizationSetupSaved>;
@@ -82,6 +89,12 @@ const bridge: EncoderGymBridge = {
   optimizationSetups: id => ipcRenderer.invoke("encoder-gym:optimization-setups", id),
   previewOptimizationSetup: (id, request, progress, preparationId) => invokeWithProgress("encoder-gym:preview-optimization-setup", id, request, progress, preparationId),
   saveOptimizationSetup: (id, request, progress, preparationId) => invokeWithProgress("encoder-gym:save-optimization-setup", id, request, progress, preparationId),
+  agentFinalResult: (id, runId) => ipcRenderer.invoke("encoder-gym:agent-final-result", id, runId),
+  reviewAgentFinal: (id, runId) => ipcRenderer.invoke("encoder-gym:review-agent-final", id, runId),
+  authorizeAgentFinal: (id, runId, reviewToken, progress) => invokeWithProgress("encoder-gym:authorize-agent-final", id, runId, progress, reviewToken),
+  recoverAgentFinal: (id, runId, authorizationId, progress) => invokeWithProgress("encoder-gym:recover-agent-final", id, runId, progress, authorizationId),
+  stopAgentFinal: (id, runId) => ipcRenderer.invoke("encoder-gym:stop-agent-final", id, runId),
+  promoteAgentFinal: (id, runId, request) => ipcRenderer.invoke("encoder-gym:promote-agent-final", id, runId, request),
   optimizationLaunches: id => ipcRenderer.invoke("encoder-gym:optimization-launches", id),
   optimizationAgentPresets: id => ipcRenderer.invoke("encoder-gym:optimization-agent-presets", id),
   previewOptimizationLaunch: (id, setupId) => ipcRenderer.invoke("encoder-gym:preview-optimization-launch", id, setupId),

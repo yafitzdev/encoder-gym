@@ -4,6 +4,7 @@ import type { ManagedWorkspace } from "../managed-workspace.js";
 import type { WorkspaceSnapshot } from "../workspace.js";
 import type { NativeProgress } from "../managed-control.js";
 import { appendLiveActivity, inputRunActivity, type InputRunActivity, type InputRunActivityEntry } from "./input-run-activity.js";
+import { OptimizationFinalController } from "./optimization-final-controller.js";
 
 export class InputRunsController {
   runs?: InputOptimizationRun[];
@@ -20,7 +21,10 @@ export class InputRunsController {
   private activityLoaded = new Set<string>();
   private activityLoading = new Set<string>();
   activityErrors = new Map<string, unknown>();
-  constructor(readonly projectId: string, private bridge: EncoderGymBridge, private render: () => void, private updated?: (workspace: ManagedWorkspace, snapshot?: WorkspaceSnapshot) => void) {}
+  readonly final: OptimizationFinalController;
+  constructor(readonly projectId: string, private bridge: EncoderGymBridge, private render: () => void, private updated?: (workspace: ManagedWorkspace, snapshot?: WorkspaceSnapshot) => void) {
+    this.final = new OptimizationFinalController(projectId, bridge, render, updated);
+  }
   async stop(run: InputOptimizationRun): Promise<void> {
     if (run.projectId !== this.projectId || this.stoppingId || this.runningId !== run.id && !inputOptimizationMayBeActive(run)) return;
     this.stoppingId = run.id; this.render();

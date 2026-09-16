@@ -11,7 +11,7 @@ export function agentPresets() {
 export function setupFixture() {
   const projectId = randomUUID();
   const model = { id: randomUUID(), name: "Baseline", fingerprint };
-  const baseline = { id: randomUUID(), modelArtifactId: model.id, fingerprint };
+  const baseline = { id: randomUUID(), modelArtifactId: model.id, fingerprint, change: { kind: "initialization", source_fingerprint: fingerprint } };
   const version = { id: randomUUID(), datasetId: randomUUID(), projectId, number: 1, fingerprint };
   const benchmark = { id: randomUUID(), projectId, number: 1, fingerprint };
   const provider = role => ({ role, endpoint: "https://provider.example.test", model: `${role}-model`, limits: { maximumRequests: 100, maximumInputTokens: 100000, maximumOutputTokens: 10000, maximumCostMicrousd: 1000000 } });

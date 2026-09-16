@@ -5,6 +5,23 @@ import { OptimizationSetupController } from "../dist/evidence/optimization-setup
 import { agentPresets, setupFixture } from "./optimization-setup-fixture.mjs";
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 
+test("newly reserved Quick-test history is available before drive and after completion", async () => {
+  const f = fixture(), launches = [];
+  f.bridge.optimizationLaunches = async () => [...launches];
+  f.bridge.startInputOptimization = async (_id,_setup,_progress,_preparation,options) => {
+    const run = { ...f.run(), launchId: options.id };
+    launches.push({id:options.id,scope:{agentic:options.settings}}); f.runs.push(run); return {run};
+  };
+  f.bridge.driveInputOptimization = async (_id,runId) => {
+    assert.equal(f.controller.launches[0].scope.agentic.mode,"quick_test");
+    return {...f.runs.find(run=>run.id===runId),state:"agent_completed"};
+  };
+  await f.controller.ensure(); f.controller.selectMode("quick_test"); await f.controller.optimize();
+  assert.equal(f.controller.run.state,"agent_completed");
+  assert.equal(f.controller.launches[0].id,f.controller.run.launchId);
+  assert.equal(f.controller.launches[0].scope.agentic.mode,"quick_test");
+});
+
 test("Stop during input preview interrupts preparation and never starts a run", async () => {
   const f = fixture(), pending = deferred(); let token;
   f.bridge.previewOptimizationSetup = async (_id, _inputs, receive, id) => {

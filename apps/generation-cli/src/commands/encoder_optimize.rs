@@ -261,23 +261,27 @@ impl Drop for OptimizationExecutionLease {
         if matches!(read_execution_lease(&self.directory), Ok(ref owner) if owner == &self.owner) {
             // A failed cleanup must not release ownership before process exit
             // closes the lifetime job. Keep the lease for exclusive recovery.
-            if !matches!(
-                crate::process_ownership::has_contained_descendants(),
-                Ok(false)
-            ) {
-                return;
-            }
+            let contained = match crate::process_ownership::contained_descendants() {
+                Ok(Some(true)) | Err(_) => return,
+                Ok(value) => value,
+            };
             let Ok(children) = read_execution_children(&self.directory, &self.owner) else {
                 return;
             };
-            let system = process_system();
-            if children.iter().any(|child| {
-                system
-                    .process(Pid::from_u32(child.process_id))
-                    .is_some_and(|process| process.start_time() == child.process_started_at)
-            }) {
-                return;
+            if contained.is_none() {
+                let system = process_system();
+                if children.iter().any(|child| {
+                    system
+                        .process(Pid::from_u32(child.process_id))
+                        .is_some_and(|process| process.start_time() == child.process_started_at)
+                }) {
+                    return;
+                }
             }
+            // An initialized Windows job is authoritative for this live owner.
+            // Polling historical PID/second-resolution start times again can
+            // mistake a rapidly reused PID (e.g. desktop status readers) for a
+            // surviving child and strand this process's next iteration lease.
             let _ = remove_execution_lease_directory(&self.directory);
         }
     }
@@ -3141,6 +3145,68 @@ surprise = true
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn initialized_job_releases_lease_despite_stale_recorded_pid() {
+        if crate::process_ownership::isolate_lease_test(
+            "commands::encoder_optimize::tests::initialized_job_releases_lease_despite_stale_recorded_pid",
+        ) {
+            return;
+        }
+        // Spawn outside this coordinator's job, then model a stale/reused PID
+        // in the historical observer file. It must not hold or be killed by
+        // an otherwise quiescent live owner's lease.
+        let directory = tempfile::tempdir().unwrap();
+        let mut outside = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "process_ownership::tests::ownership_fixture",
+                "--ignored",
+            ])
+            .current_dir(directory.path())
+            .env("ENCODER_OWNERSHIP_FIXTURE_MODE", "leaf")
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        crate::process_ownership::initialize().unwrap();
+        let url = format!(
+            "sqlite://{}",
+            directory
+                .path()
+                .join("scientific.sqlite")
+                .to_string_lossy()
+                .replace('\\', "/")
+        );
+        let lease = OptimizationExecutionLease::acquire(&url, Uuid::new_v4())
+            .await
+            .unwrap();
+        let path = lease.directory.clone();
+        let child = ExecutionLeaseChild {
+            schema_version: EXECUTION_LEASE_SCHEMA_VERSION,
+            owner_nonce: lease.owner.nonce,
+            process_id: outside.id(),
+            process_started_at: process_started_at(outside.id()).unwrap(),
+        };
+        fs::write(
+            path.join(format!(
+                "child-{}-{}.json",
+                child.process_id, child.process_started_at
+            )),
+            serde_json::to_vec(&child).unwrap(),
+        )
+        .unwrap();
+        drop(lease);
+        let released = !path.exists();
+        let untouched = outside.try_wait().unwrap().is_none();
+        outside.kill().unwrap();
+        outside.wait().unwrap();
+        assert!(
+            released,
+            "Empty authoritative job retained a stale PID lease"
+        );
+        assert!(untouched, "Unrelated process was affected by lease release");
     }
 
     #[tokio::test]

@@ -143,7 +143,7 @@ fn print(view: &AgentFinalExecution) -> Result<()> {
     super::super::print(&serde_json::json!({"state":view.state(), "execution":view}))
 }
 
-fn selected<'a>(
+pub(super) fn selected<'a>(
     view: &AgentFinalExecution,
     scientific: &'a [IterationScientificEvidence],
 ) -> Result<&'a IterationScientificEvidence> {
@@ -153,7 +153,7 @@ fn selected<'a>(
         .context("Selected final scientific evidence is missing")
 }
 
-async fn runtime_binding(
+pub(super) async fn runtime_binding(
     folder: &Path,
     run_id: Uuid,
 ) -> Result<project_workspace_core::ScientificBinding> {
@@ -169,7 +169,7 @@ async fn runtime_binding(
         .context("Pinned scientific runtime binding missing")
 }
 
-async fn backend(
+pub(super) async fn backend(
     folder: &Path,
     run_id: Uuid,
     view: &AgentFinalExecution,

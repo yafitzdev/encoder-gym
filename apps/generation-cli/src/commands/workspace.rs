@@ -2076,6 +2076,11 @@ async fn resolve_promoted_nomos_baseline(
     }
 
     let mut matches = Vec::new();
+    if let Some(model) =
+        optimization_runs::final_promotion::resolve_promoted(workspace, active_model).await?
+    {
+        matches.push(model);
+    }
     for run_id in store
         .optimization_run_ids_for_project(previous_project.id)
         .await?
