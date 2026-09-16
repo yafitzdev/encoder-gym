@@ -368,6 +368,7 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     let calls = root.join("agent-calls.jsonl");
     let sidecar =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/optimization_agent_sidecar.mjs");
+    let invocation_folder = folder.canonicalize().unwrap();
     let command = || {
         let mut command = Command::new(env!("CARGO_BIN_EXE_synth"));
         command
@@ -379,7 +380,7 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
                 "json",
                 "workspace",
                 "optimization-run",
-                "project",
+                invocation_folder.to_str().unwrap(),
                 if loop_mode.is_some() {
                     "drive-agent"
                 } else if complete {
@@ -466,9 +467,40 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
             "CREATE TRIGGER interrupt_first_development_report BEFORE INSERT ON encoder_experiment_events WHEN json_extract(NEW.artifact_json,'$.event.kind')='candidate_development_suite_completed' AND (SELECT COUNT(*) FROM encoder_experiment_events WHERE json_extract(artifact_json,'$.event.kind')='candidate_development_suite_completed')=0 BEGIN SELECT RAISE(ABORT, 'injected first development report interruption'); END",
         )
         .await;
+        install_trigger(
+            &project_database,
+            "CREATE TRIGGER interrupt_candidate_registration BEFORE INSERT ON model_artifacts WHEN NEW.origin='trained' BEGIN SELECT RAISE(ABORT, 'injected candidate registration interruption'); END",
+        )
+        .await;
+        assert_injected(
+            invoke_iteration(),
+            "injected candidate registration interruption",
+        );
+        drop_trigger(&project_database, "interrupt_candidate_registration").await;
         assert_injected(
             invoke_iteration(),
             "injected first development report interruption",
+        );
+        // A trained model and its exact data link remain visible even while
+        // evaluation cannot persist its first result. No successful retry is
+        // required to make the completed checkpoint an ordinary project model.
+        let interrupted = project_workspace_local::open_workspace(&folder, false)
+            .await
+            .unwrap();
+        let trained = interrupted
+            .model_catalog
+            .as_ref()
+            .unwrap()
+            .artifacts
+            .iter()
+            .filter(|model| model.producing_run.is_some())
+            .collect::<Vec<_>>();
+        assert_eq!(trained.len(), 1);
+        assert!(
+            interrupted
+                .model_dataset_links
+                .iter()
+                .any(|link| link.model_id == trained[0].id)
         );
         drop_trigger(&scientific_database, "interrupt_first_development_report").await;
 
@@ -482,17 +514,6 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
             "injected second development report interruption",
         );
         drop_trigger(&scientific_database, "interrupt_second_development_report").await;
-
-        install_trigger(
-            &project_database,
-            "CREATE TRIGGER interrupt_candidate_registration BEFORE INSERT ON model_artifacts WHEN NEW.origin='trained' BEGIN SELECT RAISE(ABORT, 'injected candidate registration interruption'); END",
-        )
-        .await;
-        assert_injected(
-            invoke_iteration(),
-            "injected candidate registration interruption",
-        );
-        drop_trigger(&project_database, "interrupt_candidate_registration").await;
 
         let mut db = SqliteConnection::connect(&format!(
             "sqlite://{}",

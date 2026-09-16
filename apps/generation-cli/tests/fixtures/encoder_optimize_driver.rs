@@ -63,7 +63,8 @@ async fn run() -> anyhow::Result<()> {
     let _lease = commands::encoder_optimize::OptimizationExecutionLease::for_command(
         &command,
         &database_url,
-    )?;
+    )
+    .await?;
     let store = command.database_access().production(&database_url).await?;
     commands::encoder_optimize::execute_lifecycle(*command, &store, || {
         FakeBackend::open(&workspace)

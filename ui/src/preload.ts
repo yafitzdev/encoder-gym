@@ -21,7 +21,7 @@ export interface EncoderGymBridge {
   startInputOptimization(id: string, setupId: string, progress?: (value: NativeProgress) => void, preparationId?: string): Promise<InputOptimizationStarted>;
   stopInputPreparation(id: string, preparationId: string): Promise<void>;
   finishInputPreparation(id: string, preparationId: string): Promise<void>;
-  driveInputOptimization(id: string, runId: string, progress?: (value: NativeProgress) => void): Promise<InputOptimizationRun>;
+  driveInputOptimization(id: string, runId: string, progress?: (value: NativeProgress) => void, resumeHead?: string): Promise<InputOptimizationRun>;
   cancelInputOptimization(id: string, runId: string): Promise<InputOptimizationRun>;
   stopInputOptimization(id: string, runId: string): Promise<void>;
   inputOptimizationRun(id: string, runId: string): Promise<InputOptimizationRun>;
@@ -86,7 +86,7 @@ const bridge: EncoderGymBridge = {
   startInputOptimization: (id, setupId, progress, preparationId) => invokeWithProgress("encoder-gym:start-input-optimization", id, setupId, progress, preparationId),
   stopInputPreparation: (id, token) => ipcRenderer.invoke("encoder-gym:stop-input-preparation", id, token),
   finishInputPreparation: (id, token) => ipcRenderer.invoke("encoder-gym:finish-input-preparation", id, token),
-  driveInputOptimization: (id, runId, progress) => invokeWithProgress("encoder-gym:drive-input-optimization", id, runId, progress),
+  driveInputOptimization: (id, runId, progress, resumeHead) => invokeWithProgress("encoder-gym:drive-input-optimization", id, runId, progress, resumeHead),
   cancelInputOptimization: (id, runId) => ipcRenderer.invoke("encoder-gym:cancel-input-optimization", id, runId),
   stopInputOptimization: (id, runId) => ipcRenderer.invoke("encoder-gym:stop-input-optimization", id, runId),
   inputOptimizationRun: (id, runId) => ipcRenderer.invoke("encoder-gym:input-optimization-run", id, runId),

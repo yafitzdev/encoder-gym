@@ -211,6 +211,20 @@ The runner's `development_only_iteration_cannot_authorize_or_execute_holdout`
 regression separately proves zero-allowance adaptive protocols cannot acquire
 sealed authorization even when a candidate passes development.
 
+The desktop repair regressions exercise explicit standard Agent authorization,
+the renderer-observed Resume head, uncertain Stop-reply identity and prepared-run
+executor selection. Fixtures retain the CLI's actual nullable completion field.
+CLI Agent journeys use canonical project paths, including Windows extended-path
+prefixes. A held first development-report write proves that a completed trained
+checkpoint and its dataset link are already in ordinary model custody. Separate
+lease tests serialize concurrent stale-owner recovery through a per-run SQLite
+lock. This does not close the unobserved-descendant spawn/crash window.
+
+The existing Electron smoke suite now checks that Optimize reserves standard
+Agent authority and Stop actually persists an acknowledged Agent pause, then
+reopens that history in another process. Its drive is still a renderer fixture;
+these assertions must not be reported as complete Agent-loop desktop acceptance.
+
 For each component:
 
 1. Define the smallest useful public behavior.

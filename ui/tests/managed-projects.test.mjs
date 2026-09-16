@@ -358,6 +358,12 @@ test("project run execution loads its pinned catalog instead of current provider
   const registry = new ProjectRegistry(join(root, "profile", "projects.json")); registry.addManaged(workspace);
   const ref = () => ({ id: randomUUID(), fingerprint });
   const wire = { run: { id: runId, projectId: id, launch: ref(), setup: ref(), createdAt, fingerprint }, state: "baseline_retained", attempt: 1, materializationAttempt: 1, experimentAttempt: 1, executionAttempt: 1, finalAttempt: 0, lastSequence: 8, headFingerprint: fingerprint, updatedAt: createdAt };
+  const providerLimits = { maximumRequests: 7, maximumInputTokens: 10_000, maximumOutputTokens: 2_000, maximumCostMicrousd: 0 };
+  const launch = { id: wire.run.launch.id, authorizedBy: "operator", createdAt, fingerprint, scope: {
+    projectId: id, setup: wire.run.setup, providerCatalog: ref(), fingerprint,
+    generation: providerLimits, advisor: providerLimits, finalEvaluation: "selected_candidate_once",
+    limits: { maximumIterations: 3, maximumModels: 3, maximumDatasetRowChanges: 5_000, maximumTrainingSeconds: 21_600, maximumDevelopmentEvaluations: 6, maximumFinalEvaluations: 1 },
+  } };
   const seen = [], resolved = [];
   let keyAvailable = true;
   const backend = new ManagedBackend("owned-synth", registry, async (_exe, args, environment) => {
@@ -365,6 +371,7 @@ test("project run execution loads its pinned catalog instead of current provider
     if (args[3] === "open") return JSON.stringify(workspace);
     if (args[3] === "optimization-run" && args[5] === "providers") { assert.equal(args[6], runId); return JSON.stringify({ projectId: id, providers: [provider(connectionId)] }); }
     if (args[3] === "optimization-run" && args[5] === "show") return JSON.stringify(wire);
+    if (args[3] === "optimization-launch" && args[5] === "list") return JSON.stringify([launch]);
     return "{}";
   }, { resolveCredential: (reference, fallback) => { resolved.push({ reference, fallback }); return keyAvailable ? "pinned-test-secret" : undefined; } });
   await backend.optimizationLaunch.drive(id, runId);

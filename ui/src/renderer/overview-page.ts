@@ -10,7 +10,7 @@ import { dateLabel, metricInfo, score, delta, suiteName } from "./catalog.js";
 import { inputRunProgress, pendingInputRunProgress, type ActivityView } from "./input-run-progress.js";
 import type { OptimizationStage } from "../optimization-stages.js";
 import { runContext } from "./workspace-pages.js";
-import { comparisonTone, overviewRecords, reportDecision, type OverviewRecord } from "./overview-records.js";
+import { comparisonTone, newerInputRun, overviewRecords, reportDecision, type OverviewRecord } from "./overview-records.js";
 import { failureReason } from "../presentation-errors.js";
 
 // The standalone renderer verification uses the same keyed replacement rule
@@ -26,7 +26,7 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
   if (setup.run) {
     const index = roots.findIndex(run => run.id === setup.run!.id);
     if (index < 0) roots.push(setup.run);
-    else if (setup.running || roots[index]!.lastSequence < setup.run.lastSequence) roots[index] = setup.run;
+    else if (setup.running || newerInputRun(setup.run, roots[index]!)) roots[index] = setup.run;
   }
   const records = overviewRecords(workspace, roots, managed);
   if (state.launching && setup.run) {
@@ -86,7 +86,7 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     let tab = state.tabs.get(id) ?? (record && needsRegistration(record) ? "status" : availableReport ? "report" : record ? "status" : "setup");
     if (tab === "report" && !availableReport || tab === "status" && !availableStatus) tab = "setup";
     const panelId = "overview-panel-" + id;
-    return h("article", { class: "focus-run" + (expanded ? " expanded" : ""), "data-run-id": id },
+    return h("article", { class: "focus-run" + (expanded ? " expanded" : ""), "data-run-id": id, "data-run-state": record?.input?.state },
       h("button", { type: "button", id: "overview-run-" + id, class: "focus-run-heading", "aria-expanded": String(expanded), "aria-controls": panelId,
         onClick: () => { state.expanded = expanded ? null : id; actions.render(); } },
       disclosureIndicator(expanded), h("strong", {}, name),

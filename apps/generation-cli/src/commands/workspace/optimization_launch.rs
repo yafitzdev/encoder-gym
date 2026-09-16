@@ -21,6 +21,7 @@ pub(super) async fn execute(
             setup,
             settings_file,
             quick_test,
+            agentic,
         } => {
             let settings = if let Some(file) = settings_file {
                 ensure!(
@@ -35,6 +36,8 @@ pub(super) async fn execute(
                 )
             } else if quick_test {
                 Some(project_workspace_core::OptimizationAgentSettings::quick_test())
+            } else if agentic {
+                Some(project_workspace_core::OptimizationAgentSettings::default())
             } else {
                 None
             };

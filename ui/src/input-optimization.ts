@@ -98,7 +98,7 @@ export function parseInputOptimizationRun(value: unknown, expectedProjectId: str
     const execution = record(item.agentExecution, "Agent execution", ["state", "attemptId", "attempts", "completion", "lastSequence", "headFingerprint", "updatedAt"]);
     if (typeof execution.state !== "string" || !agentStates.has(execution.state as AgentExecutionState)) throw new Error("Invalid Agent execution state.");
     const state = execution.state as AgentExecutionState;
-    const completion = execution.completion === undefined ? undefined : bound(execution.completion);
+    const completion = execution.completion === undefined || execution.completion === null ? undefined : bound(execution.completion);
     if ((state === "completed") !== !!completion) throw new Error("Invalid Agent execution completion.");
     run.agentExecution = {
       state, attemptId: uuid(execution.attemptId), attempts: integer(execution.attempts),

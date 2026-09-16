@@ -638,6 +638,9 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   harness.backend.optimizationLaunch.drive = driveInputRun;
   const queued = (await harness.backend.optimizationLaunch.runs(setupProjectId)).find(run => run.id === activeRunId);
   if (!queued) throw new Error("Optimize did not reserve its visible project run");
+  const agentLaunch = (await harness.backend.optimizationLaunch.list(setupProjectId)).find(launch => launch.id === queued.launchId);
+  if (agentLaunch?.scope.agentic?.mode !== "standard" || agentLaunch.scope.agentic.maximumIterations !== 3 || agentLaunch.scope.agentic.maximumRowChanges !== 192) throw new Error("Overview did not reserve the standard Agent authority through the real CLI");
+  console.log("PASS Overview reserves standard Agent authority through production IPC and CLI");
   let finishInputRun!: () => void;
   const inputRunPending = new Promise<void>(resolve => { finishInputRun = resolve; });
   harness.backend.optimizationLaunch.drive = async (projectId, selectedRun, progress) => {
@@ -661,6 +664,9 @@ export async function runManagedSmokeChecks(window: BrowserWindow, output: strin
   await until("document.querySelector('.optimization-status-controls')?.textContent.includes('Stopping…')");
   finishInputRun();
   await until("!document.querySelector('#nav-overview .spinner')");
+  await until("document.querySelector('[data-run-id=" + JSON.stringify(queued.id) + "]')?.dataset.runState === 'agent_paused'");
+  const stoppedAgentRun = await harness.backend.optimizationLaunch.show(setupProjectId, queued.id);
+  if (stoppedAgentRun.state !== "agent_paused" || !stoppedAgentRun.agentExecution) throw new Error("Stop did not persist and acknowledge the Agent pause");
   await check("Stop leaves the same UUID resumable without cancelling it", "(()=>{const row=document.querySelector('[data-run-id=" + JSON.stringify(queued.id) + "]');return row.querySelector('.focus-run-state').textContent.includes('Paused') && [...row.querySelectorAll('button')].some(button=>button.textContent==='Resume')})()");
   await screenshot("managed-project-run-stopped");
   harness.backend.optimizationLaunch.drive = driveInputRun;

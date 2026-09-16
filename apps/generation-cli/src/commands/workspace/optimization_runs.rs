@@ -326,7 +326,8 @@ async fn run_final_evaluation(
     let _execution_lease = crate::commands::encoder_optimize::OptimizationExecutionLease::acquire(
         &database_url,
         view.run.id,
-    )?;
+    )
+    .await?;
     let store = super::open_bound_store_mutable(&workspace.folder, binding).await?;
     let bound_project = super::load_bound_project(&store, binding).await?;
     let backend = super::open_nomos_binding(binding, &bound_project)?.with_progress_observer(
@@ -549,7 +550,8 @@ async fn run_attached_candidate(
     let _execution_lease = crate::commands::encoder_optimize::OptimizationExecutionLease::acquire(
         &database_url,
         view.run.id,
-    )?;
+    )
+    .await?;
     let store = super::open_bound_store_mutable(&workspace.folder, binding).await?;
     let bound_project = super::load_bound_project(&store, binding).await?;
     let base_backend = super::open_nomos_binding(binding, &bound_project)?;

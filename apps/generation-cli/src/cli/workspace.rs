@@ -34,6 +34,9 @@ pub enum WorkspaceOptimizationLaunchCommand {
         /// Preview a single small diagnostic iteration with no final holdout.
         #[arg(long)]
         quick_test: bool,
+        /// Preview the standard bounded Agent loop using core-owned defaults.
+        #[arg(long, conflicts_with_all = ["settings_file", "quick_test"])]
+        agentic: bool,
     },
     /// Authorize the exact previewed inputs and finite execution envelope.
     Authorize {

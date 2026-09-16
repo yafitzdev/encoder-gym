@@ -11,32 +11,52 @@ slice contracts. More settings, System narration, mockups or documentation alone
 do not satisfy this goal. A completed experiment may reject every candidate:
 model improvement is not guaranteed.
 
-## Completion checkpoint — 16 September 2026
+## Completion audit — 16 September 2026
 
-The one-click Agent optimization path is connected and verified with
-deterministic adapters. Overview launches the existing `drive-agent`
-coordinator, parses every Agent root state, keeps legacy fixed-run execution
-compatible, persists durable Stop intent, reconciles stale ownership after app
-restart, and resumes only from the exact observed paused head.
+**The overall goal is not complete.** The previous completion claim in
+`14f2fb0` overstated layered component evidence as connected app acceptance.
+The production CLI has the finite Agent loop and native budget-stop state.
+At that commit the desktop had a `drive-agent` branch, but its new-run preview
+selected legacy authority; Resume also adopted the latest head instead of the
+head the user observed. Those were integration defects, not completed acceptance.
 
-Native training exhaustion now closes the root as the distinct non-retrying
-`agent_budget_exhausted` outcome. The execution lease records exact
-PID/start-time identities for observed descendants; stale-owner recovery stops
-and waits for them before declaring interruption, and status distinguishes an
-orphaned child from a stopped worker. Fault-injection coverage crosses dataset
-publication, full-population qualification, training receipt, candidate
-registration, both development reports, iteration result, loop completion and
-root completion without duplicating completed provider/native work.
+The current repair checkpoint addresses new-run Agent authority, renderer-to-CLI
+Resume fencing, prepared-run executor selection, Stop retry identity, concurrent
+stale-lease takeover, and trained-model custody after evaluation persistence
+failure. It also fixes canonical Windows paths in Agent lease commands, nullable
+CLI completion fields, late Stop acknowledgements and independent Agent-journal
+ordering in Overview. Old Stop retries no longer hide a newer attempt's failure.
 
-Verification on the final executable tree:
+Verified on the repair checkpoint's executable tree:
 
-- `cargo fmt-check`, `cargo check-all`, `cargo lint`, and `cargo test-all` pass
-  after rebuilding the renamed SQLite crates from a clean target.
-- All 18 managed-optimization production-CLI tests pass; the focused
-  child-recovery process test also passes outside the process sandbox.
-- UI typecheck, build, all 127 UI tests, and rendered Overview verification
-  pass.
-- All nine embedded native training-clearance Python tests pass.
+- `cargo fmt-check`, `cargo check-all`, `cargo lint`, and `cargo test-all` pass,
+  including all 18 managed benchmark CLI tests with canonical project paths.
+- The focused recorded-child termination/recovery test passes outside the
+  process sandbox. It covers recorded children, not the spawn/observation gap.
+- UI typecheck/build and all 136 UI tests pass.
+- Both legacy and managed Electron smoke flows pass across independent restarts.
+  New assertions verify real CLI Agent authority and a persisted paused state;
+  optimization driving in this smoke suite remains fixture-controlled.
+- Rendered Overview regression checks and all nine native-clearance Python
+  tests pass. These do not establish the missing connected Agent-loop journey.
+
+Remaining work identified by inspecting production code:
+
+- Child-process polling does not establish spawn-time ownership: abrupt death
+  between spawn and observation can leave an unrecorded child. Complete this
+  before claiming safe descendant recovery or every-boundary restart coverage.
+- Overview still lacks independently selectable Agent iterations and their
+  reports/artifact links. Advanced/Quick-test controls also need to use the
+  enforced Agent settings contract.
+- The adaptive protocols deliberately have zero sealed allowance; a separate
+  at-most-once handoff for the selected Agent candidate is still required.
+- Add a deterministic, connected renderer/IPC/CLI journey, including second-
+  iteration evidence and Stop/app-restart/Resume. The existing renderer fixture
+  and mocked desktop-controller tests are not that journey.
+
+The earlier 18 CLI tests and 127 UI tests are historical component evidence,
+not proof that the full app journey passed. SQL-trigger persistence failures
+also do not prove abrupt process death at every boundary.
 
 No paid provider call, real Nomos training, or final-holdout use was performed;
 those remain separately authorized live operations rather than acceptance
@@ -133,7 +153,7 @@ This is not full recovery or desktop readiness. The root still projects budget
 errors as failed attempts; distinct budget-stop presentation and safe descendant
 reconciliation remain unfinished. No real Nomos run or paid call was started.
 
-## Historical next deliverable (completed 16 September 2026)
+## Current next deliverable
 
 Make the existing Overview execute and display the tested Agent loop, with
 working Stop/Resume and truthful activity. Do not rebuild the loop or introduce
@@ -370,10 +390,10 @@ stop, pause implementation and answer immediately.
 
 ## Acceptance evidence
 
-The final evidence is layered: production CLI orchestration uses deterministic
-provider/native adapters, the production desktop controller is exercised with
-strict command/environment assertions, and the real renderer is verified in
-Electron. No fixture substitutes a second coordinator.
+Existing evidence is layered: production CLI orchestration uses deterministic
+provider/native adapters, controller tests assert fixed commands and credentials,
+and Electron fixture tests check the renderer. Connected production-path
+acceptance remains required; do not treat these separate layers as its substitute.
 
 - [x] Production-CLI tests trace development evidence through Agent decisions,
   removals/additions, qualification, exact training lineage and comparison using
@@ -386,23 +406,23 @@ Electron. No fixture substitutes a second coordinator.
 - [x] Production-CLI training-time tests prove reduced retry grants after Stop,
   no native dispatch after deadline exhaustion, and completed-output reuse after
   a lost settlement without refunding the unknown charge.
-- [x] One Optimize action invokes the pinned Agent and, when additions are
+- [ ] One Optimize action invokes the pinned Agent and, when additions are
   proposed, the independently pinned generator through that same coordinator.
-- [x] Every exposed Advanced setting is enforced cumulatively, including
+- [ ] Every exposed Advanced setting is enforced cumulatively, including
   concurrency, uncertain outcomes and interrupted-training limits; Quick test
   uses the same engine with its diagnostic restrictions.
-- [x] Stop/restart/Resume tests cover every boundary, control-intent races,
+- [ ] Stop/restart/Resume tests cover every boundary, control-intent races,
   worker/descendant ownership and reuse of completed work.
-- [x] Complete derived datasets pass native admission and benchmark-isolation
+- [ ] Complete derived datasets pass native admission and benchmark-isolation
   checks through the connected path; invalid generated rows cannot train.
-- [x] Rendered production-path tests show real Agent/Generation activity,
+- [ ] Rendered production-path tests show real Agent/Generation activity,
   complete independently browsable iteration/stage history, responsive controls
   and continuous spinners.
-- [x] Candidate models, dataset diffs and benchmark reports open from the same
+- [ ] Candidate models, dataset diffs and benchmark reports open from the same
   run, including rejected candidates and multiple iterations.
-- [x] Adaptive work never sees sealed evidence. Final holdout has its separate
+- [ ] Adaptive work never sees sealed evidence. Final holdout has its separate
   at-most-once selected-candidate handoff; promotion remains manual.
-- [x] Required Rust, UI/native and rendered journey checks pass on the final
+- [ ] Required Rust, UI/native and rendered journey checks pass on the final
   executable tree. The handoff distinguishes deterministic evidence from
   separately authorized live execution.
 

@@ -96,7 +96,8 @@ pub(super) async fn complete(
     let _scientific_lease = crate::commands::encoder_optimize::OptimizationExecutionLease::acquire(
         &database_url,
         run_id,
-    )?;
+    )
+    .await?;
     let store = super::super::super::open_bound_store_mutable(&workspace.folder, &runtime).await?;
     let result: Result<_> = async {
         let bound_project = super::super::super::load_bound_project(&store, &runtime).await?;
@@ -247,13 +248,22 @@ pub(super) async fn complete(
         runner
             .create_run_identified(protocol.id, experiment_id)
             .await?;
-        let completed = runner.run_development(experiment_id).await?;
+        let development = runner.run_development(experiment_id).await;
+        // Stop must unwind without starting another custody operation. Other
+        // evaluation/persistence failures must not hide an already trained model.
+        if let Err(encoder_experiment_runner::ExperimentRunnerError::Stopped) = &development {
+            return Err(encoder_experiment_runner::ExperimentRunnerError::Stopped.into());
+        }
+        let completed = runner.status(experiment_id).await?;
         let events = store.load_events(experiment_id).await?;
         let output = completed
             .candidates
             .get(&candidate.id)
-            .and_then(|execution| execution.train_output.as_ref())
-            .context("Iteration did not produce a trained model")?;
+            .and_then(|execution| execution.train_output.as_ref());
+        let Some(output) = output else {
+            development?;
+            anyhow::bail!("Iteration did not produce a trained model");
+        };
         // Preserve every trained output, even if a later evaluation failed.
         let registered = super::registration::register(
             folder,
@@ -268,6 +278,7 @@ pub(super) async fn complete(
             },
         )
         .await?;
+        development?;
         let result =
             custody::record_result(folder, run_id, iteration.id, &project, &protocol, &events)
                 .await?;

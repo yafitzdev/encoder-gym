@@ -78,11 +78,12 @@ async fn execute_step(
     qualify: bool,
     train: bool,
 ) -> Result<()> {
-    let database_url = format!("sqlite://{}", folder.join("project.sqlite").display());
+    let database_url = super::super::sqlite_file_url(&folder.join("project.sqlite"));
     let _lease = crate::commands::encoder_optimize::OptimizationExecutionLease::acquire(
         &database_url,
         run_id,
-    )?;
+    )
+    .await?;
     if optimization_runs::show(folder, run_id)
         .await?
         .preparation

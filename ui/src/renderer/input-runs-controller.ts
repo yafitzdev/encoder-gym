@@ -24,8 +24,15 @@ export class InputRunsController {
   async stop(run: InputOptimizationRun): Promise<void> {
     if (this.runningId !== run.id || this.stoppingId) return;
     this.stoppingId = run.id; this.render();
-    try { await this.bridge.stopInputOptimization(this.projectId, run.id); }
-    catch (error) { this.error = error; this.stoppingId = undefined; this.render(); }
+    try {
+      await this.bridge.stopInputOptimization(this.projectId, run.id);
+      // The drive may have settled before the Stop reply. Refresh the durable
+      // acknowledgement instead of leaving a stale stopping view on screen.
+      this.replace(await this.bridge.inputOptimizationRun(this.projectId, run.id));
+      this.render();
+    }
+    catch (error) { this.error = error; }
+    finally { this.stoppingId = undefined; this.render(); }
   }
   retain(run: InputOptimizationRun): void { this.replace(run); }
   async ensureActivity(runId: string): Promise<void> {
@@ -65,7 +72,7 @@ export class InputRunsController {
     try {
       poll(); this.replace(await this.bridge.driveInputOptimization(this.projectId, run.id, value => {
         if (!settled && epoch === this.epoch) { this.liveProgress = value; this.liveProgressAt = Date.now(); appendLiveActivity(this.liveEvents, value, this.liveProgressAt); this.render(); }
-      })); settled = true;
+      }, run.state === "agent_paused" ? run.agentExecution?.headFingerprint : undefined)); settled = true;
       const opened = await this.bridge.selectProject(this.projectId);
       if (epoch === this.epoch && opened.content.state === "ready" && opened.content.workspace.managed) this.updated?.(opened.content.workspace.managed, opened.content.workspace);
       const activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30, run.id), run.id); if (activity) this.activities.set(run.id, activity);
@@ -77,7 +84,7 @@ export class InputRunsController {
       }
     } finally {
       settled = true; if (timer) clearTimeout(timer);
-      if (epoch === this.epoch) { this.runningId = undefined; this.stoppingId = undefined; this.render(); }
+      if (epoch === this.epoch) { this.runningId = undefined; this.render(); }
     }
   }
   async cancel(run: InputOptimizationRun): Promise<void> {

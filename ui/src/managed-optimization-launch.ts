@@ -110,6 +110,9 @@ export class ManagedOptimizationLaunch {
       const requestId = this.stopRequests.get(key) ?? randomUUID();
       this.stopRequests.set(key, requestId);
       await this.ports.command<unknown>(["optimization-run", workspace.folder, "stop-agent", runId, "--request-id", requestId]);
+      // A failed reply retains this command's identity for retry. A confirmed
+      // Stop is finished; a later user action must get a new control identity.
+      this.stopRequests.delete(key);
       const active = this.active.get(projectId);
       if (active?.runId === runId) active.stop = true;
       return;
@@ -167,9 +170,10 @@ export class ManagedOptimizationLaunch {
     const setupId = uuid(setupIdValue);
     return this.ports.exclusive(projectId, async () => {
       const workspace = await this.ports.open(projectId);
-      const received = await this.ports.command<unknown>(["optimization-launch", workspace.folder, "preview", "--setup", setupId], undefined, progress, signal);
+      const received = await this.ports.command<unknown>(["optimization-launch", workspace.folder, "preview", "--setup", setupId, "--agentic"], undefined, progress, signal);
       const item = record(received, "optimization launch preview", ["scope", "modelName", "datasetRows", "benchmarkNumber"]);
       const resolved = scope(item.scope, workspace.manifest.id), current = workspace.providerCatalog;
+      if (!resolved.agentic) throw new Error("The CLI did not return Agent launch authority. Update the backend before starting Optimize.");
       if (resolved.setup.id !== setupId || !current || resolved.providerCatalog.id !== current.id || resolved.providerCatalog.fingerprint !== current.fingerprint) throw new Error("Optimization inputs or providers changed. Refresh the project.");
       const request: OptimizationLaunchRequest = { id: randomUUID(), scope: resolved };
       const directory = await mkdtemp(join(tmpdir(), "encoder-gym-optimization-run-")), file = join(directory, "launch.json");
@@ -203,13 +207,13 @@ export class ManagedOptimizationLaunch {
     return cancelled;
   }
 
-  async drive(projectId: string, runIdValue: unknown, progress?: (phase: InputOptimizationPhase, native?: NativeProgress) => void): Promise<InputOptimizationRun> {
+  async drive(projectId: string, runIdValue: unknown, progress?: (phase: InputOptimizationPhase, native?: NativeProgress) => void, resumeHeadValue?: unknown): Promise<InputOptimizationRun> {
     const runId = uuid(runIdValue);
+    const resumeHead = resumeHeadValue === undefined ? undefined : fingerprint(resumeHeadValue);
     return this.ports.exclusiveRun(projectId, runId, async signal => {
       const workspace = await this.ports.open(projectId);
       const execution = { runId, stop: this.pendingStops.delete(`${projectId}:${runId}`) };
       this.active.set(projectId, execution);
-      this.stopRequests.delete(`${projectId}:${runId}`);
       const stage = async (phase: InputOptimizationPhase, command: string, native = false): Promise<void> => {
         if (execution.stop) throw stopped;
         progress?.(phase);
@@ -226,8 +230,10 @@ export class ManagedOptimizationLaunch {
           if (inputOptimizationTerminal(agentRun.state)) return agentRun;
           const args = ["optimization-run", workspace.folder, "drive-agent", runId];
           if (agentRun.state === "agent_paused") {
-            if (!agentRun.agentExecution) throw new Error("Paused Agent run has no execution head.");
-            args.push("--resume", agentRun.agentExecution.headFingerprint);
+            if (!resumeHead || resumeHead !== agentRun.agentExecution?.headFingerprint) throw new Error("Agent Stop state changed. Refresh the run and explicitly Resume the observed pause.");
+            args.push("--resume", resumeHead);
+          } else if (resumeHead) {
+            throw new Error("Agent execution changed since Resume was selected. Refresh the run.");
           }
           progress?.("training");
           await this.ports.command<unknown>(args, await this.ports.environment?.(projectId, workspace, runId), value => progress?.("training", value), signal);
@@ -249,7 +255,8 @@ export class ManagedOptimizationLaunch {
         return current;
       } catch (error) {
         const current = parseInputOptimizationRun(await this.ports.command<unknown>(["optimization-run", workspace.folder, "show", runId]), projectId);
-        if (current.state === "cancelled" || execution.stop || error === stopped) return current;
+        if (current.state === "cancelled" || error === stopped
+          || execution.stop && (!current.agentExecution || current.state === "agent_paused")) return current;
         throw error;
       } finally {
         this.active.delete(projectId);
@@ -259,7 +266,6 @@ export class ManagedOptimizationLaunch {
 
   private async isAgentRun(projectId: string, run: InputOptimizationRun): Promise<boolean> {
     if (run.agentExecution) return true;
-    if (run.state !== "queued") return false;
     const launch = (await this.list(projectId)).find(item => item.id === run.launchId);
     if (!launch) throw new Error("Optimization launch authority is missing.");
     return launch.scope.agentic !== undefined;

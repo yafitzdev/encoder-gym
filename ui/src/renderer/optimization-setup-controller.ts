@@ -40,10 +40,16 @@ export class OptimizationSetupController {
   }
   async stop(): Promise<void> {
     if ((!this.preparationId && (!this.running || !this.run)) || this.stopping) return;
+    const runId = this.running ? this.run?.id : undefined;
     this.stopping = true; this.render();
     try {
       if (this.preparationId) await this.bridge.stopInputPreparation(this.projectId, this.preparationId);
-      if (this.running && this.run) await this.bridge.stopInputOptimization(this.projectId, this.run.id);
+      if (runId) {
+        await this.bridge.stopInputOptimization(this.projectId, runId);
+        const observed = await this.bridge.inputOptimizationRun(this.projectId, runId);
+        if (this.run?.id === runId) this.run = observed;
+        this.render();
+      }
     }
     catch (error) { this.error = error; this.stopping = false; this.render(); }
   }
@@ -133,9 +139,10 @@ export class OptimizationSetupController {
 
   async optimize(): Promise<void> {
     if (!this.canOptimize) return;
+    const resumeHead = this.run?.state === "agent_paused" ? this.run.agentExecution?.headFingerprint : undefined;
     this.preparationId = crypto.randomUUID(); this.liveEvents = []; this.liveProgress = undefined; this.stopping = false;
     this.render();
-    try { await this.optimizePrepared(); }
+    try { await this.optimizePrepared(resumeHead); }
     finally {
       const token = this.preparationId; this.preparationId = undefined;
       if (token) await this.bridge.finishInputPreparation(this.projectId, token);
@@ -146,7 +153,7 @@ export class OptimizationSetupController {
     this.liveProgress = value; this.liveProgressAt = Date.now();
     appendLiveActivity(this.liveEvents, value, this.liveProgressAt);
   }
-  private async optimizePrepared(): Promise<void> {
+  private async optimizePrepared(resumeHead?: string): Promise<void> {
     this.error = undefined;
     if (!this.benchmark) await this.initializeEvaluation();
     if (!this.benchmark || this.error || this.stopping) return;
@@ -188,7 +195,7 @@ export class OptimizationSetupController {
         }, 1250);
       };
       poll();
-      try { this.run = await this.bridge.driveInputOptimization(this.projectId, this.run.id, progress); }
+      try { this.run = await this.bridge.driveInputOptimization(this.projectId, this.run.id, progress, resumeHead); }
       finally { settled = true; if (timer) clearTimeout(timer); }
       if (epoch !== this.epoch) return;
       this.activity = inputRunActivity(await this.bridge.projectActivity(this.projectId, 30, this.run.id), this.run.id);

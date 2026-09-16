@@ -132,14 +132,14 @@ pub(super) async fn timeline(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn activity_follows_the_exact_lease_and_never_claims_a_dead_process_is_running() {
+    #[tokio::test]
+    async fn activity_follows_the_exact_lease_and_never_claims_a_dead_process_is_running() {
         let root = tempfile::tempdir().unwrap();
         let database = root.path().join("scientific.sqlite");
         let url = format!("sqlite://{}", database.to_string_lossy().replace('\\', "/"));
         let id = Uuid::new_v4();
         assert_eq!(worker_status(&database, id)["state"], "idle");
-        let lease = OptimizationExecutionLease::acquire(&url, id).unwrap();
+        let lease = OptimizationExecutionLease::acquire(&url, id).await.unwrap();
         assert_eq!(worker_status(&database, id)["state"], "running");
         assert_eq!(worker_status(&database, Uuid::new_v4())["state"], "idle");
         let mut stale = lease.owner.clone();

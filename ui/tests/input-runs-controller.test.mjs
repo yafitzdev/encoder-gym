@@ -64,3 +64,43 @@ test("a run can be durably cancelled without starting or resuming it", async () 
   await controller.cancel(value);
   assert.equal(cancelled, 1); assert.equal(controller.runs[0].state, "cancelled"); assert.equal(controller.cancellingId, undefined);
 });
+
+test("Resume carries the execution head displayed by the renderer", async () => {
+  const projectId = randomUUID(), value = run(projectId, "agent_paused"), head = `sha256:${"c".repeat(64)}`;
+  value.agentExecution = { headFingerprint: head };
+  let observed;
+  const controller = new InputRunsController(projectId, {
+    driveInputOptimization: async (id, runId, _progress, resumeHead) => {
+      assert.equal(id, projectId); assert.equal(runId, value.id); observed = resumeHead;
+      throw new Error("A newer Stop was recorded");
+    },
+    inputOptimizationRun: async () => ({ ...value, agentExecution: { headFingerprint: `sha256:${"d".repeat(64)}` } }),
+    projectActivity: async () => ({ actions: [] }),
+  }, () => {});
+  await controller.resume(value);
+  assert.equal(observed, head);
+  assert.match(controller.error.message, /newer Stop/);
+  assert.notEqual(controller.runs[0].agentExecution.headFingerprint, observed);
+});
+
+test("a late Stop reply refreshes its durable pause after the drive has already settled", async () => {
+  const projectId = randomUUID(), value = run(projectId, "agent_running");
+  let finishDrive, acknowledgeStop;
+  const driving = new Promise(resolve => { finishDrive = resolve; });
+  const stopping = new Promise(resolve => { acknowledgeStop = resolve; });
+  const paused = { ...value, state: "agent_paused", agentExecution: { headFingerprint: `sha256:${"e".repeat(64)}` } };
+  const controller = new InputRunsController(projectId, {
+    driveInputOptimization: async () => { await driving; return { ...value, state: "agent_stopping" }; },
+    stopInputOptimization: async () => { await stopping; },
+    inputOptimizationRun: async () => paused,
+    selectProject: async () => ({ content: { state: "ready", workspace: {} } }),
+    projectActivity: async () => ({ actions: [] }),
+  }, () => {});
+  const resume = controller.resume(value);
+  const stop = controller.stop(value);
+  finishDrive(); await resume;
+  assert.equal(controller.stoppingId, value.id, "finishing the drive must not acknowledge an outstanding Stop");
+  acknowledgeStop(); await stop;
+  assert.equal(controller.runs[0], paused);
+  assert.equal(controller.stoppingId, undefined);
+});

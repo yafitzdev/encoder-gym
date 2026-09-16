@@ -44,8 +44,8 @@ function agentAuthorization(f) {
 }
 function agentRun(wire, state, attemptId = randomUUID(), head = fingerprint) {
   const executionState = state.replace("agent_", "");
-  const completion = state === "agent_completed" ? { id: randomUUID(), fingerprint } : undefined;
-  return { ...wire, state, agentExecution: { state: executionState, attemptId, attempts: 1, ...(completion ? { completion } : {}), lastSequence: 2, headFingerprint: head, updatedAt: wire.updatedAt } };
+  const completion = state === "agent_completed" ? { id: randomUUID(), fingerprint } : null;
+  return { ...wire, state, agentExecution: { state: executionState, attemptId, attempts: 1, completion, lastSequence: 2, headFingerprint: head, updatedAt: wire.updatedAt } };
 }
 
 test("optimization launch preview and history are exact project-owned reads", async () => {
@@ -121,11 +121,15 @@ test("one-click authorization preserves its retry, removes temp files and reject
 test("one-click optimization reserves exact current inputs and removes its private request", async () => {
   const f = fixture(), files = [], wire = f.run();
   const backend = new ManagedOptimizationLaunch(ports(f, async args => {
-    if (args[0] === "optimization-launch") return f.preview;
+    if (args[0] === "optimization-launch") {
+      assert.deepEqual(args, ["optimization-launch", "owned-project", "preview", "--setup", f.setupId, "--agentic"]);
+      return { ...f.preview, scope: agentAuthorization(f).scope };
+    }
     assert.deepEqual(args.slice(0, 4), ["optimization-run", "owned-project", "start", "--file"]);
     files.push(args[4]);
     const request = JSON.parse(await readFile(args[4], "utf8"));
     assert.equal(request.scope.setup.id, f.setupId);
+    assert.ok(request.scope.agentic, "Optimize must reserve Agent authority, not the fixed-recipe envelope");
     return { actionId: randomUUID(), run: { ...wire, run: { ...wire.run, launch: { id: request.id, fingerprint } } } };
   }));
   const started = await backend.start(f.projectId, f.setupId);
@@ -133,6 +137,14 @@ test("one-click optimization reserves exact current inputs and removes its priva
   assert.equal(started.run.setupId, f.setupId);
   assert.equal(started.run.state, "queued");
   for (const file of files) { await assert.rejects(() => access(file)); await assert.rejects(() => access(dirname(file))); }
+});
+
+test("a new Optimize action fails closed if an older backend returns only legacy authority", async () => {
+  const f = fixture(), calls = [];
+  const backend = new ManagedOptimizationLaunch(ports(f, async args => { calls.push(args); return f.preview; }));
+  await assert.rejects(() => backend.start(f.projectId, f.setupId), /Agent launch authority/);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][2], "preview");
 });
 
 test("one-click optimization drives recoverable stages, forwards exact work, and withholds credentials from non-execution work", async () => {
@@ -272,7 +284,94 @@ test("Agent Stop is durable, does not kill the coordinator, and Resume pins the 
   await backend.stop(f.projectId, queued.run.id);
   assert.equal((await driving).state, "agent_paused");
   assert.equal(aborts, 0, "durable Agent Stop must let the owner unwind and acknowledge pause");
-  assert.equal((await backend.drive(f.projectId, queued.run.id)).state, "agent_completed");
+  assert.equal((await backend.drive(f.projectId, queued.run.id, undefined, pausedHead)).state, "agent_completed");
   const resumed = calls.find(args => args[2] === "drive-agent" && args.includes("--resume"));
   assert.deepEqual(resumed.slice(-2), ["--resume", pausedHead]);
+});
+
+test("Resume never adopts a newer Stop head and startup cannot implicitly resume a queued Stop", async () => {
+  const f = fixture(), wire = f.run(), oldHead = `sha256:${"c".repeat(64)}`, newHead = `sha256:${"d".repeat(64)}`, calls = [];
+  const paused = agentRun(wire, "agent_paused", randomUUID(), newHead);
+  const backend = new ManagedOptimizationLaunch(ports(f, async args => {
+    calls.push(args);
+    if (args[2] === "show") return paused;
+    throw new Error("Must not dispatch work for stale or missing Resume intent");
+  }));
+  await assert.rejects(() => backend.drive(f.projectId, wire.run.id, undefined, oldHead), /Stop state changed/);
+  await assert.rejects(() => backend.drive(f.projectId, wire.run.id), /explicitly Resume/);
+  await assert.rejects(() => backend.drive(f.projectId, wire.run.id, undefined, "--injected"), /fingerprint/);
+  assert.ok(calls.every(args => args[2] === "show"));
+});
+
+test("reconciliation does not turn an older Continue into permission to clear a Stop", async () => {
+  const f = fixture(), wire = f.run(), attempt = randomUUID(), calls = [];
+  let current = agentRun(wire, "agent_stopping", attempt);
+  // The execution state's wire name differs from the root projection.
+  current.agentExecution.state = "stop_requested";
+  const backend = new ManagedOptimizationLaunch(ports(f, async args => {
+    calls.push(args);
+    if (args[2] === "show") return current;
+    if (args[2] === "reconcile-agent") { current = agentRun(wire, "agent_paused", attempt); return {}; }
+    throw new Error("Reconciliation may not start work");
+  }));
+  await assert.rejects(() => backend.drive(f.projectId, wire.run.id), /explicitly Resume/);
+  assert.ok(!calls.some(args => args[2] === "drive-agent"));
+});
+
+test("prepared Agent runs use their immutable launch authority before any root Agent attempt exists", async () => {
+  for (const state of ["preparing", "preparation_failed", "ready"]) {
+    const f = fixture(), wire = f.run(state), calls = []; let done = false;
+    const backend = new ManagedOptimizationLaunch(ports(f, async args => {
+      calls.push(args[2]);
+      if (args[0] === "optimization-launch") return [agentAuthorization(f)];
+      if (args[2] === "show") return done ? agentRun(wire, "agent_completed") : wire;
+      if (args[2] === "drive-agent") { done = true; return {}; }
+      throw new Error("Agent authority must not enter the fixed executor");
+    }));
+    assert.equal((await backend.drive(f.projectId, wire.run.id)).state, "agent_completed");
+    assert.deepEqual(calls, ["show", "list", "drive-agent", "show"]);
+  }
+});
+
+test("failed Stop replies reuse the command identity while a confirmed later Stop is distinct", async () => {
+  const f = fixture(), wire = agentRun(f.run(), "agent_paused"), requests = [];
+  const backend = new ManagedOptimizationLaunch(ports(f, async args => {
+    if (args[2] === "show") return wire;
+    if (args[2] === "stop-agent") {
+      requests.push(args[5]);
+      if (requests.length === 1) throw new Error("Lost reply after persisted Stop");
+      return {};
+    }
+    throw new Error("Unexpected command");
+  }));
+  await assert.rejects(() => backend.stop(f.projectId, wire.run.id), /Lost reply/);
+  await backend.stop(f.projectId, wire.run.id);
+  await backend.stop(f.projectId, wire.run.id);
+  assert.equal(requests[0], requests[1]);
+  assert.notEqual(requests[1], requests[2]);
+});
+
+test("retrying an old Stop after Resume cannot hide a failure in the newer attempt", async () => {
+  const f = fixture(), wire = f.run(), calls = []; let current = agentRun(wire, "agent_paused"), release, entered;
+  const pending = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  const backend = new ManagedOptimizationLaunch(ports(f, async args => {
+    if (args[2] === "show") return current;
+    if (args[2] === "stop-agent") {
+      calls.push(args[5]);
+      if (calls.length === 1) throw new Error("Lost Stop reply");
+      return current; // The old request is already recorded; this attempt stays running.
+    }
+    if (args[2] === "drive-agent") {
+      current = agentRun(wire, "agent_running"); entered(); await pending;
+      current = agentRun(wire, "agent_failed"); throw new Error("New attempt failed");
+    }
+    throw new Error("Unexpected command");
+  }));
+  await assert.rejects(() => backend.stop(f.projectId, wire.run.id), /Lost Stop reply/);
+  const driving = backend.drive(f.projectId, wire.run.id, undefined, current.agentExecution.headFingerprint);
+  await started;
+  await backend.stop(f.projectId, wire.run.id);
+  assert.equal(calls[0], calls[1]);
+  release();
+  await assert.rejects(() => driving, /New attempt failed/);
 });

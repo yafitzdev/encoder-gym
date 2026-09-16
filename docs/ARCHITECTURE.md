@@ -120,8 +120,9 @@ append-only persistence. Quick-test sampling follows full-population clearance,
 and the native adapter verifies effective training settings in its receipt.
 Each adaptive protocol has zero sealed allowance. Reservation accepts Agent
 authority, but legacy materialization still rejects it. This first-cycle CLI
-path is also reused by the finite `drive-agent` CLI coordinator, but is not yet
-the production Overview executor.
+path is also reused by the finite `drive-agent` CLI coordinator. New Overview
+launches explicitly request its core-owned Agent defaults; historical fixed-run
+launches keep their original executor.
 
 `project-workspace-core::optimization_loop` owns completion, cumulative edit
 charges and selection using the existing experiment-core development ranking.
@@ -132,7 +133,8 @@ normal store. Later Agent inputs bind the preceding result and best eligible
 full dataset without changing the original baseline, benchmark or model
 starting checkpoint. The CLI bounds continuation by the immutable iteration
 limit and reuses the same inspection, generation, qualification, training and
-registration functions. Desktop integration remains outstanding.
+registration functions. Complete per-iteration desktop presentation and
+connected end-to-end acceptance remain outstanding.
 
 `project-workspace-core::optimization_execution` owns only the coordinator's
 execution-attempt transitions and a terminal-iteration reference, not another
@@ -154,8 +156,10 @@ Scoped cancellation probes stop local/native file reads and owned native child
 processes. The experiment backend's provider-neutral Stop predicate prevents
 new scientific steps and preserves resumable journal state on interruption,
 rather than recording an artificial candidate failure. No subprocess, SQLite
-or provider types enter core. Complete abrupt-process recovery, root budget-stop
-projection, desktop wiring and final holdout remain outstanding.
+or provider types enter core. The renderer supplies the paused head it displayed
+through typed IPC; main-process refresh never substitutes a newer Stop head.
+Complete abrupt-process recovery, per-iteration desktop presentation and final
+holdout handoff remain outstanding.
 
 `encoder-experiment-core::training_budget` owns cumulative native-training time
 and its narrow reserve/finish port. `project-workspace-local` implements this
@@ -175,10 +179,16 @@ observed child processes. Stale-owner takeover terminates and waits for those
 exact descendants before replacing the lease, while status reports a surviving
 child as orphaned rather than claiming that work has stopped. This recovery
 mechanism remains operational custody in the CLI adapter and does not leak
-process types into domain contracts.
+process types into domain contracts. Stale-owner inspection and replacement
+are serialized by a separate per-run SQLite write lock. That lock database is
+not deleted, avoiding split lock identities between concurrent recoverers.
+Observed descendants are not a substitute for guaranteed spawn-time ownership;
+the unobserved-child crash window still requires closure and acceptance coverage.
 
 The CLI now transfers each iteration's verified training output into ordinary
-model custody, including development-rejected candidates. The model's producing
+model custody, including development-rejected candidates and trained outputs
+whose later evaluation could not persist a result. Stop still unwinds without
+starting another custody operation. The model's producing
 run pins the scientific training-completion event, and its dataset link verifies
 the exact trainer version and ordered native contents without changing source
 row identities. Benchmark result projection follows the root preparation,

@@ -303,7 +303,7 @@ ipcMain.handle("encoder-gym:start-input-optimization", (event, value: unknown, s
 });
 ipcMain.handle("encoder-gym:input-optimization-run", (_event, value: unknown, run: unknown) => backend.optimizationLaunch.show(projectId(value), run));
 ipcMain.handle("encoder-gym:input-optimization-runs", (_event, value: unknown) => backend.optimizationLaunch.runs(projectId(value)));
-ipcMain.handle("encoder-gym:drive-input-optimization", (event, value: unknown, run: unknown, token: unknown) => {
+ipcMain.handle("encoder-gym:drive-input-optimization", (event, value: unknown, run: unknown, token: unknown, resumeHead: unknown) => {
   const id = projectId(value), phases: Record<InputOptimizationPhase, NativeProgress["phase"]> = {
     checking_inputs: "checking_model", preparing_data: "loading_training_rows", starting: "loading_evaluation_protocol", training: "checking_files",
     saving_candidate: "registering_candidate", evaluating: "checking_evaluation", complete: "optimization_complete",
@@ -314,7 +314,7 @@ ipcMain.handle("encoder-gym:drive-input-optimization", (event, value: unknown, r
     backend.optimizationLaunch.drive(id, run, (phase, native) => {
       if (phase !== "complete") currentStage = native && phase === "training" ? taskStage(native.phase) ?? currentStage : phase;
       const value = { ...(native ?? { phase: phases[phase] }), runStage: currentStage }; live(value); progress(value);
-    }), result => [
+    }, resumeHead), result => [
       ...activityReference("run", result.id), ...activityReference("model", result.finalResult?.modelId ?? result.outcome?.selectedModelId),
     ]);
 });

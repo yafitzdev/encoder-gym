@@ -281,6 +281,23 @@ async fn agent_settings_preview_and_authority_are_immutable_and_cannot_run_as_a_
     request(root, &choice, Uuid::new_v4());
     let setup = save(root)["setup"].clone();
     let before = fs::read(folder.join("project.sqlite")).unwrap();
+    let standard = run(
+        root,
+        &[
+            "optimization-launch",
+            "project",
+            "preview",
+            "--setup",
+            setup["id"].as_str().unwrap(),
+            "--agentic",
+        ],
+    );
+    assert_eq!(
+        standard["scope"]["agentic"],
+        serde_json::to_value(project_workspace_core::OptimizationAgentSettings::default()).unwrap()
+    );
+    assert_eq!(standard["scope"]["limits"]["maximumIterations"], 3);
+    assert_eq!(standard["scope"]["limits"]["maximumDatasetRowChanges"], 192);
     let preview = run(
         root,
         &[

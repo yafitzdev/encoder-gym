@@ -26,8 +26,8 @@ pub(in crate::commands::workspace::optimization_runs) async fn reconcile(
     folder: &Path,
     run_id: Uuid,
 ) -> Result<()> {
-    let database = format!("sqlite://{}", folder.join("project.sqlite").display());
-    if let Some(_lease) = OptimizationExecutionLease::try_acquire(&database, run_id)? {
+    let database = super::super::super::sqlite_file_url(&folder.join("project.sqlite"));
+    if let Some(_lease) = OptimizationExecutionLease::try_acquire(&database, run_id).await? {
         optimization_execution::reconcile(folder, run_id).await?;
     }
     super::super::super::print(

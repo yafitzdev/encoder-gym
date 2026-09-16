@@ -6,8 +6,9 @@ include a bounded Pi inspection/proposal loop, selected OpenAI-compatible model
 transport, an append-only project Agent-call journal, read-only native
 development-failure inspection, bounded concurrent generation, and recoverable
 publication through ordinary imports and dataset versions. Bounded repeated
-iteration is composed through the CLI below. Root lifecycle, complete recovery
-and the production GUI remain outstanding. The fixed-recipe executor
+iteration is composed through the CLI below. Root lifecycle and desktop dispatch
+are implemented; complete recovery, per-iteration GUI presentation and connected
+app acceptance remain outstanding. The fixed-recipe executor
 still explicitly rejects agentic settings; it must not masquerade as an agent run.
 
 The pre-training CLI composition now exists as `workspace optimization-run
@@ -139,8 +140,15 @@ as a distinct terminal `budget_exhausted` event; normal run projection exposes
 `agent_budget_exhausted`, and another `drive-agent` call cannot create a retry
 attempt or dispatch more work.
 The desktop uses the same `drive-agent`, `stop-agent`, and `reconcile-agent`
-commands. Stop persists a stable request identity without aborting the owning
-coordinator, and Resume supplies the exact paused execution head.
+commands. New launches preview `--agentic`, selecting core-owned standard
+defaults rather than the historical fixed recipe. Executor selection reads the
+immutable launch even when a manually prepared run has no Agent attempt yet.
+Stop retains its command UUID after an uncertain reply and uses a distinct UUID
+for a later confirmed action. Resume carries the paused head displayed in the
+renderer through IPC; main-process reads cannot adopt a newer Stop intent.
+Concurrent stale-lease recovery is serialized with a separate per-run SQLite
+lock. Descendant polling still leaves a spawn/observation crash window and does
+not establish complete abrupt-process recovery.
 
 Native training now reserves remaining time immediately before fresh process
 dispatch, through an experiment-core accounting port backed by the project
@@ -197,8 +205,9 @@ Unknown outcomes retain their reservations, and reported overruns cannot authori
 edits or native rows. Custom-endpoint cost remains unknown without pinned pricing.
 
 The read-only CLI supports `workspace optimization-launch <PROJECT> preview
---setup <ID> --quick-test` or `--settings-file <STRICT_JSON>`. Omitting both
-preserves the legacy preview byte shape. Authorization persists the exact
+--setup <ID> --agentic`, `--quick-test`, or `--settings-file <STRICT_JSON>`.
+These options are mutually exclusive. Omitting all three preserves the legacy
+preview byte shape. Authorization persists the exact
 settings and their derived bounds. `optimization-run start` only reserves the
 authority; the legacy fixed-recipe `materialize` rejects Agent settings so they
 cannot silently enter an executor that ignores them.

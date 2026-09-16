@@ -60,6 +60,7 @@ use encoder_repair_core::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 use uuid::Uuid;
 use workflow_core::benchmark_generation::{BenchmarkGenerationState, BenchmarkGenerationView};
@@ -118,35 +119,61 @@ pub(crate) struct OptimizationExecutionLease {
 }
 
 impl OptimizationExecutionLease {
-    pub(crate) fn for_command(
+    pub(crate) async fn for_command(
         command: &EncoderOptimizeCommand,
         database_url: &str,
     ) -> anyhow::Result<Option<Self>> {
         match command {
             EncoderOptimizeCommand::Resume(args) => {
-                Self::acquire(database_url, args.run_id).map(Some)
+                Self::acquire(database_url, args.run_id).await.map(Some)
             }
             EncoderOptimizeCommand::Drive(args) => {
-                Self::acquire(database_url, args.run_id).map(Some)
+                Self::acquire(database_url, args.run_id).await.map(Some)
             }
             _ => Ok(None),
         }
     }
 
-    pub(crate) fn acquire(database_url: &str, run_id: Uuid) -> anyhow::Result<Self> {
-        Self::try_acquire(database_url, run_id)?.context(
+    pub(crate) async fn acquire(database_url: &str, run_id: Uuid) -> anyhow::Result<Self> {
+        Self::try_acquire(database_url, run_id).await?.context(
             "This optimization stage is already running in another local process. Reopen its status instead of starting it again.",
         )
     }
 
     /// None means the exact recorded PID/start-time owner is still alive.
     /// Invalid or unreadable ownership remains an error, never proof of death.
-    pub(crate) fn try_acquire(database_url: &str, run_id: Uuid) -> anyhow::Result<Option<Self>> {
+    pub(crate) async fn try_acquire(
+        database_url: &str,
+        run_id: Uuid,
+    ) -> anyhow::Result<Option<Self>> {
         let database = database_file_path(database_url)?;
         let parent = database
             .parent()
             .context("experiment database path has no parent")?;
         let directory = parent.join(format!(".encoder-optimization-{run_id}.lease"));
+        // Serialize stale-owner inspection and replacement with an OS-backed
+        // SQLite write lock. A directory rename alone is not compare-and-swap:
+        // two recoverers could inspect the same dead owner, then the loser could
+        // rename and delete the winner's newly published live lease. This small
+        // coordination database is never removed; deleting a lock inode could
+        // split ownership. Process death releases its lock automatically.
+        let options = SqliteConnectOptions::new()
+            .filename(parent.join(format!(".encoder-optimization-{run_id}.lock.sqlite")))
+            .create_if_missing(true)
+            .busy_timeout(Duration::from_millis(100));
+        let mut recovery_lock = SqliteConnection::connect_with(&options).await?;
+        match sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut recovery_lock)
+            .await
+        {
+            Ok(_) => {}
+            Err(sqlx::Error::Database(error)) if error.code().as_deref() == Some("5") => {
+                return Ok(None);
+            }
+            Err(error) => {
+                return Err(error).context("could not serialize optimization lease recovery");
+            }
+        }
         let process_id = std::process::id();
         let owner = ExecutionLeaseOwner {
             schema_version: EXECUTION_LEASE_SCHEMA_VERSION,
@@ -1207,7 +1234,7 @@ pub async fn execute(command: EncoderOptimizeCommand, database_url: &str) -> any
     ensure_database_belongs_to_workspace(database_url, &args.workspace)?;
     let workspace = args.workspace.clone();
     let python = args.python.clone();
-    let _execution_lease = OptimizationExecutionLease::for_command(&command, database_url)?;
+    let _execution_lease = OptimizationExecutionLease::for_command(&command, database_url).await?;
     let store = command.database_access().production(database_url).await?;
     match command {
         EncoderOptimizeCommand::Doctor(args) => {
@@ -1243,7 +1270,7 @@ pub(crate) async fn execute_managed(
     let python = args.python.clone();
     let store = command.database_access().production(database_url).await?;
     ensure_managed_command_scope(&command, &store, project_id, project_fingerprint).await?;
-    let _execution_lease = OptimizationExecutionLease::for_command(&command, database_url)?;
+    let _execution_lease = OptimizationExecutionLease::for_command(&command, database_url).await?;
     match command {
         EncoderOptimizeCommand::Doctor(args) => {
             let backend = NomosBackend::open(&workspace, python)?;
@@ -2904,21 +2931,29 @@ surprise = true
         assert!(verify_managed_definitions_directory(project.path(), true).is_err());
     }
 
-    #[test]
-    fn optimization_execution_lease_blocks_a_live_duplicate_and_releases_cleanly() {
+    #[tokio::test]
+    async fn optimization_execution_lease_blocks_a_live_duplicate_and_releases_cleanly() {
         let directory = tempfile::tempdir().unwrap();
         let database = directory.path().join("scientific.sqlite");
         let url = format!("sqlite://{}", database.to_string_lossy().replace('\\', "/"));
         let run_id = Uuid::new_v4();
-        let lease = OptimizationExecutionLease::acquire(&url, run_id).unwrap();
-        let duplicate = OptimizationExecutionLease::acquire(&url, run_id).unwrap_err();
+        let lease = OptimizationExecutionLease::acquire(&url, run_id)
+            .await
+            .unwrap();
+        let duplicate = OptimizationExecutionLease::acquire(&url, run_id)
+            .await
+            .unwrap_err();
         assert!(duplicate.to_string().contains("already running"));
         drop(lease);
-        assert!(OptimizationExecutionLease::acquire(&url, run_id).is_ok());
+        assert!(
+            OptimizationExecutionLease::acquire(&url, run_id)
+                .await
+                .is_ok()
+        );
     }
 
-    #[test]
-    fn optimization_execution_lease_recovers_an_atomically_published_stale_owner() {
+    #[tokio::test]
+    async fn optimization_execution_lease_recovers_an_atomically_published_stale_owner() {
         let directory = tempfile::tempdir().unwrap();
         let database = directory.path().join("scientific.sqlite");
         let url = format!("sqlite://{}", database.to_string_lossy().replace('\\', "/"));
@@ -2943,20 +2978,116 @@ surprise = true
         )
         .unwrap();
 
-        let lease = OptimizationExecutionLease::acquire(&url, run_id).unwrap();
+        let lease = OptimizationExecutionLease::acquire(&url, run_id)
+            .await
+            .unwrap();
         assert_ne!(lease.owner, stale);
         drop(lease);
         assert!(!lease_directory.exists());
     }
 
-    #[test]
+    #[tokio::test]
+    async fn optimization_execution_lease_serializes_recovery_before_reading_the_owner() {
+        let directory = tempfile::tempdir().unwrap();
+        let run_id = Uuid::new_v4();
+        let database = directory.path().join("scientific.sqlite");
+        let url = format!("sqlite://{}", database.display());
+        let options = SqliteConnectOptions::new()
+            .filename(
+                directory
+                    .path()
+                    .join(format!(".encoder-optimization-{run_id}.lock.sqlite")),
+            )
+            .create_if_missing(true);
+        let mut recovery = SqliteConnection::connect_with(&options).await.unwrap();
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut recovery)
+            .await
+            .unwrap();
+        assert!(
+            OptimizationExecutionLease::try_acquire(&url, run_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            !directory
+                .path()
+                .join(format!(".encoder-optimization-{run_id}.lease"))
+                .exists()
+        );
+        recovery.close().await.unwrap();
+        let lease = OptimizationExecutionLease::acquire(&url, run_id)
+            .await
+            .unwrap();
+        assert_eq!(read_execution_lease(&lease.directory).unwrap(), lease.owner);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn optimization_execution_lease_concurrent_recoverers_preserve_the_winner() {
+        let directory = tempfile::tempdir().unwrap();
+        let run_id = Uuid::new_v4();
+        let url = format!(
+            "sqlite://{}",
+            directory.path().join("scientific.sqlite").display()
+        );
+        let lease_directory = directory
+            .path()
+            .join(format!(".encoder-optimization-{run_id}.lease"));
+        fs::create_dir(&lease_directory).unwrap();
+        let stale = ExecutionLeaseOwner {
+            schema_version: EXECUTION_LEASE_SCHEMA_VERSION,
+            process_id: std::process::id(),
+            process_started_at: 0,
+            nonce: Uuid::new_v4(),
+        };
+        fs::write(
+            lease_directory.join("owner.json"),
+            serde_json::to_vec(&stale).unwrap(),
+        )
+        .unwrap();
+        let barrier = Arc::new(tokio::sync::Barrier::new(8));
+        let tasks = (0..8)
+            .map(|_| {
+                let url = url.clone();
+                let barrier = barrier.clone();
+                tokio::spawn(async move {
+                    barrier.wait().await;
+                    OptimizationExecutionLease::try_acquire(&url, run_id)
+                        .await
+                        .unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut winners = Vec::new();
+        for task in tasks {
+            if let Some(lease) = task.await.unwrap() {
+                winners.push(lease);
+            }
+        }
+        assert_eq!(winners.len(), 1);
+        assert_eq!(
+            read_execution_lease(&lease_directory).unwrap(),
+            winners[0].owner
+        );
+        assert!(
+            OptimizationExecutionLease::try_acquire(&url, run_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
     #[ignore = "requires permission to terminate a process by exact PID identity"]
-    fn optimization_execution_lease_stops_recorded_children_before_recovery() {
+    async fn optimization_execution_lease_stops_recorded_children_before_recovery() {
         let directory = tempfile::tempdir().unwrap();
         let database = directory.path().join("scientific.sqlite");
         let url = format!("sqlite://{}", database.to_string_lossy().replace('\\', "/"));
         let run_id = Uuid::new_v4();
-        let mut lease = OptimizationExecutionLease::acquire(&url, run_id).unwrap();
+        let mut lease = OptimizationExecutionLease::acquire(&url, run_id)
+            .await
+            .unwrap();
         let mut child = if cfg!(windows) {
             std::process::Command::new("powershell")
                 .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30"])
@@ -3006,7 +3137,9 @@ surprise = true
             "orphaned"
         );
 
-        let replacement = OptimizationExecutionLease::acquire(&url, run_id).unwrap();
+        let replacement = OptimizationExecutionLease::acquire(&url, run_id)
+            .await
+            .unwrap();
         child.wait().unwrap();
         drop(replacement);
     }

@@ -14,11 +14,12 @@ pub(in crate::commands::workspace::optimization_runs) async fn execute(
     runtime: crate::cli::ResearchRuntimeArgs,
     resume: Option<String>,
 ) -> Result<()> {
-    let database_url = format!("sqlite://{}", folder.join("project.sqlite").display());
+    let database_url = super::super::super::sqlite_file_url(&folder.join("project.sqlite"));
     let _lease = crate::commands::encoder_optimize::OptimizationExecutionLease::acquire(
         &database_url,
         run_id,
-    )?;
+    )
+    .await?;
     let view = optimization_runs::show(folder, run_id).await?;
     let launch = optimization_launch::list(folder)
         .await?

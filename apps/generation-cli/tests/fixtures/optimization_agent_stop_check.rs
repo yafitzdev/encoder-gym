@@ -12,10 +12,11 @@ pub(super) async fn exercise(
     command: impl Fn() -> Command,
 ) {
     let id = run_id.to_string();
+    let canonical_folder = folder.canonicalize().unwrap();
     let queued_stop = Uuid::new_v4().to_string();
     let queued_args = [
         "optimization-run",
-        "project",
+        canonical_folder.to_str().unwrap(),
         "stop-agent",
         &id,
         "--request-id",

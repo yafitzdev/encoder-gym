@@ -24,3 +24,14 @@ test("report colors respect direction; verdict never follows positive numbers", 
   assert.equal(reportDecision({ input: { state: "candidate_accepted" } }), "KEEP");
   assert.equal(reportDecision({ input: { state: "ready_for_final_evaluation" }, experiment: { acceptance: { state: "unused" } } }), undefined);
 });
+
+test("Overview keeps the newest Agent journal even when the fixed root sequence is unchanged", () => {
+  const base = { id: "root", createdAt: "2026-09-16T12:00:00Z", lastSequence: 1 };
+  const running = { ...base, state: "agent_running", agentExecution: { lastSequence: 1 } };
+  const paused = { ...base, state: "agent_paused", agentExecution: { lastSequence: 3 } };
+  for (const roots of [[running, paused], [paused, running]]) {
+    assert.equal(overviewRecords({ runs: [] }, roots)[0].input, paused);
+  }
+  const cancelled = { ...running, state: "cancelled", lastSequence: 2 };
+  assert.equal(overviewRecords({ runs: [] }, [cancelled, paused])[0].input, cancelled);
+});
