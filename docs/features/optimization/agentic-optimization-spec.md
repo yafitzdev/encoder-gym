@@ -212,6 +212,13 @@ records a native time-limit or exhausted allowance
 as a distinct terminal `budget_exhausted` event; normal run projection exposes
 `agent_budget_exhausted`, and another `drive-agent` call cannot create a retry
 attempt or dispatch more work.
+Continuation prompts retain the latest completed Agent turn in full, along with
+the newest content-bearing result for each inspection capability. Older
+duplicate results are projected as immutable item identities and fingerprints,
+with their content explicitly marked compacted and available through a fresh
+inspection. The durable trace remains complete. This prevents quadratic replay
+of already-persisted row and development-evidence payloads without weakening
+request reservation, cumulative token accounting, or proposal validation.
 The desktop uses the same `drive-agent`, `stop-agent`, and `reconcile-agent`
 commands. New launches preview `--agentic`, selecting core-owned standard
 defaults rather than the historical fixed recipe. Executor selection reads the
