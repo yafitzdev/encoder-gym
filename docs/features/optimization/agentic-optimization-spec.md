@@ -316,6 +316,15 @@ checkout conversion does not change runtime authority; an actual revision,
 manifest, baseline or training-binding change still invalidates the pinned
 identity. CLI fixtures exercise qualification with a clean CRLF manifest.
 
+Native clearance v2 identifies within-training duplicates by normalized native
+query plus the sorted multiset of eligible candidates' native rendered views.
+Distinct retrieval contexts remain distinct; registry IDs, registry order and
+changed labels cannot disguise duplicate model inputs. This is exact rendered
+input matching, not semantic or embedding deduplication. Benchmark isolation
+remains query/source/group/lineage based: different candidates never excuse a
+protected query match. The versioned program identity prevents reuse of a v1
+receipt under v2 rules; historical receipts and datasets remain immutable.
+
 The read-only CLI supports `workspace optimization-launch <PROJECT> preview
 --setup <ID> --agentic`, `--quick-test`, or `--settings-file <STRICT_JSON>`.
 These options are mutually exclusive. Omitting all three preserves the legacy

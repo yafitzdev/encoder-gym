@@ -134,7 +134,7 @@ fn native_clearance(arguments: &[String]) -> Result<()> {
     let path = PathBuf::from(arguments.get(2).context("Missing audit request")?);
     let request: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
     ensure!(
-        request["protocol"] == "nomos-training-clearance-v1",
+        request["protocol"] == "nomos-training-clearance-v2",
         "Unknown audit protocol"
     );
     let training = fs::read_to_string(

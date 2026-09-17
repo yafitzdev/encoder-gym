@@ -5,7 +5,7 @@ use encoder_experiment_core::benchmark::BenchmarkDefinition;
 use std::io::Write;
 
 const PROGRAM: &str = include_str!("qualify_training.py");
-const PROTOCOL: &str = "nomos-training-clearance-v1";
+const PROTOCOL: &str = "nomos-training-clearance-v2";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

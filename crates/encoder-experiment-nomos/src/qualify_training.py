@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import sys
 
-PROTOCOL = "nomos-training-clearance-v1"
+PROTOCOL = "nomos-training-clearance-v2"
 MAX_BYTES = 512 * 1024 * 1024
 MAX_LINE = 16 * 1024 * 1024
 
@@ -86,7 +86,20 @@ def verify_sources(root, sources):
             raise ValueError("Native source changed")
 
 
-def audit(root, request, render, validate):
+def training_identity(query_identity, candidates):
+    # Retrieval input includes the eligible candidates, not just the query.
+    # Native views exclude concrete registry IDs. Preserve the candidate
+    # multiset, ignore registry order, and never use labels to hide duplicates.
+    views = []
+    for candidate in candidates:
+        if (not isinstance(candidate, (list, tuple)) or not candidate
+                or any(not isinstance(view, str) or not view.strip() for view in candidate)):
+            raise ValueError("Native candidate cannot be rendered")
+        views.append(tuple(" ".join(view.casefold().split()) for view in candidate))
+    return fingerprint(json.dumps([query_identity, sorted(views)], ensure_ascii=False))
+
+
+def audit(root, request, render, validate, candidate_inputs):
     if request["protocol"] != PROTOCOL:
         raise ValueError("Unsupported clearance protocol")
     protected = [set() for _ in range(5)]
@@ -103,16 +116,18 @@ def audit(root, request, render, validate):
             benchmark_rows += 1
     if not benchmark_rows:
         raise ValueError("Empty benchmark population")
-    seen = [set(), set()]
+    seen = set()
     total = invalid = duplicates = overlaps = 0
     for row in rows(root, request["training"]):
         total += 1
         valid = validate(row).valid and row.get("accepted") is True and row.get("evaluation_partition") == "train"
         invalid += not valid
         values = identity(row, render)
-        duplicates += any(value in seen[index] for index, value in enumerate(values[:2]))
-        for index, value in enumerate(values[:2]):
-            seen[index].add(value)
+        native_input = training_identity(values[1], candidate_inputs(row))
+        duplicates += native_input in seen
+        seen.add(native_input)
+        # Benchmark isolation deliberately remains more conservative: a changed
+        # candidate registry cannot excuse the same protected query or lineage.
         overlaps += any(value is not None and value in protected[index] for index, value in enumerate(values))
         missing_group += values[3] is None
         missing_lineage += values[4] is None
@@ -142,7 +157,8 @@ def main():
     with open(os.devnull, "w", encoding="utf-8") as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
         dense_router = importlib.import_module(native_package + ".dense_router")
         contracts = importlib.import_module(native_package + ".generic_contracts")
-        result = audit(root, request, dense_router.query_document, contracts.validate_decision_state_v2)
+        result = audit(root, request, dense_router.query_document, contracts.validate_decision_state_v2,
+                       lambda row: [dense_router.candidate_views(tool) for tool in dense_router.eligible_tools(row)])
     verify_sources(root, request["sources"])
     output = request_path.with_name("result.json")
     with output.open("x", encoding="utf-8") as stream:
