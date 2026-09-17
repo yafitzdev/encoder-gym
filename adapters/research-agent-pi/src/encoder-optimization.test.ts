@@ -225,45 +225,134 @@ test("proposal-only project call requires the one exposed proposal tool", async 
   }
 });
 
-test("official DeepSeek connections disable both thinking controls on the wire", async () => {
+test("official DeepSeek connections use Responses with a required proposal tool", async () => {
   const input = request("https://api.deepseek.com");
   input.model = "deepseek-flash";
+  input.capabilitySet = "encoder_optimization_proposal_v1";
   input.apiKeyEnv = "ENCODER_OPTIMIZATION_DEEPSEEK_FIXTURE_KEY";
   process.env.ENCODER_OPTIMIZATION_DEEPSEEK_FIXTURE_KEY = "fixture-not-a-secret";
   try {
     const { model, models } = projectProvider(input);
+    assert.equal(model.api, "openai-responses");
     assert.equal(model.reasoning, true);
-    assert.equal(model.compat?.thinkingFormat, "deepseek");
+    assert.equal(model.compat?.supportsDeveloperRole, false);
     let payload: Record<string, unknown> | undefined;
+    let requestUrl: string | undefined;
+    const proposalArguments = {
+      summary: "No justified edit remains.",
+      stop: true,
+      removals: [],
+      additions: [],
+    };
+    const functionCall = {
+      type: "function_call",
+      id: "function-1",
+      call_id: "call-1",
+      name: "propose_dataset_edits",
+      arguments: JSON.stringify(proposalArguments),
+      status: "completed",
+    };
+    const tools = createEncoderOptimizationTools(
+      "test-run",
+      {
+        async execute() {
+          return { content: {} };
+        },
+      },
+      true,
+    );
     const stream = models.streamSimple(
       model,
       {
         systemPrompt: "Use the one supplied tool.",
         messages: [{ role: "user", content: "Submit the result.", timestamp: Date.now() }],
+        tools,
       },
       {
         maxRetries: 0,
         onPayload: (candidate) => configureProjectPayload(input, candidate),
-        async fetch(_input, init) {
+        async fetch(fetchInput, init) {
+          requestUrl = fetchInput instanceof Request ? fetchInput.url : String(fetchInput);
           payload = JSON.parse(String(init?.body));
-          return new Response(JSON.stringify({ error: { message: "fixture stop" } }), {
-            status: 400,
-            headers: { "content-type": "application/json" },
+          const response = {
+            id: "response-1",
+            object: "response",
+            status: "completed",
+            model: "deepseek-flash",
+            output: [functionCall],
+            usage: {
+              input_tokens: 20,
+              input_tokens_details: { cached_tokens: 0 },
+              output_tokens: 8,
+              output_tokens_details: { reasoning_tokens: 0 },
+              total_tokens: 28,
+            },
+          };
+          const events = [
+            { type: "response.created", sequence_number: 0, response },
+            {
+              type: "response.output_item.added",
+              sequence_number: 1,
+              output_index: 0,
+              item: { ...functionCall, arguments: "", status: "in_progress" },
+            },
+            {
+              type: "response.function_call_arguments.done",
+              sequence_number: 2,
+              output_index: 0,
+              item_id: functionCall.id,
+              arguments: functionCall.arguments,
+            },
+            {
+              type: "response.output_item.done",
+              sequence_number: 3,
+              output_index: 0,
+              item: functionCall,
+            },
+            { type: "response.completed", sequence_number: 4, response },
+          ];
+          const body = `${events
+            .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+            .join("")}data: [DONE]\n\n`;
+          return new Response(body, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
           });
         },
       },
     );
-    for await (const _event of stream) {
-      // Consume the terminal provider-error event after capturing its request.
+    let result: { stopReason: string; content: unknown[] } | undefined;
+    for await (const event of stream) {
+      if (event.type === "done") result = event.message;
+      if (event.type === "error") assert.fail(event.error.errorMessage);
     }
-    assert.deepEqual(payload?.thinking, { type: "disabled" });
-    assert.equal(payload?.reasoning_effort, "none");
+    assert.equal(requestUrl, "https://api.deepseek.com/responses");
+    assert.deepEqual(payload?.reasoning, { effort: "none" });
+    assert.equal(payload?.tool_choice, "required");
+    assert.equal(payload?.thinking, undefined);
+    assert.equal(payload?.reasoning_effort, undefined);
+    assert.equal(payload?.messages, undefined);
+    assert.ok(Array.isArray(payload?.input));
+    const exposed = payload?.tools as { name: string }[];
+    assert.deepEqual(
+      exposed.map((tool) => tool.name),
+      ["propose_dataset_edits"],
+    );
+    assert.equal(result?.stopReason, "toolUse");
+    assert.deepEqual(result?.content, [
+      {
+        type: "toolCall",
+        id: "call-1|function-1",
+        name: "propose_dataset_edits",
+        arguments: proposalArguments,
+      },
+    ]);
   } finally {
     delete process.env.ENCODER_OPTIMIZATION_DEEPSEEK_FIXTURE_KEY;
   }
 
   const generic = request("https://provider.example/v1");
   const { model: genericModel } = projectProvider(generic);
+  assert.equal(genericModel.api, "openai-completions");
   assert.equal(genericModel.reasoning, false);
-  assert.equal(genericModel.compat?.thinkingFormat, undefined);
 });
