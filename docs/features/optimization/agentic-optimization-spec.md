@@ -310,6 +310,12 @@ separate cumulative request/token/spend allowances and in-flight concurrency.
 Unknown outcomes retain their reservations, and reported overruns cannot authorize
 edits or native rows. Custom-endpoint cost remains unknown without pinned pricing.
 
+Native registration and full-population qualification use the same committed
+manifest fingerprint after verifying a clean isolated checkout. Git's CRLF/LF
+checkout conversion does not change runtime authority; an actual revision,
+manifest, baseline or training-binding change still invalidates the pinned
+identity. CLI fixtures exercise qualification with a clean CRLF manifest.
+
 The read-only CLI supports `workspace optimization-launch <PROJECT> preview
 --setup <ID> --agentic`, `--quick-test`, or `--settings-file <STRICT_JSON>`.
 These options are mutually exclusive. Omitting all three preserves the legacy

@@ -234,6 +234,13 @@ pub async fn initial_benchmark_fixture(
         serde_json::to_vec_pretty(&manifest).unwrap(),
     )
     .unwrap();
+    // Exercise a normal Windows checkout on every platform. Registration and
+    // qualification must agree on committed identity despite CRLF conversion.
+    fs::write(
+        runtime.join(".gitattributes"),
+        "encoder-gym-experiment.json text eol=crlf\n",
+    )
+    .unwrap();
     git(&runtime, &["init", "--quiet"]);
     git(&runtime, &["config", "user.name", "Encoder Gym Fixture"]);
     git(
@@ -242,6 +249,23 @@ pub async fn initial_benchmark_fixture(
     );
     git(&runtime, &["add", "."]);
     git(&runtime, &["commit", "--quiet", "-m", "fixture"]);
+    fs::remove_file(runtime.join("encoder-gym-experiment.json")).unwrap();
+    git(
+        &runtime,
+        &[
+            "checkout-index",
+            "--index",
+            "--",
+            "encoder-gym-experiment.json",
+        ],
+    );
+    assert!(
+        fs::read(runtime.join("encoder-gym-experiment.json"))
+            .unwrap()
+            .windows(2)
+            .any(|pair| pair == b"\r\n")
+    );
+    git(&runtime, &["diff", "--exit-code"]);
 
     let backend = NomosBackend::open(&runtime, executable.to_path_buf()).unwrap();
     let project = backend.project_snapshot().unwrap();

@@ -85,12 +85,7 @@ impl NomosBackend {
         self.verify_no_remote()?;
         self.verify_clean_worktree()?;
         let revision = self.git_output(["rev-parse", "HEAD"])?;
-        let runtime = artifact_core::fingerprint(&json!({
-            "experiment_revision":revision,
-            "manifest_sha256":sha256_file(&self.root.join(EXPERIMENT_MANIFEST_NAME))?,
-            "source_commit":self.manifest.source.commit,
-        }))
-        .map_err(adapter_error)?;
+        let runtime = self.runtime_source_fingerprint(&revision)?;
         if revision != project.source_revision
             || bound_source_fingerprint(
                 runtime,

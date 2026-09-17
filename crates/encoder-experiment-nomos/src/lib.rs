@@ -325,13 +325,7 @@ impl NomosBackend {
         self.verify_no_remote()?;
         self.verify_clean_worktree()?;
         let revision = self.git_output(["rev-parse", "HEAD"])?;
-        let manifest_fingerprint = git_blob_sha256_at(&self.root, EXPERIMENT_MANIFEST_NAME)?;
-        let runtime_source_fingerprint = artifact_core::fingerprint(&json!({
-            "experiment_revision": revision,
-            "manifest_sha256": manifest_fingerprint,
-            "source_commit": self.manifest.source.commit,
-        }))
-        .map_err(adapter_error)?;
+        let runtime_source_fingerprint = self.runtime_source_fingerprint(&revision)?;
 
         let mut inputs = Vec::with_capacity(self.manifest.datasets.len());
         for dataset in &self.manifest.datasets {
@@ -823,6 +817,20 @@ impl NomosBackend {
             ));
         }
         Ok(())
+    }
+
+    fn runtime_source_fingerprint(
+        &self,
+        revision: &str,
+    ) -> Result<String, EncoderTaskAdapterError> {
+        // Callers first verify a clean, isolated checkout. Use the committed
+        // manifest consistently: checkout line endings are not a code change.
+        artifact_core::fingerprint(&json!({
+            "experiment_revision": revision,
+            "manifest_sha256": git_blob_sha256_at(&self.root, EXPERIMENT_MANIFEST_NAME)?,
+            "source_commit": self.manifest.source.commit,
+        }))
+        .map_err(adapter_error)
     }
 
     fn verify_clean_worktree(&self) -> Result<(), EncoderTaskAdapterError> {
