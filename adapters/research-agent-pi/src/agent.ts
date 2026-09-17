@@ -12,7 +12,10 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 
 import { createArchitectTools } from "./architect-tools.js";
 import { createBenchmarkArchitectTools } from "./benchmark-architect-tools.js";
-import { createEncoderOptimizationTools } from "./encoder-optimization-tools.js";
+import {
+  createEncoderOptimizationTools,
+  encoderOptimizationModelTools,
+} from "./encoder-optimization-tools.js";
 import { configureProjectPayload, projectProvider } from "./project-provider.js";
 import { createSupervisorTools } from "./supervisor-tools.js";
 
@@ -90,26 +93,36 @@ export class PiResearchAgent {
         messages: [],
       },
       streamFn: (model, context, options) =>
-        runtime.models.streamSimple(model, context, {
-          ...options,
-          ...(request.openaiCompatible
-            ? {
-                maxTokens: request.openaiCompatible.maximumOutputTokens,
-                maxRetries: 0,
-                onPayload: (payload: unknown) => configureProjectPayload(request, payload),
-                ...(!request.apiKeyEnv
-                  ? {
-                      transformHeaders: (headers: Record<string, string | null>) =>
-                        Object.fromEntries(
-                          Object.entries(headers).filter(
-                            ([name]) => name.toLowerCase() !== "authorization",
+        runtime.models.streamSimple(
+          model,
+          {
+            ...context,
+            ...(request.capabilitySet === "encoder_optimization_v1" ||
+            request.capabilitySet === "encoder_optimization_proposal_v1"
+              ? { tools: encoderOptimizationModelTools(context.tools ?? []) }
+              : {}),
+          },
+          {
+            ...options,
+            ...(request.openaiCompatible
+              ? {
+                  maxTokens: request.openaiCompatible.maximumOutputTokens,
+                  maxRetries: 0,
+                  onPayload: (payload: unknown) => configureProjectPayload(request, payload),
+                  ...(!request.apiKeyEnv
+                    ? {
+                        transformHeaders: (headers: Record<string, string | null>) =>
+                          Object.fromEntries(
+                            Object.entries(headers).filter(
+                              ([name]) => name.toLowerCase() !== "authorization",
+                            ),
                           ),
-                        ),
-                    }
-                  : {}),
-              }
-            : {}),
-        }),
+                      }
+                    : {}),
+                }
+              : {}),
+          },
+        ),
       getApiKey: (provider) => {
         // Pi requires a nonempty key even for explicitly keyless compatible
         // servers. The transport strips this placeholder before dispatch.

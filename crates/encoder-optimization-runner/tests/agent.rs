@@ -339,6 +339,72 @@ async fn invented_row_or_evidence_is_rejected_and_the_agent_receives_the_validat
 }
 
 #[tokio::test]
+async fn malformed_proposals_are_recorded_and_corrected_within_reserved_turns() {
+    for (field, value, expected_error) in [
+        (
+            "summary",
+            json!("x".repeat(401)),
+            "summary exceeds 400 characters",
+        ),
+        (
+            "stop",
+            json!("false"),
+            "Tool arguments do not match the declared schema",
+        ),
+        (
+            "unexpected",
+            json!(true),
+            "Tool arguments do not match the declared schema",
+        ),
+    ] {
+        let mut invalid = proposal();
+        invalid[field] = value;
+        let mut turns = inspected_turns();
+        turns.push(turn(
+            "propose_dataset_edits",
+            invalid.clone(),
+            "Submit a proposal.",
+        ));
+        turns.push(turn(
+            "propose_dataset_edits",
+            proposal(),
+            "Correct the rejected proposal.",
+        ));
+        let (agent, store, runtime) = setup(turns);
+        let scope = scope();
+        let accepted = agent.analyze(scope.clone()).await.unwrap();
+        assert_eq!(serde_json::to_value(&accepted).unwrap(), proposal());
+        {
+            let history = store.history.lock().unwrap();
+            assert_eq!(history.len(), 4);
+            assert_eq!(history[2].tools[0].arguments, invalid);
+            assert!(history[2].tools[0].failed);
+            assert!(history[2].proposal.is_none());
+            assert!(!history[2].interrupted);
+            assert!(
+                history[2].tools[0]
+                    .result
+                    .to_string()
+                    .contains(expected_error)
+            );
+            assert_eq!(history[2].usage.output_tokens, Some(20));
+            assert!(history.iter().all(|record| record.validate().is_ok()));
+        }
+        assert!(
+            runtime.requests.lock().unwrap()[3]
+                .initial_prompt
+                .contains(expected_error)
+        );
+        assert_eq!(agent.analyze(scope).await.unwrap(), accepted);
+        assert_eq!(
+            runtime.requests.lock().unwrap().len(),
+            4,
+            "completed correction must not be repeated on resume"
+        );
+    }
+}
+
+#[tokio::test]
 async fn unknown_tools_and_sealed_requests_never_reach_inspection() {
     let (agent, store, _) = setup(vec![turn(
         "read_sealed_rows",

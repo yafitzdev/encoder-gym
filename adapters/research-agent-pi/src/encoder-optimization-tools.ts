@@ -1,4 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { Tool } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
 import type { EncoderOptimizationToolName, ToolExecutor } from "./protocol.js";
@@ -40,8 +41,17 @@ const descriptions: Record<EncoderOptimizationToolName, string> = {
   inspect_training_rows:
     "Inspect a bounded page of the exact starting training dataset; optionally filter its task-visible text.",
   propose_dataset_edits:
-    "Submit evidence-linked removals and targeted generation instructions, or stop without changes. Reference only inspected row and evidence IDs. The host validates every proposal; this tool cannot train, approve or change a benchmark.",
+    "Submit evidence-linked removals and targeted generation instructions, or stop without changes. Keep summary within 400 characters. Reference only inspected row and evidence IDs. The host validates every proposal; this tool cannot train, approve or change a benchmark.",
 };
+
+export function encoderOptimizationModelTools(tools: Tool[]): Tool[] {
+  return tools.map((tool) => {
+    if (!Object.hasOwn(schemas, tool.name)) {
+      throw new Error("Unexpected encoder optimization tool");
+    }
+    return { ...tool, parameters: schemas[tool.name as EncoderOptimizationToolName] };
+  });
+}
 
 export function createEncoderOptimizationTools(
   runId: string,
@@ -55,7 +65,10 @@ export function createEncoderOptimizationTools(
     name,
     label: name,
     description: descriptions[name],
-    parameters: schemas[name],
+    // Pi validates/coerces before calling execute. Keep its transport schema
+    // permissive so every attempt reaches the authoritative Rust validator and
+    // append-only trace unchanged. The model receives the strict schema above.
+    parameters: Type.Unknown(),
     executionMode: "sequential",
     async execute(callId, parameters, signal) {
       const result = await executor.execute({ runId, callId, name, arguments: parameters }, signal);

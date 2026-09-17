@@ -226,7 +226,12 @@ transport also requires that single tool. The last permitted call is
 proposal-only even when inspection did not complete, so the Agent must submit a
 validated evidence-linked edit or an explicit no-change stop. Invalid proposal
 attempts remain in the append-only trace and may be corrected within the
-remaining turn budget. Reservation failures identify the exact exhausted input,
+remaining turn budget. Pi advertises the strict tool schemas to the model but
+forwards submitted arguments unchanged to the host validator. It must not drop
+schema-invalid proposals or silently coerce their values before the host can
+record the rejection; a rejected attempt still consumes its reserved call and
+reported usage. The host remains the sole authority for accepting edits.
+Reservation failures identify the exact exhausted input,
 output, request, or spend dimension and its projected and configured limits.
 The desktop uses the same `drive-agent`, `stop-agent`, and `reconcile-agent`
 commands. New launches preview `--agentic`, selecting core-owned standard

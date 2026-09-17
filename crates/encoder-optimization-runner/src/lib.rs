@@ -100,7 +100,7 @@ impl OptimizationAgent {
             let proposal_only =
                 inspection_phase_complete(&history) || sequence == scope.maximum_turns;
             let instruction = if proposal_only {
-                "The inspection phase is closed and no inspection tools are available. Call propose_dataset_edits in this turn. Submit evidence-linked edits when the recorded evidence supports them; otherwise submit stop=true with no edits. Be concise and do not emit analysis without the proposal tool call."
+                "The inspection phase is closed and no inspection tools are available. Call propose_dataset_edits in this turn. Submit evidence-linked edits when the recorded evidence supports them; otherwise submit stop=true with no edits. Keep summary within 400 characters. If the previous proposal was rejected, correct the recorded validation error. Do not emit analysis without the proposal tool call."
             } else {
                 "Continue from recorded tool results. Older duplicate inspection content may be compacted to immutable identities; the latest content-bearing result for each inspection capability remains complete. Re-inspect compacted content only if it is necessary. Inspect the missing evidence source efficiently. Once both inspection capabilities have succeeded, the next call will be proposal-only."
             };

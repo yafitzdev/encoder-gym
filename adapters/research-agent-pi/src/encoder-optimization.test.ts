@@ -4,8 +4,8 @@ import test from "node:test";
 
 import { PiResearchAgent } from "./agent.js";
 import { createEncoderOptimizationTools } from "./encoder-optimization-tools.js";
-import { configureProjectPayload, projectProvider } from "./project-provider.js";
-import type { PiRunEvent, PiRunRequest } from "./protocol.js";
+import { projectProvider } from "./project-provider.js";
+import type { PiRunEvent, PiRunRequest, ScriptedToolCall } from "./protocol.js";
 
 function request(baseUrl: string): PiRunRequest {
   return {
@@ -161,6 +161,64 @@ test("proposal-only capability exposes no inspection tools", () => {
   );
 });
 
+test("Pi forwards malformed encoder arguments without coercion so the host can reject and record them", async () => {
+  const cases: ScriptedToolCall[] = [
+    {
+      name: "propose_dataset_edits",
+      arguments: { summary: "x".repeat(401), stop: true, removals: [], additions: [] },
+    },
+    {
+      name: "propose_dataset_edits",
+      arguments: {
+        summary: "No edits",
+        stop: "true",
+        removals: [],
+        additions: [],
+        unexpected: "retained",
+      },
+    },
+    { name: "propose_dataset_edits", arguments: { summary: "Missing required fields" } },
+    { name: "inspect_training_rows", arguments: { offset: "0", limit: 21, query: null } },
+  ];
+  for (const call of cases) {
+    const submitted: unknown[] = [];
+    const agent = new PiResearchAgent({
+      async execute(request) {
+        submitted.push({ name: request.name, arguments: request.arguments });
+        return { content: { error: "Host rejected this attempt" } };
+      },
+    });
+    const { openaiCompatible: _, ...input } = request("unused");
+    await agent.run({ ...input, provider: "fake", scriptedTurns: [{ toolCalls: [call] }] });
+    assert.deepEqual(submitted, [call]);
+  }
+});
+
+test("permissive argument transport does not expose unauthorized tools", async () => {
+  const submitted: unknown[] = [];
+  const agent = new PiResearchAgent({
+    async execute(call) {
+      submitted.push(call);
+      return { content: {} };
+    },
+  });
+  const { openaiCompatible: _, ...input } = request("unused");
+  await agent.run({
+    ...input,
+    provider: "fake",
+    capabilitySet: "encoder_optimization_proposal_v1",
+    scriptedTurns: [
+      {
+        toolCalls: [
+          { name: "inspect_training_rows", arguments: { offset: 0, limit: 1 } },
+          { name: "draft_profile", arguments: {} },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(submitted, []);
+});
+
 test("proposal-only project call requires the one exposed proposal tool", async () => {
   let payload: Record<string, unknown> | undefined;
   const server = createServer(async (incoming, outgoing) => {
@@ -225,21 +283,22 @@ test("proposal-only project call requires the one exposed proposal tool", async 
   }
 });
 
-test("official DeepSeek connections use Responses with a required proposal tool", async () => {
+test("official DeepSeek proposals reach host validation unchanged through the actual Pi loop", async (t) => {
   const input = request("https://api.deepseek.com");
   input.model = "deepseek-flash";
   input.capabilitySet = "encoder_optimization_proposal_v1";
   input.apiKeyEnv = "ENCODER_OPTIMIZATION_DEEPSEEK_FIXTURE_KEY";
   process.env.ENCODER_OPTIMIZATION_DEEPSEEK_FIXTURE_KEY = "fixture-not-a-secret";
   try {
-    const { model, models } = projectProvider(input);
+    const { model } = projectProvider(input);
     assert.equal(model.api, "openai-responses");
     assert.equal(model.reasoning, true);
     assert.equal(model.compat?.supportsDeveloperRole, false);
     let payload: Record<string, unknown> | undefined;
     let requestUrl: string | undefined;
+    let requests = 0;
     const proposalArguments = {
-      summary: "No justified edit remains.",
+      summary: "x".repeat(401),
       stop: true,
       removals: [],
       additions: [],
@@ -252,80 +311,81 @@ test("official DeepSeek connections use Responses with a required proposal tool"
       arguments: JSON.stringify(proposalArguments),
       status: "completed",
     };
-    const tools = createEncoderOptimizationTools(
-      "test-run",
-      {
-        async execute() {
-          return { content: {} };
-        },
-      },
-      true,
-    );
-    const stream = models.streamSimple(
-      model,
-      {
-        systemPrompt: "Use the one supplied tool.",
-        messages: [{ role: "user", content: "Submit the result.", timestamp: Date.now() }],
-        tools,
-      },
-      {
-        maxRetries: 0,
-        onPayload: (candidate) => configureProjectPayload(input, candidate),
-        async fetch(fetchInput, init) {
-          requestUrl = fetchInput instanceof Request ? fetchInput.url : String(fetchInput);
-          payload = JSON.parse(String(init?.body));
-          const response = {
-            id: "response-1",
-            object: "response",
-            status: "completed",
-            model: "deepseek-flash",
-            output: [functionCall],
-            usage: {
-              input_tokens: 20,
-              input_tokens_details: { cached_tokens: 0 },
-              output_tokens: 8,
-              output_tokens_details: { reasoning_tokens: 0 },
-              total_tokens: 28,
-            },
-          };
-          const events = [
-            { type: "response.created", sequence_number: 0, response },
-            {
-              type: "response.output_item.added",
-              sequence_number: 1,
-              output_index: 0,
-              item: { ...functionCall, arguments: "", status: "in_progress" },
-            },
-            {
-              type: "response.function_call_arguments.done",
-              sequence_number: 2,
-              output_index: 0,
-              item_id: functionCall.id,
-              arguments: functionCall.arguments,
-            },
-            {
-              type: "response.output_item.done",
-              sequence_number: 3,
-              output_index: 0,
-              item: functionCall,
-            },
-            { type: "response.completed", sequence_number: 4, response },
-          ];
-          const body = `${events
-            .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
-            .join("")}data: [DONE]\n\n`;
-          return new Response(body, {
-            status: 200,
-            headers: { "content-type": "text/event-stream" },
-          });
-        },
+    t.mock.method(
+      globalThis,
+      "fetch",
+      async (fetchInput: RequestInfo | URL, init?: RequestInit) => {
+        requests += 1;
+        requestUrl = fetchInput instanceof Request ? fetchInput.url : String(fetchInput);
+        payload = JSON.parse(String(init?.body));
+        const response = {
+          id: "response-1",
+          object: "response",
+          status: "completed",
+          model: "deepseek-flash",
+          output: [functionCall],
+          usage: {
+            input_tokens: 20,
+            input_tokens_details: { cached_tokens: 0 },
+            output_tokens: 8,
+            output_tokens_details: { reasoning_tokens: 0 },
+            total_tokens: 28,
+          },
+        };
+        const events = [
+          { type: "response.created", sequence_number: 0, response },
+          {
+            type: "response.output_item.added",
+            sequence_number: 1,
+            output_index: 0,
+            item: { ...functionCall, arguments: "", status: "in_progress" },
+          },
+          {
+            type: "response.function_call_arguments.done",
+            sequence_number: 2,
+            output_index: 0,
+            item_id: functionCall.id,
+            arguments: functionCall.arguments,
+          },
+          {
+            type: "response.output_item.done",
+            sequence_number: 3,
+            output_index: 0,
+            item: functionCall,
+          },
+          { type: "response.completed", sequence_number: 4, response },
+        ];
+        const body = `${events
+          .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+          .join("")}data: [DONE]\n\n`;
+        return new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
       },
     );
-    let result: { stopReason: string; content: unknown[] } | undefined;
-    for await (const event of stream) {
-      if (event.type === "done") result = event.message;
-      if (event.type === "error") assert.fail(event.error.errorMessage);
-    }
+    const submitted: unknown[] = [];
+    const events: PiRunEvent[] = [];
+    const agent = new PiResearchAgent(
+      {
+        async execute(call) {
+          submitted.push(call.arguments);
+          return submitted.length === 1
+            ? { content: { error: "Agent proposal summary exceeds 400 characters" } }
+            : { content: { accepted: true }, terminate: true };
+        },
+      },
+      (event) => {
+        events.push(event);
+      },
+    );
+    await agent.run(input);
+    assert.equal(requests, 1, "a rejected proposal must not trigger an unreserved retry");
+    assert.deepEqual(
+      submitted,
+      [proposalArguments],
+      "Pi must not discard an invalid proposal before the host can persist it",
+    );
     assert.equal(requestUrl, "https://api.deepseek.com/responses");
     assert.deepEqual(payload?.reasoning, { effort: "none" });
     assert.equal(payload?.tool_choice, "required");
@@ -333,20 +393,33 @@ test("official DeepSeek connections use Responses with a required proposal tool"
     assert.equal(payload?.reasoning_effort, undefined);
     assert.equal(payload?.messages, undefined);
     assert.ok(Array.isArray(payload?.input));
-    const exposed = payload?.tools as { name: string }[];
+    const exposed = payload?.tools as {
+      name: string;
+      parameters: { properties: { summary: { maxLength: number } } };
+    }[];
     assert.deepEqual(
       exposed.map((tool) => tool.name),
       ["propose_dataset_edits"],
     );
-    assert.equal(result?.stopReason, "toolUse");
-    assert.deepEqual(result?.content, [
-      {
-        type: "toolCall",
-        id: "call-1|function-1",
-        name: "propose_dataset_edits",
-        arguments: proposalArguments,
-      },
-    ]);
+    assert.equal(
+      exposed[0]?.parameters.properties.summary.maxLength,
+      400,
+      "the model still receives the strict proposal schema",
+    );
+    assert.ok(
+      events.some(
+        (event) =>
+          event.type === "turn_completed" && event.inputTokens === 20 && event.outputTokens === 8,
+      ),
+    );
+    proposalArguments.summary = "No justified edit remains.";
+    functionCall.arguments = JSON.stringify(proposalArguments);
+    input.initialPrompt =
+      "The prior proposal was rejected: Agent proposal summary exceeds 400 characters. Correct it.";
+    await agent.run(input);
+    assert.equal(requests, 2);
+    assert.equal(submitted.length, 2);
+    assert.deepEqual(submitted[1], proposalArguments);
   } finally {
     delete process.env.ENCODER_OPTIMIZATION_DEEPSEEK_FIXTURE_KEY;
   }
