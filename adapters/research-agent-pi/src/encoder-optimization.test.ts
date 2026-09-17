@@ -3,7 +3,10 @@ import { createServer } from "node:http";
 import test from "node:test";
 
 import { PiResearchAgent } from "./agent.js";
-import { createEncoderOptimizationTools } from "./encoder-optimization-tools.js";
+import {
+  createEncoderOptimizationTools,
+  encoderOptimizationModelTools,
+} from "./encoder-optimization-tools.js";
 import { projectProvider } from "./project-provider.js";
 import type { PiRunEvent, PiRunRequest, ScriptedToolCall } from "./protocol.js";
 
@@ -21,6 +24,68 @@ function request(baseUrl: string): PiRunRequest {
     openaiCompatible: { baseUrl, maximumOutputTokens: 256 },
   };
 }
+
+function requirementsPrompt(maximumRowChanges = 144, complete = true) {
+  return JSON.stringify({
+    proposalRequirements: {
+      maximumRowChanges,
+      maximumSummaryCharacters: 400,
+      maximumEvidenceIdsPerEdit: 20,
+      trainingRowIds: ["training-row"],
+      trainingRowIdsComplete: complete,
+      developmentEvidenceIds: ["report:failure-item"],
+      developmentEvidenceIdsComplete: complete,
+    },
+  });
+}
+
+test("advertised proposal schemas bind exact inspected namespaces and remaining edit limits", () => {
+  const tools = createEncoderOptimizationTools(
+    "run",
+    {
+      async execute() {
+        return { content: {} };
+      },
+    },
+    true,
+  );
+  const schema = JSON.parse(
+    JSON.stringify(encoderOptimizationModelTools(tools, requirementsPrompt())[0]?.parameters),
+  );
+  const additions = schema.properties.additions;
+  assert.equal(additions.maxItems, 144);
+  assert.equal(additions.items.properties.count.maximum, 144);
+  assert.deepEqual(additions.items.properties.templateRowId.enum, ["training-row"]);
+  assert.deepEqual(additions.items.properties.evidenceIds.items.enum, ["report:failure-item"]);
+  assert.deepEqual(schema.properties.removals.items.properties.rowId.enum, ["training-row"]);
+  assert.equal(additions.items.properties.evidenceIds.minItems, 1);
+  assert.equal(additions.items.properties.evidenceIds.maxItems, 20);
+  assert.equal(additions.items.properties.evidenceIds.uniqueItems, true);
+  const partial = JSON.parse(
+    JSON.stringify(
+      encoderOptimizationModelTools(tools, requirementsPrompt(144, false))[0]?.parameters,
+    ),
+  );
+  assert.equal(
+    partial.properties.additions.items.properties.evidenceIds.items.enum,
+    undefined,
+    "a bounded example list must not masquerade as all inspected IDs",
+  );
+  const empty = JSON.parse(
+    JSON.stringify(encoderOptimizationModelTools(tools, requirementsPrompt(0))[0]?.parameters),
+  );
+  assert.equal(empty.properties.additions.maxItems, 0);
+  assert.equal(empty.properties.removals.maxItems, 0);
+  assert.throws(
+    () => encoderOptimizationModelTools(tools, requirementsPrompt(5001)),
+    /Invalid host proposal limits/,
+  );
+  assert.throws(
+    () => encoderOptimizationModelTools(tools, JSON.stringify({ proposalRequirements: {} })),
+    /Invalid host proposal limits/,
+  );
+  assert.ok(encoderOptimizationModelTools(tools, "legacy text").length);
+});
 
 test("selected project endpoint and model execute real Pi tool calls without catalog substitution", async () => {
   const requests: Record<string, unknown>[] = [];
@@ -178,6 +243,22 @@ test("Pi forwards malformed encoder arguments without coercion so the host can r
       },
     },
     { name: "propose_dataset_edits", arguments: { summary: "Missing required fields" } },
+    {
+      name: "propose_dataset_edits",
+      arguments: {
+        summary: "Mixed IDs",
+        stop: false,
+        removals: [],
+        additions: [
+          {
+            templateRowId: "training-row",
+            count: 480,
+            instruction: "A bounded edit",
+            evidenceIds: ["report", "report:failure-item", "training-row"],
+          },
+        ],
+      },
+    },
     { name: "inspect_training_rows", arguments: { offset: "0", limit: 21, query: null } },
   ];
   for (const call of cases) {
@@ -189,7 +270,12 @@ test("Pi forwards malformed encoder arguments without coercion so the host can r
       },
     });
     const { openaiCompatible: _, ...input } = request("unused");
-    await agent.run({ ...input, provider: "fake", scriptedTurns: [{ toolCalls: [call] }] });
+    await agent.run({
+      ...input,
+      initialPrompt: requirementsPrompt(),
+      provider: "fake",
+      scriptedTurns: [{ toolCalls: [call] }],
+    });
     assert.deepEqual(submitted, [call]);
   }
 });
@@ -294,6 +380,7 @@ test("official DeepSeek proposals reach host validation unchanged through the ac
     assert.equal(model.api, "openai-responses");
     assert.equal(model.reasoning, true);
     assert.equal(model.compat?.supportsDeveloperRole, false);
+    input.initialPrompt = requirementsPrompt();
     let payload: Record<string, unknown> | undefined;
     let requestUrl: string | undefined;
     let requests = 0;
@@ -406,6 +493,14 @@ test("official DeepSeek proposals reach host validation unchanged through the ac
       400,
       "the model still receives the strict proposal schema",
     );
+    const actualSchema = JSON.parse(JSON.stringify(exposed[0]?.parameters));
+    assert.deepEqual(actualSchema.properties.additions.items.properties.evidenceIds.items.enum, [
+      "report:failure-item",
+    ]);
+    assert.deepEqual(actualSchema.properties.additions.items.properties.templateRowId.enum, [
+      "training-row",
+    ]);
+    assert.equal(actualSchema.properties.additions.items.properties.count.maximum, 144);
     assert.ok(
       events.some(
         (event) =>
@@ -414,8 +509,11 @@ test("official DeepSeek proposals reach host validation unchanged through the ac
     );
     proposalArguments.summary = "No justified edit remains.";
     functionCall.arguments = JSON.stringify(proposalArguments);
-    input.initialPrompt =
-      "The prior proposal was rejected: Agent proposal summary exceeds 400 characters. Correct it.";
+    input.initialPrompt = JSON.stringify({
+      ...JSON.parse(requirementsPrompt()),
+      instruction:
+        "The prior proposal was rejected: Agent proposal summary exceeds 400 characters. Correct it.",
+    });
     await agent.run(input);
     assert.equal(requests, 2);
     assert.equal(submitted.length, 2);

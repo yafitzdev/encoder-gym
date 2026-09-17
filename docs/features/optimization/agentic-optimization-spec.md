@@ -227,6 +227,17 @@ A single oversized item fails explicitly. Historical pages keep their original
 read-validation bound and are not rewritten. Pi input usage includes uncached,
 cache-read and cache-write tokens; caching changes pricing, not the input-token
 ceiling. Custom-endpoint cost remains unknown without pinned pricing.
+Proposal turns also carry a bounded host-derived reference contract: the exact
+remaining total edit limit and distinct inspected training/evidence item IDs.
+When those bounded lists are complete, Pi advertises them as separate schema
+enums; incomplete examples never masquerade as the full allowed set. The host
+still receives raw arguments and remains the validation authority. IDs found
+inside native content (including report IDs) do not become evidence-item IDs.
+Validation identifies invalid reference positions and supplies bounded valid
+examples, while edit-budget errors report requested and remaining changes.
+Older rejected proposal arguments are compacted to fingerprints in continuation
+prompts; the latest attempt, all validation feedback and immutable traces remain
+intact. Input reservations include the repeated dynamic schema references.
 Inspection is a finite phase rather than an open-ended search loop. After one
 successful call to each owned inspection capability, every later model call for
 that iteration exposes only `propose_dataset_edits`; the OpenAI-compatible

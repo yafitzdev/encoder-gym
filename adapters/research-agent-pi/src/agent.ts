@@ -99,7 +99,7 @@ export class PiResearchAgent {
             ...context,
             ...(request.capabilitySet === "encoder_optimization_v1" ||
             request.capabilitySet === "encoder_optimization_proposal_v1"
-              ? { tools: encoderOptimizationModelTools(context.tools ?? []) }
+              ? { tools: encoderOptimizationModelTools(context.tools ?? [], request.initialPrompt) }
               : {}),
           },
           {

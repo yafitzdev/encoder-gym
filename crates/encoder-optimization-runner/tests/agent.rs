@@ -431,6 +431,44 @@ async fn invented_row_or_evidence_is_rejected_and_the_agent_receives_the_validat
 }
 
 #[tokio::test]
+async fn proposals_receive_exact_reference_contract_and_actionable_mixed_id_rejection() {
+    let mut turns = inspected_turns();
+    let mut invalid = proposal();
+    invalid["additions"][0]["evidenceIds"] = json!(["report-id", "failure-1", "row-1"]);
+    turns.push(turn(
+        "propose_dataset_edits",
+        invalid.clone(),
+        "Attempt mixed reference namespaces.",
+    ));
+    turns.push(turn(
+        "propose_dataset_edits",
+        proposal(),
+        "Use only the failure-item ID.",
+    ));
+    let (agent, store, runtime) = setup(turns);
+    agent.analyze(scope()).await.unwrap();
+    let requests = runtime.requests.lock().unwrap();
+    let first: Value = serde_json::from_str(&requests[2].initial_prompt).unwrap();
+    assert_eq!(first["proposalRequirements"]["maximumRowChanges"], 2);
+    assert_eq!(
+        first["proposalRequirements"]["trainingRowIds"],
+        json!(["row-1"])
+    );
+    assert_eq!(
+        first["proposalRequirements"]["developmentEvidenceIds"],
+        json!(["failure-1"])
+    );
+    let correction: Value = serde_json::from_str(&requests[3].initial_prompt).unwrap();
+    let error = correction["previousTurns"][2]["tools"][0]["result"]["error"]
+        .as_str()
+        .unwrap();
+    assert!(error.contains("additions[0].evidenceIds"));
+    assert!(error.contains("[0, 2]"));
+    assert!(error.contains("failure-1"));
+    assert_eq!(store.history.lock().unwrap()[2].tools[0].arguments, invalid);
+}
+
+#[tokio::test]
 async fn malformed_proposals_are_recorded_and_corrected_within_reserved_turns() {
     for (field, value, expected_error) in [
         (

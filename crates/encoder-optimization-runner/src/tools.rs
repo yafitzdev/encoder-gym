@@ -24,6 +24,24 @@ struct TrainingRequest {
     query: Option<String>,
 }
 
+pub(super) fn proposal_requirements(
+    scope: &AgentAnalysisScope,
+    rows: &BTreeSet<String>,
+    evidence: &BTreeSet<String>,
+) -> Value {
+    json!({
+        "maximumRowChanges": scope.maximum_row_changes,
+        "maximumSummaryCharacters": 400,
+        "maximumEvidenceIdsPerEdit": 20,
+        "rowChangeRule": "removals.length + sum(additions[*].count) must not exceed maximumRowChanges",
+        "referenceRule": "Every evidenceIds entry must be an exact outer item.id from inspect_development_failures. Never use reportId, source row IDs, fingerprints or training-row IDs found inside content. rowId and templateRowId instead use inspect_training_rows item.id values.",
+        "trainingRowIds": rows.iter().take(20).collect::<Vec<_>>(),
+        "trainingRowIdsComplete": rows.len() <= 20,
+        "developmentEvidenceIds": evidence.iter().take(20).collect::<Vec<_>>(),
+        "developmentEvidenceIdsComplete": evidence.len() <= 20,
+    })
+}
+
 pub(super) async fn execute(
     inspection: &dyn OptimizationInspection,
     scope: &AgentAnalysisScope,
@@ -241,5 +259,27 @@ mod tests {
                 .to_string()
                 .contains("fingerprint")
         );
+    }
+
+    #[test]
+    fn reference_examples_are_bounded_and_labeled_when_incomplete() {
+        let scope = AgentAnalysisScope {
+            run_id: uuid::Uuid::new_v4(),
+            iteration: 1,
+            launch_fingerprint: fingerprint(&"launch").unwrap(),
+            dataset_version_id: uuid::Uuid::new_v4(),
+            dataset_fingerprint: fingerprint(&"dataset").unwrap(),
+            development_evidence_fingerprint: fingerprint(&"evidence").unwrap(),
+            objective: String::new(),
+            maximum_turns: 8,
+            maximum_row_changes: 144,
+        };
+        let ids = (0..21).map(|i| format!("item-{i:02}")).collect();
+        let guidance = proposal_requirements(&scope, &ids, &BTreeSet::new());
+        assert_eq!(guidance["trainingRowIds"].as_array().unwrap().len(), 20);
+        assert_eq!(guidance["trainingRowIdsComplete"], false);
+        assert_eq!(guidance["developmentEvidenceIds"], json!([]));
+        assert_eq!(guidance["developmentEvidenceIdsComplete"], true);
+        assert_eq!(guidance["maximumRowChanges"], 144);
     }
 }

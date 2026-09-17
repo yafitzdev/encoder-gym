@@ -100,12 +100,20 @@ impl OptimizationAgent {
             let proposal_only =
                 inspection_phase_complete(&history) || sequence == scope.maximum_turns;
             let instruction = if proposal_only {
-                "The inspection phase is closed and no inspection tools are available. Call propose_dataset_edits in this turn. Submit evidence-linked edits when the recorded evidence supports them; otherwise submit stop=true with no edits. Keep summary within 400 characters. If the previous proposal was rejected, correct the recorded validation error. Do not emit analysis without the proposal tool call."
+                "The inspection phase is closed and no inspection tools are available. Call propose_dataset_edits in this turn. Submit evidence-linked edits when the recorded evidence supports them; otherwise submit stop=true with no edits. Follow proposalRequirements exactly, including the remaining total row-change limit and distinct training/evidence ID namespaces. Keep summary within 400 characters. If the previous proposal was rejected, correct the recorded validation error; obsolete rejected arguments may be compacted, but the latest attempt remains complete. Do not emit analysis without the proposal tool call."
             } else {
                 "Continue from recorded tool results. Older duplicate inspection content may be compacted to immutable identities; the latest content-bearing result for each inspection capability remains complete. Re-inspect compacted content only if it is necessary. Inspect the missing evidence source efficiently. Once both inspection capabilities have succeeded, the next call will be proposal-only."
             };
+            let proposal_requirements =
+                tools::proposal_requirements(&scope, &inspected_rows, &inspected_evidence);
+            // The model's proposal schema repeats both bounded reference sets
+            // in removals and additions. Reserve those bytes as well as the
+            // prompt copy; dynamic enums are not free framing overhead.
+            let proposal_schema_allowance =
+                2 * serde_json::to_vec(&proposal_requirements)?.len() as u64;
             let initial_prompt = serde_json::to_string(&json!({
                 "scope": scope,
+                "proposalRequirements": proposal_requirements,
                 "previousTurns": continuation_history(&history)?,
                 "turn": {
                     "sequence": sequence,
@@ -134,8 +142,10 @@ impl OptimizationAgent {
             // UTF-8 byte upper estimate plus a conservative allowance for the
             // fixed capability schema and protocol framing. Missing usage stays
             // charged at this ceiling; the store also detects reported overruns.
-            let input_token_ceiling =
-                request.initial_prompt.len() as u64 + SYSTEM_PROMPT.len() as u64 + 12288;
+            let input_token_ceiling = request.initial_prompt.len() as u64
+                + SYSTEM_PROMPT.len() as u64
+                + 12288
+                + proposal_schema_allowance;
             let call = AgentCallReservation {
                 id: Uuid::new_v4(),
                 scope_fingerprint: scope_fingerprint.clone(),
@@ -429,7 +439,17 @@ fn continuation_history(history: &[AgentTurnRecord]) -> Result<Vec<Value>, Optim
                 .tools
                 .iter()
                 .map(|tool| {
-                    if !tool.failed
+                    if tool.failed && tool.name == "propose_dataset_edits" {
+                        compacted = true;
+                        Ok(json!({
+                            "callId": tool.call_id,
+                            "name": tool.name,
+                            "argumentsFingerprint": fingerprint(&tool.arguments)?,
+                            "argumentsCompacted": true,
+                            "failed": true,
+                            "result": tool.result,
+                        }))
+                    } else if !tool.failed
                         && matches!(
                             tool.name.as_str(),
                             "inspect_training_rows" | "inspect_development_failures"
@@ -534,6 +554,34 @@ mod prompt_tests {
         assert!(compacted.contains("latest-unique-content"));
         assert!(compacted.contains("contentCompacted"));
         assert!(compacted.len() + 80_000 < full.len());
+    }
+
+    #[test]
+    fn obsolete_rejected_arguments_are_compacted_but_latest_attempt_and_errors_remain() {
+        let mut old = inspection_record(1, "old", "unused");
+        old.tools[0].name = "propose_dataset_edits".into();
+        old.tools[0].arguments =
+            json!({"summary":"obsolete-attempt-marker", "payload":"x".repeat(8000)});
+        old.tools[0].result = json!({"error":"old validation feedback"});
+        old.tools[0].failed = true;
+        let mut latest = old.clone();
+        latest.call.sequence = 2;
+        latest.tools[0].arguments = json!({"summary":"latest-attempt-marker"});
+        latest.tools[0].result = json!({"error":"latest validation feedback"});
+        let history = vec![old, latest];
+        let original = serde_json::to_value(&history).unwrap();
+        let projected = continuation_history(&history).unwrap();
+        assert_eq!(projected[0]["tools"][0]["argumentsCompacted"], true);
+        assert_eq!(
+            projected[0]["tools"][0]["argumentsFingerprint"],
+            fingerprint(&history[0].tools[0].arguments).unwrap()
+        );
+        assert_eq!(projected[1], serde_json::to_value(&history[1]).unwrap());
+        let text = serde_json::to_string(&projected).unwrap();
+        assert!(!text.contains("obsolete-attempt-marker"));
+        assert!(text.contains("old validation feedback"));
+        assert!(text.contains("latest validation feedback"));
+        assert_eq!(serde_json::to_value(&history).unwrap(), original);
     }
 
     #[test]

@@ -120,29 +120,40 @@ impl DatasetEditProposal {
                 })?;
         require(
             changes <= u64::from(scope.maximum_row_changes),
-            "Proposal exceeds the remaining row-change budget",
+            &format!(
+                "Proposal exceeds the remaining row-change budget: requested {changes}, remaining {}. Count every removal plus the sum of all addition counts.",
+                scope.maximum_row_changes
+            ),
         )?;
         require(
             if self.stop { changes == 0 } else { changes > 0 },
             "Stop requires no edits; continuation requires an explicit edit",
         )?;
         let mut removed = BTreeSet::new();
-        for row in &self.removals {
+        for (index, row) in self.removals.iter().enumerate() {
             require(removed.insert(&row.row_id), "Repeated row removal")?;
             require(
                 inspected_rows.contains(&row.row_id),
                 "Removal references an uninspected training row",
             )?;
             text(&row.reason)?;
-            evidence(&row.evidence_ids, inspected_evidence)?;
+            evidence(
+                &row.evidence_ids,
+                inspected_evidence,
+                &format!("removals[{index}].evidenceIds"),
+            )?;
         }
-        for target in &self.additions {
+        for (index, target) in self.additions.iter().enumerate() {
             require(
                 inspected_rows.contains(&target.template_row_id),
                 "Generation references an uninspected training template",
             )?;
             text(&target.instruction)?;
-            evidence(&target.evidence_ids, inspected_evidence)?;
+            evidence(
+                &target.evidence_ids,
+                inspected_evidence,
+                &format!("additions[{index}].evidenceIds"),
+            )?;
         }
         Ok(())
     }
@@ -155,11 +166,31 @@ fn text(value: &str) -> Result<(), OptimizationError> {
     )
 }
 
-fn evidence(ids: &[String], inspected: &BTreeSet<String>) -> Result<(), OptimizationError> {
+fn evidence(
+    ids: &[String],
+    inspected: &BTreeSet<String>,
+    field: &str,
+) -> Result<(), OptimizationError> {
     require(
-        !ids.is_empty() && ids.len() <= 20 && ids.iter().all(|id| inspected.contains(id)),
-        "Edits must reference inspected development evidence",
+        !ids.is_empty() && ids.len() <= 20,
+        &format!(
+            "Edits must reference inspected development evidence: {field} requires 1–20 item IDs"
+        ),
     )?;
+    let invalid: Vec<_> = ids
+        .iter()
+        .enumerate()
+        .filter_map(|(index, id)| (!inspected.contains(id)).then_some(index))
+        .collect();
+    if !invalid.is_empty() {
+        // Show positions, not arbitrary rejected strings. Examples come only
+        // from evidence already exposed in this iteration and stay bounded.
+        let examples: Vec<_> = inspected.iter().take(20).collect();
+        return Err(OptimizationError::Validation(format!(
+            "Edits must reference inspected development evidence: {field} has invalid zero-based positions {invalid:?}. Every entry must be an exact outer item.id from inspect_development_failures, not a reportId, source row ID, fingerprint or training-row ID found inside content. Valid inspected item ID examples: {}",
+            serde_json::to_string(&examples)?
+        )));
+    }
     require(
         ids.iter().collect::<BTreeSet<_>>().len() == ids.len(),
         "Repeated development evidence identity",

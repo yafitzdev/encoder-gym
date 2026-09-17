@@ -84,3 +84,27 @@ fn stop_is_an_explicit_no_change_decision_and_unknown_fields_cannot_grant_author
     raw["approveSealedEvaluation"] = true.into();
     assert!(serde_json::from_value::<DatasetEditProposal>(raw).is_err());
 }
+
+#[test]
+fn mixed_reference_namespaces_report_wrong_positions_without_echoing_untrusted_ids() {
+    let rows = BTreeSet::from(["row".into()]);
+    let evidence = BTreeSet::from(["report:failure".into()]);
+    let mut value = proposal();
+    value.removals.clear();
+    value.additions[0].evidence_ids = vec![
+        "private-report-field".into(),
+        "report:failure".into(),
+        "row".into(),
+    ];
+    let error = value
+        .validate(&scope(), &rows, &evidence)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("additions[0].evidenceIds"));
+    assert!(error.contains("[0, 2]"));
+    assert!(error.contains("report:failure"));
+    assert!(error.contains("outer item.id"));
+    assert!(!error.contains("private-report-field"));
+    value.additions[0].evidence_ids = vec!["report:failure".into()];
+    value.validate(&scope(), &rows, &evidence).unwrap();
+}
