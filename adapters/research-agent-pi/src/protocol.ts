@@ -98,7 +98,8 @@ export interface PiRunRequest {
     | "dataset_architect_v1"
     | "benchmark_architect_v1"
     | "generation_quality_supervisor_v1"
-    | "encoder_optimization_v1";
+    | "encoder_optimization_v1"
+    | "encoder_optimization_proposal_v1";
   runId: string;
   runSpecificationFingerprint: string;
   provider: string;

@@ -96,6 +96,9 @@ export class PiResearchAgent {
             ? {
                 maxTokens: request.openaiCompatible.maximumOutputTokens,
                 maxRetries: 0,
+                ...(request.capabilitySet === "encoder_optimization_proposal_v1"
+                  ? { onPayload: requireProposalTool }
+                  : {}),
                 ...(!request.apiKeyEnv
                   ? {
                       transformHeaders: (headers: Record<string, string | null>) =>
@@ -142,6 +145,19 @@ export class PiResearchAgent {
   }
 }
 
+function requireProposalTool(payload: unknown): unknown {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("OpenAI-compatible proposal request payload is invalid");
+  }
+  return {
+    ...payload,
+    tool_choice: {
+      type: "function",
+      function: { name: "propose_dataset_edits" },
+    },
+  };
+}
+
 function validateRequest(request: PiRunRequest): void {
   if (request.protocolVersion !== PROTOCOL_VERSION) {
     throw new Error(
@@ -180,6 +196,7 @@ function systemPolicy(request: PiRunRequest): string {
     case "generation_quality_supervisor_v1":
       return SUPERVISOR_SYSTEM_POLICY;
     case "encoder_optimization_v1":
+    case "encoder_optimization_proposal_v1":
       return ENCODER_OPTIMIZATION_SYSTEM_POLICY;
   }
 }
@@ -196,6 +213,8 @@ function toolsFor(request: PiRunRequest, executor: ToolExecutor) {
       return createSupervisorTools(request.runId, executor);
     case "encoder_optimization_v1":
       return createEncoderOptimizationTools(request.runId, executor);
+    case "encoder_optimization_proposal_v1":
+      return createEncoderOptimizationTools(request.runId, executor, true);
   }
 }
 

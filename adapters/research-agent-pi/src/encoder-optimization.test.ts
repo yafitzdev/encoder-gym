@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import test from "node:test";
 
 import { PiResearchAgent } from "./agent.js";
+import { createEncoderOptimizationTools } from "./encoder-optimization-tools.js";
 import type { PiRunEvent, PiRunRequest } from "./protocol.js";
 
 function request(baseUrl: string): PiRunRequest {
@@ -141,4 +142,84 @@ test("missing selected credentials fail before provider dispatch", async () => {
     },
   });
   await assert.rejects(agent.run(input), /no available API key/);
+});
+
+test("proposal-only capability exposes no inspection tools", () => {
+  const tools = createEncoderOptimizationTools(
+    "test-run",
+    {
+      async execute() {
+        return { content: {} };
+      },
+    },
+    true,
+  );
+  assert.deepEqual(
+    tools.map((tool) => tool.name),
+    ["propose_dataset_edits"],
+  );
+});
+
+test("proposal-only project call requires the one exposed proposal tool", async () => {
+  let payload: Record<string, unknown> | undefined;
+  const server = createServer(async (incoming, outgoing) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of incoming) chunks.push(Buffer.from(chunk));
+    payload = JSON.parse(Buffer.concat(chunks).toString());
+    const event = (delta: unknown, finish: string | null = null) =>
+      `data: ${JSON.stringify({ id: "proposal-response", object: "chat.completion.chunk", model: "key-visible-custom-model", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+    outgoing.writeHead(200, { "content-type": "text/event-stream" });
+    outgoing.write(
+      event({
+        role: "assistant",
+        tool_calls: [
+          {
+            index: 0,
+            id: "proposal-1",
+            type: "function",
+            function: {
+              name: "propose_dataset_edits",
+              arguments:
+                '{"summary":"No justified edit remains.","stop":true,"removals":[],"additions":[]}',
+            },
+          },
+        ],
+      }),
+    );
+    outgoing.write(event({}, "tool_calls"));
+    outgoing.write(
+      `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28 } })}\n\n`,
+    );
+    outgoing.end("data: [DONE]\n\n");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const input = request(`http://127.0.0.1:${address.port}/v1`);
+  input.capabilitySet = "encoder_optimization_proposal_v1";
+  const calls: string[] = [];
+  const agent = new PiResearchAgent({
+    async execute(call) {
+      calls.push(call.name);
+      return { content: { accepted: true }, terminate: true };
+    },
+  });
+  try {
+    await agent.run(input);
+    assert.deepEqual(calls, ["propose_dataset_edits"]);
+    assert.deepEqual(payload?.tool_choice, {
+      type: "function",
+      function: { name: "propose_dataset_edits" },
+    });
+    const exposed = payload?.tools as { function: { name: string } }[];
+    assert.deepEqual(
+      exposed.map((tool) => tool.function.name),
+      ["propose_dataset_edits"],
+    );
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
 });

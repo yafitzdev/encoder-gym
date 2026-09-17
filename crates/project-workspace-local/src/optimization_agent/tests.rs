@@ -195,13 +195,36 @@ async fn zero_reported_catalog_cost_is_not_substituted_for_unknown_cost() {
     let mut record = outcome(first, false);
     record.usage.cost_microusd = None;
     insert_outcome(&mut db, &record).await.unwrap();
-    assert!(
-        reserve(&mut db, &scope, &call(&scope, 2), &limits)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("budget")
-    );
+    let error = reserve(&mut db, &scope, &call(&scope, 2), &limits)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("spend budget exhausted"), "{error}");
+    assert!(error.contains("projected 20"), "{error}");
+    assert!(error.contains("limit 10 microusd"), "{error}");
+}
+
+#[tokio::test]
+async fn reservation_reports_the_exact_exhausted_token_dimension() {
+    let (mut db, scope, mut limits) = fixture().await;
+    limits.maximum_input_tokens = 99;
+    let error = reserve(&mut db, &scope, &call(&scope, 1), &limits)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("input token budget exhausted"), "{error}");
+    assert!(error.contains("projected 100"), "{error}");
+    assert!(error.contains("limit 99"), "{error}");
+
+    let (mut db, scope, mut limits) = fixture().await;
+    limits.maximum_output_tokens = 49;
+    let error = reserve(&mut db, &scope, &call(&scope, 1), &limits)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("output token budget exhausted"), "{error}");
+    assert!(error.contains("projected 50"), "{error}");
+    assert!(error.contains("limit 49"), "{error}");
 }
 
 #[tokio::test]

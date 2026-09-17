@@ -31,6 +31,7 @@ pub(super) async fn execute(
     rows: &mut BTreeSet<String>,
     evidence: &mut BTreeSet<String>,
     submitted: bool,
+    proposal_only: bool,
 ) -> Result<(Value, Option<DatasetEditProposal>), OptimizationError> {
     if submitted {
         return Err(OptimizationError::Validation(
@@ -44,6 +45,11 @@ pub(super) async fn execute(
     }
     let invalid =
         |_| OptimizationError::Validation("Tool arguments do not match the declared schema".into());
+    if proposal_only && request.name != "propose_dataset_edits" {
+        return Err(OptimizationError::Validation(
+            "Inspection is closed; this turn must submit propose_dataset_edits".into(),
+        ));
+    }
     match request.name.as_str() {
         "inspect_development_failures" => {
             let input: PageRequest =

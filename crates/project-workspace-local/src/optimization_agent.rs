@@ -353,10 +353,25 @@ async fn reserve(
             .context("Agent cost accounting overflow")?;
     }
     ensure!(
-        input <= limits.maximum_input_tokens
-            && output <= limits.maximum_output_tokens
-            && cost <= limits.maximum_cost_microusd,
-        OptimizationError::Budget("Agent token or spend budget exhausted".into())
+        input <= limits.maximum_input_tokens,
+        OptimizationError::Budget(format!(
+            "Agent input token budget exhausted: projected {input}, limit {}",
+            limits.maximum_input_tokens
+        ))
+    );
+    ensure!(
+        output <= limits.maximum_output_tokens,
+        OptimizationError::Budget(format!(
+            "Agent output token budget exhausted: projected {output}, limit {}",
+            limits.maximum_output_tokens
+        ))
+    );
+    ensure!(
+        cost <= limits.maximum_cost_microusd,
+        OptimizationError::Budget(format!(
+            "Agent spend budget exhausted: projected {cost} microusd, limit {} microusd",
+            limits.maximum_cost_microusd
+        ))
     );
     let scope_fingerprint = scope.fingerprint()?;
     let existing: Option<String> = sqlx::query_scalar(

@@ -43,8 +43,15 @@ const descriptions: Record<EncoderOptimizationToolName, string> = {
     "Submit evidence-linked removals and targeted generation instructions, or stop without changes. Reference only inspected row and evidence IDs. The host validates every proposal; this tool cannot train, approve or change a benchmark.",
 };
 
-export function createEncoderOptimizationTools(runId: string, executor: ToolExecutor): AgentTool[] {
-  return (Object.keys(schemas) as EncoderOptimizationToolName[]).map((name) => ({
+export function createEncoderOptimizationTools(
+  runId: string,
+  executor: ToolExecutor,
+  proposalOnly = false,
+): AgentTool[] {
+  const names: EncoderOptimizationToolName[] = proposalOnly
+    ? ["propose_dataset_edits"]
+    : (Object.keys(schemas) as EncoderOptimizationToolName[]);
+  return names.map((name) => ({
     name,
     label: name,
     description: descriptions[name],

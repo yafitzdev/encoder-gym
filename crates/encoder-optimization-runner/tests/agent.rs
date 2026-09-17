@@ -289,6 +289,11 @@ async fn evidence_and_row_inspection_drive_real_tool_proposal_and_completed_work
                 .contains("missing read-only routing context")
         );
         assert!(requests[2].initial_prompt.contains("ambiguous route"));
+        assert_eq!(
+            requests[2].capability_set,
+            "encoder_optimization_proposal_v1"
+        );
+        assert!(requests[2].initial_prompt.contains("\"proposalOnly\":true"));
     }
     assert_eq!(store.captions.lock().unwrap().len(), 4);
     assert!(store.captions.lock().unwrap().contains(&result.summary));

@@ -219,6 +219,15 @@ with their content explicitly marked compacted and available through a fresh
 inspection. The durable trace remains complete. This prevents quadratic replay
 of already-persisted row and development-evidence payloads without weakening
 request reservation, cumulative token accounting, or proposal validation.
+Inspection is a finite phase rather than an open-ended search loop. After one
+successful call to each owned inspection capability, every later model call for
+that iteration exposes only `propose_dataset_edits`; the OpenAI-compatible
+transport also requires that single tool. The last permitted call is
+proposal-only even when inspection did not complete, so the Agent must submit a
+validated evidence-linked edit or an explicit no-change stop. Invalid proposal
+attempts remain in the append-only trace and may be corrected within the
+remaining turn budget. Reservation failures identify the exact exhausted input,
+output, request, or spend dimension and its projected and configured limits.
 The desktop uses the same `drive-agent`, `stop-agent`, and `reconcile-agent`
 commands. New launches preview `--agentic`, selecting core-owned standard
 defaults rather than the historical fixed recipe. Executor selection reads the
