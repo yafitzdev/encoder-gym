@@ -339,6 +339,17 @@ impl OptimizationAgent {
                             "Agent ended without a completed model turn".into(),
                         ));
                     }
+                    if proposal_only
+                        && record.proposal.is_none()
+                        && !record
+                            .tools
+                            .iter()
+                            .any(|tool| tool.name == "propose_dataset_edits")
+                    {
+                        return Err(OptimizationError::Adapter(
+                            "Agent provider ignored the required proposal tool call".into(),
+                        ));
+                    }
                     return Ok(());
                 }
                 AgentMessage::Failed { message } => {

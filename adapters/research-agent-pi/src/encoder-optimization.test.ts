@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { PiResearchAgent } from "./agent.js";
 import { createEncoderOptimizationTools } from "./encoder-optimization-tools.js";
-import { projectProvider } from "./project-provider.js";
+import { configureProjectPayload, projectProvider } from "./project-provider.js";
 import type { PiRunEvent, PiRunRequest } from "./protocol.js";
 
 function request(baseUrl: string): PiRunRequest {
@@ -225,7 +225,7 @@ test("proposal-only project call requires the one exposed proposal tool", async 
   }
 });
 
-test("official DeepSeek connections translate disabled Agent thinking to the wire format", async () => {
+test("official DeepSeek connections disable both thinking controls on the wire", async () => {
   const input = request("https://api.deepseek.com");
   input.model = "deepseek-flash";
   input.apiKeyEnv = "ENCODER_OPTIMIZATION_DEEPSEEK_FIXTURE_KEY";
@@ -243,6 +243,7 @@ test("official DeepSeek connections translate disabled Agent thinking to the wir
       },
       {
         maxRetries: 0,
+        onPayload: (candidate) => configureProjectPayload(input, candidate),
         async fetch(_input, init) {
           payload = JSON.parse(String(init?.body));
           return new Response(JSON.stringify({ error: { message: "fixture stop" } }), {
@@ -256,6 +257,7 @@ test("official DeepSeek connections translate disabled Agent thinking to the wir
       // Consume the terminal provider-error event after capturing its request.
     }
     assert.deepEqual(payload?.thinking, { type: "disabled" });
+    assert.equal(payload?.reasoning_effort, "none");
   } finally {
     delete process.env.ENCODER_OPTIMIZATION_DEEPSEEK_FIXTURE_KEY;
   }

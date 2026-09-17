@@ -13,7 +13,7 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { createArchitectTools } from "./architect-tools.js";
 import { createBenchmarkArchitectTools } from "./benchmark-architect-tools.js";
 import { createEncoderOptimizationTools } from "./encoder-optimization-tools.js";
-import { projectProvider } from "./project-provider.js";
+import { configureProjectPayload, projectProvider } from "./project-provider.js";
 import { createSupervisorTools } from "./supervisor-tools.js";
 
 import {
@@ -96,9 +96,7 @@ export class PiResearchAgent {
             ? {
                 maxTokens: request.openaiCompatible.maximumOutputTokens,
                 maxRetries: 0,
-                ...(request.capabilitySet === "encoder_optimization_proposal_v1"
-                  ? { onPayload: requireProposalTool }
-                  : {}),
+                onPayload: (payload: unknown) => configureProjectPayload(request, payload),
                 ...(!request.apiKeyEnv
                   ? {
                       transformHeaders: (headers: Record<string, string | null>) =>
@@ -143,19 +141,6 @@ export class PiResearchAgent {
     this.#active.agent.abort();
     return true;
   }
-}
-
-function requireProposalTool(payload: unknown): unknown {
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-    throw new Error("OpenAI-compatible proposal request payload is invalid");
-  }
-  return {
-    ...payload,
-    tool_choice: {
-      type: "function",
-      function: { name: "propose_dataset_edits" },
-    },
-  };
 }
 
 function validateRequest(request: PiRunRequest): void {

@@ -3,6 +3,27 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 
 import type { PiRunRequest } from "./protocol.js";
 
+export function configureProjectPayload(request: PiRunRequest, payload: unknown): unknown {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("OpenAI-compatible request payload is invalid");
+  }
+  const configured: Record<string, unknown> = { ...payload };
+  const endpoint = request.openaiCompatible?.baseUrl;
+  if (endpoint && new URL(endpoint).hostname.toLowerCase() === "api.deepseek.com") {
+    // DeepSeek defaults to thinking mode. Send both documented controls because
+    // reasoning-only completions cannot satisfy a required proposal tool call.
+    configured.thinking = { type: "disabled" };
+    configured.reasoning_effort = "none";
+  }
+  if (request.capabilitySet === "encoder_optimization_proposal_v1") {
+    configured.tool_choice = {
+      type: "function",
+      function: { name: "propose_dataset_edits" },
+    };
+  }
+  return configured;
+}
+
 /** Use the selected project model verbatim, never a built-in catalog substitute. */
 export function projectProvider(request: PiRunRequest) {
   const configuration = request.openaiCompatible;

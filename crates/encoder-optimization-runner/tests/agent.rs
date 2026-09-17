@@ -347,13 +347,40 @@ async fn unknown_tools_and_sealed_requests_never_reach_inspection() {
     )]);
     let mut scope = scope();
     scope.maximum_turns = 1;
-    assert!(matches!(
-        agent.analyze(scope).await,
-        Err(OptimizationError::Budget(_))
-    ));
+    let error = agent.analyze(scope).await.unwrap_err().to_string();
+    assert!(error.contains("ignored the required proposal tool call"));
     let history = store.history.lock().unwrap();
     assert!(history[0].tools[0].failed);
     assert!(history[0].proposal.is_none());
+}
+
+#[tokio::test]
+async fn proposal_only_turn_without_the_required_tool_fails_without_paid_retries() {
+    let mut turns = inspected_turns();
+    turns.push(vec![
+        AgentMessage::Event {
+            event: AgentEvent::ModelTurnStarted { sequence: 1 },
+        },
+        AgentMessage::Event {
+            event: AgentEvent::ModelTurnCompleted {
+                sequence: 1,
+                input_tokens: 100,
+                output_tokens: 500,
+                cost_microusd: 0,
+            },
+        },
+        AgentMessage::Completed,
+    ]);
+    let (agent, store, runtime) = setup(turns);
+
+    let error = agent.analyze(scope()).await.unwrap_err().to_string();
+
+    assert!(error.contains("ignored the required proposal tool call"));
+    assert_eq!(runtime.requests.lock().unwrap().len(), 3);
+    let history = store.history.lock().unwrap();
+    assert_eq!(history.len(), 3);
+    assert!(history[2].interrupted);
+    assert_eq!(history[2].usage.output_tokens, Some(500));
 }
 
 #[tokio::test]
