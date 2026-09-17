@@ -231,6 +231,13 @@ fn proposal() -> Value {
 }
 
 fn setup(turns: Vec<Vec<AgentMessage>>) -> (OptimizationAgent, Arc<Store>, Arc<Runtime>) {
+    setup_with_inspection(turns, Arc::new(Inspection))
+}
+
+fn setup_with_inspection(
+    turns: Vec<Vec<AgentMessage>>,
+    inspection: Arc<dyn OptimizationInspection>,
+) -> (OptimizationAgent, Arc<Store>, Arc<Runtime>) {
     let store = Arc::new(Store::default());
     let runtime = Arc::new(Runtime {
         store: store.clone(),
@@ -240,7 +247,7 @@ fn setup(turns: Vec<Vec<AgentMessage>>) -> (OptimizationAgent, Arc<Store>, Arc<R
     let agent = OptimizationAgent::new(
         runtime.clone(),
         store.clone(),
-        Arc::new(Inspection),
+        inspection,
         AgentSelection {
             provider: "project-provider".into(),
             model: "selected-flash".into(),
@@ -251,6 +258,91 @@ fn setup(turns: Vec<Vec<AgentMessage>>) -> (OptimizationAgent, Arc<Store>, Arc<R
         },
     );
     (agent, store, runtime)
+}
+
+struct LargeInspection;
+
+impl OptimizationInspection for LargeInspection {
+    fn development_failures(
+        &self,
+        scope: AgentAnalysisScope,
+        offset: u64,
+        limit: u32,
+    ) -> BoxFuture<'_, InspectionPage> {
+        Inspection.development_failures(scope, offset, limit)
+    }
+
+    fn training_rows(
+        &self,
+        _scope: AgentAnalysisScope,
+        offset: u64,
+        limit: u32,
+        _query: Option<String>,
+    ) -> BoxFuture<'_, InspectionPage> {
+        Box::pin(async move {
+            Ok(InspectionPage {
+                items: (offset..20)
+                    .take(limit as usize)
+                    .map(|index| {
+                        let content =
+                            json!({"question":format!("row-{index}"),"context":"x".repeat(5000)});
+                        InspectionItem {
+                            id: format!("row-{index}"),
+                            fingerprint: fingerprint(&content).unwrap(),
+                            content,
+                        }
+                    })
+                    .collect(),
+                next_offset: (offset + u64::from(limit) < 20).then_some(offset + u64::from(limit)),
+            })
+        })
+    }
+}
+
+#[tokio::test]
+async fn large_inspection_is_paged_before_recording_and_correction_preserves_the_bound() {
+    let mut turns = inspected_turns();
+    let mut invalid = proposal();
+    invalid["removals"][0]["rowId"] = "row-9".into();
+    turns.push(turn(
+        "propose_dataset_edits",
+        invalid,
+        "Try a row not in the returned page.",
+    ));
+    turns.push(turn(
+        "propose_dataset_edits",
+        proposal(),
+        "Use the returned row.",
+    ));
+    let (agent, store, runtime) = setup_with_inspection(turns, Arc::new(LargeInspection));
+    let scope = scope();
+    let accepted = agent.analyze(scope.clone()).await.unwrap();
+    {
+        let history = store.history.lock().unwrap();
+        let page: InspectionPage =
+            serde_json::from_value(history[1].tools[0].result.clone()).unwrap();
+        assert_eq!(page.items.len(), 6);
+        assert_eq!(page.next_offset, Some(6));
+        assert_eq!(page.items[1].content["context"], "x".repeat(5000));
+        assert!(
+            history[2].tools[0].failed,
+            "unreturned rows must not become inspected"
+        );
+        assert!(
+            history
+                .iter()
+                .all(|record| record.call.input_token_ceiling < 50_000)
+        );
+        assert!(history.iter().all(|record| record.validate().is_ok()));
+    }
+    let saved = store.history.lock().unwrap().clone();
+    assert_eq!(agent.analyze(scope).await.unwrap(), accepted);
+    assert_eq!(
+        *store.history.lock().unwrap(),
+        saved,
+        "replay must preserve immutable history"
+    );
+    assert_eq!(runtime.requests.lock().unwrap().len(), 4);
 }
 
 fn inspected_turns() -> Vec<Vec<AgentMessage>> {

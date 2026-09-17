@@ -271,7 +271,11 @@ function mapEvent(
         type: "turn_completed",
         runId,
         sequence: turns,
-        inputTokens: message?.usage.input ?? 0,
+        // Pi splits uncached input, cache reads and cache writes. All three
+        // consume the host's input-token budget, even when billed differently.
+        inputTokens: message
+          ? message.usage.input + message.usage.cacheRead + message.usage.cacheWrite
+          : 0,
         outputTokens: message?.usage.output ?? 0,
         costMicrousd: Math.round((message?.usage.cost.total ?? 0) * 1_000_000),
       };

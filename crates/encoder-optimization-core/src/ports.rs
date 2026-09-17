@@ -11,6 +11,8 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, OptimizationEr
 
 /// Adapters return only the pinned development report's persisted failures and
 /// the selected training version. There is deliberately no arbitrary read tool.
+/// Offsets count items in the stable (optionally filtered) sequence. A host may
+/// shorten a page to a complete prefix and continue at offset + returned count.
 pub trait OptimizationInspection: Send + Sync {
     fn development_failures(
         &self,

@@ -37,9 +37,9 @@ const schemas = {
 
 const descriptions: Record<EncoderOptimizationToolName, string> = {
   inspect_development_failures:
-    "Inspect persisted development failures for the pinned benchmark. No sealed evidence is accessible.",
+    "Inspect persisted development failures for the pinned benchmark. Pages are byte-bounded and may return fewer items than limit; nextOffset identifies the next complete item. No sealed evidence is accessible.",
   inspect_training_rows:
-    "Inspect a bounded page of the exact starting training dataset; optionally filter its task-visible text.",
+    "Inspect a bounded page of the exact starting training dataset; optionally filter its task-visible text. Pages may return fewer items than limit to bound context; only returned items have been inspected, and nextOffset identifies the next complete item.",
   propose_dataset_edits:
     "Submit evidence-linked removals and targeted generation instructions, or stop without changes. Keep summary within 400 characters. Reference only inspected row and evidence IDs. The host validates every proposal; this tool cannot train, approve or change a benchmark.",
 };

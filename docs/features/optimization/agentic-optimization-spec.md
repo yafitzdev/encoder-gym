@@ -219,6 +219,14 @@ with their content explicitly marked compacted and available through a fresh
 inspection. The durable trace remains complete. This prevents quadratic replay
 of already-persisted row and development-evidence payloads without weakening
 request reservation, cumulative token accounting, or proposal validation.
+New inspection responses are additionally bounded to 32 KiB plus 512 bytes of
+identity/framing space before they enter the durable trace or inspected-ID set.
+Pages retain a complete prefix with original item fingerprints and a continuation
+offset for the first unreturned item; native row content is never clipped.
+A single oversized item fails explicitly. Historical pages keep their original
+read-validation bound and are not rewritten. Pi input usage includes uncached,
+cache-read and cache-write tokens; caching changes pricing, not the input-token
+ceiling. Custom-endpoint cost remains unknown without pinned pricing.
 Inspection is a finite phase rather than an open-ended search loop. After one
 successful call to each owned inspection capability, every later model call for
 that iteration exposes only `propose_dataset_edits`; the OpenAI-compatible

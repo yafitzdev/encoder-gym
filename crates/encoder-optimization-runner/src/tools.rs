@@ -58,7 +58,7 @@ pub(super) async fn execute(
             let page = inspection
                 .development_failures(scope.clone(), input.offset, input.limit)
                 .await?;
-            page.validate(input.limit)?;
+            let page = context_page(page, input.offset, input.limit)?;
             evidence.extend(page.items.iter().map(|item| item.id.clone()));
             Ok((serde_json::to_value(page)?, None))
         }
@@ -78,7 +78,7 @@ pub(super) async fn execute(
             let page = inspection
                 .training_rows(scope.clone(), input.offset, input.limit, input.query)
                 .await?;
-            page.validate(input.limit)?;
+            let page = context_page(page, input.offset, input.limit)?;
             rows.extend(page.items.iter().map(|item| item.id.clone()));
             Ok((serde_json::to_value(page)?, None))
         }
@@ -92,6 +92,33 @@ pub(super) async fn execute(
             "Tool is not permitted for encoder optimization".into(),
         )),
     }
+}
+
+// A native item may contain up to 32 KiB of task-visible content. Leave space
+// for its bounded identity/fingerprint and page framing, but do not replay twenty
+// such items on every proposal/correction call. Historical pages retain their
+// original, larger validation bound and are never rewritten on recovery.
+const CONTEXT_PAGE_BYTES: usize = 32 * 1024 + 512;
+
+fn context_page(
+    mut page: InspectionPage,
+    offset: u64,
+    limit: u32,
+) -> Result<InspectionPage, OptimizationError> {
+    page.validate(limit)?;
+    while serde_json::to_vec(&page)?.len() > CONTEXT_PAGE_BYTES {
+        if page.items.len() <= 1 {
+            return Err(OptimizationError::Validation(
+                "Inspection item exceeds the Agent context page limit; its content was not truncated"
+                    .into(),
+            ));
+        }
+        page.items.pop();
+        page.next_offset = Some(offset.checked_add(page.items.len() as u64).ok_or_else(|| {
+            OptimizationError::Validation("Inspection continuation offset overflow".into())
+        })?);
+    }
+    Ok(page)
 }
 
 fn page_limit(limit: u32) -> Result<(), OptimizationError> {
@@ -128,4 +155,91 @@ pub(super) fn restore_inspections(
         target.extend(page.items.into_iter().map(|item| item.id));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use encoder_optimization_core::{agent::InspectionItem, fingerprint};
+
+    fn item(index: usize, text: String) -> InspectionItem {
+        let content = json!({"text":text});
+        InspectionItem {
+            id: format!("row-{index}"),
+            fingerprint: fingerprint(&content).unwrap(),
+            content,
+        }
+    }
+
+    #[test]
+    fn context_pages_preserve_exact_items_and_advance_without_skipping() {
+        // Quotes and multibyte text exercise serialized UTF-8 bytes, not chars.
+        let items: Vec<_> = (0..20).map(|i| item(i, "界\"".repeat(1000))).collect();
+        let original = InspectionPage {
+            items: items.clone(),
+            next_offset: None,
+        };
+        assert!(serde_json::to_vec(&original).unwrap().len() > 90_000);
+        let mut offset = 0;
+        let mut seen = Vec::new();
+        loop {
+            let remaining = InspectionPage {
+                items: items[offset as usize..].to_vec(),
+                next_offset: None,
+            };
+            let page = context_page(remaining, offset, 20).unwrap();
+            page.validate(20).unwrap();
+            assert!(serde_json::to_vec(&page).unwrap().len() <= CONTEXT_PAGE_BYTES);
+            seen.extend(page.items);
+            match page.next_offset {
+                Some(next) => {
+                    assert_eq!(next as usize, seen.len());
+                    offset = next;
+                }
+                None => break,
+            }
+        }
+        assert_eq!(seen, items);
+        original.validate(20).unwrap(); // Historical full pages stay readable.
+    }
+
+    #[test]
+    fn preserves_small_pages_and_full_native_items_but_never_clips_content() {
+        let page = InspectionPage {
+            items: vec![item(0, "x".repeat(32_740))],
+            next_offset: Some(91),
+        };
+        assert_eq!(context_page(page.clone(), 90, 20).unwrap(), page);
+        let empty = InspectionPage {
+            items: vec![],
+            next_offset: None,
+        };
+        assert_eq!(context_page(empty.clone(), 0, 20).unwrap(), empty);
+        let oversized = InspectionPage {
+            items: vec![item(0, "x".repeat(40_000))],
+            next_offset: None,
+        };
+        assert!(
+            context_page(oversized, 0, 20)
+                .unwrap_err()
+                .to_string()
+                .contains("not truncated")
+        );
+    }
+
+    #[test]
+    fn invalid_omitted_items_and_cursor_overflow_still_fail_closed() {
+        let mut page = InspectionPage {
+            items: (0..20).map(|i| item(i, "x".repeat(5000))).collect(),
+            next_offset: None,
+        };
+        assert!(context_page(page.clone(), u64::MAX, 20).is_err());
+        page.items[19].fingerprint = "altered".into();
+        assert!(
+            context_page(page, 0, 20)
+                .unwrap_err()
+                .to_string()
+                .contains("fingerprint")
+        );
+    }
 }

@@ -50,7 +50,7 @@ test("selected project endpoint and model execute real Pi tool calls without cat
     );
     outgoing.write(chunk({}, "tool_calls"));
     outgoing.write(
-      `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 35, completion_tokens: 12, total_tokens: 47 } })}\n\n`,
+      `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 35, prompt_tokens_details: { cached_tokens: 20, cache_write_tokens: 5 }, completion_tokens: 12, total_tokens: 47 } })}\n\n`,
     );
     outgoing.end("data: [DONE]\n\n");
   });
@@ -326,7 +326,7 @@ test("official DeepSeek proposals reach host validation unchanged through the ac
           output: [functionCall],
           usage: {
             input_tokens: 20,
-            input_tokens_details: { cached_tokens: 0 },
+            input_tokens_details: { cached_tokens: 12 },
             output_tokens: 8,
             output_tokens_details: { reasoning_tokens: 0 },
             total_tokens: 28,
