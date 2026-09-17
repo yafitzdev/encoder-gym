@@ -341,14 +341,33 @@ impl OptimizationAgent {
                     }
                     return Ok(());
                 }
-                AgentMessage::Failed { .. } => {
-                    return Err(OptimizationError::Adapter(
-                        "Agent provider failed; inspect connection and model settings".into(),
-                    ));
+                AgentMessage::Failed { message } => {
+                    return Err(provider_failure(&message));
                 }
             }
         }
     }
+}
+
+fn provider_failure(message: &str) -> OptimizationError {
+    let status = message
+        .split(|character: char| !character.is_ascii_digit())
+        .filter(|part| part.len() == 3)
+        .find_map(|part| part.parse::<u16>().ok())
+        .filter(|status| (400..=599).contains(status));
+    let summary = match status {
+        Some(400) => {
+            "Agent provider rejected the request (HTTP 400); verify model feature compatibility"
+        }
+        Some(401 | 403) => "Agent provider rejected authorization; verify the saved credential",
+        Some(404) => "Agent provider could not find the configured endpoint or model (HTTP 404)",
+        Some(408 | 429) => {
+            "Agent provider temporarily rejected the request; verify timeout or rate limits"
+        }
+        Some(500..=599) => "Agent provider is unavailable due to a server error",
+        _ => "Agent provider failed; inspect connection and model settings",
+    };
+    OptimizationError::Adapter(summary.into())
 }
 
 fn inspection_phase_complete(history: &[AgentTurnRecord]) -> bool {
@@ -521,5 +540,16 @@ mod prompt_tests {
 
         training.tools[0].failed = true;
         assert!(!inspection_phase_complete(&[training]));
+    }
+
+    #[test]
+    fn provider_failures_expose_only_a_safe_status_classification() {
+        let error = provider_failure("400 Bad Request: private provider detail").to_string();
+        assert!(error.contains("HTTP 400"));
+        assert!(!error.contains("private provider detail"));
+
+        let error = provider_failure("provider body contains a private value").to_string();
+        assert!(error.contains("inspect connection and model settings"));
+        assert!(!error.contains("private value"));
     }
 }

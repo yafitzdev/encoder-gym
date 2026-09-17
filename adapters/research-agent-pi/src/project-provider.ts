@@ -28,19 +28,28 @@ export function projectProvider(request: PiRunRequest) {
   if (request.apiKeyEnv && !key?.trim()) {
     throw new Error("The selected project connection has no available API key");
   }
+  // DeepSeek enables thinking by default at the HTTP boundary. Pi's
+  // thinkingLevel="off" needs this compatibility declaration to serialize
+  // `thinking: { type: "disabled" }`; otherwise a forced tool choice is
+  // rejected with HTTP 400 even though the Agent requested non-thinking mode.
+  const isDeepSeek = url.hostname.toLowerCase() === "api.deepseek.com";
   const model: Model<"openai-completions"> = {
     id: request.model,
     name: request.model,
     api: "openai-completions",
     provider: request.provider,
     baseUrl: url.toString().replace(/\/$/, ""),
-    reasoning: false,
+    reasoning: isDeepSeek,
     input: ["text"],
     // The host reports unknown cost unless it has an independent pinned rate.
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 131072,
     maxTokens: configuration.maximumOutputTokens,
-    compat: { maxTokensField: "max_tokens", supportsStore: false },
+    compat: {
+      maxTokensField: "max_tokens",
+      supportsStore: false,
+      ...(isDeepSeek ? { thinkingFormat: "deepseek" as const } : {}),
+    },
   };
   const models = createModels();
   models.setProvider(

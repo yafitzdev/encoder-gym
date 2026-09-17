@@ -4,6 +4,7 @@ import test from "node:test";
 
 import { PiResearchAgent } from "./agent.js";
 import { createEncoderOptimizationTools } from "./encoder-optimization-tools.js";
+import { projectProvider } from "./project-provider.js";
 import type { PiRunEvent, PiRunRequest } from "./protocol.js";
 
 function request(baseUrl: string): PiRunRequest {
@@ -222,4 +223,45 @@ test("proposal-only project call requires the one exposed proposal tool", async 
       server.close((error) => (error ? reject(error) : resolve())),
     );
   }
+});
+
+test("official DeepSeek connections translate disabled Agent thinking to the wire format", async () => {
+  const input = request("https://api.deepseek.com");
+  input.model = "deepseek-flash";
+  input.apiKeyEnv = "ENCODER_OPTIMIZATION_DEEPSEEK_FIXTURE_KEY";
+  process.env.ENCODER_OPTIMIZATION_DEEPSEEK_FIXTURE_KEY = "fixture-not-a-secret";
+  try {
+    const { model, models } = projectProvider(input);
+    assert.equal(model.reasoning, true);
+    assert.equal(model.compat?.thinkingFormat, "deepseek");
+    let payload: Record<string, unknown> | undefined;
+    const stream = models.streamSimple(
+      model,
+      {
+        systemPrompt: "Use the one supplied tool.",
+        messages: [{ role: "user", content: "Submit the result.", timestamp: Date.now() }],
+      },
+      {
+        maxRetries: 0,
+        async fetch(_input, init) {
+          payload = JSON.parse(String(init?.body));
+          return new Response(JSON.stringify({ error: { message: "fixture stop" } }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          });
+        },
+      },
+    );
+    for await (const _event of stream) {
+      // Consume the terminal provider-error event after capturing its request.
+    }
+    assert.deepEqual(payload?.thinking, { type: "disabled" });
+  } finally {
+    delete process.env.ENCODER_OPTIMIZATION_DEEPSEEK_FIXTURE_KEY;
+  }
+
+  const generic = request("https://provider.example/v1");
+  const { model: genericModel } = projectProvider(generic);
+  assert.equal(genericModel.reasoning, false);
+  assert.equal(genericModel.compat?.thinkingFormat, undefined);
 });
