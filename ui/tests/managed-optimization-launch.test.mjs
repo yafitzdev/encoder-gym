@@ -277,6 +277,21 @@ test("project optimization history is a typed project-owned read", async () => {
   await assert.rejects(() => new ManagedOptimizationLaunch(ports(f, async () => [foreign])).runs(f.projectId));
 });
 
+test("the run index does not reconstruct every Agent history", async () => {
+  const f = fixture(), wire = agentRun(f.run(), "agent_completed"), calls = [];
+  const configured = ports(f, async () => assert.fail("Unexpected delegated command"));
+  configured.command = async args => {
+    calls.push(args);
+    if (args[2] === "list") return [wire];
+    assert.fail(`The run index must not execute ${args[2]}`);
+  };
+  const runs = await new ManagedOptimizationLaunch(configured).runs(f.projectId);
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].id, wire.run.id);
+  assert.equal(runs[0].iterations, undefined);
+  assert.deepEqual(calls, [["optimization-run", "owned-project", "list"]]);
+});
+
 test("Stop interrupts the in-flight work without cancelling the run and Resume keeps the same UUID", async () => {
   const f = fixture(), wire = f.run("ready"), calls = [];
   let finish, entered;

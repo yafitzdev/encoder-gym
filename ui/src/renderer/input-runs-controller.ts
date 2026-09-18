@@ -21,6 +21,9 @@ export class InputRunsController {
   private activityLoaded = new Set<string>();
   private activityLoading = new Set<string>();
   activityErrors = new Map<string, unknown>();
+  private historyLoadedAt = new Map<string, string>();
+  historyLoading = new Set<string>();
+  historyErrors = new Map<string, unknown>();
   readonly final: OptimizationFinalController;
   constructor(readonly projectId: string, private bridge: EncoderGymBridge, private render: () => void, private updated?: (workspace: ManagedWorkspace, snapshot?: WorkspaceSnapshot) => void) {
     this.final = new OptimizationFinalController(projectId, bridge, render, updated);
@@ -39,6 +42,30 @@ export class InputRunsController {
     finally { this.stoppingId = undefined; this.render(); }
   }
   retain(run: InputOptimizationRun): void { this.replace(run); }
+  async ensureHistory(runId: string): Promise<void> {
+    const run = this.runs?.find(value => value.id === runId);
+    if (!run?.agentExecution || this.historyLoadedAt.get(runId) === run.updatedAt
+      || this.historyLoading.has(runId) || this.historyErrors.has(runId)) return;
+    this.historyLoading.add(runId);
+    const epoch = this.epoch;
+    try {
+      const detailed = await this.bridge.inputOptimizationRun(this.projectId, runId);
+      if (epoch === this.epoch) {
+        this.replace(detailed);
+        this.historyLoadedAt.set(runId, detailed.updatedAt);
+      }
+    } catch (error) { if (epoch === this.epoch) this.historyErrors.set(runId, error); }
+    finally {
+      this.historyLoading.delete(runId);
+      if (epoch === this.epoch) this.render();
+    }
+  }
+  retryHistory(runId: string): void {
+    this.historyErrors.delete(runId);
+    this.historyLoadedAt.delete(runId);
+    void this.ensureHistory(runId);
+    this.render();
+  }
   async ensureActivity(runId: string): Promise<void> {
     if (this.activityLoaded.has(runId) || this.activityLoading.has(runId) || this.activityErrors.has(runId)) return;
     this.activityLoading.add(runId);
@@ -50,7 +77,7 @@ export class InputRunsController {
     finally { this.activityLoading.delete(runId); this.render(); }
   }
   async ensure(): Promise<void> { if (!this.runs && !this.loading && !this.error) await this.load(); }
-  refresh(): void { if (!this.runningId && !this.stoppingId) { this.epoch++; this.runs = undefined; this.error = undefined; this.loading = false; this.activities.clear(); this.activityLoaded.clear(); this.activityErrors.clear(); this.render(); } }
+  refresh(): void { if (!this.runningId && !this.stoppingId) { this.epoch++; this.runs = undefined; this.error = undefined; this.loading = false; this.activities.clear(); this.activityLoaded.clear(); this.activityErrors.clear(); this.historyLoadedAt.clear(); this.historyErrors.clear(); this.render(); } }
   private async load(): Promise<void> {
     const epoch = this.epoch; this.loading = true; this.error = undefined; this.render();
     try {

@@ -49,6 +49,7 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
   create.id = "overview-new-run"; create.disabled = busy || setup.loading || runs.loading;
   const controllerError = setup.error ?? runs.error;
   const expandedRun = records.find(record => record.id === state.expanded)?.input;
+  if (expandedRun?.agentExecution) void runs.ensureHistory(expandedRun.id);
   const expandedActivity = expandedRun
     ? setup.run?.id === expandedRun.id && setup.activity?.failure ? setup.activity : runs.activities.get(expandedRun.id)
     : undefined;
@@ -206,6 +207,8 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     const unobserved = inputOptimizationMayBeActive(run) && !running;
     const refresh = button("Refresh status", () => runs.refresh(), "secondary"); refresh.disabled = busy || stopping;
     return h("div", { class: "focus-status" },
+      runs.historyLoading.has(run.id) ? h("div", { role: "status", class: "workspace-progress" }, spinner(), "Loading iteration history") : null,
+      runs.historyErrors.has(run.id) ? h("div", { class: "operation-failure", role: "alert" }, failureNotice(runs.historyErrors.get(run.id)), button("Retry history", () => runs.retryHistory(run.id), "secondary")) : null,
       runs.activityErrors.has(run.id) ? failureNotice(runs.activityErrors.get(run.id)) : null,
       activity?.failure ? h("div", { class: "operation-failure", role: "alert" }, failureNotice(activity.failure.message)) : null,
       inputRunProgress({ run, running, activity, iteration, startedAt: activity ? Date.parse(activity.startedAt) : setup.startedAt, context,

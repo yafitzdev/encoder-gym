@@ -36,6 +36,29 @@ test("run history loads newest first and completes the exact selected run", asyn
   assert.equal(controller.runs[0].state, "baseline_retained"); assert.equal(controller.runningId, undefined); assert.equal(updates.length, 1);
 });
 
+test("Agent iteration history loads only for the selected run and coalesces concurrent reads", async () => {
+  const projectId = randomUUID(), summary = run(projectId, "agent_completed");
+  summary.agentExecution = { lastSequence: 2 };
+  const detailed = { ...summary, iterations: [{ number: 1 }] };
+  let reads = 0, release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const controller = new InputRunsController(projectId, {
+    inputOptimizationRuns: async () => [summary],
+    inputOptimizationRun: async (id, runId) => {
+      assert.equal(id, projectId); assert.equal(runId, summary.id); reads++;
+      return pending;
+    },
+  }, () => {});
+  await controller.ensure();
+  assert.equal(reads, 0, "the collection read must not load Agent iteration history");
+  const first = controller.ensureHistory(summary.id), second = controller.ensureHistory(summary.id);
+  assert.equal(reads, 1);
+  release(detailed); await Promise.all([first, second]);
+  assert.deepEqual(controller.runs[0].iterations, detailed.iterations);
+  await controller.ensureHistory(summary.id);
+  assert.equal(reads, 1, "the unchanged detailed run is cached");
+});
+
 test("failed continuation remains retryable and refresh never interrupts active work", async () => {
   const projectId = randomUUID(), value = run(projectId, "execution_failed"), stopped = { ...value, failureCode: "candidate_execution_failed" }; let attempts = 0, release;
   const pending = new Promise(resolve => { release = resolve; });

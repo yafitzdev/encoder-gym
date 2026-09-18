@@ -214,11 +214,10 @@ export class ManagedOptimizationLaunch {
 
   async runs(projectId: string): Promise<InputOptimizationRun[]> {
     const workspace = await this.ports.open(projectId);
-    const runs = parseInputOptimizationRuns(await this.ports.command<unknown>(["optimization-run", workspace.folder, "list"]), projectId);
-    // Each read opens an owned CLI process; do not fan out one worker per old run.
-    const history: InputOptimizationRun[] = [];
-    for (const run of runs) history.push(await this.withHistory(workspace, run));
-    return history;
+    // The index must stay cheap: opening history reconstructs the scientific
+    // projection and starts a separate CLI process for every Agent run. The
+    // renderer asks show() for that projection only when a run is expanded.
+    return parseInputOptimizationRuns(await this.ports.command<unknown>(["optimization-run", workspace.folder, "list"]), projectId);
   }
 
   private async withHistory(workspace: ManagedWorkspace, run: InputOptimizationRun): Promise<InputOptimizationRun> {
