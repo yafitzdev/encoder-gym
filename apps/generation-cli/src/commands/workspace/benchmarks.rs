@@ -168,6 +168,22 @@ async fn initialize(folder: &Path, expected_parent: Option<Uuid>) -> Result<()> 
 mod iteration_results;
 mod optimization_results;
 
+/// A run report consumes only that root's scientific children. Reuse the full
+/// benchmark/iteration validators without projecting unrelated experiment runs.
+pub(super) async fn iteration_run_results(
+    folder: &Path,
+    version_id: Uuid,
+    catalog: &project_workspace_core::ModelCatalog,
+    run: &project_workspace_core::ProjectOptimizationRunView,
+) -> Result<project_workspace_core::benchmark_results::ProjectBenchmarkResults> {
+    let version = inspect(folder, version_id).await?;
+    let mut results =
+        project_workspace_core::benchmark_results::ProjectBenchmarkResults::new(version, catalog)?;
+    iteration_results::include_runs(folder, catalog, &mut results, std::slice::from_ref(run))
+        .await?;
+    Ok(results)
+}
+
 pub(super) async fn results(
     folder: &Path,
     version_id: Uuid,

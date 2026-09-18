@@ -112,7 +112,7 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
             onClick: () => { state.tabs.set(id, stage); actions.render(); } }, h("span", { class: "focus-stage-number" }, String(index + 1)), { setup: "Setup", status: "Status", report: "Report" }[stage]))),
         h("section", { class: "focus-panel", "aria-label": tab }, tab !== "setup" && diagnostic ? h("p", { class: "diagnostic-notice" }, "Diagnostic run · no final holdout or promotion.") : null, tab !== "setup" ? iterationSelector(record) : null,
           tab === "setup" ? setupPanel(record) : tab === "status" ? statusPanel(record) : record?.input?.iterations?.length
-            ? h("div", {}, iterationReport(selectedIteration(record), actions), settings ? optimizationFinalPanel(record.input, runs.final, workspace.managed!, actions, diagnostic, !!setup.running || !!runs.runningId) : null) : reportPanel(record!))) : null);
+            ? h("div", {}, settings ? optimizationFinalPanel(record.input, runs.final, workspace.managed!, actions, diagnostic, !!setup.running || !!runs.runningId) : null, iterationReport(selectedIteration(record), actions)) : reportPanel(record!))) : null);
   }
   function selectedIteration(record: OverviewRecord) {
     const history = record.input?.iterations;

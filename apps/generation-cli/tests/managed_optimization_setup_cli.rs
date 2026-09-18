@@ -1396,7 +1396,32 @@ async fn one_click_authority_pins_exact_inputs_and_provider_revisions_without_se
             .await
             .is_err()
     );
+    // A single-run lookup must not replay another run's history. Both a full
+    // listing and a lookup of the altered run must still reject its corruption.
+    sqlx::query("DROP TRIGGER immutable_project_optimization_events_update")
+        .execute(&mut database)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE project_optimization_events SET fingerprint='changed' WHERE run_id=? AND sequence=1")
+        .bind(cancel_id.to_string())
+        .execute(&mut database)
+        .await
+        .unwrap();
     database.close().await.unwrap();
+    assert_eq!(
+        run(
+            root,
+            &[
+                "optimization-run",
+                "project",
+                "show",
+                started["run"]["run"]["id"].as_str().unwrap()
+            ]
+        ),
+        finalized["run"]
+    );
+    assert!(optimization_runs::show(&folder, cancel_id).await.is_err());
+    assert!(optimization_runs::list(&folder).await.is_err());
 }
 
 #[tokio::test]

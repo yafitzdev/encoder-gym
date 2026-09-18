@@ -15,7 +15,10 @@ npm ci
 npm start
 ```
 
-`npm start` builds the Rust workspace CLI and opens Encoder Gym Studio. Close an older running instance
+`npm start` builds the optimized (`--release`) Rust workspace CLI and opens Encoder Gym Studio.
+The desktop uses `target/release/synth`; ordinary Rust tests retain their debug build.
+This matters for real-size datasets: checksum and provenance replay are CPU-intensive.
+Close an older running instance
 before launching changed code; a second normal launch focuses that instance.
 
 ## Project folders and page responsibilities

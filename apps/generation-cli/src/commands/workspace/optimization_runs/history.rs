@@ -63,9 +63,15 @@ pub(super) async fn read(folder: &Path, run_id: Uuid) -> Result<History> {
     // The shared reader verifies the original baseline, unchanged benchmark,
     // scientific journals and complete iteration ancestry. Never rescore in UI.
     let results = match inputs.first() {
-        Some(first) => {
-            Some(super::super::benchmarks::results(folder, first.benchmark.id.parse()?).await?)
-        }
+        Some(first) => Some(
+            super::super::benchmarks::iteration_run_results(
+                folder,
+                first.benchmark.id.parse()?,
+                catalog,
+                &run,
+            )
+            .await?,
+        ),
         None => None,
     };
     let mut iterations = Vec::new();

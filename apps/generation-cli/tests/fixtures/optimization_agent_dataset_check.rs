@@ -482,6 +482,23 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
+        if complete && loop_mode.is_none() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let bookkeeping: Vec<Value> = stderr
+                .lines()
+                .filter_map(|line| line.strip_prefix("ENCODER_GYM_PROGRESS "))
+                .filter_map(|json| serde_json::from_str::<Value>(json).ok())
+                .filter(|event| event["phase"] == "finalizing_iteration")
+                .collect();
+            assert_eq!(
+                bookkeeping.len(),
+                2,
+                "candidate/result custody must report progress"
+            );
+            assert!(bookkeeping.iter().all(|event| event["iteration"] == 1
+                && event["runStage"] == "evaluating"
+                && event["narrative"]["origin"] == "system"));
+        }
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
     let before_native = fs::read(root.join("runtime/native-invocations.log")).unwrap();

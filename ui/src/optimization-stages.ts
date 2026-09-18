@@ -10,7 +10,7 @@ export function isOptimizationStage(value: unknown): value is OptimizationStage 
 /** Native execution includes training, checkpoint saving and development evaluation. */
 export function taskStage(task: string): OptimizationStage | undefined {
   if (["agent_analysis", "data_generation"].includes(task)) return "preparing_data";
-  if (["evaluating_retrieval", "evaluating_agent", "development_decision", "final_decision"].includes(task)) return "evaluating";
+  if (["evaluating_retrieval", "evaluating_agent", "development_decision", "final_decision", "finalizing_iteration"].includes(task)) return "evaluating";
   if (["saving_checkpoint", "registering_candidate"].includes(task)) return "saving_candidate";
   if (["checking_files", "checking_training_data", "loading_model", "preparing_batches", "training"].includes(task)) return "training";
   if (["loading_training_rows", "writing_training_rows", "checking_materialized_project"].includes(task)) return "preparing_data";

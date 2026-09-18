@@ -169,6 +169,10 @@ async fn run(
         }
         let completed = optimization_completions::list(folder, run_id).await?;
         let iteration = if let Some(last) = completed.last() {
+            super::progress::finalizing(
+                last.number,
+                "Verifying saved iteration results and deciding whether to continue.",
+            );
             let sources =
                 super::super::iteration_inputs::scientific_history(folder, run_id, last.number)
                     .await?;
@@ -182,6 +186,10 @@ async fn run(
             super::super::iteration_inputs::bind_inputs(folder, run_id).await?
         };
         run_step(folder, &iteration, runtime.clone(), true, true).await?;
+        super::progress::finalizing(
+            iteration.scope.iteration,
+            "Verifying iteration history and recording the candidate selection.",
+        );
         let sources = super::super::iteration_inputs::scientific_history(
             folder,
             run_id,

@@ -210,6 +210,11 @@ app.whenReady().then(async()=>{
     await click('#overview-agent-root-report');
     await check('Quick-test reports cannot be mistaken for promotion evidence',`document.querySelector('.diagnostic-notice').textContent.includes('no final holdout') && document.querySelector('.focus-run-heading').children.length===4 && document.querySelector('.run-mode-label').textContent==='Quick test'`);
     await capture('quick-history-390');
+    await evaluate(`qa.setup.launches[0].scope.agentic=${JSON.stringify(presets.standard)};
+      qa.runs.runs[0].state='agent_completed';qa.runs.runningId=undefined;
+      Object.assign(qa.runs.runs[0].iterations[0],{completed:true,selected:false,developmentPassed:false});qa.render()`);
+    await check('completed experiment without a winner is not presented as an execution failure',`document.querySelector('[aria-label="Run outcome"] h3').textContent==='Completed — no qualifying improvement' && document.querySelector('[aria-label="Run outcome"]').textContent.includes('1 candidate was trained') && !document.querySelector('.operation-failure') && !document.querySelector('[id^="agent-final-authorize"]')`);
+    await capture('completed-no-improvement-390');
     console.log('Overview renderer verification complete.');
   }finally{window.destroy();app.quit()}
 }).catch(error=>{console.error(error);app.exit(1)});

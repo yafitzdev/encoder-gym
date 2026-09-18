@@ -17,6 +17,8 @@ pub struct CompletedModelRegistration {
 
 /// The application verifies the native output and its scientific run before
 /// calling this custody boundary. Evaluation success is deliberately irrelevant.
+/// Verifies the copied/reused candidate, not every historical project artifact.
+/// The returned inventory is not a full workspace audit (`verified` is false).
 pub async fn register_completed_model(
     folder: &Path,
     source: &Path,
@@ -74,9 +76,20 @@ pub async fn register_completed_model(
                 artifact == existing,
                 "The completed model's recorded provenance changed."
             );
+            // Retries must verify the managed copy too, even when source bytes
+            // are unchanged. Do not turn adoption of one checkpoint into a deep
+            // audit of every old model and dataset in the workspace.
+            let managed = inspect_model(&contained(root, &existing.path)?)?;
+            ensure!(
+                managed.format == existing.format
+                    && managed.bytes == existing.bytes
+                    && managed.fingerprint == existing.fingerprint,
+                "Managed completed model artifact changed: {}",
+                existing.path
+            );
             transaction.rollback().await?;
             database.close().await?;
-            return open_workspace(root, true).await;
+            return open_workspace(root, false).await;
         }
     }
     catalog.with_artifact(artifact.clone())?;
@@ -87,5 +100,6 @@ pub async fn register_completed_model(
         .bind(serde_json::to_string(&artifact)?).execute(&mut *transaction).await?;
     transaction.commit().await?;
     database.close().await?;
-    open_workspace(root, true).await
+    // publish_model_copy already checks the destination's complete inventory.
+    open_workspace(root, false).await
 }

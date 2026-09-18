@@ -34,7 +34,14 @@ async fn validate(folder: &Path, run_id: Uuid, binding: &IterationTrainingBindin
         "Training does not use this iteration's published Agent dataset"
     );
     let qualified = dataset_versions::inspect(folder, binding.qualified_dataset.id).await?;
-    let training = dataset_versions::inspect(folder, binding.training_dataset.id).await?;
+    // Full-data runs name the same immutable version twice. Verify it once per
+    // custody read; a distinct Quick-test subset still receives its own check.
+    let subset = if binding.training_dataset.id == qualified.id {
+        None
+    } else {
+        Some(dataset_versions::inspect(folder, binding.training_dataset.id).await?)
+    };
+    let training = subset.as_ref().unwrap_or(&qualified);
     ensure!(
         qualified.reference() == binding.qualified_dataset
             && training.reference() == binding.training_dataset
@@ -65,7 +72,7 @@ async fn validate(folder: &Path, run_id: Uuid, binding: &IterationTrainingBindin
         );
     } else {
         ensure!(
-            training == qualified,
+            training == &qualified,
             "Training population differs from its clearance"
         );
     }

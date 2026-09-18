@@ -9,7 +9,15 @@ export function optimizationFinalPanel(run: InputOptimizationRun, controller: Op
   workspace: ManagedWorkspace, actions: Actions, diagnostic: boolean, otherBusy: boolean): HTMLElement | null {
   if (!controller || !["agent_completed", "agent_budget_exhausted"].includes(run.state) || diagnostic) return null;
   const winner = run.iterations?.find(iteration => iteration.selected);
-  if (!winner) return h("p", { class: "muted" }, "No development-eligible candidate. Baseline retained; final holdout was not authorized.");
+  if (!run.iterations?.length) return null;
+  if (!winner) {
+    const trained = run.iterations.filter(iteration => iteration.modelId).length;
+    return h("section", { class: "focus-report", "aria-label": "Run outcome" },
+      h("h3", {}, run.state === "agent_completed" ? "Completed — no qualifying improvement" : "Budget reached — baseline retained"),
+      h("p", {}, trained ? `${trained} ${trained === 1 ? "candidate was" : "candidates were"} trained; none passed all required development checks. The baseline is unchanged.`
+        : "No new candidate was trained. The baseline is unchanged."),
+      h("p", { class: "muted" }, "Models, dataset changes and evaluation reports remain available below. Final holdout was not authorized."));
+  }
   const state = controller.state(run.id), saved = state.view, receipt = saved?.execution.result;
   const busy = !!state.operation || otherBusy || !!controller.busyRun;
   const control = (id: string, label: string, action: () => void, style = "secondary") => {

@@ -3,6 +3,21 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { appendLiveActivity, inputRunActivity, inputRunStageDetail, inputRunStageLabel, mergedActivity, presentedActivity, stagedActivity, optimizationStages } from "../dist/evidence/input-run-activity.js";
 
+test("post-evaluation bookkeeping stays visible in its exact iteration", () => {
+  const narrative = { origin: "system", kind: "action", summary: "Recording completed development evaluation results." };
+  const event = { state: "progress", stage: "finalizing_iteration", created_at: "2026-09-18T12:00:00Z", narrative,
+    references: [{ kind: "iteration", id: "3" }, { kind: "run_stage", id: "evaluating" }] };
+  const log = { actions: [{ action_id: "root", operation: "optimization.run", state: "progress", started_at: event.created_at,
+    references: [{ kind: "run", id: "run" }], events: [event] }] };
+  const activity = inputRunActivity(log, "run");
+  assert.equal(activity.progress.phase, "finalizing_iteration");
+  assert.equal(activity.progress.iteration, 3);
+  assert.deepEqual(activity.progress.narrative, narrative);
+  assert.equal(activity.events[0].stage, "evaluating");
+  assert.equal(inputRunStageLabel("finalizing_iteration"), "Saving and checking iteration results");
+  assert.equal(stagedActivity([{ at: event.created_at, progress: { phase: "finalizing_iteration", iteration: 3 } }])[0].stage, "evaluating");
+});
+
 test("iteration identity survives durable and live activity without merging adjacent iterations", () => {
   const live = [];
   appendLiveActivity(live, { phase: "training", iteration: 1 }, 1_000);

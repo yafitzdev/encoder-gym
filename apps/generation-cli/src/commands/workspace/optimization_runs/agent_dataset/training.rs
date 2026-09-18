@@ -267,6 +267,10 @@ pub(super) async fn complete(
             anyhow::bail!("Iteration did not produce a trained model");
         };
         // Preserve every trained output, even if a later evaluation failed.
+        super::progress::finalizing(
+            iteration.scope.iteration,
+            "Verifying and saving the trained candidate and its dataset to Models.",
+        );
         let registered = super::registration::register(
             folder,
             &backend,
@@ -281,6 +285,10 @@ pub(super) async fn complete(
         )
         .await?;
         development?;
+        super::progress::finalizing(
+            iteration.scope.iteration,
+            "Recording completed development evaluation results.",
+        );
         let result =
             custody::record_result(folder, run_id, iteration.id, &project, &protocol, &events)
                 .await?;

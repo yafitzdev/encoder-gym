@@ -19,6 +19,15 @@ pub(super) async fn include(
     results: &mut ProjectBenchmarkResults,
 ) -> Result<()> {
     let runs = optimization_runs::list(folder).await?;
+    include_runs(folder, catalog, results, &runs).await
+}
+
+pub(super) async fn include_runs(
+    folder: &Path,
+    catalog: &ModelCatalog,
+    results: &mut ProjectBenchmarkResults,
+    runs: &[project_workspace_core::ProjectOptimizationRunView],
+) -> Result<()> {
     let relevant: Vec<_> = runs
         .iter()
         .filter(|view| {

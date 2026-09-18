@@ -4,6 +4,7 @@ import { isOptimizationStage } from "./optimization-stages.js";
 
 const phases = new Set([
   "agent_analysis", "data_generation",
+  "finalizing_iteration",
   "checking_model", "checking_dataset", "checking_evaluation", "checking_runtime",
   "loading_training_rows", "writing_training_rows", "checking_materialized_project",
   "loading_evaluation_protocol", "creating_candidate", "creating_experiment",

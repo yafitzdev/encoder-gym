@@ -39,7 +39,7 @@ const credentials = new CredentialStore(join(app.getPath("userData"), "credentia
 const providerConnections = new ProviderConnectionStore(join(app.getPath("userData"), "provider-connections.json"));
 const projectCredentials = new ProjectCredentials(credentials, providerConnections);
 const backend = new ManagedBackend(
-  app.isPackaged ? join(process.resourcesPath, "synth" + (process.platform === "win32" ? ".exe" : "")) : join(directory, "..", "..", "target", "debug", "synth" + (process.platform === "win32" ? ".exe" : "")),
+  app.isPackaged ? join(process.resourcesPath, "synth" + (process.platform === "win32" ? ".exe" : "")) : join(directory, "..", "..", "target", "release", "synth" + (process.platform === "win32" ? ".exe" : "")),
   registry,
   undefined,
   { resolveCredential: (id, environmentFallback) => projectCredentials.resolve(id, environmentFallback) },

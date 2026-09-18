@@ -10,7 +10,7 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "build:backend": "cargo build --manifest-path ../Cargo.toml --package synthetic-data-cli --bin synth --locked",
+    "build:backend": "cargo build --manifest-path ../Cargo.toml --package synthetic-data-cli --bin synth --release --locked",
     "build:test-fixtures": "cargo build --manifest-path ../Cargo.toml --package synthetic-data-cli --features test-fixtures --bin synth-benchmark-fixture --locked",
     "verify:current": "npm run build:backend && npm run build && electron . --verify-managed-current",
     "build": "node scripts/build.mjs",

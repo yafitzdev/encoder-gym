@@ -45,11 +45,12 @@ export async function runAgentJourney(window: BrowserWindow, registry: ProjectRe
         const expected = "agent_completed";
         await until(`document.querySelector('[data-run-state=${expected}]') && !document.getElementById('overview-new-run').disabled`);
         const runs = await backend.optimizationLaunch.runs(id); assert.equal(runs.length, 1);
-        const run = runs[0]!, launch = (await backend.optimizationLaunch.list(id))[0]!;
+        const run = await backend.optimizationLaunch.show(id, runs[0]!.id), launch = (await backend.optimizationLaunch.list(id))[0]!;
         assert.equal(launch.scope.agentic?.mode, "quick_test"); assert.equal(launch.scope.limits.maximumFinalEvaluations, 0);
         const native = readFileSync(join(fixture.folder, "../runtime/native-invocations.log"), "utf8");
         if (phase === "quick") {
           assert.equal(run.iterations?.length, 1); assert.ok(run.iterations![0]!.trainingDatasetVersionId);
+          await until(`document.getElementById('overview-${run.id}-report') && !document.getElementById('overview-${run.id}-report').disabled`);
           await click(`#overview-${run.id}-report`);
           assert.match(await evaluate("document.body.innerText"), /Diagnostic run/);
           assert.equal(await evaluate("document.querySelectorAll('[aria-label=\"Final acceptance\"]').length"), 0);
@@ -130,6 +131,9 @@ export async function runAgentJourney(window: BrowserWindow, registry: ProjectRe
       writeFileSync(join(root, "before-final-native.txt"), readFileSync(join(fixture.folder, "../runtime/native-invocations.log")));
       console.log("PASS restarted Resume completed two evidence-dependent training cycles and no-change completion; ordinary artifact viewers and real Agent/Generation activity opened"); return;
     }
+    // Reopened runs load their detailed history on demand. A visible root is
+    // not yet a ready report; wait for the real renderer's enabled control.
+    await until(`document.getElementById('overview-${runId}-report') && !document.getElementById('overview-${runId}-report').disabled`);
     await click(`#overview-${runId}-report`);
     if (phase === "final") {
       await until(`document.getElementById('agent-final-review-${runId}') && !document.getElementById('agent-final-review-${runId}').disabled`);

@@ -12,7 +12,7 @@ import { experimentFixture, writeExperimentDatabase } from "./fixtures/experimen
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "gym-managed-ui-"));
   const registry = new ProjectRegistry(join(root, "profile", "projects.json"));
-  const backend = new ManagedBackend(resolve("../target/debug/synth" + (process.platform === "win32" ? ".exe" : "")), registry);
+  const backend = new ManagedBackend(resolve("../target/release/synth" + (process.platform === "win32" ? ".exe" : "")), registry);
   const source = join(root, "model"); writeLocalModel(source);
   return { root, registry, backend, source };
 }

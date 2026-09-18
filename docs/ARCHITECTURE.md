@@ -986,6 +986,17 @@ The desktop validates this closed response and joins child experiments by exact
 identity. Stop/Resume authority reads do not depend on report availability.
 Artifact links refresh the project inventory before ordinary viewer navigation,
 fencing late responses against project/navigation changes without restarting work.
+Single-run custody reads replay only the requested root and its Agent history,
+using the same checks as full listings. Checkpoint registration verifies the exact
+source and managed copy (including retries) without auditing unrelated historical
+model/data contents; its returned inventory is not marked fully verified. Explicit
+workspace verification retains the complete audit. Post-evaluation candidate
+registration, result recording and completion replay emit iteration-scoped System
+progress so bookkeeping remains visible separately from native evaluation.
+The run-history report similarly projects only that root's iteration scientific
+children through the shared benchmark validator; the benchmark-wide viewer still
+projects all runs. Identical qualified/trainer versions are verified once within
+each custody read, while distinct Quick-test subsets retain independent checks.
 Native progress carries an explicit iteration ordinal through typed telemetry
 and durable activity references; the renderer never assigns iteration membership
 from timestamps. Unscoped setup activity remains separately selectable.

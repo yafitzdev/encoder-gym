@@ -110,11 +110,24 @@ pub async fn start(
 }
 
 pub async fn list(folder: &Path) -> Result<Vec<ProjectOptimizationRunView>> {
+    read(folder, None).await
+}
+
+async fn read(folder: &Path, run_id: Option<Uuid>) -> Result<Vec<ProjectOptimizationRunView>> {
     let workspace = open_workspace(folder, false).await?;
-    let launches = optimization_launch::list(folder).await?;
-    let setups = optimization_setup::list(folder).await?;
     let mut database = connect(Path::new(&workspace.folder), true, false).await?;
-    let mut runs = load(&mut database, workspace.manifest.id, &launches, &setups).await?;
+    let setups = optimization_setup::load(&mut database, &workspace).await?;
+    let providers = load_provider_catalog_history(&mut database, &workspace.manifest).await?;
+    let launches =
+        optimization_launch::load(&mut database, &workspace, &setups, &providers).await?;
+    let mut runs = load_selected(
+        &mut database,
+        workspace.manifest.id,
+        &launches,
+        &setups,
+        run_id,
+    )
+    .await?;
     for view in &mut runs {
         let launch = launches
             .iter()
@@ -171,7 +184,7 @@ pub async fn providers(
 }
 
 pub async fn show(folder: &Path, run_id: Uuid) -> Result<ProjectOptimizationRunView> {
-    list(folder)
+    read(folder, Some(run_id))
         .await?
         .into_iter()
         .find(|run| run.run.id == run_id)
@@ -1105,6 +1118,19 @@ async fn load(
     launches: &[OptimizationLaunchAuthorization],
     setups: &[OptimizationSetup],
 ) -> Result<Vec<ProjectOptimizationRunView>> {
+    load_selected(database, project_id, launches, setups, None).await
+}
+
+// A targeted read must still replay all of that run's custody and Agent history,
+// but unrelated runs are not dependencies of this one. Keep the same validation
+// path for both targeted reads and the project-wide listing.
+async fn load_selected(
+    database: &mut SqliteConnection,
+    project_id: Uuid,
+    launches: &[OptimizationLaunchAuthorization],
+    setups: &[OptimizationSetup],
+    run_id: Option<Uuid>,
+) -> Result<Vec<ProjectOptimizationRunView>> {
     if sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='project_optimization_runs'",
     )
@@ -1114,9 +1140,19 @@ async fn load(
     {
         return Ok(vec![]);
     }
-    let records = sqlx::query("SELECT * FROM project_optimization_runs ORDER BY created_at, id")
-        .fetch_all(&mut *database)
-        .await?;
+    let records = match run_id {
+        Some(id) => {
+            sqlx::query("SELECT * FROM project_optimization_runs WHERE id=?")
+                .bind(id.to_string())
+                .fetch_all(&mut *database)
+                .await?
+        }
+        None => {
+            sqlx::query("SELECT * FROM project_optimization_runs ORDER BY created_at, id")
+                .fetch_all(&mut *database)
+                .await?
+        }
+    };
     let mut result = Vec::new();
     for row in records {
         let run: ProjectOptimizationRun =

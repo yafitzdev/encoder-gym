@@ -496,9 +496,27 @@ async fn accepted_model_promotion_copies_once_and_advances_the_baseline_atomical
         effective_configuration_fingerprint: request.effective_configuration_fingerprint.clone(),
         source_revision: request.source_revision.clone(),
     };
+    // Candidate registration is scoped custody, not a deep audit of unrelated
+    // historical data. A full explicit workspace audit still detects tampering.
+    let unrelated_source = temp.path().join("unrelated.jsonl");
+    let original_data = b"{\"text\":\"one\"}\n";
+    fs::write(&unrelated_source, original_data).unwrap();
+    let unrelated_preview = inspect_dataset(&unrelated_source, DatasetPurpose::Training).unwrap();
+    let inventory = import_dataset(
+        &destination,
+        &unrelated_source,
+        "Unrelated historical dataset",
+        DatasetPurpose::Training,
+        &unrelated_preview.artifact.fingerprint,
+    )
+    .await
+    .unwrap();
+    let unrelated_copy = destination.join(&inventory.datasets[0].artifact.path);
+    fs::write(&unrelated_copy, b"{\"text\":\"two\"}\n").unwrap();
     let registered = register_completed_model(&destination, &candidate, registration.clone())
         .await
         .unwrap();
+    assert!(!registered.verified, "scoped custody is not a full audit");
     let registered_catalog = registered.model_catalog.as_ref().unwrap();
     assert_eq!(registered_catalog.artifacts.len(), 2);
     assert_eq!(registered_catalog.active_baseline_revision_id, expected);
@@ -507,6 +525,19 @@ async fn accepted_model_promotion_copies_once_and_advances_the_baseline_atomical
         .await
         .unwrap();
     assert_eq!(again.model_catalog.as_ref().unwrap(), registered_catalog);
+    assert!(open_workspace(&destination, true).await.is_err());
+    fs::write(unrelated_copy, original_data).unwrap();
+    let managed_candidate = destination
+        .join(&registered_catalog.artifacts[1].path)
+        .join("candidate.json");
+    fs::write(&managed_candidate, b"{\"accepted\":null}\n").unwrap();
+    assert!(
+        register_completed_model(&destination, &candidate, registration.clone())
+            .await
+            .is_err(),
+        "an unchanged source cannot hide tampering of the managed copy"
+    );
+    fs::write(managed_candidate, b"{\"accepted\":true}\n").unwrap();
     let mut invalid = registration;
     invalid.training_snapshot.fingerprint = digest('9');
     assert!(

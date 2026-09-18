@@ -4,6 +4,7 @@
 pub(super) mod control;
 mod inspection;
 mod iteration_loop;
+mod progress;
 mod providers;
 mod qualification;
 mod registration;
