@@ -125,6 +125,9 @@ async fn run_step(
     };
     append_activity(folder, event(ActivityEventState::Started, None)).await?;
     let result: Result<_> = async {
+        if qualify {
+            qualification::preflight(folder, run_id, iteration).await?;
+        }
         let mut result = drive(folder, iteration, action_id, runtime).await?;
         ensure!(
             !project_workspace_local::optimization_execution::stopped(folder, run_id).await?,

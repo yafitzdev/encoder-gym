@@ -153,12 +153,16 @@ fn native_clearance(arguments: &[String]) -> Result<()> {
             .open("native-invocations.log")?,
         "encoder_gym.qualify_training"
     )?;
+    let duplicate_rows = fs::read_to_string("runs/fixture-clearance-duplicates")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(0);
     write_json(
         &path.with_file_name("result.json"),
         &serde_json::json!({
             "protocol":request["protocol"], "requestFingerprint":request["fingerprint"],
             "trainingRows":request["rows"], "benchmarkRows":3,
-            "invalidRows":0, "duplicateRows":0, "overlapRows":0,
+            "invalidRows":0, "duplicateRows":duplicate_rows, "overlapRows":0,
             "missingGroupRows":request["rows"].as_u64().unwrap() + 3,
             "missingLineageRows":request["rows"].as_u64().unwrap() + 3,
         }),

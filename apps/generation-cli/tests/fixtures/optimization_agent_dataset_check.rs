@@ -66,6 +66,11 @@ async fn cli_agent_inspects_generates_qualifies_and_replays_exact_dataset_withou
 }
 
 #[tokio::test]
+async fn cli_agent_preflight_blocks_irreparable_starting_dataset_before_provider_dispatch() {
+    scenario(true, Some("dirty_preflight")).await;
+}
+
+#[tokio::test]
 async fn cli_agent_edits_qualified_data_trains_exact_sample_evaluates_and_replays() {
     scenario(true, None).await;
 }
@@ -206,15 +211,24 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         .unwrap();
     }
     let source = root.join("selected.jsonl");
-    fs::write(
-        &source,
+    let source_rows = if loop_mode == Some("dirty_preflight") {
+        fs::write(root.join("runtime/runs/fixture-clearance-duplicates"), "9").unwrap();
+        (0..10)
+            .map(|index| native_row(&format!("duplicate-{index}"), "Search something"))
+            .chain(std::iter::once(native_row(
+                "keep",
+                "Retain this useful example",
+            )))
+            .map(|row| format!("{row}\n"))
+            .collect::<String>()
+    } else {
         format!(
             "{}\n{}\n",
             native_row("old", "Search something"),
             native_row("keep", "Retain this useful example")
-        ),
-    )
-    .unwrap();
+        )
+    };
+    fs::write(&source, source_rows).unwrap();
     let preview = inspect_dataset(&source, DatasetPurpose::Training).unwrap();
     let workspace = import_dataset(
         &folder,
@@ -238,7 +252,7 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
-    let generator = (!matches!(loop_mode, Some("no_change_first" | "agent_limit" | "generation_limit"))).then(|| std::thread::spawn(move || {
+    let generator = (!matches!(loop_mode, Some("no_change_first" | "agent_limit" | "generation_limit" | "dirty_preflight"))).then(|| std::thread::spawn(move || {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
         let mut stream = loop {
             match listener.accept() {
@@ -471,6 +485,25 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
     let before_native = fs::read(root.join("runtime/native-invocations.log")).unwrap();
+    if loop_mode == Some("dirty_preflight") {
+        let rejected = invoke_iteration();
+        assert!(!rejected.status.success());
+        let error = String::from_utf8_lossy(&rejected.stderr);
+        assert!(
+            error.contains("at least 9 row changes")
+                && error.contains("only 8 are authorized")
+                && error.contains("no provider was called"),
+            "{error}"
+        );
+        assert!(!calls.exists(), "Agent provider must not be dispatched");
+        let after_native = fs::read(root.join("runtime/native-invocations.log")).unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&after_native[before_native.len()..]),
+            "encoder_gym.qualify_training\n"
+        );
+        assert!(generator.is_none());
+        return;
+    }
     if loop_mode == Some("crash_boundaries") {
         crash_check::exercise(root, &folder, reserved.id, &calls, command).await;
         generator.unwrap().join().unwrap();
@@ -802,6 +835,7 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
             added.lines().collect::<Vec<_>>(),
             vec![
                 "encoder_gym.qualify_training",
+                "encoder_gym.qualify_training",
                 "tools.train_dense_triplet_router",
                 "tools.evaluate_dense_router",
                 "tools.evaluate_real_agent_sessions",
@@ -902,7 +936,10 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         store.pool().close().await;
         assert_iteration_projection(&folder, reserved.id, &binding, &benchmark).await;
     } else {
-        assert_eq!(added, "encoder_gym.qualify_training\n");
+        assert_eq!(
+            added,
+            "encoder_gym.qualify_training\nencoder_gym.qualify_training\n"
+        );
     }
     let published: project_workspace_local::optimization_dataset::OptimizationDatasetPublication =
         serde_json::from_value(first["datasetStep"]["publication"].clone()).unwrap();
