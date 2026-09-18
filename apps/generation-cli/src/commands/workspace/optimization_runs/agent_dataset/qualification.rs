@@ -15,11 +15,20 @@ use serde::Serialize;
 use std::path::Path;
 use uuid::Uuid;
 
+const QUALIFICATION_REJECTED: &str = "Derived dataset rejected before training:";
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct QualifiedDataset {
     pub(super) native_dataset: NomosTrainingDataset,
     pub(super) clearance: NomosTrainingClearance,
+}
+
+fn rejection_message(clearance: &NomosTrainingClearance) -> String {
+    format!(
+        "{QUALIFICATION_REJECTED} {} invalid rows, {} duplicate model inputs, and {} benchmark overlaps; no training started",
+        clearance.invalid_rows, clearance.duplicate_rows, clearance.overlap_rows
+    )
 }
 
 pub(super) async fn prepare(
@@ -58,17 +67,21 @@ pub(super) async fn prepare(
         "Checking the complete candidate dataset: native schema, duplicate inputs and benchmark isolation.",
     )?), None)).await?;
     let result = prepare_native(folder, run_id, publication).await;
-    let terminal = if result.is_ok() {
-        event(ActivityEventState::Succeeded, None, None)
-    } else {
-        event(
-            ActivityEventState::Failed,
-            None,
-            Some(ActivityFailure::new(
-                "dataset_qualification_failed",
-                "Dataset qualification did not complete cleanly; no training started.",
-            )?),
-        )
+    let terminal = match &result {
+        Ok(_) => event(ActivityEventState::Succeeded, None, None),
+        Err(error) => {
+            let message = error.to_string();
+            let safe = if message.starts_with(QUALIFICATION_REJECTED) {
+                message.as_str()
+            } else {
+                "Dataset qualification did not complete cleanly; no training started."
+            };
+            event(
+                ActivityEventState::Failed,
+                None,
+                Some(ActivityFailure::new("dataset_qualification_failed", safe)?),
+            )
+        }
     };
     project_workspace_local::append_activity(folder, terminal).await?;
     result
@@ -147,12 +160,36 @@ async fn prepare_native(
             .is_terminal(),
         "Run stopped during dataset qualification"
     );
-    ensure!(
-        clearance.training_allowed(),
-        "Derived dataset failed native schema, duplicate or benchmark-isolation checks; no training started"
-    );
+    if !clearance.training_allowed() {
+        anyhow::bail!(rejection_message(&clearance));
+    }
     Ok(QualifiedDataset {
         native_dataset,
         clearance,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn qualification_rejection_reports_only_safe_aggregate_counts() {
+        let clearance = NomosTrainingClearance {
+            protocol: "nomos-training-clearance-v2".into(),
+            request_fingerprint: format!("sha256:{}", "1".repeat(64)),
+            training_rows: 6_864,
+            benchmark_rows: 2_512,
+            invalid_rows: 0,
+            duplicate_rows: 549,
+            overlap_rows: 0,
+            missing_group_rows: 0,
+            missing_lineage_rows: 0,
+            fingerprint: String::new(),
+        };
+        assert_eq!(
+            rejection_message(&clearance),
+            "Derived dataset rejected before training: 0 invalid rows, 549 duplicate model inputs, and 0 benchmark overlaps; no training started"
+        );
+    }
 }
