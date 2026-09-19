@@ -1,592 +1,468 @@
-# Goal: make one-click agentic encoder optimization work in the app
-
-The user opens a project's Overview, selects a baseline, starting dataset,
-evaluation benchmark, Agent model and Data generation model, then presses
-Optimize once. The Agent investigates development failures, proposes justified
-dataset changes, requests generation, trains and evaluates a candidate, and
-uses that result to decide the next bounded iteration.
-
-Finish and connect the existing engine. Preserve the approved GUI and working
-slice contracts. More settings, System narration, mockups or documentation alone
-do not satisfy this goal. A completed experiment may reject every candidate:
-model improvement is not guaranteed.
-
-## Completed connected implementation — 16 September 2026
-
-The local app now runs the finite Agent workflow through the production CLI and
-real Pi adapter. One Optimize action reaches development inspection, justified
-dataset edits, the independently pinned generator, native qualification,
-training, development evaluation and evidence-dependent subsequent iterations.
-Stop/restart/Resume preserves completed work and conservative interrupted-call
-charges. Reports expose the selected winner, rejected candidates, exact dataset
-diffs and ordinary model/benchmark viewers.
-
-Final acceptance is a separate rendered action: review, explicit one-use consent,
-saved-result recovery after response loss, and accepted-only manual promotion.
-Quick test uses the same engine but excludes that authority. Report controls wait
-for the persisted launch mode. Durable Agent completion/pause ends both stage and
-sidebar spinners without prematurely releasing mutation locks.
-
-`npm run verify:agent` in `ui/` is the connected acceptance entry point. Its seven
-Electron launches use real renderer/IPC/backend/CLI/Pi orchestration with loopback
-model responses and a deterministic native executable; no drive method is mocked.
-They cover two trained candidates (including a rejection), no-change completion,
-Stop/restart/Resume, exact interrupted-call custody, artifact navigation, final
-receipt loss and recovery without redispatch, manual promotion/restart, Quick
-mode and rejection of generated sealed-partition authority before training.
-
-Windows process tests additionally kill the real coordinator at nine durable
-artifact boundaries and verify no repeated completed provider/native work. They
-complement active-training interruption and descendant-ownership tests. Terminal
-Pi sessions are reaped, scientific leases wait for contained work to settle, and
-empty Windows jobs cannot be held by stale/reused child PIDs.
-
-Final executable-tree verification passes: `cargo fmt-check`, `cargo check-all`,
-`cargo lint`, and `cargo test-all`, including all 23 managed benchmark scenarios
-and six setup/authority tests. UI typecheck/build and all 172 UI tests, all 14 Pi
-adapter tests, all nine native-clearance Python tests, rendered Overview checks,
-both legacy/managed Electron flows across independent restarts, and the seven-
-phase connected Agent journey pass. The separately enabled exact-PID child
-recovery regression also passes. Desktop and narrow screenshots were inspected.
-No dependency or provider stack was added. The historical checkpoints below
-record earlier gaps; they are not the current implementation status.
-
-This is deterministic local acceptance, not evidence of real model improvement.
-No paid provider call, real Nomos training or real holdout was run. Those remain
-separately authorized operations. Other platforms retain recorded-child recovery;
-the Windows spawn-time containment guarantee is not claimed for them.
-
-## Historical completion audit — 16 September 2026
-
-At this earlier checkpoint, the overall goal was not complete. The completion claim in
-`14f2fb0` overstated layered component evidence as connected app acceptance.
-The production CLI has the finite Agent loop and native budget-stop state.
-At that commit the desktop had a `drive-agent` branch, but its new-run preview
-selected legacy authority; Resume also adopted the latest head instead of the
-head the user observed. Those were integration defects, not completed acceptance.
-
-The `74e7ac7` repair checkpoint addresses new-run Agent authority, renderer-to-CLI
-Resume fencing, prepared-run executor selection, Stop retry identity, concurrent
-stale-lease takeover, and trained-model custody after evaluation persistence
-failure. It also fixes canonical Windows paths in Agent lease commands, nullable
-CLI completion fields, late Stop acknowledgements and independent Agent-journal
-ordering in Overview. Old Stop retries no longer hide a newer attempt's failure.
-
-Verified on that repair checkpoint's executable tree:
-
-- `cargo fmt-check`, `cargo check-all`, `cargo lint`, and `cargo test-all` pass,
-  including all 18 managed benchmark CLI tests with canonical project paths.
-- The focused recorded-child termination/recovery test passes outside the
-  process sandbox. It covers recorded children, not the spawn/observation gap.
-- UI typecheck/build and all 136 UI tests pass.
-- Both legacy and managed Electron smoke flows pass across independent restarts.
-  New assertions verify real CLI Agent authority and a persisted paused state;
-  optimization driving in this smoke suite remains fixture-controlled.
-- Rendered Overview regression checks and all nine native-clearance Python
-  tests pass. These do not establish the missing connected Agent-loop journey.
-
-The subsequent Windows process-ownership checkpoint passes all four Rust gates,
-including all 19 managed benchmark CLI scenarios. Its process tests cover
-unobserved suspended/reparented descendants, Stop before coordinator exit,
-legacy creation-time mismatch, and lease retention while children remain alive.
-The recorded-child recovery test also passes when explicitly enabled. UI
-typecheck/build, all 136 UI tests, and both Electron flows across independent
-restarts pass. The desktop smoke drive remains fixture-controlled: this is
-recovery and compatibility evidence, not full connected-loop acceptance.
-
-The iteration-history/report checkpoint passes all four Rust gates, including
-the 19 managed benchmark CLI scenarios with new history assertions. UI
-typecheck/build, all 142 UI tests, expanded rendered Overview checks and both
-desktop smoke flows across independent restarts pass. Screenshots were inspected
-at desktop and narrow widths. No provider, runtime or dependency was added.
-The smoke driver is still fixture-controlled; none of the connected-journey
-acceptance boxes below are claimed by these separate layers.
-
-The desktop control-observation repair prevents late collection, poll and drive
-responses from overwriting a newer Stop acknowledgement, and prevents stale
-setup state from winning over the run collection. Reopened Agent runs expose
-Stop without dispatching a new worker. Stored-running state is explicitly
-unverified; pending Stop, acknowledged pause and interruption remain distinct.
-Durable stopped states end spinners even while desktop IPC is still settling.
-All four Rust gates, all 149 UI tests, expanded rendered checks (including narrow
-recovery controls) and both smoke flows across independent restarts pass. This does not establish
-live worker discovery, every-boundary recovery or connected Agent acceptance.
-
-The Advanced/Quick-test connection uses core-owned presets and the existing
-settings-file preview/start path. Optional per-run provider ceilings can only
-lower pinned project limits; omitted overrides preserve historical fingerprints.
-Uncertain reservation retries preserve the original UUID and settings. Historical
-settings are read-only, and diagnostic runs explicitly exclude final holdout and
-promotion. Provider/Agent budget exhaustion now preserves its typed error through
-the adapters and reaches the same non-retrying root state as training exhaustion.
-This remains component evidence, not completion of the connected journey below.
-
-Verified on the Advanced/settings checkpoint: all four Rust gates pass,
-including 21 managed benchmark CLI scenarios and six setup/authority CLI tests;
-UI typecheck/build, all 155 UI tests, expanded rendered Overview checks, all nine
-native-clearance Python tests and both Electron flows across independent restarts
-pass. The managed smoke verifies custom Quick-test values through real renderer,
-IPC and CLI reservation, but still substitutes its drive. Screenshots were
-inspected at desktop and narrow widths. No live provider or real training ran.
-
-The final-consent checkpoint adds a separate row-free, immutable grant for the
-closed Agent loop's deterministic full-data winner. Preview replays all original
-completed scientific journals without migration or writes. Consent pins the
-last completion separately from the selected iteration, original checkpoint,
-benchmark, protocol and adaptive execution head. Exact retries reuse one grant;
-competing authority, changed scope, diagnostic runs and unfinished adaptive work
-are rejected. First-use migration and grant creation share one write transaction.
-This is consent only: final dispatch/recovery, desktop consent and manual
-promotion remain unfinished, and no final-holdout acceptance box is claimed.
-
-Validation also exposed a Windows recorded-child recovery race: an exiting
-process could deny a new termination handle. Recovery now verifies exact
-identity/liveness before attempting termination and rechecks transient failures
-within the existing deadline. Unknown creation time is not treated as PID reuse,
-and unresolved live children still prevent takeover.
-
-Verified for this checkpoint: all four Rust gates, including 21 managed benchmark
-CLI scenarios and six setup/authority CLI tests; the focused Windows exited-child
-and recorded-child recovery tests; UI typecheck/build and all 155 UI tests; all
-nine native-clearance Python tests; rendered Overview checks; and both Electron
-flows across independent restarts pass. The consent regression exercises the
-production CLI, including concurrent first requests on an older schema. The
-desktop smoke still substitutes its drive, so it is not connected-loop acceptance.
-No dependency, provider, real training run or final-holdout use was added.
-
-The final-execution checkpoint connects separate consent to an at-most-once CLI
-dispatch. Report and assessment identities are reserved before native work;
-every retry can only recover complete saved native evidence. Missing or partial
-evidence leaves the allowance consumed and the outcome unknown. A lost project
-receipt recovers the same identities without another evaluation. The receipt is
-row-free: protected scores stay in native scientific evidence, and completed
-reads reconstruct the original deterministic assessment before exposing its
-decision. Adaptive protocols/journals, Agent inputs and the baseline remain
-unchanged. Desktop consent/execution and manual promotion remain unfinished.
-
-Verified for this checkpoint: all four Rust gates pass, including all 21 managed
-benchmark CLI scenarios with failed-reservation, lost-receipt, missing-evidence,
-reserved-identity and tampered-verdict assertions. UI typecheck/build, all 155 UI
-tests, all nine native-clearance tests, rendered Overview checks and both
-desktop smoke flows across independent restarts pass. Desktop/narrow screenshots
-were inspected. The smoke drive remains fixture-controlled; this is not the
-connected Agent journey. No live provider, real training or real holdout ran.
-
-The subsequent repair/promotion checkpoint adds an explicit final-accepted
-promotion command using existing baseline revisions and registered model custody.
-It replays native final evidence, verifies training/development/model lineage,
-preserves exact retry identity, and resolves the promoted checkpoint for a later
-runtime binding. The row-free desktop bridge supports explicit review, consent,
-recovery, Stop and promotion without calling any of them from Optimize or reads.
-Repairs include the incomplete preview bridge/type import, cancellation during
-final preflight, the deterministic Python capability-probe fixture, and historical
-report assertions after promotion. The rendered final controls are not yet wired;
-this is not a completed app journey.
-
-At that checkpoint, remaining work identified by inspecting production code was:
-
-- Windows CLI startup now establishes kill-on-close job ownership before any
-  dispatch; inherited membership closes the unobserved-child spawn/crash gap.
-  Process tests cover suspended and reparented children, and the actual CLI
-  training-crash regression preserves unknown budget charges without repeated
-  native work. Stop drains owned descendants before acknowledgement. Other
-  platforms still use polling; every-artifact-boundary restart coverage remains
-  unfinished. Do not equate the focused Windows tests with that broader claim.
-- Overview now reads ordered iteration custody and original development
-  comparisons through `optimization-run history`. It joins scientific children
-  under one run, supports independent iteration/stage selection and scroll
-  restoration, and links rejected models, exact datasets/diffs and benchmark
-  results. Native training telemetry retains explicit iteration identity.
-  Development KEEP/REJECT, best-so-far selection and final approval are distinct.
-  CLI and rendered-fixture coverage is not yet the connected production-path
-  acceptance below; full activity/usage/recovery presentation still needs that
-  audit. Advanced/Quick-test controls now use the enforced settings contract;
-  connected execution acceptance still must cover their use through the app.
-- The adaptive protocols deliberately have zero sealed allowance. Separate
-  selected-candidate consent, at-most-once CLI final dispatch and read-only
-  completed-result recovery and manual CLI promotion are implemented. The typed
-  desktop boundary exists, but rendered consent, execution/recovery and manual
-  promotion controls are still required. Never turn the consent grant into
-  permission for repeated execution.
-- Add a deterministic, connected renderer/IPC/CLI journey, including second-
-  iteration evidence and Stop/app-restart/Resume. The existing renderer fixture
-  and mocked desktop-controller tests are not that journey.
-
-The earlier 18 CLI tests and 127 UI tests are historical component evidence,
-not proof that the full app journey passed. SQL-trigger persistence failures
-also do not prove abrupt process death at every boundary.
-
-No paid provider call, real Nomos training, or final-holdout use was performed;
-those remain separately authorized live operations rather than acceptance
-prerequisites.
-
-## Historical handoff — paused for project rename and a new chat
-
-This records the superseded 15 September checkpoint for audit history.
-
-The user requested a clean stopping point. Implementation is paused; resume in
-the new chat when requested. This is an unfinished product goal, not a failed
-or blocked build.
-
-- Last implementation commit: **`5a31588`** on `main` (cumulative native-training
-  time). The worktree was clean before this documentation-only handoff update.
-- Verification completed: `cargo fmt-check`, `cargo check-all`, `cargo lint`,
-  `cargo test-all`, UI typecheck, 125 UI tests and nine native-clearance Python
-  tests. The full Rust suite includes 18 managed benchmark CLI tests. No build
-  or test command from that checkpoint remains pending.
-- No real Nomos training, paid provider call or protected evaluation was
-  started. Historical Run 17 is not evidence of Agent-loop execution.
-- The GUI has not yet been connected to the new Agent coordinator. Do not
-  report the app as ready or ask the user to run another experiment as a test.
-
-Start the next implementation checkpoint with **a distinct root budget-stop
-state**. Native training already returns typed exhaustion and retains its
-charges, but root execution currently records it as an ordinary failed attempt.
-Make that outcome truthful and non-retrying without changing historical
-fingerprints or losing completed work. Then address descendant-process recovery
-and the remaining integration/acceptance items below. Do not rebuild accounting,
-redesign Overview or create a second coordinator.
-
-Useful entry points, relative to this repository's new location:
-
-- `apps/generation-cli/src/commands/workspace/optimization_runs/agent_dataset/iteration_loop.rs`
-  — existing `drive-agent` coordinator and error-to-root-state handoff.
-- `crates/project-workspace-core/src/optimization_execution.rs` and
-  `crates/project-workspace-local/src/optimization_execution.rs`
-  — root lifecycle, persistence, Stop/Resume fencing and state projection.
-- `crates/encoder-experiment-core/src/training_budget.rs`,
-  `crates/project-workspace-local/src/optimization_training_time.rs` and
-  `crates/encoder-experiment-nomos/src/training_accounting.rs`
-  — verified training accounting; migration `0021_optimization_training_time.sql`.
-- `apps/generation-cli/tests/fixtures/optimization_training_time_check.rs`
-  — Stop, timeout and lost-settlement production-CLI regressions.
-- `ui/src/input-optimization.ts` — strict desktop parser needing Agent lifecycle
-  support before connecting launch and recovery controls.
-
-If the source directory is renamed, resolve all paths from the new checkout and
-recheck development startup and saved path references. The source repository
-and the managed Nomos project are separate: do not rename its data directory,
-rewrite immutable project/run IDs or recreate its history as part of a source
-rename. No rename or broad path migration has been performed by this handoff.
-
-## Historical status — 15 September 2026
-
-**The one-click agentic desktop journey is not ready.** The production CLI has a
-tested Agent loop; the desktop still needs compatible lifecycle handling and
-connection to that coordinator.
-
-| Capability | Verified checkpoint | What remains |
-| --- | --- | --- |
-| Agent inspection, separate generation, immutable edits and native data qualification | `18fc85b` | Preserve and reuse |
-| One complete Agent-directed training/evaluation cycle | `a8bb5c4` | Preserve and reuse |
-| Candidate registration, exact training-dataset links and benchmark report lookup | `6d90ead` | Verify navigation through the connected app |
-| Evidence-dependent iterations, best eligible dataset selection and no-change completion | `f3d222b` | Complete cumulative accounting and interruption coverage |
-| Root execution attempts and adaptive completion | `3e18b6c` | Integrate lifecycle and recovery into the desktop |
-| Durable Stop and explicit Resume | `9ea9dc4`; all four Rust gates and 15 managed benchmark tests pass | Descendant ownership, every-boundary recovery and desktop controls |
-| Cumulative native-training time | `5a31588`; all four Rust gates and 18 managed benchmark tests pass | Root budget-stop projection and abrupt-process recovery |
-| One-click Overview execution | Not verified end to end | Update the strict parser, connect the existing coordinator and test the rendered journey |
-
-The committed CLI checkpoints passed their required Rust gates. Prior UI tests
-and rendered Overview fixture checks passed, but fixture captions do not prove
-that Optimize invokes the Agent. Do not transfer a checkpoint's test results to
-later uncommitted changes. The Stop/Resume checkpoint also passed UI typecheck,
-all 125 UI tests, nine native-clearance Python tests and rendered Overview
-fixture checks. These are not connected Agent-loop desktop acceptance tests.
-
-Run 17 (`998d54fb-363f-443f-abeb-195dd2574d79`) established fixed training and
-evaluation, not Agent optimization: 6,800 existing rows, one epoch on CUDA, both
-development suites failed, baseline retained, final holdout unused. Its 4,431
-activity events contained no Agent-origin entries. System templates and
-`agent_*` evaluation metrics are not evidence of optimization-Agent calls.
-
-Native training now reserves the remaining iteration/run time before dispatch
-and records measured elapsed time after the owned process stops. Interrupted,
-failed and timed-out attempts consume allowance; unknown attempts retain their
-full reservation. Retries preserve candidate identity and reuse verified output.
-The read-only `training-time` CLI exposes the ledger. Three focused process tests,
-all four Rust gates, UI typecheck, all 125 UI tests and nine native-clearance
-Python tests passed on this checkpoint's unchanged executable tree.
-
-This is not full recovery or desktop readiness. The root still projects budget
-errors as failed attempts; distinct budget-stop presentation and safe descendant
-reconciliation remain unfinished. No real Nomos run or paid call was started.
-
-## Historical next deliverable (superseded by the connected implementation)
-
-Make the existing Overview execute and display the tested Agent loop, with
-working Stop/Resume and truthful activity. Do not rebuild the loop or introduce
-another executor.
-
-1. **Preserve the verified Stop/Resume checkpoint.** Stop has a stable command
-   UUID; Resume pins the observed execution head. The production-CLI regression
-   rejects stale Resume, preserves interrupted-call charges and reuses completed
-   work. Do not rebuild it or equate this coverage with complete recovery.
-2. **Preserve the verified cumulative training-accounting checkpoint.** Do not
-   rebuild it. The same production CLI now charges
-   interrupted work, enforces remaining time and reuses completed artifacts.
-   Keep qualification/evaluation time separate and unknown charges conservative.
-   Do not promise optimizer-state recovery: unfinished training may restart,
-   but only within the remaining allowance.
-
-3. **Close the remaining recovery gaps before exposing controls.**
-
-   - Reconcile coordinator and descendant-process ownership after abrupt exit.
-     A dead coordinator does not prove its children stopped.
-   - Test interruption around publication, qualification, training, candidate
-     registration and each development report.
-   - Reconcile activity with durable outcomes; distinguish paused work,
-     exhausted budgets, execution failure and successful experiment completion.
-     Native budget exhaustion already has a typed error and persisted charges;
-     project execution still needs a distinct, non-retrying budget-stop state.
-   - Preserve the verified control-intent fence through desktop integration:
-     a stale Resume cannot clear a new Stop; retrying an old Stop cannot halt
-     an already resumed attempt.
-4. **Connect the desktop.** Extend `ui/src/input-optimization.ts` to accept the
-   actual Agent execution states and `agentExecution` record. Update lifecycle
-   handling and the launch controller to invoke the existing `drive-agent`
-   coordinator. Preserve historical fixed-run compatibility.
-5. **Prove the connected journey.** Use production orchestration with
-   deterministic provider/native adapters to demonstrate one-click execution,
-   an evidence-dependent second iteration, linked artifacts, complete activity
-   and Stop/app-restart/Resume.
-
-Do not ask the user to start another real Nomos run to discover whether the
-Agent is connected. Deliver these checkpoints in bounded increments, reporting
-what is component-tested, CLI-integrated and app-verified.
-
-### Historical verified Stop/Resume checkpoint
-
-The CLI supports `stop-agent --request-id <UUID>`, explicit
-`drive-agent --resume <EXECUTION_HEAD>` and `reconcile-agent`. Clients reuse the
-Stop UUID for retries; each new Stop changes the head even while paused. Resume
-checks the observed head in the write transaction, rather than adopting a newer
-intent. Stop intent is persisted before pause acknowledgement; reconciliation
-does not start work or displace a live owner.
-
-Focused tests cover queued Stop, an interrupted active Agent call, duplicate
-worker rejection, preservation of completed inspection, conservative unknown
-provider usage, interruptible local/native reads, owned-child termination and
-scientific interruption without falsely failing the candidate.
-The expanded process test also rejects an old Resume after another Stop and
-proves that retrying an old Stop after Resume leaves the new attempt running.
-All four required Rust gates passed on the unchanged executable tree, including
-the 15 managed benchmark tests and the legacy optimization recovery suite.
-
-These Stop/Resume tests alone do not establish every-boundary recovery, safe
-orphan reconciliation or cumulative interrupted-training budgets. The separate
-training-time checkpoint adds the latter's CLI tests. Unfinished training may restart;
-do not promise optimizer-checkpoint continuation. Stored `running` state is
-not by itself proof of a live worker.
-
-## Required execution contract
-
-1. Pin the exact baseline, starting dataset version, benchmark version, selected
-   provider connections/models and finite limits in one durable authorization.
-2. Give the Agent permitted development metrics, persisted predictions/error
-   analysis and bounded training-row inspection tools. Make missing evidence
-   explicit. Aggregate scores alone are not a substitute for investigating
-   concrete failures.
-3. Persist the Agent's public explanation, evidence references and validated
-   edit proposal. It may remove rows and request targeted additions from the
-   separately selected Data generation model. No-change is valid; do not force
-   edits or generation just to create activity.
-4. Validate generated output through the owning dataset/native contracts:
-   row semantics, membership, duplicates and benchmark contamination. Qualify
-   the complete proposed population before training; invalid output must not
-   become training data.
-5. Publish an immutable derived dataset version with inspectable additions,
-   removals, parentage and generation provenance. Never overwrite source data.
-6. Train through the existing adapter using the exact recorded version and
-   pinned settings. Save and register the artifact and dataset link even when
-   development evaluation rejects the candidate.
-7. Evaluate against the same original comparison baseline and unchanged
-   development benchmark. Persist scores, reports and deterministic verdicts.
-8. Feed the latest candidate's development result into the next iteration,
-   including rejected-candidate evidence. Use the best eligible full dataset
-   so far, falling back to the original dataset. Continue from the pinned
-   starting model unless an explicitly supported contract says otherwise.
-   Do not imply candidate warm-start or use Quick-test samples as source data.
-9. End on finite ceilings or a validated no-change/stop decision. Select the
-   best eligible candidate deterministically. Final holdout is a separate,
-   at-most-once authorization after adaptive work ends. Never feed its rows,
-   scores or diagnostics back into an adaptive step. Promotion remains manual.
-
-Keep root setup immutable. Each iteration owns its dataset, actual training
-input, candidate and result. Preserve proposal identities, requested-edit
-charges, predecessor validation and completion receipts. Completed replay must
-not duplicate calls, datasets, models, training or evaluation. Do not invent
-the imported baseline's unknown training history.
-
-## Setup and Quick test
-
-Ordinary Setup contains only:
-
-- Baseline.
-- Starting dataset.
-- Evaluation.
-- LLM Agent.
-- LLM Data generator.
-
-API keys belong in project connection settings. Allow multiple connections,
-discover their available models and select each role independently, including
-different models from the same connection. Pin those choices per run; changing
-project defaults must not redirect resumed work. Keep secrets outside the
-renderer and logs. An unavailable pinned connection needs an actionable error.
-
-Put tuning under **Advanced**, and expose only settings execution enforces:
-
-- Optional Agent objective, subordinate to run authority and evidence isolation.
-- Maximum optimization iterations and separate Agent-turn limits.
-- Total row-change budget and separate provider request/token/spend ceilings.
-- Generation concurrency from 1 to 16, default 1 for self-hosted compatibility.
-  This is bounded concurrent requests in one local run, not multiple workers.
-- Training device, epochs, batch size, learning rate and training-time limit.
-  Resolve Auto and record the actual device.
-
-Preserve the settings contracts in `docs/features/optimization/agentic-optimization-spec.md`:
-standard defaults are three iterations, eight Agent turns per iteration and
-192 total row changes.
-
-Quick test uses the same execution path with one iteration, up to four Agent
-turns, eight edits, 64 deterministic training rows and two minutes of training.
-Qualify the full population before deriving the recorded sample. Keep the
-development benchmark unchanged. Two minutes is a training ceiling, not a
-total-runtime promise. Quick tests are diagnostic, cannot use final holdout
-and cannot qualify a candidate for promotion. One normal iteration is not
-equivalent to Quick test.
-
-## Overview and live feedback
-
-Keep one expandable row per run and the approved `Setup → Status → Report`
-layout. No new redesign or duplicate progress panels.
-
-Inside Status:
-
-- Put the iteration selector above that iteration's six stages: Checking inputs,
-  Preparing data, Starting, Training, Saving candidate, Evaluating. A new
-  iteration must not make the same bar appear to jump backwards.
-- Make every stage clickable. Show all persisted activity for that stage,
-  paginating as needed. Historical selection and scroll position must remain
-  stable during live updates; provide an explicit return-to-live action.
-- Make the activity stream the primary insight surface: actual Agent decisions,
-  evidence and row references, generation targets, filenames, training and
-  evaluation details. Use truthful origins: Agent, Generation, Training,
-  Evaluation and System, not Work/Now.
-- Show public model explanations and validated tool decisions, not private
-  chain-of-thought or System templates labeled as Agent reasoning. Tool-only
-  responses still need an inspectable decision summary derived from the actual
-  tool call. Label sampled diagnostics as samples.
-- Keep stage progress above subordinate step progress. Omit processed-byte and
-  row counters. Keep spinners continuous while work runs and stop them for
-  terminal/paused states. Keep elapsed time and Stop/Resume beside Activity.
-- Show separate Agent and Data generation token usage. Costs must be reported
-  reliably or calculated from pinned rates; otherwise show unknown. Reservations
-  are not actual spend, and interrupted calls do not imply zero usage.
-- Avoid redundant checksum work through verified reuse where safe. Preserve
-  provenance and invalidation checks; do not remove integrity guarantees merely
-  to speed up the display. File verification must not drown out meaningful work.
-- Show a simple, nonduplicated `ERROR: <reason>` when needed. Avoid filler prose
-  and misleading states such as paused while a worker is still executing.
-
-Report contains benchmark results, comparisons against the original baseline
-and direction-aware green/red changes, plus the deterministic KEEP/REJECT
-outcome. Each model, dataset diff and report opens its ordinary viewer.
-Rejection is a scientific outcome, not a missing model or execution error.
-
-## Recovery and accounting
-
-Persist step identities and provider reservations before dispatch, with stable
-run, iteration, action and child IDs. Resume the same run after Stop, failure
-or app restart, reusing verified completed work.
-
-Stop prevents new work at fine-grained step boundaries and interrupts active
-calls/processes where safely supported; it must not wait for a whole macro
-stage. Acknowledge pause only after owned work has stopped. Distinguish durable
-Stop intent from permanent cancellation.
-
-Enforce cumulative budgets across iterations, retries and outstanding requests,
-including interrupted training. Unknown external outcomes remain unknown and
-consume conservative reservations; do not claim exactly-once external execution.
-Persist typed budget-stop outcomes. Separately written usage, activity and
-completion records require reconciliation.
-
-## Architecture and implementation rules
-
-Follow `AGENTS.md` and read the required platform, slice, architecture and
-development specifications before executable changes.
-`docs/features/optimization/agentic-optimization-spec.md` governs this loop; preserve the object and
-provenance contracts in `docs/features/workspaces/encoder-workspace-product.md`.
-
-Reuse existing ownership:
-
-- `encoder-optimization-core` / `encoder-optimization-runner`: provider-neutral
-  Agent inspection, proposal and generation contracts.
-- `project-workspace-core` / `project-workspace-local`: immutable authority,
-  iteration lineage, provider pins, accounting and publication.
-- `encoder-experiment-nomos`: native diagnostics, qualification,
-  materialization, training and evaluation adapters.
-- Workspace optimization CLI: production composition. The desktop invokes it,
-  not a parallel workflow implementation.
-
-Preserve legacy history and fixed-recipe guards. Do not add cloud execution,
-multiple workers, unrelated abstractions or another provider stack. Keep core
-logic independent of UI, SDK and persistence types.
-
-After each coherent executable component, run `cargo fmt-check`,
-`cargo check-all`, `cargo lint`, `cargo test-all` and relevant UI/native checks.
-Review interfaces and dependency directions; commit the verified component
-when Git identity is configured. Keep existing unrelated changes intact.
-
-Real Nomos state remains read-only during development. Use deterministic
-adapters and temporary projects for ordinary tests. Paid/provider execution,
-real training and final holdout require explicit execution authorization.
-A request to update this file is documentation-only; it does not authorize
-continuing implementation or launching a run in the same turn.
-
-Keep checkpoints bounded and updates concrete. When asked for status or to
-stop, pause implementation and answer immediately.
-
-## Acceptance evidence
-
-Evidence includes connected production-path Electron/IPC/CLI/Pi acceptance,
-production-CLI process/crash regressions, core/accounting tests, native-clearance
-tests and rendered interaction checks. The connected test does not substitute a
-desktop drive; only model responses and native scientific work are deterministic.
-
-- [x] Production-CLI tests trace development evidence through Agent decisions,
-  removals/additions, qualification, exact training lineage and comparison using
-  deterministic adapters.
-- [x] Production-CLI tests prove an evidence-dependent second iteration,
-  unchanged baseline/benchmark and genuine no-change completion.
-- [x] Production-CLI Stop/Resume tests prove durable control intent, stale-command
-  rejection and reuse of completed inspection after an interrupted Agent call
-  (`9ea9dc4`). This complements the artifact-boundary recovery coverage below.
-- [x] Production-CLI training-time tests prove reduced retry grants after Stop,
-  no native dispatch after deadline exhaustion, and completed-output reuse after
-  a lost settlement without refunding the unknown charge.
-- [x] One Optimize action invokes the pinned Agent and, when additions are
-  proposed, the independently pinned generator through that same coordinator.
-- [x] Every exposed Advanced setting is enforced cumulatively, including
-  concurrency, uncertain outcomes and interrupted-training limits; Quick test
-  uses the same engine with its diagnostic restrictions.
-- [x] Stop/restart/Resume tests cover provider and scientific-artifact boundaries
-  on Windows, control-intent races, worker/descendant ownership and completed-work
-  reuse. The abrupt-kill regression names its nine exact artifact boundaries.
-- [x] Complete derived datasets pass native admission and benchmark-isolation
-  checks through the connected path; invalid generated rows cannot train.
-- [x] Rendered production-path tests show real Agent/Generation activity,
-  complete independently browsable iteration/stage history, responsive controls
-  and continuous spinners.
-- [x] Candidate models, dataset diffs and benchmark reports open from the same
-  run, including rejected candidates and multiple iterations.
-- [x] Adaptive work never sees sealed evidence. Final holdout has its separate
-  at-most-once selected-candidate handoff; promotion remains manual.
-- [x] Required Rust, UI/native and rendered journey checks pass on the final
-  executable tree. The handoff distinguishes deterministic evidence from
-  separately authorized live execution.
-
-Completion requires a usable, traceable, bounded and resumable optimization
-journey in the actual app. Show one run's chosen providers, Agent decisions,
-dataset changes, trained candidates and benchmark comparisons, plus proof of a
-second evidence-dependent iteration and Stop/restart reuse. Configuration,
-fixture-only rendering and a successful fixed training run are not completion.
+# Goal: evidence-driven dataset repair in the existing optimization loop
+
+Status: scoped specification, not implemented or accepted.
+Date: 19 September 2026.
+
+## 1. Outcome and scope
+
+Make each bounded optimization iteration answer five inspectable questions:
+
+1. What does the development evaluation show is wrong?
+2. What does the training dataset contain in those areas?
+3. What specific data intervention will test the Agent's hypothesis, and why
+   this many rows?
+4. Which proposed changes actually passed admission and reached training?
+5. What changed in the targeted development metrics and the global gates?
+
+Deliver this through the existing managed Nomos optimization loop and its CLI.
+Expose the same persisted facts in the existing Overview as a separate final
+UI phase. Do not build another coordinator, another training pipeline, or a
+general-purpose dataset agent.
+
+The release improves the quality and auditability of repair decisions. It
+does not promise that every iteration improves the model. A justified no-change,
+an admission rejection, and a scientifically rejected candidate are valid,
+distinct outcomes.
+
+This file replaces the completed one-click-loop goal and its historical
+checkpoints. Git retains that history. It extends the existing
+[agentic optimization contract](docs/features/optimization/agentic-optimization-spec.md);
+historical launches keep their original behavior. This editing task authorizes
+planning/documentation only, not implementation or external execution.
+
+## 2. Existing foundations: preserve, do not rebuild
+
+The following already exist:
+
+- A finite, resumable CLI/desktop Agent loop, independent Agent/generator pins,
+  cumulative budgets, immutable dataset versions, native qualification,
+  training, development evaluation, and deterministic candidate selection.
+- Protocol V2's full local training scan and aggregate landscape, joined on
+  expected capability, task kind, scenario family, and eligible candidate-pool
+  size; bounded cluster-row inspection.
+- Evidence-linked removals and generation requests. Generation currently changes
+  only a question while preserving its template's native context and labels.
+- Saved repair-plan history, a first-batch native-admission canary, and an
+  on-demand viewer of saved development disagreement samples.
+
+The gaps are not simply missing clustering or missing orchestration:
+
+- Retrieval support is currently projected from the combined scientific report.
+  In `evaluation.rs` that report's support can be the minimum of retrieval
+  states and agent sessions. `dataset_landscape.rs` uses it as a retrieval-share
+  denominator; `development_comparison.rs` uses it to bound retrieval samples.
+  These are different populations and must not be conflated.
+- V2 closes inspection after one successful landscape and cluster inspection.
+  Samples are content-hash selected, not selected for distinct native contexts
+  or suspected defects.
+- A generation target is an inspected template, instruction, count, and evidence
+  IDs. It does not encode a repair hypothesis, percentage basis, anchor diversity,
+  measurable expected result, or allocation shortfall.
+- Native admission checks structure and duplicates, not whether a generated
+  question still supports the inherited label. The current canary covers one
+  target/context only.
+- Saved failure samples do not establish complete confusion rates or prove that
+  an absent case was fixed. Existing iteration history is not structured
+  hypothesis/outcome memory.
+
+Do not base implementation on a display ordinal such as "Run 46". Tests and
+diagnostics must identify the root run, iteration, model, dataset, reports, and
+pinned protocol explicitly.
+
+## 3. Release boundaries
+
+The first implementation is Nomos-specific at the adapter boundary and
+task-neutral in the core. Use deterministic native dimensions, not embeddings.
+
+Supported interventions:
+
+- Add label-preserving question variants across multiple inspected training
+  contexts for a diagnosed cluster.
+- Add contrasting examples for a recorded capability confusion, using existing
+  inspected anchors for both sides. A true contrast pair requires compatible
+  native context and independently supported labels.
+- Remove individually inspected exact redundant model inputs when the native
+  adapter proves equivalent context and labels and identifies the retained row.
+- Record suspected faulty labels, unsupported contexts, and ambiguous examples
+  as review findings. Do not silently relabel or delete them.
+
+Deferred: new registries, new candidate pools or state construction, automatic
+label correction, automatic removal based only on an LLM verdict, semantic or
+embedding deduplication, arbitrary topic discovery, and evaluation redesign.
+A zero-training-coverage cluster with no valid anchor is an explicit unsupported
+repair, not permission to use a benchmark row as a template.
+
+"Politics" is a usable cluster only if the task actually declares that dimension.
+Do not invent a generic topic taxonomy for Nomos or infer domain labels from
+question keywords.
+
+## 4. Trustworthy development evidence
+
+Create a versioned diagnostic projection over the exact already-saved native
+development reports. It must pin model, suite, suite fingerprint, report,
+native artifact fingerprint, and projection version.
+
+Required facts:
+
+- Retrieval population: evaluated state count; existing aggregate and
+  dimension metrics; per-cluster support and metric direction.
+- Agent evaluation: session count and metric-specific denominators when saved,
+  kept separate from retrieval states. Unavailable denominators remain unknown.
+- Original-baseline and current-candidate values with comparable population
+  identities. Never compare rates as though their denominators were identical
+  merely because they share a report.
+- Diagnostic availability: available sample, available empty sample, missing,
+  corrupt, or incompatible, with a bounded actionable reason.
+
+Use native retrieval `metrics.states` for retrieval shares and sample bounds.
+Validate each cluster's support against that population. Multi-label capability
+memberships may sum above the population; each individual membership share may
+not exceed 100%. Keep counts exact and mark errors reconstructed from rounded
+rates as estimates.
+
+Do not change historical scientific support, acceptance gates, report IDs,
+fingerprints, or saved Agent tool results. Correct passive projections from
+verified source artifacts; new adaptive inputs use the new protocol. If required
+native evidence is unavailable, report that limitation before Agent spending
+instead of substituting another population or rerunning inference.
+
+Retain the existing failure-sample boundary. Aggregate clusters are complete
+only where the saved native report says so; confusion examples derived from its
+at-most-50 disagreements are sampled evidence. A case missing on one side is
+not a fix or regression. Full prediction collection and new evaluation cases
+remain outside this release.
+
+## 5. Dataset inventory and bounded investigation
+
+Extend the existing full local scan, not the prompt size. Produce one immutable
+inventory for the selected dataset fingerprint and native inventory version.
+
+For each existing dimension/value cluster retain:
+
+- Stable semantic cluster key, separate from the evidence fingerprint that
+  changes across reports or dataset versions.
+- Training count/share, development support/metrics, baseline deltas, missing
+  evidence flags, and deterministic priority.
+- Counts of distinct native context fingerprints and generation capacity.
+- Exact duplicate groups and contradictory-label groups under the same
+  native model-input identity; conflicts are findings, not automatic repairs.
+
+Retain the existing priority order: descending estimated top-1 error count,
+recall-at-1 regression, coverage gap, then stable cluster key. This is a browsing
+order, not an additive error total or an automatic row-allocation formula.
+
+Reuse the native renderer/validator for input and context identity. Context
+includes the trainer-visible candidate pool and state/history, not registry ID
+or question text alone. Distinct contexts must not be discarded as duplicates.
+
+Extend bounded inspection to return representative, contrasting, and suspect
+training examples. Selection is deterministic: distinct context strata first,
+then content fingerprints. Return selection method, inspected count, total
+eligible count, and continuation cursor. Only actually returned rows become
+eligible anchors/removals.
+
+The new protocol permits additional pages within the frozen Agent-turn/token
+limits; one successful page must not force an immediate decision. A final
+proposal-only turn remains reserved. If evidence is insufficient, submit
+no-change with the specific limitation.
+
+V3 requires at least four planning turns: landscape, examples, plan preview,
+submission. Standard keeps eight and Quick test keeps four. Custom settings
+below four are rejected at readiness, not discovered after provider calls.
+
+Frozen first-release limits:
+
+- At most four repair targets per iteration.
+- At most eight inspected generation anchors per target.
+- At most 32 distinct training rows inspected per iteration, including removals.
+- At most eight requested additions per anchor across the entire iteration.
+- Existing per-item/page byte limits remain enforced; continuation never clips
+  native row content or grants access to an unreturned row.
+
+These are safety/capacity limits, not reasons to spend the whole allowance.
+Show when a limit prevents a larger intervention. Pagination and context
+selection must not grow prompts with the full dataset or full trace history.
+
+## 6. Structured repair plan and exact allocation
+
+Introduce a versioned `RepairPlan` with explicit targets; do not parse intent
+back out of free-form instructions. Each target must contain:
+
+- Target ID and stable cluster key(s), plus exact inspected evidence references.
+- A concise public hypothesis, evidence limitations, intended failure pattern,
+  and the alternative explanation the Agent considered.
+- Operation: label-preserving variants, existing-anchor contrast, or proven
+  redundant-row removal.
+- Exact inspected anchor/member IDs and fingerprints; contrast relationships
+  where applicable; individual removal reasons and retained-row identities.
+- Desired addition count, count basis, allocation rationale, and exact
+  per-anchor counts. Removal counts are always explicit row IDs.
+- One existing target metric and desired direction, plus the unchanged global
+  development gates to watch. This is a hypothesis, not a new acceptance rule.
+
+Support only two addition-count bases in this release:
+
+1. `absolute_rows`: an integer desired count.
+2. `relative_cluster_growth`: integer basis points of the selected source
+   cluster's current row count, rounded up once.
+
+For example, +5% of a 400-row cluster means 20 additions, not five percentage
+points of the whole dataset. Pin the 400-row base and 500 basis points. Changing
+the denominator requires another plan. Percentage-point balancing is deferred.
+An absolute request may describe an unsupported empty-cluster gap but cannot
+execute without valid inspected anchors.
+
+A pure compiler validates a proposed plan and returns an exact preview:
+
+- Desired and executable additions/removals, per-anchor allocation, projected
+  dataset size and cluster shares, unused allowance, and limiting constraints.
+- Every removal plus every requested addition consumes the existing row-change
+  ledger. Rejected generation is not refunded.
+- Overlapping clusters never duplicate edit charges. A generated slot has one
+  owner target; its descriptive memberships can overlap.
+- Allocate an accepted target total evenly across its selected anchors using
+  quotient/remainder and stable anchor-ID tie-breaking. Reject cap violations.
+  For contrast targets, require an even total and declared anchor pairs;
+  allocate pairs first, with equal counts on both sides and stable pair-ID ties.
+- Never silently trim an infeasible plan or raise a ceiling. Return a typed
+  constraint result; the Agent may revise within remaining turns or stop.
+- Do not force a minimum edit volume or treat benchmark/training share matching
+  as an optimization objective.
+
+Expose preview through an application-owned tool and CLI contract. Submission
+must reproduce the exact preview fingerprint before generation. Preserve legacy
+proposal contracts rather than retroactively adding required fields.
+
+## 7. Targeted generation and semantic admission
+
+Keep the independently pinned generator and existing structured transport.
+Each request pins target, anchor, strategy, slot, instruction, schema, and
+prompt version. The host still owns labels, registry, state, identities, and
+training partition.
+
+Give the generator training anchors and a host-compiled abstract repair brief
+from validated strategy/cluster fields, not free-form Agent rationale or raw
+benchmark questions as generation examples. A contrast target uses inspected
+training anchors on both sides; it cannot fabricate a competing label or claim
+to create a new hard-negative candidate pool. Ordinary paraphrases remain an
+honest strategy, not a claimed contrast intervention.
+
+Add a bounded, blind semantic assessment for every structurally surviving
+generated row:
+
+- The reviewer sees the generated question, relevant native context, and legal
+  candidate semantics. It does not see inherited labels, the desired answer,
+  the Agent's persuasive rationale, or evaluation rows.
+- It returns a strict native assessment: supported candidate IDs, ambiguity,
+  context consistency, and concise issue codes/rationale. A second target-fit
+  assessment sees the abstract strategy only after the blind answer is
+  recorded; it cannot revise that answer. Both passes are required.
+- The host validates exact row/request identity, permitted candidate vocabulary,
+  and output shape. Admit only an unambiguous compatible answer set matching
+  the native label policy, consistent context, and supported target fit.
+  Abstention/no-tool semantics remain adapter-owned; unsupported cases fail
+  closed rather than being forced into classification labels.
+- Contradictory, ambiguous, unsupported, malformed, or unassessed additions do
+  not enter the candidate dataset. An LLM assessment is evidence, not truth.
+- A contrast pair is admitted together only if both sides pass their individual
+  checks and the adapter verifies the declared contrast relationship.
+
+Own the provider-neutral native-assessment extension in a feature-owned module
+of `dataset-quality-core`, with a separate request shape from classification
+`SourceRow`. Reuse quality-policy and assessment primitives where applicable;
+do not force Nomos into the existing fixed-label audit. The Nomos adapter owns
+native semantics; optimization consumes verdicts through a narrow port.
+
+This is addition admission under a newly pinned finite launch policy. It does
+not create an approved curation manifest, auto-approve existing human-review
+workflows, or declare the unchanged source dataset semantically qualified.
+
+Use the run's pinned Agent connection/model for review through the existing
+provider transport; add no third provider selector or provider stack. Charge
+reviews to the same cumulative advisor request/token/spend ceilings, with a
+separate visible operation category and durable reservations. Review calls are
+not planning turns, but have finite per-plan batch/attempt ceilings. Record
+shared generator/reviewer models honestly; a separate call is not proof of
+independent judgment. Preview must disclose review work before launch.
+
+Each review pass batches at most eight rows, subject to the existing payload
+bound; contrast pairs stay together. Reserve one attempt before dispatch.
+Malformed or negative assessments are terminal evidence, not retry requests.
+An interrupted/unknown review may have at most one fresh attempt on explicit
+Resume, within remaining provider ceilings; the unknown charge remains.
+The plan preview itemizes both passes, canary/bulk batch boundaries, planned
+requests and token reservations. Feasibility is not a promise that retries
+will fit. Missing review budget stops work; it never disables the gate.
+
+## 8. Per-target canaries and publication
+
+Replace the single global canary only for new-protocol launches:
+
+- Reserve the first planned batch of at most two rows for every distinct
+  target/anchor/strategy combination. A contrast pair is one coupled canary
+  unit. Canary rows are part of requested additions, not extra edits.
+- Require native admission and semantic assessment of every canary row.
+  Run all canary units before dispatching non-canary batches.
+- Any rejected canary prevents bulk generation and publication for that
+  iteration. Persist `repair_not_executed: canary_rejected` and end the run
+  normally with no new candidate; retain any earlier eligible candidate.
+  Resume cannot regenerate a saved rejection.
+- After passed canaries, bulk rows use the same per-row checks and ordinary
+  bounded generation concurrency. No automatic refill or hidden retry loop in
+  this release.
+- Persist requested, generated, structurally admitted, semantically admitted,
+  duplicate-excluded, and published counts separately, per target and anchor.
+
+A bulk shortfall is an observed result, not a rewritten requested allocation.
+Publish surviving additions plus validated removals only when at least one
+actual edit survives. Record partial target fulfillment explicitly. Zero
+surviving changes ends without training. Interrupted/unknown provider work
+retains its conservative charge and normal explicit recovery rules.
+
+Reuse the complete-population native qualification and training-to-benchmark
+firewall before training, including all retained source rows. Check generated
+duplicates against the full selected population and other generated rows using
+the native model-input identity, not question-only matching across distinct
+candidate contexts. Schema, duplicate, and isolation failures remain blockers.
+
+## 9. Outcome feedback, not causal claims
+
+After normal development evaluation, persist a `RepairOutcome` for every
+target: hypothesis/plan identity, requested and actual edits, input/output
+dataset versions, candidate, report references, relevant cluster metric
+deltas/support, global gate verdict, and limitations.
+
+Compare to the same original baseline; also show the preceding candidate when
+its population is comparable. Label target metric direction as improved,
+regressed, unchanged, or unavailable. A positive delta does not establish
+statistical significance or prove that a particular row caused it. Global
+KEEP/REJECT and best-candidate selection remain unchanged.
+
+Give the next iteration a bounded summary of earlier plans/outcomes within
+this root run, including rejected candidates and admission failures. Use stable
+cluster keys for continuity. An identical target/strategy/anchor intervention
+with no new evidence must not be resubmitted as a new hypothesis.
+
+Continue using the best eligible full dataset and the latest candidate's
+development evidence, as today. Do not silently warm-start a rejected model.
+Cross-run memory, learned allocation policies, bandits, and automatic tuning of
+training settings are deferred.
+
+## 10. Compatibility, ownership, and recovery
+
+Pin this behavior as Agent analysis protocol V3 plus explicit repair/admission
+policy versions. Keep V1/V2 tool contracts, optional-field serialization,
+historical canaries, fingerprints, and replay behavior unchanged. No resumed
+run silently upgrades. Activate V3 defaults only after connected acceptance;
+unsupported adapters or insufficient evidence fail launch readiness clearly.
+
+Keep existing iteration, row, provider, concurrency, and training ceilings.
+Do not raise Standard or Quick-test defaults as part of this work. Account for
+the extra review requests during plan feasibility and show budget-limited
+capacity honestly. No policy expands authority after launch.
+
+Ownership:
+
+- `encoder-optimization-core`: repair-plan contracts, allocation, bounded
+  investigation policy, and outcome summaries.
+- `dataset-quality-core`: native row-assessment contracts and deterministic
+  assessment policy, without provider or orchestration dependencies.
+- `encoder-experiment-nomos`: native evidence projection, inventory/context
+  identity, generation construction, and semantic assessment adapter.
+- `encoder-optimization-runner`: bounded investigation, generation/canary/
+  review orchestration through ports, not native business logic.
+- `project-workspace-core/local`: frozen authority, append-only artifacts,
+  custody, migrations, and cumulative accounting.
+- CLI: compose existing owners. Desktop: typed passive projections and explicit
+  existing execution controls, never a second policy engine.
+
+Persist plan, slots, reservations, admission evidence, publication, and outcomes
+before their dependent stages. Stop/restart/Resume must preserve completed
+work, unknown charges, and exact artifact identities. Typed read failures must
+not become empty successful results. Reading history never dispatches work.
+
+Adaptive components may consume permitted development evidence, never sealed
+rows, diagnostics, metrics, or protected overlap matches. The isolation gate
+returns only aggregate clearance facts. Final holdout and promotion retain
+their separate explicit authority.
+
+## 11. Delivery order and staged commits
+
+Implement one coherent component at a time, with its tests and contract docs.
+Do not implement the whole specification in one unreviewed change.
+
+1. **Evidence correctness.** Add population-specific diagnostic projections and
+   typed availability; fix landscape/sample consumers. Prove that 1,000
+   retrieval states, 16 agent sessions, and 50 saved disagreements are valid,
+   and that a 100-state cluster has 10% retrieval support.
+2. **Inventory and investigation.** Add stable cluster/context identities,
+   suspect groups, diverse bounded sampling, and V3 inspection. Prove complete
+   aggregate counts without sending the full dataset to the Agent.
+3. **Repair-plan compiler.** Add strict targets, percentage semantics, exact
+   allocation preview/submission, immutable persistence, and CLI reads.
+   Prove budget, overlap, cap, stale-preview, and no-change behavior.
+4. **Native semantic assessment.** Add core contracts, deterministic fake,
+   Nomos adapter, provider accounting, and durable row-level evidence.
+   Prove a schema-valid wrong-label question is excluded.
+5. **Generation integration.** Wire structured targets, per-combination
+   canaries, contrast coupling, complete-population deduplication, immutable
+   publication, and existing qualification/training. Prove saved rejection
+   cannot cause another call and shortfalls remain visible.
+6. **Outcome feedback and connected CLI acceptance.** Persist target outcomes,
+   feed the next iteration, and exercise success/rejection/no-change and
+   interruption paths through the production CLI.
+7. **Separate desktop phase.** After CLI acceptance and explicit authorization
+   to start UI work, extend the existing Overview repair plan/case/report
+   views. Preserve Setup -> Status -> Report, navigation, and Stop/Resume.
+   Show the chain: weakness -> dataset evidence -> hypothesis/count basis ->
+   actual edits/admission -> target outcome/global verdict. No redesign or
+   new HTTP API. Then prove the production Electron/IPC/CLI journey.
+
+After every executable component run `cargo fmt-check`, `cargo check-all`,
+`cargo lint`, `cargo test-all`, and relevant Pi/native/UI checks. Review
+dependency directions and commit the coherent verified stage when Git identity
+is configured. Documentation-only edits require diff/content checks, not claims
+that executable test gates were rerun. Push only when requested.
+
+## 12. Acceptance and stopping criteria
+
+The release is complete only when deterministic fixtures prove all of these:
+
+- [ ] Population-correct evidence and explicit unavailable reasons; no false
+      disappearance of valid retrieval samples.
+- [ ] Exact complete dataset counts, overlap-safe accounting, reproducible
+      diverse samples, and no eligibility for unseen rows.
+- [ ] A weak cluster produces a concrete, justified, feasible multi-anchor plan;
+      +5% of 400 rows reproduces exactly 20 requested additions.
+- [ ] A missing-anchor gap becomes an honest unsupported/no-change finding;
+      no development row enters generation as an anchor.
+- [ ] A redundant row is removed with a retained equivalent; a suspected label
+      conflict is exposed without unsupported deletion or relabeling.
+- [ ] Wrong-label/ambiguous generated questions fail semantic admission even
+      when their native schema is valid; unassessed rows cannot train.
+- [ ] Each target/anchor canary gates bulk work; contrast pairs cannot be
+      partially admitted; no hidden refill or new budget.
+- [ ] Actual immutable dataset membership and training input reproduce all
+      per-target published counts; full native qualification still gates training.
+- [ ] A second iteration consumes the first plan and measured outcome, including
+      rejection, without claiming causality or repeating an unchanged hypothesis.
+- [ ] Budget exhaustion, no-change, canary rejection, execution failure, and
+      scientific rejection are distinguishable through CLI and history.
+- [ ] Stop/crash/restart around each new durable boundary reuses completed work
+      and preserves unknown charges, without duplicate publication or training.
+- [ ] V1/V2 persisted fixtures still replay unchanged, and sealed sentinels never
+      appear in prompts, diagnostics, review requests, or adaptive outcomes.
+- [ ] The final authorized UI phase displays the same recorded facts and passes
+      `npm run verify:agent`, relevant renderer tests, and narrow/desktop checks.
+
+Use temporary projects, loopback provider fixtures, and deterministic native
+adapters. Do not use the user's production dataset as a development fixture.
+A separately authorized live run may evaluate usefulness after acceptance; no
+paid call, real training, replacement run, final evaluation, or promotion is
+authorized by this specification alone.
+
+Stop scope expansion here: no benchmark improvement, full-prediction evaluator
+rewrite, training-backend replacement, Unsloth integration, cloud execution,
+multiple workers, new autonomous agents, automated curation approval, or
+general app redesign. Do not claim completion from a plan preview, isolated
+unit tests, more generated rows, or one successful training run.
