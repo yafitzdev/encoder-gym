@@ -54,6 +54,8 @@ export type SupervisorToolName = (typeof SUPERVISOR_TOOL_NAMES)[number];
 export const ENCODER_OPTIMIZATION_TOOL_NAMES = [
   "inspect_development_failures",
   "inspect_training_rows",
+  "inspect_dataset_landscape",
+  "inspect_dataset_clusters",
   "propose_dataset_edits",
 ] as const;
 export type EncoderOptimizationToolName = (typeof ENCODER_OPTIMIZATION_TOOL_NAMES)[number];
@@ -99,7 +101,9 @@ export interface PiRunRequest {
     | "benchmark_architect_v1"
     | "generation_quality_supervisor_v1"
     | "encoder_optimization_v1"
-    | "encoder_optimization_proposal_v1";
+    | "encoder_optimization_proposal_v1"
+    | "encoder_optimization_v2"
+    | "encoder_optimization_proposal_v2";
   runId: string;
   runSpecificationFingerprint: string;
   provider: string;

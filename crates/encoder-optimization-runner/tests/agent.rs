@@ -116,6 +116,33 @@ impl OptimizationInspection for Inspection {
             ))
         })
     }
+    fn dataset_landscape(
+        &self,
+        _scope: AgentAnalysisScope,
+        _offset: u64,
+        _limit: u32,
+    ) -> BoxFuture<'_, InspectionPage> {
+        Box::pin(async {
+            Ok(page(
+                "dataset-cluster-1",
+                json!({"kind":"dataset_cluster","cluster":{"dimension":"expected_capability","value":"read"},"training":{"rows":8,"sharePpm":200000},"development":[{"estimatedTop1Errors":5,"supportSharePpm":350000,"coverageGapPpm":150000}]}),
+            ))
+        })
+    }
+    fn dataset_cluster_rows(
+        &self,
+        _scope: AgentAnalysisScope,
+        cluster_ids: Vec<String>,
+        _examples_per_cluster: u32,
+    ) -> BoxFuture<'_, InspectionPage> {
+        Box::pin(async move {
+            assert_eq!(cluster_ids, vec!["dataset-cluster-1"]);
+            Ok(page(
+                "row-1",
+                json!({"question":"ambiguous route","selectedForClusters":cluster_ids}),
+            ))
+        })
+    }
 }
 
 struct Runtime {
@@ -219,6 +246,7 @@ fn scope() -> AgentAnalysisScope {
         dataset_fingerprint: fingerprint(&"training-members").unwrap(),
         development_evidence_fingerprint: fingerprint(&"development-result").unwrap(),
         objective: "Improve read-only routing".into(),
+        analysis_protocol: 1,
         maximum_turns: 4,
         maximum_row_changes: 2,
     }
@@ -402,6 +430,54 @@ async fn evidence_and_row_inspection_drive_real_tool_proposal_and_completed_work
         runtime.requests.lock().unwrap().len(),
         3,
         "resume must not repeat completed model calls"
+    );
+}
+
+#[tokio::test]
+async fn v2_requires_landscape_then_cluster_rows_and_uses_cluster_evidence() {
+    let turns = vec![
+        turn(
+            "inspect_dataset_landscape",
+            json!({"offset":0,"limit":20}),
+            "Compare weak evaluation dimensions with training coverage.",
+        ),
+        turn(
+            "inspect_dataset_clusters",
+            json!({"clusterIds":["dataset-cluster-1"],"examplesPerCluster":2}),
+            "Inspect representative rows for the underrepresented cluster.",
+        ),
+        turn(
+            "propose_dataset_edits",
+            json!({"summary":"Increase read coverage by one row as a bounded test.","stop":false,
+                "removals":[],
+                "additions":[{"templateRowId":"row-1","instruction":"Generate one precise read-only route for the weak cluster.","count":1,"evidenceIds":["dataset-cluster-1"]}]}),
+            "Submit the bounded coverage shift.",
+        ),
+    ];
+    let (agent, store, runtime) = setup(turns);
+    let mut scope = scope();
+    scope.analysis_protocol = 2;
+    let proposal = agent.analyze(scope).await.unwrap();
+    assert_eq!(proposal.additions[0].template_row_id, "row-1");
+    assert_eq!(
+        proposal.additions[0].evidence_ids,
+        vec!["dataset-cluster-1"]
+    );
+    let requests = runtime.requests.lock().unwrap();
+    assert_eq!(requests[0].capability_set, "encoder_optimization_v2");
+    assert_eq!(requests[1].capability_set, "encoder_optimization_v2");
+    assert_eq!(
+        requests[2].capability_set,
+        "encoder_optimization_proposal_v2"
+    );
+    assert!(requests[1].initial_prompt.contains("coverageGapPpm"));
+    assert!(
+        store
+            .history
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|record| record.validate().is_ok())
     );
 }
 

@@ -76,7 +76,7 @@ function proposalSchema(requirements?: ProposalRequirements) {
       maxItems: 20,
       uniqueItems: true,
       description:
-        "Only exact outer item.id values from inspect_development_failures. Never reportId, source-row IDs, training-row IDs or fingerprints inside content.",
+        "Only exact outer evidence item.id values returned by the active inspection protocol. Never nested report IDs, source-row IDs, training-row IDs or fingerprints.",
     },
   );
   return Type.Object(
@@ -113,6 +113,14 @@ const schemas = {
     limit: Type.Integer({ minimum: 1, maximum: 20 }),
     query: Type.Optional(Type.String({ maxLength: 200 })),
   }),
+  inspect_dataset_landscape: Type.Object({
+    offset: Type.Integer({ minimum: 0 }),
+    limit: Type.Integer({ minimum: 1, maximum: 20 }),
+  }),
+  inspect_dataset_clusters: Type.Object({
+    clusterIds: Type.Array(identity, { minItems: 1, maxItems: 4, uniqueItems: true }),
+    examplesPerCluster: Type.Integer({ minimum: 1, maximum: 4 }),
+  }),
   propose_dataset_edits: proposalSchema(),
 };
 
@@ -121,8 +129,12 @@ const descriptions: Record<EncoderOptimizationToolName, string> = {
     "Inspect persisted development failures for the pinned benchmark. Pages are byte-bounded and may return fewer items than limit; nextOffset identifies the next complete item. No sealed evidence is accessible.",
   inspect_training_rows:
     "Inspect a bounded page of the exact starting training dataset; optionally filter its task-visible text. Pages may return fewer items than limit to bound context; only returned items have been inspected, and nextOffset identifies the next complete item.",
+  inspect_dataset_landscape:
+    "Inspect ranked aggregate clusters built by scanning the complete pinned training dataset and joining development metrics. Compare evaluation support, errors and regression with training coverage; coverage is descriptive, not causal. No sealed evidence is accessible.",
+  inspect_dataset_clusters:
+    "Inspect deterministic representative training rows for 1–4 exact cluster IDs already returned by inspect_dataset_landscape. This reveals qualitative row content without reading the full dataset.",
   propose_dataset_edits:
-    "Submit evidence-linked removals and targeted generation instructions, or stop without changes. Keep summary within 400 characters. evidenceIds must contain ONLY outer item.id values from inspect_development_failures, never report IDs or training-row IDs inside content. Total removals plus requested additions must fit the remaining row-change budget. The host validates every proposal; this tool cannot train, approve or change a benchmark.",
+    "Submit evidence-linked removals and targeted generation instructions, or stop without changes. Keep summary within 400 characters and state the intended bounded coverage shift. Use only exact outer IDs returned by the active inspection protocol. Total removals plus requested additions must fit the remaining row-change budget. The host validates every proposal; this tool cannot train, approve or change a benchmark.",
 };
 
 export function encoderOptimizationModelTools(tools: Tool[], initialPrompt?: string): Tool[] {
@@ -145,10 +157,13 @@ export function createEncoderOptimizationTools(
   runId: string,
   executor: ToolExecutor,
   proposalOnly = false,
+  analysisProtocol: 1 | 2 = 1,
 ): AgentTool[] {
   const names: EncoderOptimizationToolName[] = proposalOnly
     ? ["propose_dataset_edits"]
-    : (Object.keys(schemas) as EncoderOptimizationToolName[]);
+    : analysisProtocol === 2
+      ? ["inspect_dataset_landscape", "inspect_dataset_clusters"]
+      : ["inspect_development_failures", "inspect_training_rows", "propose_dataset_edits"];
   return names.map((name) => ({
     name,
     label: name,

@@ -24,17 +24,29 @@ struct TrainingRequest {
     query: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ClusterRowsRequest {
+    cluster_ids: Vec<String>,
+    examples_per_cluster: u32,
+}
+
 pub(super) fn proposal_requirements(
     scope: &AgentAnalysisScope,
     rows: &BTreeSet<String>,
     evidence: &BTreeSet<String>,
 ) -> Value {
+    let reference_rule = if scope.analysis_protocol == 2 {
+        "Every evidenceIds entry must be an exact outer item.id from inspect_dataset_landscape. rowId and templateRowId must be exact outer item.id values returned by inspect_dataset_clusters. Nested report, source-row and fingerprint values are never valid references."
+    } else {
+        "Every evidenceIds entry must be an exact outer item.id from inspect_development_failures. Never use reportId, source row IDs, fingerprints or training-row IDs found inside content. rowId and templateRowId instead use inspect_training_rows item.id values."
+    };
     json!({
         "maximumRowChanges": scope.maximum_row_changes,
         "maximumSummaryCharacters": 400,
         "maximumEvidenceIdsPerEdit": 20,
         "rowChangeRule": "removals.length + sum(additions[*].count) must not exceed maximumRowChanges",
-        "referenceRule": "Every evidenceIds entry must be an exact outer item.id from inspect_development_failures. Never use reportId, source row IDs, fingerprints or training-row IDs found inside content. rowId and templateRowId instead use inspect_training_rows item.id values.",
+        "referenceRule": reference_rule,
         "trainingRowIds": rows.iter().take(20).collect::<Vec<_>>(),
         "trainingRowIdsComplete": rows.len() <= 20,
         "developmentEvidenceIds": evidence.iter().take(20).collect::<Vec<_>>(),
@@ -66,6 +78,22 @@ pub(super) async fn execute(
     if proposal_only && request.name != "propose_dataset_edits" {
         return Err(OptimizationError::Validation(
             "Inspection is closed; this turn must submit propose_dataset_edits".into(),
+        ));
+    }
+    let permitted = match scope.analysis_protocol {
+        1 => matches!(
+            request.name.as_str(),
+            "inspect_development_failures" | "inspect_training_rows" | "propose_dataset_edits"
+        ),
+        2 => matches!(
+            request.name.as_str(),
+            "inspect_dataset_landscape" | "inspect_dataset_clusters" | "propose_dataset_edits"
+        ),
+        _ => false,
+    };
+    if !permitted {
+        return Err(OptimizationError::Validation(
+            "Tool is not permitted by this analysis protocol".into(),
         ));
     }
     match request.name.as_str() {
@@ -100,7 +128,44 @@ pub(super) async fn execute(
             rows.extend(page.items.iter().map(|item| item.id.clone()));
             Ok((serde_json::to_value(page)?, None))
         }
+        "inspect_dataset_landscape" => {
+            let input: PageRequest =
+                serde_json::from_value(request.arguments.clone()).map_err(invalid)?;
+            page_limit(input.limit)?;
+            let page = inspection
+                .dataset_landscape(scope.clone(), input.offset, input.limit)
+                .await?;
+            let page = context_page(page, input.offset, input.limit)?;
+            evidence.extend(page.items.iter().map(|item| item.id.clone()));
+            Ok((serde_json::to_value(page)?, None))
+        }
+        "inspect_dataset_clusters" => {
+            let input: ClusterRowsRequest =
+                serde_json::from_value(request.arguments.clone()).map_err(invalid)?;
+            if input.cluster_ids.is_empty()
+                || input.cluster_ids.len() > 4
+                || !(1..=4).contains(&input.examples_per_cluster)
+                || input.cluster_ids.iter().any(|id| !evidence.contains(id))
+            {
+                return Err(OptimizationError::Validation(
+                    "Cluster inspection requires 1–4 landscape IDs already returned to this Agent and 1–4 examples per cluster"
+                        .into(),
+                ));
+            }
+            let page = inspection
+                .dataset_cluster_rows(scope.clone(), input.cluster_ids, input.examples_per_cluster)
+                .await?;
+            let page = context_page(page, 0, 20)?;
+            rows.extend(page.items.iter().map(|item| item.id.clone()));
+            Ok((serde_json::to_value(page)?, None))
+        }
         "propose_dataset_edits" => {
+            if scope.analysis_protocol == 2 && !proposal_only {
+                return Err(OptimizationError::Validation(
+                    "Protocol V2 proposals are accepted only after landscape and cluster inspection complete"
+                        .into(),
+                ));
+            }
             let proposal: DatasetEditProposal =
                 serde_json::from_value(request.arguments.clone()).map_err(invalid)?;
             proposal.validate(scope, rows, evidence)?;
@@ -151,6 +216,7 @@ fn page_limit(limit: u32) -> Result<(), OptimizationError> {
 
 pub(super) fn restore_inspections(
     record: &AgentTurnRecord,
+    analysis_protocol: u32,
     rows: &mut BTreeSet<String>,
     evidence: &mut BTreeSet<String>,
 ) -> Result<(), OptimizationError> {
@@ -158,10 +224,12 @@ pub(super) fn restore_inspections(
         if tool.failed {
             continue;
         }
-        let target = match tool.name.as_str() {
-            "inspect_training_rows" => &mut *rows,
-            "inspect_development_failures" => &mut *evidence,
-            "propose_dataset_edits" => continue,
+        let target = match (analysis_protocol, tool.name.as_str()) {
+            (1, "inspect_training_rows") | (2, "inspect_dataset_clusters") => &mut *rows,
+            (1, "inspect_development_failures") | (2, "inspect_dataset_landscape") => {
+                &mut *evidence
+            }
+            (1 | 2, "propose_dataset_edits") => continue,
             _ => {
                 return Err(OptimizationError::Validation(
                     "Persisted Agent tool is not permitted".into(),
@@ -271,6 +339,7 @@ mod tests {
             dataset_fingerprint: fingerprint(&"dataset").unwrap(),
             development_evidence_fingerprint: fingerprint(&"evidence").unwrap(),
             objective: String::new(),
+            analysis_protocol: 1,
             maximum_turns: 8,
             maximum_row_changes: 144,
         };

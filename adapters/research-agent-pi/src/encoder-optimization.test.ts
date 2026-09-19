@@ -7,7 +7,7 @@ import {
   createEncoderOptimizationTools,
   encoderOptimizationModelTools,
 } from "./encoder-optimization-tools.js";
-import { projectProvider } from "./project-provider.js";
+import { configureProjectPayload, projectProvider } from "./project-provider.js";
 import type { PiRunEvent, PiRunRequest, ScriptedToolCall } from "./protocol.js";
 
 function request(baseUrl: string): PiRunRequest {
@@ -85,6 +85,32 @@ test("advertised proposal schemas bind exact inspected namespaces and remaining 
     /Invalid host proposal limits/,
   );
   assert.ok(encoderOptimizationModelTools(tools, "legacy text").length);
+});
+
+test("analysis protocol V2 exposes only landscape, cluster drill-down and proposal tools", () => {
+  const tools = createEncoderOptimizationTools(
+    "run",
+    {
+      async execute() {
+        return { content: {} };
+      },
+    },
+    false,
+    2,
+  );
+  assert.deepEqual(
+    tools.map((tool) => tool.name),
+    ["inspect_dataset_landscape", "inspect_dataset_clusters"],
+  );
+  const schemas = encoderOptimizationModelTools(tools, requirementsPrompt());
+  assert.deepEqual(
+    schemas.map((tool) => tool.name),
+    ["inspect_dataset_landscape", "inspect_dataset_clusters"],
+  );
+  const input = request("http://127.0.0.1:1/v1");
+  input.capabilitySet = "encoder_optimization_v2";
+  const configured = configureProjectPayload(input, { messages: [] }) as Record<string, unknown>;
+  assert.equal(configured.tool_choice, "required");
 });
 
 test("selected project endpoint and model execute real Pi tool calls without catalog substitution", async () => {
