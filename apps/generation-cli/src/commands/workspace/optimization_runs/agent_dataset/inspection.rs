@@ -4,7 +4,9 @@ use std::{collections::BTreeMap, path::Path};
 
 use anyhow::{Context, Result, ensure};
 use encoder_experiment_core::ports::ExperimentStore;
-use encoder_experiment_nomos::{NomosBackend, NomosGenerationTemplates};
+use encoder_experiment_nomos::{
+    NomosBackend, NomosDatasetLandscape, NomosDevelopmentEvidence, NomosGenerationTemplates,
+};
 use encoder_optimization_core::{
     OptimizationError,
     agent::{AgentAnalysisScope, DatasetEditProposal, InspectionItem, InspectionPage},
@@ -18,6 +20,7 @@ pub(super) struct IterationInspection {
     scope: AgentAnalysisScope,
     failures: Vec<InspectionItem>,
     rows: BTreeMap<String, Value>,
+    landscape: Option<NomosDatasetLandscape>,
 }
 
 impl IterationInspection {
@@ -93,6 +96,7 @@ impl IterationInspection {
             );
             let backend = super::super::super::open_nomos_binding(&binding, &runtime_project)?;
             let mut failures = Vec::new();
+            let mut current_evidence = Vec::<NomosDevelopmentEvidence>::new();
             let reports: Vec<_> = if let Some(prior) = &prior { prior.reports.values().collect() }
                 else { protocol.baseline_development_reports() };
             for (suite, identity) in &iteration.development.reports {
@@ -108,8 +112,24 @@ impl IterationInspection {
                     &protocol.metric_contract,
                     report,
                 )?;
-                failures.extend(evidence.failures);
+                failures.extend(evidence.failures.iter().cloned());
+                current_evidence.push(evidence);
             }
+            let baseline_evidence = if iteration.scope.analysis_protocol == 2 {
+                protocol
+                    .baseline_development_reports()
+                    .into_iter()
+                    .map(|report| {
+                        backend.read_development_evidence(
+                            &project,
+                            &protocol.metric_contract,
+                            report,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                Vec::new()
+            };
             // Metrics and verdicts are explicit evidence, even when the native
             // diagnostic sample is empty. They supplement, not replace, failures.
             let content = serde_json::json!({
@@ -121,11 +141,11 @@ impl IterationInspection {
             // native sample spans many pages of concrete failures.
             failures.insert(0, InspectionItem {id:format!("development-summary-{}", iteration.development.fingerprint),
                 fingerprint:encoder_optimization_core::fingerprint(&content)?, content});
-            Ok(failures)
+            Ok((failures, current_evidence, baseline_evidence))
         }
         .await;
         store.pool().close().await;
-        let failures = result?;
+        let (failures, current_evidence, baseline_evidence) = result?;
         let dataset = dataset_versions::inspect(folder, iteration.dataset.id).await?;
         ensure!(
             dataset.reference() == iteration.dataset,
@@ -139,11 +159,15 @@ impl IterationInspection {
         let rows = source_rows
             .into_iter()
             .map(|row| (row.member.id, row.value))
-            .collect();
+            .collect::<BTreeMap<_, _>>();
+        let landscape = (iteration.scope.analysis_protocol == 2)
+            .then(|| NomosDatasetLandscape::build(&rows, &current_evidence, &baseline_evidence))
+            .transpose()?;
         Ok(Self {
             scope: iteration.scope.clone(),
             failures,
             rows,
+            landscape,
         })
     }
 
@@ -218,6 +242,43 @@ impl OptimizationInspection for IterationInspection {
                         .map_err(|error| OptimizationError::Validation(error.to_string()))
                 });
             page(rows, offset, limit)
+        })
+    }
+
+    fn dataset_landscape(
+        &self,
+        scope: AgentAnalysisScope,
+        offset: u64,
+        limit: u32,
+    ) -> BoxFuture<'_, InspectionPage> {
+        Box::pin(async move {
+            self.validate(&scope)?;
+            let landscape = self.landscape.as_ref().ok_or_else(|| {
+                OptimizationError::Validation(
+                    "Dataset landscape is unavailable for analysis protocol V1".into(),
+                )
+            })?;
+            page(landscape.summaries().iter().cloned().map(Ok), offset, limit)
+        })
+    }
+
+    fn dataset_cluster_rows(
+        &self,
+        scope: AgentAnalysisScope,
+        cluster_ids: Vec<String>,
+        examples_per_cluster: u32,
+    ) -> BoxFuture<'_, InspectionPage> {
+        Box::pin(async move {
+            self.validate(&scope)?;
+            let landscape = self.landscape.as_ref().ok_or_else(|| {
+                OptimizationError::Validation(
+                    "Dataset cluster inspection is unavailable for analysis protocol V1".into(),
+                )
+            })?;
+            let rows = landscape
+                .sample_rows(&self.rows, &cluster_ids, examples_per_cluster)
+                .map_err(|error| OptimizationError::Validation(error.to_string()))?;
+            page(rows.into_iter().map(Ok), 0, 20)
         })
     }
 }

@@ -7,6 +7,8 @@ export interface OptimizationStartOptions { id: string; settings: OptimizationAg
 export interface OptimizationAgentSettings {
   mode: "standard" | "quick_test";
   objective: string;
+  /** Host-owned dataset inspection semantics; absent historical runs are V1. */
+  analysisProtocol: 1 | 2;
   maximumIterations: number;
   maximumAgentTurnsPerIteration: number;
   generationConcurrency: number;
@@ -52,12 +54,13 @@ export function parseOptimizationAgentSettings(value: unknown): OptimizationAgen
     if (typeof item !== "number" || !Number.isSafeInteger(item) || item < 1 || item > maximum) throw new Error("Agent settings exceed supported limits.");
     return item;
   };
-  const item = object(value, ["mode", "objective", "maximumIterations", "maximumAgentTurnsPerIteration", "generationConcurrency", "maximumRowChanges", "training"], ["providerLimits"]);
+  const item = object(value, ["mode", "objective", "maximumIterations", "maximumAgentTurnsPerIteration", "generationConcurrency", "maximumRowChanges", "training"], ["providerLimits", "analysisProtocol"]);
   const training = object(item.training, ["device", "maximumEpochs", "batchSize", "learningRateNanos", "maximumSecondsPerIteration", "maximumTrainingRows"]);
   if ((item.mode !== "standard" && item.mode !== "quick_test") || typeof item.objective !== "string" || [...item.objective].length > 4_000 || /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(item.objective)) throw new Error("Invalid agent objective or mode.");
   if (training.device !== "auto" && training.device !== "cpu" && training.device !== "cuda") throw new Error("Invalid training device.");
   const result: OptimizationAgentSettings = {
     mode: item.mode, objective: item.objective,
+    analysisProtocol: (item.analysisProtocol === undefined ? 1 : bounded(item.analysisProtocol, 2)) as 1 | 2,
     maximumIterations: bounded(item.maximumIterations, 10),
     maximumAgentTurnsPerIteration: bounded(item.maximumAgentTurnsPerIteration, 32),
     generationConcurrency: bounded(item.generationConcurrency, 16),
@@ -75,6 +78,7 @@ export function parseOptimizationAgentSettings(value: unknown): OptimizationAgen
     const limits = object(item.providerLimits, ["advisor", "generation"]);
     result.providerLimits = { advisor: parseOptimizationProviderLimits(limits.advisor), generation: parseOptimizationProviderLimits(limits.generation) };
   }
+  if (result.analysisProtocol === 2 && result.maximumAgentTurnsPerIteration < 3) throw new Error("Dataset-intelligence analysis requires at least three Agent turns.");
   if (result.mode === "quick_test" && (result.maximumIterations !== 1 || result.maximumAgentTurnsPerIteration > 4 || result.maximumRowChanges > 8 || result.training.maximumEpochs !== 1 || result.training.maximumSecondsPerIteration > 120 || result.training.maximumTrainingRows === null || result.training.maximumTrainingRows > 64)) throw new Error("Quick-test limits are invalid.");
   return result;
 }

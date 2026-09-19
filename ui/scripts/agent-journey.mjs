@@ -35,28 +35,34 @@ const server = createServer(async (request, response) => {
       held = true; writeFileSync(join(root, "held.json"), JSON.stringify(calls.at(-1))); return;
     }
     let name, args;
-    if (!turns.length) { name = "inspect_development_failures"; args = { offset: 0, limit: 20 }; }
+    if (!turns.length) { name = "inspect_dataset_landscape"; args = { offset: 0, limit: 20 }; }
     else if (turns.length === 1) {
+      const clusters = turns[0].tools[0].result.items;
+      const cluster = clusters.find(item => item.content.cluster?.dimension === "expected_capability" && item.content.cluster?.value === "search") ?? clusters[0];
+      assert.ok(cluster);
       if (later) {
-        const evidence = turns[0].tools[0].result.items;
-        const failure = evidence.find(item => item.content.evidenceScope === "retrieval_failure_sample");
-        assert.equal(failure.content.expectedRank, 3); assert.match(failure.content.question, /candidate regression/);
-        assert.ok(evidence.some(item => item.content.kind === "development_summary" && item.content.assessments));
+        const examples = cluster.content.development.flatMap(value => value.sampledFailureDiagnostics.examples);
+        assert.ok(examples.some(example => example.expectedRank === 3 && /candidate regression/.test(example.questionPreview)));
       }
-      if (input.scope.iteration === 3) { name = "propose_dataset_edits"; args = { summary: "The candidate regression does not justify another dataset change.", stop: true, removals: [], additions: [] }; }
-      else { name = "inspect_training_rows"; args = { offset: 0, limit: 20, query: later ? "Retain" : "Search" }; }
+      name = "inspect_dataset_clusters"; args = { clusterIds: [cluster.id], examplesPerCluster: 4 };
     } else {
-      const evidence = turns[0].tools[0].result.items.find(item => item.content.evidenceScope === "retrieval_failure_sample");
+      const clusters = turns[0].tools[0].result.items;
+      const evidence = clusters.find(item => item.content.cluster?.dimension === "expected_capability" && item.content.cluster?.value === "search") ?? clusters[0];
       const rows = turns[1].tools[0].result.items;
-      assert.ok(evidence && rows.length); assert.equal(evidence.content.sampleLimit, 50);
+      assert.ok(evidence && rows.length);
+      const row = rows.find(item => item.content.question.includes(later ? "Retain" : "Search")) ?? rows[0];
       name = "propose_dataset_edits";
-      args = { summary: "Replace ambiguous search coverage using the inspected development failure.", stop: false,
-        removals: [{ rowId: rows[0].id, reason: "Ambiguous wording conflicts with inspected failure.", evidenceIds: [evidence.id] }],
-        additions: [{ templateRowId: rows[0].id, instruction: "Cover the specific search request from the failure.", count: 1, evidenceIds: [evidence.id] }] };
-      if (later) {
+      if (input.scope.iteration === 3) {
+        args = { summary: "The candidate regression does not justify another dataset change.", stop: true, removals: [], additions: [] };
+      } else {
+        args = { summary: "Shift search coverage by one row using the weak inspected cluster.", stop: false,
+          removals: [{ rowId: row.id, reason: "Ambiguous wording conflicts with the weak cluster.", evidenceIds: [evidence.id] }],
+          additions: [{ templateRowId: row.id, instruction: "Add one specific search request for the weak cluster.", count: 1, evidenceIds: [evidence.id] }] };
+      }
+      if (later && input.scope.iteration !== 3) {
         assert.equal(input.scope.maximumRowChanges, 6);
         args = { summary: "Changed candidate evidence identifies conflicting retain coverage.", stop: false,
-          removals: [{ rowId: rows[0].id, reason: "Remove the conflict found in candidate evidence.", evidenceIds: [evidence.id] }], additions: [] };
+          removals: [{ rowId: row.id, reason: "Remove the conflict found in candidate evidence.", evidenceIds: [evidence.id] }], additions: [] };
       }
     }
     response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
@@ -86,7 +92,7 @@ try {
   }
   const adaptive = calls.filter(call => ["stop", "resume"].includes(call.phase));
   assert.equal(adaptive.filter(call => call.model === "pinned-generator").length, 1);
-  assert.equal(adaptive.filter(call => call.model === "pinned-agent").length, 9);
+  assert.equal(adaptive.filter(call => call.model === "pinned-agent").length, 10);
   for (const iteration of [1, 2, 3]) assert.equal(adaptive.filter(call => call.iteration === iteration && call.previous === 0).length, 1, "Completed inspection must not repeat");
   assert.notEqual(adaptive.find(call => call.iteration === 1).evidence, adaptive.find(call => call.iteration === 2).evidence);
   assert.equal(calls.filter(call => ["final", "recover", "verify"].includes(call.phase)).length, 0, "Final evidence cannot start adaptive provider calls");

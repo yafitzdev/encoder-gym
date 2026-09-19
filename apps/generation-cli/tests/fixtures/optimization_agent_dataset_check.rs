@@ -374,7 +374,7 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     settings.training.device = project_workspace_core::OptimizationDevice::Cpu;
     settings.training.maximum_training_rows = Some(1);
     let mut run_limits = ProviderLimits {
-        maximum_requests: 8,
+        maximum_requests: 12,
         maximum_input_tokens: 900_000,
         maximum_output_tokens: 90_000,
         maximum_cost_microusd: 0,
@@ -757,14 +757,7 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
             "{}",
             String::from_utf8_lossy(&interrupted.stderr)
         );
-        assert_eq!(
-            fs::read_to_string(&calls).unwrap().lines().count(),
-            if loop_mode == Some("no_change_first") {
-                2
-            } else {
-                3
-            }
-        );
+        assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 3);
         let failed = optimization_runs::show(&folder, reserved.id).await.unwrap();
         let expected = if loop_mode == Some("two_iterations") {
             project_workspace_core::ProjectOptimizationRunState::AgentRunning
@@ -806,7 +799,7 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
             project_workspace_core::ProjectOptimizationRunState::AgentRunning
         );
         assert_eq!(pending.agent_execution.as_ref().unwrap().attempts, 2);
-        assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 2);
+        assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 3);
         let completions =
             project_workspace_local::optimization_completions::list(&folder, reserved.id)
                 .await
@@ -1005,7 +998,7 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     );
     let activity = run(root, &["activity", "project", "list"]);
     let log = activity.to_string();
-    assert!(log.contains("Replace the ambiguous search example"));
+    assert!(log.contains("Shift search coverage by one row"));
     assert!(log.contains("\"origin\":\"agent\""));
     assert!(log.contains("\"origin\":\"generation\""));
     assert!(log.contains("Checking the complete candidate dataset"));

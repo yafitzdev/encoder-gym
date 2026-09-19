@@ -278,7 +278,12 @@ fn native_evaluation(arguments: &[String]) -> Result<()> {
                         "recall_at_3":0.8,
                         "mrr":mrr,
                         "mean_positive_margin":0.2
-                    }, "disagreements":[{"decision_state_id":"candidate-failure", "question":"Retain useful coverage after candidate regression", "task_kind":"route", "expected_rank":3}]}}
+                    },
+                    "by_task_kind":{"route":{"states":11,"recall_at_1":0.5,"recall_at_2":0.7,"recall_at_3":0.8,"mrr":mrr,"mean_positive_margin":0.2}},
+                    "by_pool_size":{"2":{"states":11,"recall_at_1":0.5,"recall_at_2":0.7,"recall_at_3":0.8,"mrr":mrr,"mean_positive_margin":0.2}},
+                    "by_scenario_family":{"unspecified":{"states":11,"recall_at_1":0.5,"recall_at_2":0.7,"recall_at_3":0.8,"mrr":mrr,"mean_positive_margin":0.2}},
+                    "by_expected_capability":{"search":{"states":11,"recall_at_1":0.5,"recall_at_2":0.7,"recall_at_3":0.8,"mrr":mrr,"mean_positive_margin":0.2}},
+                    "disagreements":[{"decision_state_id":"candidate-failure", "question":"Retain useful coverage after candidate regression", "task_kind":"route", "expected_capabilities":["search"], "predicted_capabilities":["write"], "expected_rank":3}]}}
                 }),
             )?;
         }

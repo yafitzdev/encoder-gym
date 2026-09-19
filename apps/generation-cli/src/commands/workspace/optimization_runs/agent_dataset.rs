@@ -258,11 +258,13 @@ async fn drive(
     }
     let history = agent_store.history(iteration.scope.clone()).await?;
     let mut evidence = BTreeSet::new();
-    for tool in history
-        .iter()
-        .flat_map(|turn| &turn.tools)
-        .filter(|tool| !tool.failed && tool.name == "inspect_development_failures")
-    {
+    for tool in history.iter().flat_map(|turn| &turn.tools).filter(|tool| {
+        !tool.failed
+            && matches!(
+                tool.name.as_str(),
+                "inspect_development_failures" | "inspect_dataset_landscape"
+            )
+    }) {
         let page: InspectionPage = serde_json::from_value(tool.result.clone())?;
         page.validate(20)?;
         evidence.extend(page.items.into_iter().map(|item| item.id));

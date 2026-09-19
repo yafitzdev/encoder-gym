@@ -279,11 +279,9 @@ pub(super) async fn assert_loop(
     assert_eq!(
         String::from_utf8_lossy(&calls_before).lines().count(),
         if mode == "eligible" {
-            8
+            9
         } else if mode == "row_limit" {
             3
-        } else if mode == "no_change" {
-            5
         } else {
             6
         }
@@ -458,7 +456,7 @@ pub(super) async fn assert_loop(
     assert_eq!(after.model_dataset_links, inventory.model_dataset_links);
     assert_eq!(after.datasets, inventory.datasets);
     let activity = run(root, &["activity", "project", "list"]).to_string();
-    assert!(activity.contains("Replace the ambiguous search example"));
+    assert!(activity.contains("Shift search coverage by one row"));
     if count >= 2 {
         assert!(activity.contains("candidate regression"));
     }

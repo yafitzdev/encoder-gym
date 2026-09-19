@@ -22,7 +22,37 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       return;
     }
     let name, args;
-    if (!turns.length) {
+    if (input.scope.analysisProtocol === 2) {
+      const clusters = turns[0]?.tools[0]?.result?.items ?? [];
+      const cluster = clusters.find(item => item.content.cluster?.dimension === 'expected_capability' && item.content.cluster?.value === 'search') ?? clusters[0];
+      if (!turns.length) {
+        name = 'inspect_dataset_landscape'; args = {offset: 0, limit: 20};
+      } else if (turns.length === 1) {
+        if (!cluster || cluster.content.kind !== 'dataset_cluster') throw Error('No dataset landscape cluster');
+        if (later) {
+          const examples = cluster.content.development?.flatMap(value => value.sampledFailureDiagnostics?.examples ?? []) ?? [];
+          if (!examples.some(example => example.expectedRank === 3 && example.questionPreview.includes('candidate regression'))) throw Error('Second iteration did not receive candidate evaluation');
+        }
+        name = 'inspect_dataset_clusters'; args = {clusterIds: [cluster.id], examplesPerCluster: 4};
+      } else {
+        const rows = turns[1].tools[0].result.items;
+        if (!cluster || !rows.length) throw Error('No real cluster evidence or inspected row');
+        const row = rows.find(item => item.content.question.includes(later ? 'Retain' : 'Search')) ?? rows[0];
+        if (process.env.AGENT_FIXTURE_LOOP === 'no_change_first' || (later && (process.env.AGENT_FIXTURE_LOOP === 'no_change' || input.scope.iteration === 3))) {
+          name = 'propose_dataset_edits'; args = {summary: 'The candidate regression does not justify another dataset change.', stop: true, removals: [], additions: []};
+        } else {
+          name = 'propose_dataset_edits';
+          args = {summary: 'Shift search coverage by one row to address the weak search cluster.', stop: false,
+            removals: [{rowId: row.id, reason: 'Ambiguous wording conflicts with the weak inspected cluster.', evidenceIds: [cluster.id]}],
+            additions: [{templateRowId: row.id, instruction: 'Add one specific search request for the weak search cluster.', count: 1, evidenceIds: [cluster.id]}]};
+          if (later) {
+            if (input.scope.maximumRowChanges !== 6) throw Error('Cumulative edit budget was reset');
+            args = {summary: 'The candidate regression points to conflicting search coverage; remove one inspected row.', stop: false,
+              removals: [{rowId: row.id, reason: 'Changed candidate evidence identifies conflicting coverage.', evidenceIds: [cluster.id]}], additions: []};
+          }
+        }
+      }
+    } else if (!turns.length) {
       name = 'inspect_development_failures'; args = {offset: 0, limit: 20};
     } else if (turns.length === 1) {
       if (later) {
