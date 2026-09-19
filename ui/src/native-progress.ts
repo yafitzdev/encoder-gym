@@ -1,6 +1,7 @@
 import type { NativeProgress } from "./managed-control.js";
 import type { ProjectActivityNarrative } from "./project-activity.js";
 import { isOptimizationStage } from "./optimization-stages.js";
+import { validateTrainingMetrics } from "./training-telemetry.js";
 
 const phases = new Set([
   "agent_analysis", "data_generation",
@@ -17,7 +18,11 @@ const phases = new Set([
 export function validateNativeProgress(input: unknown): NativeProgress | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) return;
   const value = input as Record<string, unknown>;
-  if (!phases.has(value.phase as string) || Object.keys(value).some(key => !["phase", "completed", "total", "subject", "unit", "narrative", "runStage", "iteration"].includes(key))) return;
+  if (!phases.has(value.phase as string) || Object.keys(value).some(key => !["phase", "completed", "total", "subject", "unit", "narrative", "runStage", "iteration", "training"].includes(key))) return;
+  const training = value.training === undefined ? undefined : validateTrainingMetrics(value.training);
+  if (value.training !== undefined && (!training || !["training", "saving_checkpoint"].includes(value.phase as string)
+    || training.finalLoss !== undefined && value.phase !== "saving_checkpoint"
+    || training.remainingSeconds !== undefined && value.phase !== "training")) return;
   if (value.iteration !== undefined && (!Number.isSafeInteger(value.iteration) || (value.iteration as number) < 1 || (value.iteration as number) > 0xffff_ffff)) return;
   if (value.runStage !== undefined && !isOptimizationStage(value.runStage)) return;
   if (value.subject !== undefined && (typeof value.subject !== "string" || !/^[a-zA-Z0-9._ -]{1,160}$/.test(value.subject))) return;
@@ -37,6 +42,7 @@ export function validateNativeProgress(input: unknown): NativeProgress | undefin
     ...(value.subject !== undefined ? { subject: value.subject as string } : {}),
     ...(value.unit === "bytes" ? { unit: "bytes" } : {}),
     ...(narrative ? { narrative } : {}),
+    ...(training ? { training } : {}),
   };
 }
 

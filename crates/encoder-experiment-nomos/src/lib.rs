@@ -19,7 +19,8 @@ pub use development_evidence::{NomosDevelopmentCluster, NomosDevelopmentEvidence
 pub use generated_training::NomosGenerationTemplates;
 pub use managed_training::{NomosTrainingDataset, NomosTrainingDatasetWriter};
 pub use progress::{
-    NativePhase, NativeProgress, ProgressObserver, with_file_progress, with_stop_probe,
+    NativePhase, NativeProgress, ProgressObserver, TrainingMetrics, with_file_progress,
+    with_stop_probe,
 };
 pub use training_clearance::NomosTrainingClearance;
 pub use training_data::{VerifiedTrainingData, VerifiedTrainingInput};
@@ -1024,6 +1025,14 @@ impl NomosBackend {
         }
     }
 
+    fn observe_saved_training(&self, manifest: &Value) {
+        if let (Some(observer), Some(progress)) =
+            (&self.progress, progress::saved_training_metrics(manifest))
+        {
+            observer.observe(progress);
+        }
+    }
+
     async fn run_bounded(
         &self,
         arguments: &[String],
@@ -1571,6 +1580,7 @@ impl EncoderTaskBackend for NomosBackend {
                     &native_manifest,
                 )?;
                 let (bytes, digest) = tree_identity(&output)?;
+                self.observe_saved_training(&native_manifest);
                 return Ok(TrainOutput {
                     model: ModelArtifactIdentity::new(
                         output_relative,
@@ -1621,6 +1631,7 @@ impl EncoderTaskBackend for NomosBackend {
                                 &native_manifest,
                             )?;
                             let (bytes, digest) = tree_identity(&output)?;
+                            self.observe_saved_training(&native_manifest);
                             return Ok(TrainOutput {
                                 model: ModelArtifactIdentity::new(
                                     output_relative,
@@ -1678,6 +1689,7 @@ impl EncoderTaskBackend for NomosBackend {
                 prefixed(&digest),
             )
             .map_err(adapter_error)?;
+            self.observe_saved_training(&native_manifest);
             Ok(TrainOutput {
                 model,
                 duration_seconds: started.elapsed().as_secs(),

@@ -6,7 +6,8 @@ use encoder_experiment_nomos::{NativeProgress, ProgressObserver};
 pub(crate) struct ProgressOutput;
 impl ProgressObserver for ProgressOutput {
     fn observe(&self, progress: NativeProgress) {
-        // This closed schema carries no native output, model text, paths, or scores.
+        // Closed operational schema: training timing/loss, never native output,
+        // model text, paths, or evaluation scores.
         if let Ok(json) = serde_json::to_string(&progress) {
             eprintln!("ENCODER_GYM_PROGRESS {json}");
         }

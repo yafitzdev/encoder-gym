@@ -210,6 +210,8 @@ fn native_evaluation(arguments: &[String]) -> Result<()> {
             }
             let input = argument(arguments, "--input")?;
             let count = fs::read_to_string(input)?.lines().count();
+            eprintln!("50%|#### | 1/2 [00:01<00:01, 1.0it/s]");
+            eprintln!("100%|######## | 2/2 [00:02<00:00, 1.0it/s]");
             let output = PathBuf::from(argument(arguments, "--output")?);
             training_transformer::fixture::write_tiny_bert_bundle(&output)
                 .map_err(anyhow::Error::msg)?;
@@ -232,7 +234,8 @@ fn native_evaluation(arguments: &[String]) -> Result<()> {
                     "margin":argument(arguments,"--margin")?.parse::<f64>()?,
                     "query_strategy":argument(arguments,"--query-strategy")?,
                     "positive_strategy":argument(arguments,"--positive-strategy")?,
-                    "training_script":"tools.train_dense_triplet_router.v2"
+                    "training_script":"tools.train_dense_triplet_router.v2",
+                    "training_loss":0.25,"training_duration_seconds":2.0
                 }),
             )?;
         }

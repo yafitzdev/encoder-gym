@@ -116,7 +116,15 @@ export interface ManagedRunStatus {
   next_command: "resume" | "authorize-sealed" | "none";
 }
 
+export interface TrainingMetrics {
+  elapsedSeconds?: number;
+  remainingSeconds?: number;
+  /** Saved mean loss, never an evaluation metric or live step loss. */
+  finalLoss?: number;
+}
+
 export interface NativeProgress {
+  training?: TrainingMetrics;
   iteration?: number;
   runStage?: import("./optimization-stages.js").OptimizationStage;
   phase:

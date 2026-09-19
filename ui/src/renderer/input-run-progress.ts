@@ -5,6 +5,7 @@ import { spinner } from "./components.js";
 import { h } from "./dom.js";
 import { inputRunStageDetail, inputRunStageLabel, mergedActivity, presentedActivity, stagedActivity, type InputRunActivity, type InputRunActivityEntry, type InputRunStageContext } from "./input-run-activity.js";
 import { optimizationStages, stageLabels, taskStage, type OptimizationStage } from "../optimization-stages.js";
+import { trainingMetricsPanel } from "./training-metrics.js";
 
 const phases = optimizationStages, labels = stageLabels;
 export interface ActivityView { stage?: OptimizationStage; scroll: Partial<Record<OptimizationStage, number>> }
@@ -74,6 +75,7 @@ export function inputRunProgress(options: InputRunProgressOptions): HTMLElement 
   const selectedEvents = events.filter(event => event.stage === selected);
   return h("section", { class: "optimization-progress", "aria-live": "polite", "aria-busy": String(running) },
     progressSteps(active, failed, selected, options.navigation, running ? options.animationKey ?? `run-progress:${run.id}` : undefined),
+    selected === "training" || selected === "saving_candidate" ? trainingMetricsPanel(events, running && ["training", "saving_candidate"].includes(visiblePhase)) : null,
     activityStream(selectedEvents.length || events.length || scoped ? selectedEvents : selected === visiblePhase ? [{ at: activity?.updatedAt ?? new Date().toISOString(), progress: activeProgress }] : [], context,
       running && selected === events.at(-1)?.stage, selected, options.navigation,
       h("div", { class: "optimization-status-controls" }, rootRunning && startedAt ? h("span", { class: "muted" }, "Elapsed ", h("span", { "data-elapsed-start": String(startedAt) })) : null, options.controls),

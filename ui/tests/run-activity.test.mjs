@@ -6,6 +6,18 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const wire = value => `ENCODER_GYM_PROGRESS ${JSON.stringify(value)}\n`;
+test("training telemetry rejects scores, text, invalid quantities and evaluation phases", () => {
+  const sample = {phase:"training",completed:3,total:10,training:{elapsedSeconds:12,remainingSeconds:28}};
+  assert.deepEqual(parseProgress(wire(sample)), sample);
+  assert.deepEqual(parseProgress(wire({phase:"saving_checkpoint",training:{finalLoss:0}})), {phase:"saving_checkpoint",training:{finalLoss:0}});
+  for (const training of [{}, {elapsedSeconds:-1}, {elapsedSeconds:1.5}, {remainingSeconds:31_536_001}, {finalLoss:1e13}, {loss:"private"}, {sealed_score:0.9}, {finalLoss:0.5}]) {
+    assert.equal(parseProgress(wire({...sample,training})), undefined);
+  }
+  assert.equal(parseProgress(wire({...sample,phase:"evaluating_retrieval"})), undefined);
+  const activity = {phase:"training",running:true,startedAt:"",updatedAt:"",events:[]};
+  recordProgress(activity,sample); recordProgress(activity,{phase:"evaluating_agent"});
+  assert.equal(activity.training,undefined);
+});
 test("iteration telemetry accepts only a bounded explicit ordinal", () => {
   const progress = { phase: "training", iteration: 2 };
   assert.deepEqual(parseProgress(wire(progress)), progress);

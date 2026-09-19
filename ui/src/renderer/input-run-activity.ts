@@ -1,6 +1,7 @@
 import type { NativeProgress } from "../managed-control.js";
 import type { ProjectActivityAction, ProjectActivityFailure, ProjectActivityLog, ProjectActivityNarrative } from "../project-activity.js";
 import { validateNativeProgress } from "../native-progress.js";
+import { trainingMetricsFromReferences } from "../training-telemetry.js";
 import { isOptimizationStage, operationStages, stageLabels, taskStage, type OptimizationStage } from "../optimization-stages.js";
 
 export interface InputRunActivityEntry { at: string; progress: NativeProgress; stage?: OptimizationStage; label?: string; narrative?: ProjectActivityNarrative }
@@ -56,6 +57,7 @@ export function inputRunActivity(log: ProjectActivityLog, runId: string): InputR
     narrative: event.narrative,
     runStage: event.references?.find(item => item.kind === "run_stage")?.id,
     iteration: iterationReference(event.references),
+    training: trainingMetricsFromReferences(event.references),
   }) ?? { phase: "checking_files" };
   const failure = action.events.findLast(event => event.state === "failed")?.failure;
   // Older records predate explicit stage references. Their CLI action intervals

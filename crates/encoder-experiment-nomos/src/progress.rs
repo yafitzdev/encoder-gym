@@ -72,7 +72,20 @@ pub enum NativePhase {
     EvaluatingAgent,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Operational training observations only; never validation or evaluation scores.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TrainingMetrics {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining_seconds: Option<u64>,
+    /// The trainer's final mean, not a live step loss or a quality verdict.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub final_loss: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeProgress {
     pub phase: NativePhase,
@@ -82,6 +95,8 @@ pub struct NativeProgress {
     pub completed: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub training: Option<TrainingMetrics>,
 }
 
 pub trait ProgressObserver: std::fmt::Debug + Send + Sync {
@@ -95,6 +110,7 @@ impl NativeProgress {
             subject: None,
             completed: None,
             total: None,
+            training: None,
         }
     }
 }
@@ -123,7 +139,61 @@ pub(crate) fn training_counter(line: &str) -> Option<NativeProgress> {
         subject: None,
         completed: Some(completed),
         total: Some(total),
+        training: (phase == NativePhase::Training)
+            .then(|| training_times(rest))
+            .flatten(),
     })
+}
+
+fn training_times(bar: &str) -> Option<TrainingMetrics> {
+    let timing = bar.split_once('[')?.1.split_once(']')?.0;
+    let (elapsed, remaining) = timing.split_once('<')?;
+    Some(TrainingMetrics {
+        elapsed_seconds: Some(duration(elapsed)?),
+        remaining_seconds: duration(remaining.split(',').next()?),
+        final_loss: None,
+    })
+}
+
+fn duration(text: &str) -> Option<u64> {
+    let parts = text.trim().split(':').collect::<Vec<_>>();
+    if !(2..=3).contains(&parts.len()) {
+        return None;
+    }
+    let mut total = 0_u64;
+    for (index, part) in parts.iter().enumerate() {
+        if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let value = part.parse::<u64>().ok()?;
+        if index > 0 && value >= 60 {
+            return None;
+        }
+        total = total.checked_mul(60)?.checked_add(value)?;
+    }
+    (total <= 31_536_000).then_some(total)
+}
+
+/// Called only after verifying a candidate's native manifest and output. The
+/// native trainer may disable step logging: absence is not a zero loss.
+pub(crate) fn saved_training_metrics(manifest: &serde_json::Value) -> Option<NativeProgress> {
+    let final_loss = manifest["training_loss"]
+        .as_f64()
+        .filter(|value| value.is_finite() && value.abs() <= 1e12);
+    let elapsed_seconds = manifest["training_duration_seconds"]
+        .as_f64()
+        .filter(|value| value.is_finite() && (0.0..=31_536_000.0).contains(value))
+        .map(|value| value.ceil() as u64);
+    if final_loss.is_none() && elapsed_seconds.is_none() {
+        return None;
+    }
+    let mut progress = NativeProgress::phase(NativePhase::SavingCheckpoint);
+    progress.training = Some(TrainingMetrics {
+        final_loss,
+        elapsed_seconds,
+        remaining_seconds: None,
+    });
+    Some(progress)
 }
 
 #[cfg(test)]
@@ -215,7 +285,8 @@ mod tests {
                 phase: NativePhase::PreparingBatches,
                 subject: None,
                 completed: Some(2),
-                total: Some(8)
+                total: Some(8),
+                training: None
             })
         );
         assert_eq!(
@@ -224,7 +295,12 @@ mod tests {
                 phase: NativePhase::Training,
                 subject: None,
                 completed: Some(50),
-                total: Some(100)
+                total: Some(100),
+                training: Some(TrainingMetrics {
+                    elapsed_seconds: Some(10),
+                    remaining_seconds: Some(10),
+                    final_loss: None
+                })
             })
         );
         for line in [
@@ -237,5 +313,33 @@ mod tests {
         ] {
             assert!(training_counter(line).is_none());
         }
+    }
+
+    #[test]
+    fn telemetry_admits_only_bounded_training_values_not_arbitrary_native_payloads() {
+        let value = training_counter("50%|## | 1/2 [01:02:03<02:03:04, 2.0s/it]").unwrap();
+        assert_eq!(value.training.unwrap().elapsed_seconds, Some(3723));
+        for text in ["00:99", "-1:00", "secret", "999999999999999:59", "00:00:60"] {
+            assert!(duration(text).is_none());
+        }
+        let unknown_eta = training_counter("0%| | 0/100 [00:00<?, ?it/s]").unwrap();
+        assert_eq!(unknown_eta.training.unwrap().remaining_seconds, None);
+        let metrics = saved_training_metrics(&serde_json::json!({
+            "training_loss": 0.25, "training_duration_seconds": 2.3,
+            "sealed_score": 99999, "path": "private", "api_key": "secret"
+        }))
+        .unwrap();
+        let wire = serde_json::to_value(metrics).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({"phase":"saving_checkpoint","training":{"finalLoss":0.25,"elapsedSeconds":3}})
+        );
+        assert!(
+            saved_training_metrics(
+                &serde_json::json!({"training_loss":"secret","training_duration_seconds":-1})
+            )
+            .is_none()
+        );
+        assert!(saved_training_metrics(&serde_json::json!({"sealed_score":0.9})).is_none());
     }
 }

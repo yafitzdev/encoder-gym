@@ -60,6 +60,15 @@ fn assert_injected(output: std::process::Output, message: &str) {
     );
 }
 
+fn telemetry(output: &std::process::Output) -> Vec<Value> {
+    String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .filter_map(|line| line.strip_prefix("ENCODER_GYM_PROGRESS "))
+        .filter_map(|json| serde_json::from_str::<Value>(json).ok())
+        .filter(|event| event.get("training").is_some())
+        .collect()
+}
+
 #[tokio::test]
 async fn cli_agent_inspects_generates_qualifies_and_replays_exact_dataset_without_training() {
     scenario(false, None).await;
@@ -484,6 +493,10 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         );
         if complete && loop_mode.is_none() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                telemetry(&output).is_empty(),
+                "Completed replay must not fabricate a new training observation"
+            );
             let bookkeeping: Vec<Value> = stderr
                 .lines()
                 .filter_map(|line| line.strip_prefix("ENCODER_GYM_PROGRESS "))
@@ -636,7 +649,19 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
             "CREATE TRIGGER interrupt_training_receipt BEFORE INSERT ON encoder_experiment_events WHEN json_extract(NEW.artifact_json,'$.event.kind')='candidate_training_completed' BEGIN SELECT RAISE(ABORT, 'injected training receipt interruption'); END",
         )
         .await;
-        assert_injected(invoke_iteration(), "injected training receipt interruption");
+        let trained = invoke_iteration();
+        let observed = telemetry(&trained);
+        assert!(observed.iter().any(|event| event["phase"] == "training"
+            && event["completed"] == 2
+            && event["training"]["elapsedSeconds"] == 2));
+        assert!(
+            observed
+                .iter()
+                .any(|event| event["phase"] == "saving_checkpoint"
+                    && event["training"]["finalLoss"] == 0.25)
+        );
+        assert!(observed.iter().all(|event| event["iteration"] == 1));
+        assert_injected(trained, "injected training receipt interruption");
         drop_trigger(&scientific_database, "interrupt_training_receipt").await;
 
         install_trigger(
@@ -649,10 +674,19 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
             "CREATE TRIGGER interrupt_candidate_registration BEFORE INSERT ON model_artifacts WHEN NEW.origin='trained' BEGIN SELECT RAISE(ABORT, 'injected candidate registration interruption'); END",
         )
         .await;
-        assert_injected(
-            invoke_iteration(),
-            "injected candidate registration interruption",
+        let recovered = invoke_iteration();
+        let observed = telemetry(&recovered);
+        assert!(
+            observed
+                .iter()
+                .any(|event| event["phase"] == "saving_checkpoint"
+                    && event["training"]["finalLoss"] == 0.25)
         );
+        assert!(
+            observed.iter().all(|event| event["phase"] != "training"),
+            "Checkpoint reuse must not replay optimizer steps"
+        );
+        assert_injected(recovered, "injected candidate registration interruption");
         drop_trigger(&project_database, "interrupt_candidate_registration").await;
         assert_injected(
             invoke_iteration(),

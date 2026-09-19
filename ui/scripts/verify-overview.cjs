@@ -89,6 +89,16 @@ app.whenReady().then(async()=>{
     await evaluate('qa.render()');
     await check('spinner stays connected and advances across progress updates','window.__stableRunSpinner===document.querySelector(".optimization-progress .spinner") && window.__stableRunSpinner.getAnimations()[0].currentTime>window.__spinTime+80');
     await check('stage tracker follows the native task','document.querySelector(".optimization-progress-steps li.active").textContent==="Training"');
+    await check('training metrics distinguish absent native values', `document.querySelector('.training-metrics').textContent.includes('40 of 100') && document.querySelector('.training-metrics').textContent.includes('Not reported') && !document.querySelector('.training-metrics').textContent.includes('0.00')`);
+    await evaluate(`qa.setup.activity.progress.training={elapsedSeconds:24,remainingSeconds:36};qa.setup.activity.events[0].progress.training={elapsedSeconds:24,remainingSeconds:36};qa.render()`);
+    await check('actual training timing is shown separately from run elapsed', `document.querySelector('.training-metrics').textContent.includes('24s') && document.querySelector('.training-metrics').textContent.includes('36s') && document.querySelector('.training-metrics').textContent.includes('not evaluation results')`);
+    await capture('training-metrics-dark');
+    window.setContentSize(390,900);await evaluate(`document.querySelector('.training-metrics').scrollIntoView({block:'start'})`);await capture('training-metrics-390');
+    await check('training metrics fit a narrow viewport', `document.documentElement.scrollWidth<=innerWidth && getComputedStyle(document.querySelector('.training-metrics dl')).gridTemplateColumns.split(' ').length===2`);
+    window.setSize(1440,1000);
+    await evaluate(`qa.setup.activity.progress.completed=100;qa.setup.activity.events[0].progress.completed=100;qa.render()`);
+    await check('finishing optimizer steps cannot claim completed training', `document.querySelector('.training-metrics h3').textContent.includes('checkpoint verification still pending') && !document.querySelector('.training-metrics').textContent.includes('36s')`);
+    await evaluate(`qa.setup.activity.progress.completed=40;qa.setup.activity.events[0].progress.completed=40;qa.render()`);
     await capture('status-dark');
     await evaluate(`qa.setup.liveProgress={phase:'verifying_file',subject:'model.safetensors',completed:8388608,total:16777216,unit:'bytes'};qa.setup.liveProgressAt=Date.parse('2026-09-14T12:02:00Z');qa.render()`);
     await check('native filename and meter live in Activity only','document.querySelector(".focus-events li .focus-event-copy").textContent.includes("model.safetensors") && !document.querySelector(".optimization-progress-detail") && document.querySelector(".optimization-live-progress").textContent.trim()===""');
@@ -177,6 +187,8 @@ app.whenReady().then(async()=>{
     await selectIteration(1);
     await click('[id="overview-agent-root:1-stage-training"]');
     await check('historical iteration isolates activity and stops its spinner',`document.querySelectorAll('.focus-events li').length===80 && !document.querySelector('.focus-events').textContent.includes('second') && !document.querySelector('.optimization-progress .spinner') && [...document.querySelectorAll('.focus-event-kind')].every(node=>node.textContent==='Training')`);
+    await evaluate(`qa.runs.activities.get('agent-root').events.push({at:'2026-09-16T12:02:00Z',stage:'saving_candidate',progress:{phase:'saving_checkpoint',iteration:1,training:{finalLoss:0,elapsedSeconds:42}}});qa.render()`);
+    await check('historical metrics are pinned to selected iteration and preserve a true zero loss', `document.querySelector('.training-metrics').textContent.includes('42s') && [...document.querySelectorAll('.training-metrics dd')].at(-1).textContent==='0' && document.querySelector('.training-metrics h3').textContent==='Recorded training observations'`);
     await evaluate(`document.querySelector('.focus-events').scrollTop=400;document.querySelector('.focus-events').dispatchEvent(new Event('scroll'));
       qa.runs.runs[0].iterations[1].completed=true;qa.runs.runs[0].iterations[1].developmentPassed=false;
       qa.runs.runs[0].iterations.push(${JSON.stringify(iteration(3))});

@@ -31,6 +31,16 @@ checked locally; this is not a live provider probe or a replacement for native
 file/runtime validation at launch. Historical summaries use saved launch
 authority, never today's provider models or default limits.
 
+The training stage shows observed optimizer steps, trainer-reported elapsed time
+and ETA, and the final mean training loss when the verified native manifest
+provides it. These are training observations, not evaluation scores. Missing
+values remain **Not reported**; reaching the last step does not mean checkpoint
+saving and verification are complete. The current Nomos trainer does not provide
+a live loss curve, learning-rate series or GPU telemetry. Only bounded numbers
+cross the CLI progress stream and desktop boundary. Desktop activity records
+retain them for the exact run and iteration; older runs and CLI-only executions
+without an activity recorder do not acquire telemetry retroactively.
+
 Use **New project** (the sidebar plus) to choose a local checkpoint, preview its
 format/size, name the project, and choose a parent location. Gym copies the
 checkpoint into a new owned folder and creates its manifest, registry database,

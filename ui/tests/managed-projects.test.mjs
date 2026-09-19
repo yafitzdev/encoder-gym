@@ -44,7 +44,7 @@ test("desktop activity records immutable action and event UUIDs and exports veri
   const f = fixture(), id = await create(f, "Activity project"), runId = randomUUID();
   const actionId = await f.backend.startProjectActivity(id, "optimization.resume", [{ kind: "run", id: runId }]);
   const narrative = { origin: "agent", kind: "decision", summary: "Prefer the bounded candidate supported by development evidence." };
-  await f.backend.progressProjectActivity(id, actionId, "optimization.resume", "training", 4, 10, undefined, undefined, narrative);
+  await f.backend.progressProjectActivity(id, actionId, "optimization.resume", "training", 4, 10, undefined, undefined, narrative, "training", 2, { elapsedSeconds: 12, remainingSeconds: 18 });
   await f.backend.succeedProjectActivity(id, actionId, "optimization.resume", [{ kind: "candidate", id: randomUUID() }]);
   const log = await f.backend.projectActivity(id);
   assert.equal(log.project_id, id);
@@ -54,12 +54,16 @@ test("desktop activity records immutable action and event UUIDs and exports veri
   assert.equal(log.actions[0].events.length, 3);
   assert.equal(new Set(log.actions[0].events.map(event => event.id)).size, 3);
   assert.deepEqual(log.actions[0].events[1].narrative, narrative);
+  for (const reference of [{ kind: "iteration", id: "2" }, { kind: "run_stage", id: "training" }, { kind: "training_elapsed_seconds", id: "12" }, { kind: "training_remaining_seconds", id: "18" }]) {
+    assert.ok(log.actions[0].events[1].references.some(item => item.kind === reference.kind && item.id === reference.id));
+  }
   assert.equal(log.actions[0].events[1].previous_event_fingerprint, log.actions[0].events[0].fingerprint);
   const output = join(f.root, "activity.jsonl");
   const exported = await f.backend.exportProjectActivity(id, output);
   assert.equal(exported.events, 3);
   const events = readFileSync(output, "utf8").trim().split("\n").map(line => JSON.parse(line));
   assert.deepEqual(events.map(event => event.id), log.actions[0].events.map(event => event.id));
+  assert.deepEqual(events[1].references, log.actions[0].events[1].references);
 });
 
 test("managed snapshots project only their bound scientific experiment store", () => {

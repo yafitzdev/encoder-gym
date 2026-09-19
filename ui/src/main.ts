@@ -151,7 +151,8 @@ async function trackProjectAction<T>(
     const bucket = value.completed !== undefined && value.total !== undefined
       ? Math.floor((value.completed / value.total) * 10)
       : undefined;
-    const marker = `${value.iteration ?? ""}:${value.runStage ?? ""}:${value.phase}:${value.subject ?? ""}:${bucket ?? "stage"}:${value.narrative?.kind ?? ""}:${value.narrative?.summary ?? ""}`;
+    const savedTraining = value.phase === "saving_checkpoint" ? `${value.training?.elapsedSeconds ?? ""}:${value.training?.finalLoss ?? ""}` : "";
+    const marker = `${value.iteration ?? ""}:${value.runStage ?? ""}:${value.phase}:${value.subject ?? ""}:${bucket ?? "stage"}:${savedTraining}:${value.narrative?.kind ?? ""}:${value.narrative?.summary ?? ""}`;
     if (marker === progressMarker) return;
     progressMarker = marker;
     const last = progressQueue.at(-1);
@@ -162,7 +163,7 @@ async function trackProjectAction<T>(
     pendingProgress = (async () => {
       while (progressQueue.length) {
         const next = progressQueue.shift()!;
-        await backend.progressProjectActivity(id, actionId, operation, next.phase, next.completed, next.total, next.subject, next.unit, next.narrative, next.runStage, next.iteration).catch(() => undefined);
+        await backend.progressProjectActivity(id, actionId, operation, next.phase, next.completed, next.total, next.subject, next.unit, next.narrative, next.runStage, next.iteration, next.training).catch(() => undefined);
       }
       flushing = false;
     })();

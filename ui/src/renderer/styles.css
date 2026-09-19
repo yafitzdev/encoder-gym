@@ -16,6 +16,13 @@
 .focus-stages button.active { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
 .focus-stage-number { display: inline-grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; width: 25px; height: 25px; font-size: 12px; }
 .focus-panel { min-width: 0; }
+.training-metrics { margin: 20px 0; padding: 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.training-metrics h3 { margin: 0 0 14px; font-size: 14px; }
+.training-metrics dl { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 16px; margin: 0 0 14px; }
+.training-metrics dt { color: var(--muted); font-size: 11px; margin-bottom: 7px; }
+.training-metrics dd { margin: 0; font: 15px var(--mono); overflow-wrap: anywhere; }
+.training-metrics p { font-size: 11px; line-height: 1.6; }
+@media(max-width:760px) { .training-metrics dl { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 .focus-setup { display: grid; grid-template-columns: minmax(0,1fr) minmax(270px,320px); gap: 28px; align-items: start; }
 .launch-fields { min-width: 0; }
 .optimization-launch-summary { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); overflow-wrap: anywhere; position: sticky; top: 16px; }

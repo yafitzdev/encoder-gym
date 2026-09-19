@@ -3,6 +3,16 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { appendLiveActivity, inputRunActivity, inputRunStageDetail, inputRunStageLabel, mergedActivity, presentedActivity, stagedActivity, optimizationStages } from "../dist/evidence/input-run-activity.js";
 
+test("training metrics survive historical activity projection only in the owning run and iteration", () => {
+  const event = {state:"progress",stage:"training",completed:3,total:10,created_at:"2026-09-19T10:00:00Z",
+    references:[{kind:"iteration",id:"2"},{kind:"training_elapsed_seconds",id:"12"},{kind:"training_remaining_seconds",id:"28"}]};
+  const log = {actions:[{action_id:"a",operation:"optimization.run",state:"progress",started_at:event.created_at,references:[{kind:"run",id:"run"}],events:[event]}]};
+  assert.deepEqual(inputRunActivity(log,"run").events[0].progress, {phase:"training",iteration:2,completed:3,total:10,training:{elapsedSeconds:12,remainingSeconds:28}});
+  assert.equal(inputRunActivity(log,"other"),undefined);
+  event.references.push({kind:"training_remaining_seconds",id:"40"});
+  assert.equal(inputRunActivity(log,"run").progress.training,undefined);
+});
+
 test("post-evaluation bookkeeping stays visible in its exact iteration", () => {
   const narrative = { origin: "system", kind: "action", summary: "Recording completed development evaluation results." };
   const event = { state: "progress", stage: "finalizing_iteration", created_at: "2026-09-18T12:00:00Z", narrative,

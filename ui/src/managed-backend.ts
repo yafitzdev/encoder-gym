@@ -8,7 +8,8 @@ import type { CreateProjectRequest, DatasetChoice, DatasetPurpose, FolderChoice,
 import type { ProjectRegistry } from "./project-registry.js";
 import type { WorkspaceSnapshot } from "./workspace.js";
 import { readWorkspaceDatabase } from "./evidence/read-workspace.js";
-import type { NativeProgress, RunActivity, ManagedRunStatus } from "./managed-control.js";
+import type { NativeProgress, RunActivity, ManagedRunStatus, TrainingMetrics } from "./managed-control.js";
+import { trainingMetricReferences } from "./training-telemetry.js";
 import { executeObservedCommand, recordProgress } from "./run-activity.js";
 import { ManagedDatasets } from "./managed-datasets.js";
 import { ManagedBenchmarks } from "./managed-benchmarks.js";
@@ -212,8 +213,8 @@ export class ManagedBackend {
     await this.appendProjectActivity(projectId, { action_id: actionId, operation, source, state: "started", ...(references.length ? { references } : {}), created_at: createdAt });
     return actionId;
   }
-  progressProjectActivity(projectId: string, actionId: string, operation: string, stage: string, completed?: number, total?: number, subject?: string, unit?: string, narrative?: ProjectActivityNarrative, runStage?: NativeProgress["runStage"], iteration?: number): Promise<ProjectActivityEvent> {
-    const references = [...(subject ? [{ kind: "progress_subject", id: subject }] : []), ...(unit ? [{ kind: "progress_unit", id: unit }] : [])];
+  progressProjectActivity(projectId: string, actionId: string, operation: string, stage: string, completed?: number, total?: number, subject?: string, unit?: string, narrative?: ProjectActivityNarrative, runStage?: NativeProgress["runStage"], iteration?: number, training?: TrainingMetrics): Promise<ProjectActivityEvent> {
+    const references = [...(subject ? [{ kind: "progress_subject", id: subject }] : []), ...(unit ? [{ kind: "progress_unit", id: unit }] : []), ...trainingMetricReferences(training)];
     if (runStage) references.push({ kind: "run_stage", id: runStage });
     if (iteration !== undefined) references.push({ kind: "iteration", id: String(iteration) });
     return this.appendProjectActivity(projectId, { action_id: actionId, operation, source: "desktop", state: "progress", stage, references, ...(completed !== undefined && total !== undefined ? { completed, total } : {}), ...(narrative ? { narrative } : {}), created_at: new Date().toISOString() });
