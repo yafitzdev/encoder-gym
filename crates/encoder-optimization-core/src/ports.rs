@@ -27,6 +27,36 @@ pub trait OptimizationInspection: Send + Sync {
         limit: u32,
         query: Option<String>,
     ) -> BoxFuture<'_, InspectionPage>;
+
+    /// Complete aggregate development/dataset clusters for analysis protocol
+    /// V2. Adapters that only support historical V1 inspection fail closed.
+    fn dataset_landscape(
+        &self,
+        _scope: AgentAnalysisScope,
+        _offset: u64,
+        _limit: u32,
+    ) -> BoxFuture<'_, InspectionPage> {
+        Box::pin(async {
+            Err(OptimizationError::Validation(
+                "Dataset landscape inspection is not supported by this task adapter".into(),
+            ))
+        })
+    }
+
+    /// Deterministically sample task-visible training rows from one or more
+    /// cluster identities returned by `dataset_landscape`.
+    fn dataset_cluster_rows(
+        &self,
+        _scope: AgentAnalysisScope,
+        _cluster_ids: Vec<String>,
+        _examples_per_cluster: u32,
+    ) -> BoxFuture<'_, InspectionPage> {
+        Box::pin(async {
+            Err(OptimizationError::Validation(
+                "Dataset cluster-row inspection is not supported by this task adapter".into(),
+            ))
+        })
+    }
 }
 
 /// Implementations atomically enforce cumulative launch-provider budgets,

@@ -15,6 +15,7 @@ fn scope() -> AgentAnalysisScope {
         dataset_fingerprint: fingerprint(&"rows").unwrap(),
         development_evidence_fingerprint: fingerprint(&"development").unwrap(),
         objective: String::new(),
+        analysis_protocol: 1,
         maximum_turns: 4,
         maximum_row_changes: 2,
     }

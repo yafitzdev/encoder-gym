@@ -254,6 +254,7 @@ impl ProjectOptimizationIteration {
                 dataset_fingerprint: dataset.fingerprint,
                 development_evidence_fingerprint: development.fingerprint.clone(),
                 objective: settings.objective.clone(),
+                analysis_protocol: settings.analysis_protocol,
                 maximum_turns: settings.maximum_agent_turns_per_iteration,
                 maximum_row_changes: settings.maximum_row_changes - completion.total_row_changes,
             },
@@ -308,6 +309,7 @@ impl ProjectOptimizationIteration {
             dataset_fingerprint: setup.inputs.dataset.fingerprint.clone(),
             development_evidence_fingerprint: development.fingerprint.clone(),
             objective: settings.objective.clone(),
+            analysis_protocol: settings.analysis_protocol,
             maximum_turns: settings.maximum_agent_turns_per_iteration,
             maximum_row_changes: settings.maximum_row_changes,
         };

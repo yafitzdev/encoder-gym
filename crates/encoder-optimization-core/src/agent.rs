@@ -17,6 +17,13 @@ pub struct AgentAnalysisScope {
     pub dataset_fingerprint: String,
     pub development_evidence_fingerprint: String,
     pub objective: String,
+    /// Versioned inspection semantics. V1 is omitted from historical JSON so
+    /// persisted fingerprints remain byte-for-byte reproducible.
+    #[serde(
+        default = "legacy_analysis_protocol",
+        skip_serializing_if = "is_legacy_analysis_protocol"
+    )]
+    pub analysis_protocol: u32,
     pub maximum_turns: u32,
     pub maximum_row_changes: u32,
 }
@@ -34,6 +41,10 @@ impl AgentAnalysisScope {
         require(
             (1..=32).contains(&self.maximum_turns),
             "Agent turn ceiling must be 1–32",
+        )?;
+        require(
+            matches!(self.analysis_protocol, 1 | 2),
+            "Agent analysis protocol must be version 1 or 2",
         )?;
         require(
             self.maximum_row_changes <= 5000,
@@ -64,6 +75,14 @@ impl AgentAnalysisScope {
         self.validate()?;
         fingerprint(self)
     }
+}
+
+const fn legacy_analysis_protocol() -> u32 {
+    1
+}
+
+const fn is_legacy_analysis_protocol(value: &u32) -> bool {
+    *value == 1
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

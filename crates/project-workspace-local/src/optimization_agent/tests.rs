@@ -17,6 +17,7 @@ async fn fixture() -> (SqliteConnection, AgentAnalysisScope, ProviderLimits) {
         dataset_fingerprint: fingerprint(&"members").unwrap(),
         development_evidence_fingerprint: fingerprint(&"development").unwrap(),
         objective: String::new(),
+        analysis_protocol: 1,
         maximum_turns: 4,
         maximum_row_changes: 8,
     };

@@ -29,6 +29,7 @@ async fn fixture() -> (SqliteConnection, GenerationTask, ProviderLimits) {
         dataset_fingerprint: fingerprint(&"dataset").unwrap(),
         development_evidence_fingerprint: fingerprint(&"evidence").unwrap(),
         objective: String::new(),
+        analysis_protocol: 1,
         maximum_turns: 4,
         maximum_row_changes: 16,
     };

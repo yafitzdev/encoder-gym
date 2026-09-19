@@ -38,6 +38,13 @@ pub struct OptimizationTrainingSettings {
 pub struct OptimizationAgentSettings {
     pub mode: OptimizationMode,
     pub objective: String,
+    /// Core-owned inspection semantics. Historical launches omitted this field
+    /// and deserialize as V1 without changing their fingerprints.
+    #[serde(
+        default = "legacy_analysis_protocol",
+        skip_serializing_if = "is_legacy_analysis_protocol"
+    )]
+    pub analysis_protocol: u32,
     pub maximum_iterations: u32,
     pub maximum_agent_turns_per_iteration: u32,
     pub generation_concurrency: u32,
@@ -82,6 +89,7 @@ impl Default for OptimizationAgentSettings {
         Self {
             mode: OptimizationMode::Standard,
             objective: String::new(),
+            analysis_protocol: 2,
             maximum_iterations: 3,
             maximum_agent_turns_per_iteration: 8,
             generation_concurrency: 1,
@@ -130,6 +138,14 @@ impl OptimizationAgentSettings {
             "Agent objective must contain at most 4,000 characters and no control codes.",
         )?;
         require(
+            matches!(self.analysis_protocol, 1 | 2),
+            "Agent analysis protocol must be version 1 or 2.",
+        )?;
+        require(
+            self.analysis_protocol != 2 || self.maximum_agent_turns_per_iteration >= 3,
+            "Agent analysis protocol version 2 requires at least three turns per iteration.",
+        )?;
+        require(
             (1..=10).contains(&self.maximum_iterations)
                 && (1..=32).contains(&self.maximum_agent_turns_per_iteration)
                 && (1..=16).contains(&self.generation_concurrency)
@@ -167,6 +183,14 @@ impl OptimizationAgentSettings {
     }
 }
 
+const fn legacy_analysis_protocol() -> u32 {
+    1
+}
+
+const fn is_legacy_analysis_protocol(value: &u32) -> bool {
+    *value == 1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +211,11 @@ mod tests {
         invalid = quick;
         invalid.maximum_iterations = 2;
         assert!(invalid.validate().is_err());
+        let too_few_turns = OptimizationAgentSettings {
+            maximum_agent_turns_per_iteration: 2,
+            ..OptimizationAgentSettings::default()
+        };
+        assert!(too_few_turns.validate().is_err());
     }
 
     #[test]
@@ -219,5 +248,20 @@ mod tests {
         value.validate().unwrap();
         value.objective.push('\0');
         assert!(value.validate().is_err());
+    }
+
+    #[test]
+    fn historical_settings_remain_v1_while_new_presets_pin_v2() {
+        let current = serde_json::to_value(OptimizationAgentSettings::default()).unwrap();
+        assert_eq!(current["analysisProtocol"], 2);
+        let mut historical = current;
+        historical
+            .as_object_mut()
+            .unwrap()
+            .remove("analysisProtocol");
+        let decoded: OptimizationAgentSettings =
+            serde_json::from_value(historical.clone()).unwrap();
+        assert_eq!(decoded.analysis_protocol, 1);
+        assert_eq!(serde_json::to_value(decoded).unwrap(), historical);
     }
 }

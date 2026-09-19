@@ -49,6 +49,7 @@ async fn fixture(root: &Path) -> (std::path::PathBuf, AgentAnalysisScope) {
         dataset_fingerprint: parent.fingerprint,
         development_evidence_fingerprint: fingerprint(&"development").unwrap(),
         objective: String::new(),
+        analysis_protocol: 1,
         maximum_turns: 4,
         maximum_row_changes: 8,
     };

@@ -253,6 +253,7 @@ mod tests {
             dataset_fingerprint: fingerprint(&2).unwrap(),
             development_evidence_fingerprint: fingerprint(&3).unwrap(),
             objective: String::new(),
+            analysis_protocol: 1,
             maximum_turns: 4,
             maximum_row_changes: 192,
         };
