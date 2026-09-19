@@ -572,7 +572,7 @@ fn receipt_key(dataset: &NomosTrainingDataset) -> Result<String, EncoderTaskAdap
         .replace('\\', "/"))
 }
 
-fn canonical_fingerprint(value: &str) -> bool {
+pub(crate) fn canonical_fingerprint(value: &str) -> bool {
     value.strip_prefix("sha256:").is_some_and(raw_sha256)
 }
 

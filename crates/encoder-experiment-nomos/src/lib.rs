@@ -7,6 +7,7 @@ mod development_evidence;
 mod evaluation;
 mod generated_training;
 mod managed_training;
+mod native_inventory;
 mod progress;
 mod repair_delta;
 mod repair_evidence;
@@ -15,7 +16,9 @@ pub use agent_training::NomosFineTuneSettings;
 mod training_accounting;
 mod training_data;
 pub use benchmark::NomosBenchmarkPlan;
-pub use dataset_landscape::NomosDatasetLandscape;
+pub use dataset_landscape::{
+    NomosDatasetInvestigation, NomosDatasetInvestigationPage, NomosDatasetLandscape,
+};
 pub use development_evidence::{
     NomosAgentPopulation, NomosDevelopmentCluster, NomosDevelopmentEvidence,
 };
@@ -25,6 +28,7 @@ pub use generation_preview::{NomosGenerationPreviewRow, project_generation_previ
 mod development_comparison;
 pub use development_comparison::NomosDevelopmentComparison;
 pub use managed_training::{NomosTrainingDataset, NomosTrainingDatasetWriter};
+pub use native_inventory::{NomosNativeInventory, NomosNativeInventoryMember};
 pub use progress::{
     NativePhase, NativeProgress, ProgressObserver, TrainingMetrics, with_file_progress,
     with_stop_probe,
