@@ -1,6 +1,9 @@
 use std::{
     collections::{BTreeMap, VecDeque},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use agent_runtime_core::{
@@ -9,13 +12,20 @@ use agent_runtime_core::{
 };
 use dataset_quality_core::{
     native_assessment::{
-        NativeBlindAssessmentEvidence, NativeBlindAssessmentRequest, NativeBlindContext,
-        NativeBlindRow, NativeCandidateSemantics, NativeMetricDirection, NativeRepairStrategy,
-        NativeTargetBrief, NativeTargetFitEvidence, NativeTargetFitRequest,
+        NativeAdmissionRecord, NativeBlindAssessmentEvidence, NativeBlindAssessmentRequest,
+        NativeBlindContext, NativeBlindRow, NativeCandidateSemantics, NativeMetricDirection,
+        NativeRepairStrategy, NativeReviewCallOutcome, NativeReviewCallReservation,
+        NativeReviewRequest, NativeTargetBrief, NativeTargetFitEvidence, NativeTargetFitRequest,
     },
-    ports::NativeSemanticReviewer,
+    ports::{
+        BoxFuture as QualityBoxFuture, NativeReviewStore, NativeSemanticReviewer,
+        QualityAdapterError,
+    },
 };
-use encoder_optimization_runner::{AgentSelection, semantic_review::PiNativeSemanticReviewer};
+use encoder_optimization_runner::{
+    AgentSelection,
+    semantic_review::{DurableNativeReviewRunner, PiNativeSemanticReviewer},
+};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -23,6 +33,7 @@ use uuid::Uuid;
 struct Runtime {
     requests: Mutex<Vec<AgentRequest>>,
     omit_tool: bool,
+    fail_starts: AtomicUsize,
 }
 
 impl AgentRuntime for Runtime {
@@ -31,6 +42,15 @@ impl AgentRuntime for Runtime {
         request: AgentRequest,
     ) -> BoxFuture<'_, Result<Box<dyn AgentSession>, AgentAdapterError>> {
         self.requests.lock().unwrap().push(request.clone());
+        if self
+            .fail_starts
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Box::pin(async { Err(AgentAdapterError("fixture disconnect".into())) });
+        }
         let omit_tool = self.omit_tool;
         Box::pin(async move {
             let arguments = match request.capability_set.as_str() {
@@ -97,6 +117,60 @@ impl AgentRuntime for Runtime {
                 acknowledgements: Vec::new(),
             }) as Box<dyn AgentSession>)
         })
+    }
+}
+
+#[derive(Default)]
+struct MemoryReviewStore {
+    reservations: Mutex<Vec<NativeReviewCallReservation>>,
+    outcomes: Mutex<Vec<NativeReviewCallOutcome>>,
+}
+
+impl NativeReviewStore for MemoryReviewStore {
+    fn history(
+        &self,
+        request: NativeReviewRequest,
+    ) -> QualityBoxFuture<'_, Result<Vec<NativeReviewCallOutcome>, QualityAdapterError>> {
+        let values = self
+            .outcomes
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|value| value.reservation.request.fingerprint() == request.fingerprint())
+            .cloned()
+            .collect();
+        Box::pin(async move { Ok(values) })
+    }
+
+    fn reserve(
+        &self,
+        reservation: NativeReviewCallReservation,
+    ) -> QualityBoxFuture<'_, Result<(), QualityAdapterError>> {
+        self.reservations.lock().unwrap().push(reservation);
+        Box::pin(async { Ok(()) })
+    }
+
+    fn finish(
+        &self,
+        outcome: NativeReviewCallOutcome,
+    ) -> QualityBoxFuture<'_, Result<(), QualityAdapterError>> {
+        self.outcomes.lock().unwrap().push(outcome);
+        Box::pin(async { Ok(()) })
+    }
+
+    fn record_admissions(
+        &self,
+        _records: Vec<NativeAdmissionRecord>,
+    ) -> QualityBoxFuture<'_, Result<(), QualityAdapterError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn admissions(
+        &self,
+        _run_id: Uuid,
+        _iteration: u32,
+    ) -> QualityBoxFuture<'_, Result<Vec<NativeAdmissionRecord>, QualityAdapterError>> {
+        Box::pin(async { Ok(Vec::new()) })
     }
 }
 
@@ -258,4 +332,43 @@ async fn reviewer_fails_closed_when_provider_omits_required_tool() {
         dataset_quality_core::ports::QualityEvaluationErrorKind::InvalidResponse
     );
     assert!(error.message.contains("omitted the required tool"));
+}
+
+#[tokio::test]
+async fn durable_runner_requires_explicit_resume_and_never_dispatches_a_third_call() {
+    let runtime = Arc::new(Runtime {
+        fail_starts: AtomicUsize::new(1),
+        ..Runtime::default()
+    });
+    let reviewer = Arc::new(PiNativeSemanticReviewer::new(runtime.clone(), selection()).unwrap());
+    let request = blind_request(reviewer.as_ref());
+    let store = Arc::new(MemoryReviewStore::default());
+    let runner = DurableNativeReviewRunner::new(reviewer, store.clone(), selection()).unwrap();
+
+    let first = runner
+        .assess_blind(request.clone(), false)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        first.kind,
+        dataset_quality_core::ports::QualityEvaluationErrorKind::Transport
+    );
+    assert!(store.outcomes.lock().unwrap()[0].interrupted);
+    let blocked = runner
+        .assess_blind(request.clone(), false)
+        .await
+        .unwrap_err();
+    assert!(blocked.message.contains("explicit resume"));
+    assert_eq!(runtime.requests.lock().unwrap().len(), 1);
+
+    let output = runner.assess_blind(request.clone(), true).await.unwrap();
+    assert_eq!(output.assessments.len(), 1);
+    assert_eq!(runtime.requests.lock().unwrap().len(), 2);
+    assert_eq!(store.reservations.lock().unwrap().len(), 2);
+    assert_eq!(store.reservations.lock().unwrap()[1].attempt, 2);
+
+    let replayed = runner.assess_blind(request, true).await.unwrap();
+    assert_eq!(replayed.assessments, output.assessments);
+    assert_eq!(replayed.metadata, json!({"replayed": true}));
+    assert_eq!(runtime.requests.lock().unwrap().len(), 2);
 }

@@ -9,11 +9,14 @@ use dataset_quality_core::{
     assessment::{EvaluatorExecutionLocation, EvaluatorIdentity, EvaluatorIndependence},
     native_assessment::{
         NativeBlindAssessmentDraft, NativeBlindAssessmentEvidence, NativeBlindAssessmentRequest,
-        NativeReviewUsage, NativeTargetFitDraft, NativeTargetFitEvidence, NativeTargetFitRequest,
+        NativeReviewCallOutcome, NativeReviewCallReservation, NativeReviewFailure,
+        NativeReviewFailureKind, NativeReviewOperationCategory, NativeReviewRequest,
+        NativeReviewResponse, NativeReviewUsage, NativeTargetFitDraft, NativeTargetFitEvidence,
+        NativeTargetFitRequest,
     },
     ports::{
-        BoxFuture, NativeBlindBatchOutput, NativeSemanticReviewer, NativeTargetFitBatchOutput,
-        QualityEvaluationError, QualityEvaluationErrorKind,
+        BoxFuture, NativeBlindBatchOutput, NativeReviewStore, NativeSemanticReviewer,
+        NativeTargetFitBatchOutput, QualityEvaluationError, QualityEvaluationErrorKind,
     },
 };
 use encoder_optimization_core::fingerprint;
@@ -29,6 +32,7 @@ const TARGET_FIT_CAPABILITY: &str = "encoder_optimization_native_target_fit_v1";
 const TARGET_FIT_TOOL: &str = "submit_native_target_fit_assessments";
 const REVIEW_PROTOCOL: &str = "native_semantic_review_v1";
 const REVIEW_SYSTEM_PROMPT: &str = "Return exactly one bounded native semantic assessment for every supplied row through the sole required tool. Copy all host identities and fingerprints exactly. The host validates the output and owns admission.";
+const REVIEW_INPUT_FRAMING_ALLOWANCE: u64 = 16_384;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +61,270 @@ pub struct PiNativeSemanticReviewer {
     runtime: Arc<dyn AgentRuntime>,
     selection: AgentSelection,
     identity: EvaluatorIdentity,
+}
+
+/// Reservation-first coordinator. It never retries inside one invocation;
+/// callers must explicitly opt into the sole replacement attempt after a
+/// durably interrupted/unknown first call.
+pub struct DurableNativeReviewRunner {
+    reviewer: Arc<dyn NativeSemanticReviewer>,
+    store: Arc<dyn NativeReviewStore>,
+    selection: AgentSelection,
+}
+
+impl DurableNativeReviewRunner {
+    pub fn new(
+        reviewer: Arc<dyn NativeSemanticReviewer>,
+        store: Arc<dyn NativeReviewStore>,
+        selection: AgentSelection,
+    ) -> Result<Self, QualityEvaluationError> {
+        if selection.provider.trim().is_empty()
+            || selection.model.trim().is_empty()
+            || !(1..=65_536).contains(&selection.maximum_output_tokens_per_turn)
+        {
+            return Err(configuration_error("invalid durable reviewer selection"));
+        }
+        Ok(Self {
+            reviewer,
+            store,
+            selection,
+        })
+    }
+
+    pub async fn assess_blind(
+        &self,
+        request: NativeBlindAssessmentRequest,
+        resume_interrupted: bool,
+    ) -> Result<NativeBlindBatchOutput, QualityEvaluationError> {
+        request
+            .validate()
+            .map_err(|_| configuration_error("native blind request is invalid"))?;
+        let durable_request = NativeReviewRequest::Blind(request.clone());
+        let attempt = self
+            .next_attempt(&durable_request, resume_interrupted)
+            .await?;
+        if let Some(output) = attempt.replayed_blind {
+            return Ok(output);
+        }
+        let reservation = self.reservation(
+            durable_request,
+            NativeReviewOperationCategory::BlindSemanticAssessment,
+            attempt.number,
+        )?;
+        self.store
+            .reserve(reservation.clone())
+            .await
+            .map_err(store_error)?;
+        match self.reviewer.assess_blind(request.clone()).await {
+            Ok(output) => {
+                let response = output
+                    .assessments
+                    .iter()
+                    .cloned()
+                    .map(|draft| NativeBlindAssessmentEvidence::record(&request, draft))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(NativeReviewResponse::Blind)
+                    .map_err(|_| invalid_response("native blind response is invalid"));
+                let response = match response {
+                    Ok(response) => response,
+                    Err(error) => {
+                        self.finish_error(reservation, &error).await?;
+                        return Err(error);
+                    }
+                };
+                self.finish_success(reservation, output.usage, response)
+                    .await?;
+                Ok(output)
+            }
+            Err(error) => {
+                self.finish_error(reservation, &error).await?;
+                Err(error)
+            }
+        }
+    }
+
+    pub async fn assess_target_fit(
+        &self,
+        request: NativeTargetFitRequest,
+        resume_interrupted: bool,
+    ) -> Result<NativeTargetFitBatchOutput, QualityEvaluationError> {
+        request
+            .validate()
+            .map_err(|_| configuration_error("native target-fit request is invalid"))?;
+        let durable_request = NativeReviewRequest::TargetFit(request.clone());
+        let attempt = self
+            .next_attempt(&durable_request, resume_interrupted)
+            .await?;
+        if let Some(output) = attempt.replayed_target_fit {
+            return Ok(output);
+        }
+        let reservation = self.reservation(
+            durable_request,
+            NativeReviewOperationCategory::RepairTargetFitAssessment,
+            attempt.number,
+        )?;
+        self.store
+            .reserve(reservation.clone())
+            .await
+            .map_err(store_error)?;
+        match self.reviewer.assess_target_fit(request.clone()).await {
+            Ok(output) => {
+                let response = output
+                    .assessments
+                    .iter()
+                    .cloned()
+                    .map(|draft| NativeTargetFitEvidence::record(&request, draft))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(NativeReviewResponse::TargetFit)
+                    .map_err(|_| invalid_response("native target-fit response is invalid"));
+                let response = match response {
+                    Ok(response) => response,
+                    Err(error) => {
+                        self.finish_error(reservation, &error).await?;
+                        return Err(error);
+                    }
+                };
+                self.finish_success(reservation, output.usage, response)
+                    .await?;
+                Ok(output)
+            }
+            Err(error) => {
+                self.finish_error(reservation, &error).await?;
+                Err(error)
+            }
+        }
+    }
+
+    async fn next_attempt(
+        &self,
+        request: &NativeReviewRequest,
+        resume_interrupted: bool,
+    ) -> Result<Attempt, QualityEvaluationError> {
+        let history = self
+            .store
+            .history(request.clone())
+            .await
+            .map_err(store_error)?;
+        match history.as_slice() {
+            [] => Ok(Attempt::new(1)),
+            [outcome] if outcome.interrupted && resume_interrupted => Ok(Attempt::new(2)),
+            [outcome] if outcome.interrupted => Err(transport_error(
+                "native review was interrupted; explicit resume is required",
+            )),
+            [outcome] => replay(outcome),
+            [first, second] if first.interrupted => replay(second),
+            _ => Err(invalid_response("native review history is not finite")),
+        }
+    }
+
+    fn reservation(
+        &self,
+        request: NativeReviewRequest,
+        category: NativeReviewOperationCategory,
+        attempt: u32,
+    ) -> Result<NativeReviewCallReservation, QualityEvaluationError> {
+        let request_bytes = serde_json::to_vec(&request)
+            .map_err(|_| configuration_error("native review request could not be encoded"))?
+            .len() as u64;
+        let reservation = NativeReviewCallReservation {
+            id: Uuid::new_v4(),
+            category,
+            request,
+            attempt,
+            input_token_ceiling: request_bytes
+                .checked_add(REVIEW_INPUT_FRAMING_ALLOWANCE)
+                .ok_or_else(|| configuration_error("native review input ceiling overflow"))?,
+            output_token_ceiling: u64::from(self.selection.maximum_output_tokens_per_turn),
+            cost_ceiling_microusd: self.selection.maximum_cost_microusd_per_turn,
+        };
+        reservation
+            .validate()
+            .map_err(|_| configuration_error("native review reservation is invalid"))?;
+        Ok(reservation)
+    }
+
+    async fn finish_success(
+        &self,
+        reservation: NativeReviewCallReservation,
+        usage: NativeReviewUsage,
+        response: NativeReviewResponse,
+    ) -> Result<(), QualityEvaluationError> {
+        let (response, failure) = if usage.exceeds(
+            reservation.input_token_ceiling,
+            reservation.output_token_ceiling,
+            reservation.cost_ceiling_microusd,
+        ) {
+            (
+                None,
+                Some(NativeReviewFailure {
+                    kind: NativeReviewFailureKind::Budget,
+                    summary: "Native reviewer reported usage above its reservation.".into(),
+                }),
+            )
+        } else {
+            (Some(response), None)
+        };
+        let overrun = failure.is_some();
+        self.store
+            .finish(NativeReviewCallOutcome {
+                reservation,
+                usage,
+                response,
+                failure,
+                interrupted: false,
+            })
+            .await
+            .map_err(store_error)?;
+        if overrun {
+            return Err(invalid_response(
+                "native reviewer reported usage above its reservation",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn finish_error(
+        &self,
+        reservation: NativeReviewCallReservation,
+        error: &QualityEvaluationError,
+    ) -> Result<(), QualityEvaluationError> {
+        let interrupted = error.kind == QualityEvaluationErrorKind::Transport;
+        let summary = error.message.trim();
+        let failure = (!interrupted).then(|| NativeReviewFailure {
+            kind: failure_kind(error.kind),
+            summary: if summary.is_empty() {
+                "Native reviewer failed.".into()
+            } else {
+                summary.chars().take(400).collect()
+            },
+        });
+        self.store
+            .finish(NativeReviewCallOutcome {
+                reservation,
+                usage: NativeReviewUsage::default(),
+                response: None,
+                failure,
+                interrupted,
+            })
+            .await
+            .map_err(store_error)
+    }
+}
+
+struct Attempt {
+    number: u32,
+    replayed_blind: Option<NativeBlindBatchOutput>,
+    replayed_target_fit: Option<NativeTargetFitBatchOutput>,
+}
+
+impl Attempt {
+    fn new(number: u32) -> Self {
+        Self {
+            number,
+            replayed_blind: None,
+            replayed_target_fit: None,
+        }
+    }
 }
 
 impl PiNativeSemanticReviewer {
@@ -318,6 +586,77 @@ fn submission<T: DeserializeOwned>(value: Value) -> Result<Vec<T>, QualityEvalua
     serde_json::from_value::<Submission<T>>(value)
         .map(|submission| submission.assessments)
         .map_err(|_| invalid_response("native reviewer tool arguments are malformed"))
+}
+
+fn replay(outcome: &NativeReviewCallOutcome) -> Result<Attempt, QualityEvaluationError> {
+    outcome
+        .validate()
+        .map_err(|_| invalid_response("native review history failed integrity validation"))?;
+    if outcome.interrupted {
+        return Err(transport_error(
+            "native review exhausted its sole explicit interrupted-call replacement",
+        ));
+    }
+    if let Some(failure) = &outcome.failure {
+        return Err(QualityEvaluationError::new(
+            quality_failure_kind(failure.kind),
+            failure.summary.clone(),
+        ));
+    }
+    match outcome.response.as_ref() {
+        Some(NativeReviewResponse::Blind(values)) => Ok(Attempt {
+            number: outcome.reservation.attempt,
+            replayed_blind: Some(NativeBlindBatchOutput {
+                assessments: values.iter().map(|value| value.draft.clone()).collect(),
+                usage: outcome.usage,
+                metadata: json!({"replayed": true}),
+            }),
+            replayed_target_fit: None,
+        }),
+        Some(NativeReviewResponse::TargetFit(values)) => Ok(Attempt {
+            number: outcome.reservation.attempt,
+            replayed_blind: None,
+            replayed_target_fit: Some(NativeTargetFitBatchOutput {
+                assessments: values.iter().map(|value| value.draft.clone()).collect(),
+                usage: outcome.usage,
+                metadata: json!({"replayed": true}),
+            }),
+        }),
+        None => Err(invalid_response("native review history has no outcome")),
+    }
+}
+
+fn failure_kind(kind: QualityEvaluationErrorKind) -> NativeReviewFailureKind {
+    match kind {
+        QualityEvaluationErrorKind::Configuration => NativeReviewFailureKind::Configuration,
+        QualityEvaluationErrorKind::Authentication => NativeReviewFailureKind::Authentication,
+        QualityEvaluationErrorKind::InvalidResponse => NativeReviewFailureKind::InvalidResponse,
+        QualityEvaluationErrorKind::RateLimit => NativeReviewFailureKind::RateLimit,
+        QualityEvaluationErrorKind::Transport => NativeReviewFailureKind::Transport,
+        QualityEvaluationErrorKind::Provider => NativeReviewFailureKind::Provider,
+    }
+}
+
+fn quality_failure_kind(kind: NativeReviewFailureKind) -> QualityEvaluationErrorKind {
+    match kind {
+        NativeReviewFailureKind::Configuration
+        | NativeReviewFailureKind::Budget
+        | NativeReviewFailureKind::Stopped => QualityEvaluationErrorKind::Configuration,
+        NativeReviewFailureKind::Authentication => QualityEvaluationErrorKind::Authentication,
+        NativeReviewFailureKind::InvalidResponse => QualityEvaluationErrorKind::InvalidResponse,
+        NativeReviewFailureKind::RateLimit => QualityEvaluationErrorKind::RateLimit,
+        NativeReviewFailureKind::Transport => QualityEvaluationErrorKind::Transport,
+        NativeReviewFailureKind::Provider => QualityEvaluationErrorKind::Provider,
+    }
+}
+
+fn store_error(error: dataset_quality_core::ports::QualityAdapterError) -> QualityEvaluationError {
+    let kind = if error.0.to_ascii_lowercase().contains("budget") {
+        QualityEvaluationErrorKind::Configuration
+    } else {
+        QualityEvaluationErrorKind::Provider
+    };
+    QualityEvaluationError::new(kind, error.0)
 }
 
 fn configuration_error(message: &str) -> QualityEvaluationError {
