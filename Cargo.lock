@@ -948,6 +948,8 @@ version = "0.1.0"
 dependencies = [
  "artifact-core",
  "chrono",
+ "dataset-quality-core",
+ "dataset-quality-fake",
  "encoder-experiment-core",
  "encoder-optimization-core",
  "encoder-repair-core",

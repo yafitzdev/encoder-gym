@@ -7,6 +7,7 @@ mod development_evidence;
 mod evaluation;
 mod generated_training;
 mod managed_training;
+mod native_assessment;
 mod native_inventory;
 mod progress;
 mod repair_delta;
@@ -28,6 +29,10 @@ pub use generation_preview::{NomosGenerationPreviewRow, project_generation_previ
 mod development_comparison;
 pub use development_comparison::NomosDevelopmentComparison;
 pub use managed_training::{NomosTrainingDataset, NomosTrainingDatasetWriter};
+pub use native_assessment::{
+    NOMOS_LABEL_POLICY_VERSION, NomosNativeAssessmentBinding,
+    target_brief as nomos_native_target_brief,
+};
 pub use native_inventory::{NomosNativeInventory, NomosNativeInventoryMember};
 pub use progress::{
     NativePhase, NativeProgress, ProgressObserver, TrainingMetrics, with_file_progress,

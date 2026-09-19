@@ -3,6 +3,7 @@
 pub mod assessment;
 pub mod curation;
 pub mod lifecycle;
+pub mod native_assessment;
 pub mod policy;
 pub mod population;
 pub mod ports;

@@ -11,6 +11,7 @@ chrono.workspace = true
 encoder-experiment-core.workspace = true
 encoder-repair-core.workspace = true
 encoder-optimization-core.workspace = true
+dataset-quality-core.workspace = true
 generation-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -20,6 +21,7 @@ uuid.workspace = true
 workflow-core.workspace = true
 
 [dev-dependencies]
+dataset-quality-fake.workspace = true
 tempfile.workspace = true
 
 [lints]

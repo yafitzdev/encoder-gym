@@ -21,6 +21,10 @@ use crate::{
         AuditExecutionLease, AuditStatusProjection, EvaluatorAttempt, EvaluatorFailureKind,
         ProviderUsage, QualityAuditRun,
     },
+    native_assessment::{
+        NativeBlindAssessmentDraft, NativeBlindAssessmentRequest, NativeTargetFitDraft,
+        NativeTargetFitRequest,
+    },
     population::{AuditPlan, CheckedAuditPlan},
 };
 
@@ -139,6 +143,41 @@ pub trait QualityEvaluator: Send + Sync {
         &self,
         request: BlindEvaluatorRequest,
     ) -> BoxFuture<'_, Result<EvaluatorBatchOutput, QualityEvaluationError>>;
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeBlindBatchOutput {
+    pub assessments: Vec<NativeBlindAssessmentDraft>,
+    pub usage: ProviderUsage,
+    #[serde(default)]
+    pub metadata: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTargetFitBatchOutput {
+    pub assessments: Vec<NativeTargetFitDraft>,
+    pub usage: ProviderUsage,
+    #[serde(default)]
+    pub metadata: Value,
+}
+
+/// Provider-neutral two-pass native reviewer. Implementations receive separate
+/// label-blind and target-fit request types; inherited labels never cross this
+/// port.
+pub trait NativeSemanticReviewer: Send + Sync {
+    fn native_identity(&self) -> EvaluatorIdentity;
+
+    fn assess_blind(
+        &self,
+        request: NativeBlindAssessmentRequest,
+    ) -> BoxFuture<'_, Result<NativeBlindBatchOutput, QualityEvaluationError>>;
+
+    fn assess_target_fit(
+        &self,
+        request: NativeTargetFitRequest,
+    ) -> BoxFuture<'_, Result<NativeTargetFitBatchOutput, QualityEvaluationError>>;
 }
 
 /// Durable quality evidence and curation storage. Transactional methods make

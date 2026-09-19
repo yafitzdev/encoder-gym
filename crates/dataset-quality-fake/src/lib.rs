@@ -14,9 +14,14 @@ use dataset_quality_core::{
         RowAssessmentDraft,
     },
     lifecycle::ProviderUsage,
+    native_assessment::{
+        NativeAssessmentIssueCode, NativeBlindAssessmentDraft, NativeBlindAssessmentRequest,
+        NativeTargetFitDraft, NativeTargetFitRequest,
+    },
     policy::BasisPoints,
     ports::{
-        BoxFuture, EvaluatorBatchOutput, QualityEvaluationError, QualityEvaluationErrorKind,
+        BoxFuture, EvaluatorBatchOutput, NativeBlindBatchOutput, NativeSemanticReviewer,
+        NativeTargetFitBatchOutput, QualityEvaluationError, QualityEvaluationErrorKind,
         QualityEvaluator,
     },
 };
@@ -130,6 +135,174 @@ impl QualityEvaluator for FakeQualityEvaluator {
             })
         })
     }
+}
+
+impl NativeSemanticReviewer for FakeQualityEvaluator {
+    fn native_identity(&self) -> EvaluatorIdentity {
+        self.identity.clone()
+    }
+
+    fn assess_blind(
+        &self,
+        request: NativeBlindAssessmentRequest,
+    ) -> BoxFuture<'_, Result<NativeBlindBatchOutput, QualityEvaluationError>> {
+        Box::pin(async move {
+            request
+                .validate()
+                .map_err(|error| configuration_error(error.to_string()))?;
+            if request.evaluator_identity_fingerprint != self.identity.fingerprint {
+                return Err(configuration_error(
+                    "native blind request has another evaluator identity",
+                ));
+            }
+            let assessments = request
+                .rows
+                .iter()
+                .map(|row| {
+                    let question = lexical_tokens(&row.question);
+                    let scores = row
+                        .candidates
+                        .iter()
+                        .map(|candidate| {
+                            let mut semantics = lexical_tokens(&candidate.description);
+                            for capability in &candidate.capabilities {
+                                semantics.extend(lexical_tokens(capability));
+                            }
+                            (
+                                candidate.candidate_id.clone(),
+                                question.intersection(&semantics).count(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let maximum = scores.iter().map(|(_, score)| *score).max().unwrap_or(0);
+                    let mut supported = scores
+                        .into_iter()
+                        .filter(|(_, score)| maximum > 0 && *score == maximum)
+                        .map(|(id, _)| id)
+                        .collect::<Vec<_>>();
+                    supported.sort();
+                    let context_consistent = !row
+                        .question
+                        .to_ascii_lowercase()
+                        .contains("[context-inconsistent]");
+                    let ambiguous = supported.len() > 1;
+                    let mut issue_codes = Vec::new();
+                    if supported.is_empty() {
+                        issue_codes.push(NativeAssessmentIssueCode::UnsupportedQuestion);
+                    }
+                    if ambiguous {
+                        issue_codes.push(NativeAssessmentIssueCode::AmbiguousQuestion);
+                    }
+                    if !context_consistent {
+                        issue_codes.push(NativeAssessmentIssueCode::ContextInconsistent);
+                    }
+                    NativeBlindAssessmentDraft {
+                        row_id: row.row_id.clone(),
+                        row_fingerprint: row.row_fingerprint.clone(),
+                        request_fingerprint: request.fingerprint.clone(),
+                        supported_candidate_ids: supported,
+                        ambiguous,
+                        context_consistent,
+                        issue_codes,
+                        rationale:
+                            "Deterministic lexical overlap against blind candidate semantics."
+                                .into(),
+                    }
+                })
+                .collect::<Vec<_>>();
+            let usage = native_usage(&request, &assessments)?;
+            Ok(NativeBlindBatchOutput {
+                assessments,
+                usage,
+                metadata: json!({
+                    "algorithm": "blind-native-lexical-v1",
+                    "deterministic": true,
+                    "label_blind": true,
+                    "request_fingerprint": request.fingerprint,
+                }),
+            })
+        })
+    }
+
+    fn assess_target_fit(
+        &self,
+        request: NativeTargetFitRequest,
+    ) -> BoxFuture<'_, Result<NativeTargetFitBatchOutput, QualityEvaluationError>> {
+        Box::pin(async move {
+            request
+                .validate()
+                .map_err(|error| configuration_error(error.to_string()))?;
+            if request.evaluator_identity_fingerprint != self.identity.fingerprint {
+                return Err(configuration_error(
+                    "native target-fit request has another evaluator identity",
+                ));
+            }
+            let assessments = request
+                .rows
+                .iter()
+                .map(|row| {
+                    let target_fits = !row
+                        .row
+                        .question
+                        .to_ascii_lowercase()
+                        .contains("[off-target]");
+                    NativeTargetFitDraft {
+                        row_id: row.row.row_id.clone(),
+                        row_fingerprint: row.row.row_fingerprint.clone(),
+                        request_fingerprint: request.fingerprint.clone(),
+                        blind_assessment_fingerprint: row.blind_assessment_fingerprint.clone(),
+                        target_fits,
+                        issue_codes: (!target_fits)
+                            .then_some(NativeAssessmentIssueCode::TargetMismatch)
+                            .into_iter()
+                            .collect(),
+                        rationale:
+                            "Deterministic target-fit fixture over the abstract repair brief."
+                                .into(),
+                    }
+                })
+                .collect::<Vec<_>>();
+            let usage = native_usage(&request, &assessments)?;
+            Ok(NativeTargetFitBatchOutput {
+                assessments,
+                usage,
+                metadata: json!({
+                    "algorithm": "native-target-fit-v1",
+                    "deterministic": true,
+                    "blind_answer_immutable": true,
+                    "request_fingerprint": request.fingerprint,
+                }),
+            })
+        })
+    }
+}
+
+fn lexical_tokens(value: &str) -> BTreeSet<String> {
+    value
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| token.len() >= 3)
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+fn native_usage(
+    request: &impl Serialize,
+    response: &impl Serialize,
+) -> Result<ProviderUsage, QualityEvaluationError> {
+    let input = serde_json::to_vec(request)
+        .map_err(configuration_error)?
+        .len() as u64;
+    let output = serde_json::to_vec(response)
+        .map_err(configuration_error)?
+        .len() as u64;
+    let input_tokens = input.div_ceil(4).max(1);
+    let output_tokens = output.div_ceil(4).max(1);
+    Ok(ProviderUsage {
+        input_tokens,
+        output_tokens,
+        total_tokens: input_tokens.saturating_add(output_tokens),
+        cost_microusd: 0,
+    })
 }
 
 fn validate_request(
@@ -621,9 +794,14 @@ mod tests {
             BlindEvaluatorRequest, EvaluatorGuidance, EvaluatorIndependence,
             EvaluatorRequestBudget, RowQualityAssessment,
         },
+        native_assessment::{
+            NativeBlindAssessmentEvidence, NativeBlindAssessmentRequest, NativeBlindContext,
+            NativeBlindRow, NativeCandidateSemantics, NativeMetricDirection, NativeRepairStrategy,
+            NativeTargetBrief, NativeTargetFitEvidence, NativeTargetFitRequest,
+        },
         policy::{AuditMode, EvaluatorEgressPolicy, QualityPolicyPresetControls, QualityPreset},
         population::{AuditPlan, GuidanceReferences},
-        ports::QualityEvaluator,
+        ports::{NativeSemanticReviewer, QualityEvaluator},
     };
     use generation_core::domain::{DatasetDefinition, DimensionDefinition};
     use uuid::Uuid;
@@ -771,6 +949,74 @@ mod tests {
             dataset_quality_core::ports::QualityEvaluationErrorKind::Configuration
         );
         assert!(error.message.contains("fingerprint"));
+    }
+
+    #[tokio::test]
+    async fn native_reviews_are_deterministic_separate_and_label_blind() {
+        let evaluator = FakeQualityEvaluator::default();
+        let evaluator_fingerprint = evaluator.native_identity().fingerprint;
+        let row = NativeBlindRow {
+            row_id: "generated:0".into(),
+            row_fingerprint: artifact_core::fingerprint(&"generated-row").unwrap(),
+            question: "Find the saved invoice".into(),
+            context: NativeBlindContext::new(BTreeMap::from([(
+                "taskKind".into(),
+                serde_json::Value::String("route".into()),
+            )]))
+            .unwrap(),
+            candidates: vec![
+                NativeCandidateSemantics::new(
+                    "read",
+                    "Find saved records",
+                    vec!["find".into(), "search".into()],
+                )
+                .unwrap(),
+                NativeCandidateSemantics::new(
+                    "write",
+                    "Modify saved records",
+                    vec!["change".into(), "update".into()],
+                )
+                .unwrap(),
+            ],
+        };
+        let blind_request = NativeBlindAssessmentRequest::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            1,
+            evaluator_fingerprint.clone(),
+            vec![row],
+        )
+        .unwrap();
+        let first = evaluator.assess_blind(blind_request.clone()).await.unwrap();
+        let second = evaluator.assess_blind(blind_request.clone()).await.unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.assessments[0].supported_candidate_ids, vec!["read"]);
+        let blind =
+            NativeBlindAssessmentEvidence::record(&blind_request, first.assessments[0].clone())
+                .unwrap();
+        let target_request = NativeTargetFitRequest::new(
+            Uuid::new_v4(),
+            &blind_request,
+            evaluator_fingerprint,
+            vec![(
+                blind.clone(),
+                NativeTargetBrief::new(
+                    NativeRepairStrategy::LabelPreservingVariants,
+                    vec!["read-cluster".into()],
+                    "recall_at_1",
+                    NativeMetricDirection::Increase,
+                )
+                .unwrap(),
+            )],
+        )
+        .unwrap();
+        let fit = evaluator
+            .assess_target_fit(target_request.clone())
+            .await
+            .unwrap();
+        let evidence =
+            NativeTargetFitEvidence::record(&target_request, fit.assessments[0].clone()).unwrap();
+        assert!(evidence.draft.target_fits);
     }
 
     fn fixture(assigned_label: &str, assigned_difficulty: &str) -> (AuditPlan, SourceRow) {
