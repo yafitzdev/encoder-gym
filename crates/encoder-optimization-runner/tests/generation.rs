@@ -200,6 +200,7 @@ fn fixture(
                 user_prompt: format!("question {index}"),
                 maximum_output_tokens: 64,
             },
+            execution_v3: None,
         })
         .collect();
     (generator, store, backend, tasks)

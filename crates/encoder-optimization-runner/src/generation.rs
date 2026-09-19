@@ -37,6 +37,11 @@ impl OptimizationGenerator {
         if policy.is_none() || tasks.is_empty() {
             return self.generate(tasks).await;
         }
+        if policy == Some(GenerationCanaryPolicy::PerCombinationSemanticV3) {
+            return Err(OptimizationError::Validation(
+                "Protocol-V3 canaries require semantic gating before bulk dispatch".into(),
+            ));
+        }
         let first = tasks.remove(0);
         if first.target_index != 0 || first.first_row != 0 {
             return Err(OptimizationError::Validation(

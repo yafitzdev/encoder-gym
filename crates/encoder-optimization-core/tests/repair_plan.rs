@@ -99,6 +99,7 @@ fn generated(scope: &AgentAnalysisScope, proposal: &DatasetEditProposal) -> Gene
             user_prompt: "generate".into(),
             maximum_output_tokens: 100,
         },
+        execution_v3: None,
     };
     let call = GenerationReservation {
         id: Uuid::new_v4(),
@@ -204,4 +205,79 @@ fn unknown_attempts_stay_unresolved_and_retries_cannot_double_count_a_completed_
     let mut foreign = scope.clone();
     foreign.dataset_version_id = Uuid::new_v4();
     assert!(recorded_plan(&foreign, &calls, &[]).is_err());
+}
+
+fn contrast_canary(run_id: Uuid, side: ContrastSide) -> (GenerationTask, GenerationOutcome) {
+    let task = GenerationTask {
+        id: Uuid::new_v4(),
+        run_id,
+        iteration: 1,
+        proposal_fingerprint: fingerprint(&"proposal").unwrap(),
+        template_row_id: format!("anchor-{side:?}"),
+        template_fingerprint: fingerprint(&format!("anchor-{side:?}")).unwrap(),
+        target_index: if side == ContrastSide::Left { 0 } else { 1 },
+        first_row: 0,
+        requested_rows: 1,
+        request: StructuredGenerationRequest {
+            system_prompt: "system".into(),
+            user_prompt: "generate".into(),
+            maximum_output_tokens: 100,
+        },
+        execution_v3: Some(GenerationExecutionV3 {
+            target_id: "target".into(),
+            combination_id: "target:contrast:pair".into(),
+            strategy: GenerationStrategy::ExistingAnchorContrast,
+            phase: GenerationPhase::Canary,
+            contrast_pair_id: Some("pair".into()),
+            contrast_side: Some(side),
+        }),
+    };
+    let reservation = GenerationReservation {
+        id: Uuid::new_v4(),
+        task_id: task.id,
+        task_fingerprint: task.fingerprint().unwrap(),
+        attempt: 1,
+        input_token_ceiling: 100,
+        output_token_ceiling: 100,
+        cost_ceiling_microusd: 100,
+    };
+    let content = json!({"question":format!("question-{side:?}")});
+    let outcome = GenerationOutcome {
+        reservation,
+        usage: AgentTokenUsage::default(),
+        admission: Some(GenerationAdmission {
+            accepted: vec![AdmittedGenerationRow {
+                index: 0,
+                fingerprint: fingerprint(&content).unwrap(),
+                deduplication_fingerprint: fingerprint(&format!("input-{side:?}")).unwrap(),
+                content,
+            }],
+            rejected: vec![],
+        }),
+        interrupted: false,
+    };
+    (task, outcome)
+}
+
+#[test]
+fn v3_contrast_canary_is_coupled_and_semantic_rejection_fails_the_gate() {
+    let run_id = Uuid::new_v4();
+    let left = contrast_canary(run_id, ContrastSide::Left);
+    let right = contrast_canary(run_id, ContrastSide::Right);
+    let tasks = vec![left.0.clone(), right.0.clone()];
+    let outcomes = vec![left.1, right.1];
+    let mut decisions = std::collections::BTreeMap::from([
+        (generated_semantic_row_id(&tasks[0], 0), true),
+        (generated_semantic_row_id(&tasks[1], 0), true),
+    ]);
+    let passed = evaluate_v3_canaries(&tasks, &outcomes, &decisions).unwrap();
+    assert_eq!(passed.status, V3CanaryStatus::Passed);
+    assert_eq!(passed.units[0].requested, 2);
+    decisions.insert(generated_semantic_row_id(&tasks[1], 0), false);
+    let rejected = evaluate_v3_canaries(&tasks, &outcomes, &decisions).unwrap();
+    assert_eq!(rejected.status, V3CanaryStatus::Rejected);
+    assert_eq!(rejected.units[0].semantically_admitted, 1);
+    decisions.remove(&generated_semantic_row_id(&tasks[1], 0));
+    assert!(evaluate_v3_canaries(&tasks, &outcomes, &decisions).is_err());
+    assert!(evaluate_v3_canaries(&tasks[..1], &outcomes[..1], &decisions).is_err());
 }

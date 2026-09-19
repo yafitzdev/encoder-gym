@@ -154,6 +154,13 @@ impl OptimizationAgentSettings {
             "Agent analysis protocol version 3 requires at least four turns per iteration.",
         )?;
         require(
+            !matches!(
+                self.generation_canary,
+                Some(encoder_optimization_core::generation::GenerationCanaryPolicy::PerCombinationSemanticV3)
+            ) || self.analysis_protocol == 3,
+            "The per-combination semantic canary policy requires Agent analysis protocol version 3.",
+        )?;
+        require(
             (1..=10).contains(&self.maximum_iterations)
                 && (1..=32).contains(&self.maximum_agent_turns_per_iteration)
                 && (1..=16).contains(&self.generation_concurrency)
@@ -231,6 +238,9 @@ mod tests {
         let valid = OptimizationAgentSettings {
             analysis_protocol: 3,
             maximum_agent_turns_per_iteration: 4,
+            generation_canary: Some(
+                encoder_optimization_core::generation::GenerationCanaryPolicy::PerCombinationSemanticV3,
+            ),
             ..OptimizationAgentSettings::default()
         };
         valid.validate().unwrap();

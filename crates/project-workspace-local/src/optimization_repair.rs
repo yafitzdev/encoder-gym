@@ -5,8 +5,10 @@ use anyhow::{Context, Result, ensure};
 use encoder_optimization_core::{
     agent::{AgentCallReservation, AgentTurnRecord, InspectionItem},
     generation::{
-        AdmittedGenerationRow, GenerationCanaryObservation, GenerationCanaryStatus,
-        GenerationOutcome, GenerationReservation, GenerationTask, canary_passed,
+        AdmittedGenerationRow, GenerationCanaryObservation, GenerationCanaryPolicy,
+        GenerationCanaryStatus, GenerationOutcome, GenerationPhase, GenerationReservation,
+        GenerationTask, RepairNotExecuted, V3CanaryGate, V3CanaryStatus, canary_passed,
+        evaluate_v3_canaries,
     },
     repair_plan::{DatasetRepairPlan, recorded_plan},
 };
@@ -28,6 +30,8 @@ pub struct RepairPublication {
     pub rows: u64,
     pub cross_batch_duplicates: u64,
     pub semantic_rejections: u64,
+    pub coupled_rejections: u64,
+    pub target_counts: Vec<optimization_dataset::RepairPublicationCounts>,
 }
 
 /// Native inspection content is not a presentation contract. The composition
@@ -39,6 +43,8 @@ pub struct RepairPlanRead {
     pub evidence: Vec<InspectionItem>,
     pub canary: GenerationCanaryObservation,
     pub canary_rows: Vec<AdmittedGenerationRow>,
+    pub v3_canary: Option<V3CanaryGate>,
+    pub not_executed: Option<RepairNotExecuted>,
 }
 
 struct ReceiptSnapshot {
@@ -50,6 +56,8 @@ struct ReceiptSnapshot {
         Option<GenerationOutcome>,
     )>,
     publication: Option<optimization_dataset::OptimizationDatasetPublication>,
+    native_admissions: Vec<dataset_quality_core::native_assessment::NativeAdmissionRecord>,
+    not_executed: Option<RepairNotExecuted>,
 }
 
 async fn receipt_snapshot(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, ReceiptSnapshot>> {
@@ -80,6 +88,18 @@ async fn receipt_snapshot(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, R
                 generation: generation.remove(&number).unwrap_or_default(),
                 publication: optimization_dataset::read_publication(&mut snapshot, run_id, number)
                     .await?,
+                native_admissions: crate::optimization_native_review::read_admissions(
+                    &mut snapshot,
+                    run_id,
+                    number,
+                )
+                .await?,
+                not_executed: crate::optimization_repair_execution::read_not_executed(
+                    &mut snapshot,
+                    run_id,
+                    number,
+                )
+                .await?,
             },
         );
     }
@@ -125,6 +145,8 @@ pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPla
         let calls = receipt.calls;
         let records = receipt.generation;
         let publication = receipt.publication;
+        let native_admissions = receipt.native_admissions;
+        let not_executed = receipt.not_executed;
         let Some(recorded) = recorded_plan(&iteration.scope, &calls, &records)? else {
             ensure!(
                 publication.is_none(),
@@ -160,7 +182,81 @@ pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPla
             rejected: Vec::new(),
         };
         let mut canary_rows = Vec::new();
-        if canary_policy.is_some() {
+        let mut v3_canary = None;
+        if canary_policy == Some(GenerationCanaryPolicy::PerCombinationSemanticV3) {
+            let mut completed = BTreeMap::new();
+            for (task, _, outcome) in records.iter().filter(|(task, _, _)| {
+                task.execution_v3
+                    .as_ref()
+                    .is_some_and(|value| value.phase == GenerationPhase::Canary)
+            }) {
+                if let Some(outcome) = outcome.as_ref().filter(|value| !value.interrupted) {
+                    ensure!(
+                        completed
+                            .insert(task.id, (task.clone(), outcome.clone()))
+                            .is_none(),
+                        "Protocol V3 canary completed more than once"
+                    );
+                }
+            }
+            if !completed.is_empty() {
+                let (tasks, outcomes): (Vec<_>, Vec<_>) = completed.into_values().unzip();
+                let decisions = native_admissions
+                    .iter()
+                    .filter(|record| {
+                        tasks.iter().any(|task| {
+                            record
+                                .authority
+                                .row_id
+                                .starts_with(&format!("generation:{}:", task.id))
+                        })
+                    })
+                    .map(|record| (record.authority.row_id.clone(), record.admission.admitted()))
+                    .collect();
+                let gate = evaluate_v3_canaries(&tasks, &outcomes, &decisions)?;
+                canary.requested = gate.units.iter().map(|unit| unit.requested).sum();
+                canary.admitted = gate
+                    .units
+                    .iter()
+                    .map(|unit| unit.semantically_admitted)
+                    .sum();
+                canary.status = if gate.status == V3CanaryStatus::Passed {
+                    GenerationCanaryStatus::Passed
+                } else {
+                    GenerationCanaryStatus::Rejected
+                };
+                canary_rows = outcomes
+                    .iter()
+                    .flat_map(|outcome| {
+                        outcome
+                            .admission
+                            .iter()
+                            .flat_map(|admission| admission.accepted.iter().cloned())
+                    })
+                    .collect();
+                v3_canary = Some(gate);
+            }
+            if let Some(stopped) = &not_executed {
+                ensure!(
+                    v3_canary.as_ref() == Some(&stopped.canary)
+                        && publication.is_none()
+                        && records.iter().all(|(task, _, _)| {
+                            task.execution_v3
+                                .as_ref()
+                                .is_some_and(|value| value.phase == GenerationPhase::Canary)
+                        }),
+                    "Canary-rejected repair continued or its receipt changed"
+                );
+            } else {
+                ensure!(
+                    publication.is_none()
+                        || v3_canary
+                            .as_ref()
+                            .is_some_and(|gate| gate.status == V3CanaryStatus::Passed),
+                    "Dataset was published without a passed protocol V3 canary"
+                );
+            }
+        } else if canary_policy.is_some() {
             if let Some((task, call, outcome)) = records
                 .iter()
                 .filter(|(task, _, _)| task.target_index == 0 && task.first_row == 0)
@@ -196,6 +292,15 @@ pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPla
                         GenerationCanaryStatus::Passed | GenerationCanaryStatus::NotRequired
                     ),
                 "Dataset was published without a passed canary"
+            );
+            ensure!(
+                not_executed.is_none(),
+                "Historical canary policy has a protocol V3 stop receipt"
+            );
+        } else {
+            ensure!(
+                not_executed.is_none(),
+                "Disabled canary policy has a stop receipt"
             );
         }
         let published = if let Some(publication) = publication {
@@ -234,6 +339,37 @@ pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPla
                 publication.generation_rejections == expected_rejections
                     && publication.generated.len() == expected_accepted,
                 "Publication admission counts changed"
+            );
+            ensure!(
+                publication.target_counts.is_empty()
+                    || (publication
+                        .target_counts
+                        .iter()
+                        .map(|counts| counts.requested)
+                        .sum::<u64>()
+                        == plan
+                            .proposal
+                            .additions
+                            .iter()
+                            .map(|target| u64::from(target.count))
+                            .sum::<u64>()
+                        && publication
+                            .target_counts
+                            .iter()
+                            .map(|counts| counts.structurally_admitted)
+                            .sum::<u64>()
+                            == expected_accepted as u64
+                        && publication
+                            .target_counts
+                            .iter()
+                            .map(|counts| counts.published)
+                            .sum::<u64>()
+                            == publication
+                                .generated
+                                .iter()
+                                .filter(|row| row.source_record.is_some())
+                                .count() as u64),
+                "Publication per-target counts changed"
             );
             let mut links = std::collections::BTreeSet::new();
             for link in &publication.generated {
@@ -282,6 +418,7 @@ pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPla
                         == publication.generated.len() as u64
                             - added
                             - publication.semantic_rejections
+                            - publication.coupled_rejections
                     && version.changes.apply(&parent.members)? == version.members,
                 "Published dataset membership differs from its repair receipt"
             );
@@ -310,6 +447,8 @@ pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPla
                 rows: version.members.len() as u64,
                 cross_batch_duplicates: publication.cross_batch_duplicates,
                 semantic_rejections: publication.semantic_rejections,
+                coupled_rejections: publication.coupled_rejections,
+                target_counts: publication.target_counts,
             })
         } else {
             None
@@ -323,6 +462,8 @@ pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPla
                 evidence: recorded.evidence,
                 canary,
                 canary_rows,
+                v3_canary,
+                not_executed,
             },
         );
     }

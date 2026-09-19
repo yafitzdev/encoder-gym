@@ -50,6 +50,10 @@ struct RepairPlan {
     publication: Option<project_workspace_local::optimization_repair::RepairPublication>,
     evidence: Vec<encoder_experiment_nomos::NomosRepairEvidence>,
     canary: GenerationCanary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    v3_canary: Option<encoder_optimization_core::generation::V3CanaryGate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    not_executed: Option<encoder_optimization_core::generation::RepairNotExecuted>,
 }
 
 #[derive(Serialize)]
@@ -113,6 +117,8 @@ pub(super) async fn read(folder: &Path, run_id: Uuid) -> Result<History> {
                     .map(|item| encoder_experiment_nomos::project_repair_evidence(item, &reports))
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok::<_, anyhow::Error>(RepairPlan {
+                    v3_canary: recorded.v3_canary,
+                    not_executed: recorded.not_executed,
                     canary: GenerationCanary {
                         observation: recorded.canary,
                         rows: recorded

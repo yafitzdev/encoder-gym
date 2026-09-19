@@ -11,7 +11,11 @@ use std::{
 
 use anyhow::{Context, Result, ensure};
 use dataset_core::versions::DatasetVersionRef;
-use encoder_optimization_core::{agent::AgentAnalysisScope, fingerprint};
+use encoder_optimization_core::{
+    agent::AgentAnalysisScope,
+    fingerprint,
+    generation::{GenerationCanaryPolicy, GenerationPhase, GenerationStrategy},
+};
 use project_workspace_core::DatasetPurpose;
 use serde::{Deserialize, Serialize};
 use sqlx::{Connection, Row};
@@ -37,6 +41,22 @@ pub struct GeneratedRowLink {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RepairPublicationCounts {
+    pub target_index: u32,
+    pub target_id: Option<String>,
+    pub anchor_row_id: String,
+    pub combination_id: Option<String>,
+    pub requested: u64,
+    pub generated: u64,
+    pub structurally_admitted: u64,
+    pub semantically_admitted: u64,
+    pub coupled_excluded: u64,
+    pub duplicate_excluded: u64,
+    pub published: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OptimizationDatasetPublication {
     pub run_id: Uuid,
     pub iteration: u32,
@@ -46,9 +66,13 @@ pub struct OptimizationDatasetPublication {
     pub import_id: Option<Uuid>,
     pub removed: Vec<String>,
     pub generated: Vec<GeneratedRowLink>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub target_counts: Vec<RepairPublicationCounts>,
     pub generation_rejections: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub semantic_rejections: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub coupled_rejections: u64,
     pub cross_batch_duplicates: u64,
 }
 
@@ -141,12 +165,12 @@ pub async fn publish(
         scope.launch_fingerprint == launch.fingerprint,
         "Dataset publication launch changed"
     );
-    if launch
+    let canary_policy = launch
         .scope
         .agentic
         .as_ref()
-        .and_then(|settings| settings.generation_canary)
-        .is_some()
+        .and_then(|settings| settings.generation_canary);
+    if canary_policy == Some(GenerationCanaryPolicy::FirstBatchAllAdmittedV1)
         && !proposal.additions.is_empty()
     {
         let (task, _, outcome) = generated_calls
@@ -166,6 +190,14 @@ pub async fn publish(
             "Dataset publication requires a passed generation canary"
         );
     }
+    if canary_policy == Some(GenerationCanaryPolicy::PerCombinationSemanticV3) {
+        ensure!(
+            crate::optimization_repair_execution::not_executed(folder, run_id, iteration)
+                .await?
+                .is_none(),
+            "A canary-rejected repair cannot publish a dataset"
+        );
+    }
     let parent = dataset_versions::inspect(folder, scope.dataset_version_id).await?;
     ensure!(
         parent.fingerprint == scope.dataset_fingerprint,
@@ -173,7 +205,70 @@ pub async fn publish(
     );
     let mut completed = Vec::new();
     for (target_index, target) in proposal.additions.iter().enumerate() {
-        for first_row in (0..target.count).step_by(8) {
+        let first_rows = if scope.analysis_protocol == 3 {
+            let mut values = generated_calls
+                .iter()
+                .filter(|(task, _, _)| {
+                    task.iteration == iteration
+                        && task.proposal_fingerprint == proposal_fingerprint
+                        && task.target_index == target_index as u32
+                })
+                .map(|(task, _, _)| task.first_row)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            values.sort_unstable();
+            let mut cursor = 0;
+            for first_row in &values {
+                ensure!(
+                    *first_row == cursor,
+                    "Protocol V3 generation has a slot gap"
+                );
+                let task = generated_calls
+                    .iter()
+                    .find(|(task, _, _)| {
+                        task.iteration == iteration
+                            && task.proposal_fingerprint == proposal_fingerprint
+                            && task.target_index == target_index as u32
+                            && task.first_row == *first_row
+                    })
+                    .map(|(task, _, _)| task)
+                    .context("Protocol V3 generation slot is missing")?;
+                let execution = task
+                    .execution_v3
+                    .as_ref()
+                    .context("Protocol V3 generation metadata is missing")?;
+                if cursor == 0 {
+                    ensure!(
+                        execution.phase == GenerationPhase::Canary
+                            && task.requested_rows
+                                == match execution.strategy {
+                                    GenerationStrategy::LabelPreservingVariant => {
+                                        target.count.min(2)
+                                    }
+                                    GenerationStrategy::ExistingAnchorContrast => 1,
+                                },
+                        "Protocol V3 generation canary boundary changed"
+                    );
+                } else {
+                    ensure!(
+                        execution.phase == GenerationPhase::Bulk,
+                        "Protocol V3 bulk slot is not marked as bulk"
+                    );
+                }
+                cursor = cursor
+                    .checked_add(task.requested_rows)
+                    .context("Protocol V3 generation row range overflow")?;
+            }
+            ensure!(
+                cursor == target.count,
+                "Protocol V3 generation does not cover its exact allocation"
+            );
+            values
+        } else {
+            (0..target.count).step_by(8).collect::<Vec<_>>()
+        };
+        for first_row in first_rows {
             let matching: Vec<_> = generated_calls
                 .iter()
                 .filter(|(task, _, _)| {
@@ -191,7 +286,8 @@ pub async fn publish(
             ensure!(
                 matching.iter().all(|(task, _, _)| task.id == task_id
                     && task.template_row_id == target.template_row_id
-                    && task.requested_rows == (target.count - first_row).min(8)),
+                    && (scope.analysis_protocol == 3
+                        || task.requested_rows == (target.count - first_row).min(8))),
                 "Generation slot does not match its proposal"
             );
             let admitted: Vec<_> = matching
@@ -215,11 +311,110 @@ pub async fn publish(
     let mut seen = BTreeSet::new();
     let mut generation_rejections = 0;
     let mut semantic_rejections = 0;
+    let mut coupled_rejections = 0;
     let mut cross_batch_duplicates = 0;
     let mut native_admissions = native_admissions
         .into_iter()
         .map(|record| (record.authority.row_id.clone(), record))
         .collect::<BTreeMap<_, _>>();
+    let mut target_counts = BTreeMap::<u32, RepairPublicationCounts>::new();
+    for (task, _, outcome) in &completed {
+        let admission = outcome
+            .admission
+            .as_ref()
+            .context("Generation admission is missing")?;
+        let execution = task.execution_v3.as_ref();
+        let counts =
+            target_counts
+                .entry(task.target_index)
+                .or_insert_with(|| RepairPublicationCounts {
+                    target_index: task.target_index,
+                    target_id: execution.map(|value| value.target_id.clone()),
+                    anchor_row_id: task.template_row_id.clone(),
+                    combination_id: execution.map(|value| value.combination_id.clone()),
+                    requested: 0,
+                    generated: 0,
+                    structurally_admitted: 0,
+                    semantically_admitted: 0,
+                    coupled_excluded: 0,
+                    duplicate_excluded: 0,
+                    published: 0,
+                });
+        ensure!(
+            counts.anchor_row_id == task.template_row_id
+                && counts.target_id == execution.map(|value| value.target_id.clone())
+                && counts.combination_id == execution.map(|value| value.combination_id.clone()),
+            "Generation target accounting identity changed"
+        );
+        counts.requested += u64::from(task.requested_rows);
+        counts.generated += (admission.accepted.len() + admission.rejected.len()) as u64;
+        counts.structurally_admitted += admission.accepted.len() as u64;
+    }
+    let mut contrast_groups = BTreeMap::<(String, u32), Vec<(String, bool, String)>>::new();
+    if scope.analysis_protocol == 3 {
+        for (task, _, outcome) in &completed {
+            let Some(execution) = &task.execution_v3 else {
+                anyhow::bail!("Protocol V3 generated task has no execution metadata")
+            };
+            if execution.strategy != GenerationStrategy::ExistingAnchorContrast {
+                continue;
+            }
+            let pair_id = execution
+                .contrast_pair_id
+                .as_ref()
+                .context("Protocol V3 contrast task has no pair identity")?;
+            let side = format!(
+                "{:?}",
+                execution
+                    .contrast_side
+                    .context("Protocol V3 contrast task has no side",)?
+            );
+            let admission = outcome
+                .admission
+                .as_ref()
+                .context("Generation admission is missing")?;
+            for row in &admission.accepted {
+                let row_id = encoder_optimization_core::generation::generated_semantic_row_id(
+                    task, row.index,
+                );
+                let admitted = native_admissions
+                    .get(&row_id)
+                    .context("Protocol V3 contrast row has no semantic admission")?
+                    .admission
+                    .admitted();
+                contrast_groups
+                    .entry((pair_id.clone(), task.first_row + row.index))
+                    .or_default()
+                    .push((row_id, admitted, side.clone()));
+            }
+            for row in &admission.rejected {
+                contrast_groups
+                    .entry((pair_id.clone(), task.first_row + row.index))
+                    .or_default()
+                    .push((
+                        encoder_optimization_core::generation::generated_semantic_row_id(
+                            task, row.index,
+                        ),
+                        false,
+                        side.clone(),
+                    ));
+            }
+        }
+    }
+    let contrast_admitted = contrast_groups
+        .into_iter()
+        .map(|(key, rows)| {
+            let sides = rows
+                .iter()
+                .map(|(_, _, side)| side)
+                .collect::<BTreeSet<_>>();
+            ensure!(
+                rows.len() == 2 && sides.len() == 2,
+                "Protocol V3 contrast pair is incomplete"
+            );
+            Ok((key, rows.iter().all(|(_, admitted, _)| *admitted)))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
     // Proposal/slot order, not response completion order, selects the survivor.
     for (task, call, outcome) in completed {
         let admission = outcome
@@ -228,6 +423,9 @@ pub async fn publish(
             .context("Generation admission is missing")?;
         generation_rejections += admission.rejected.len() as u64;
         for row in &admission.accepted {
+            let counts = target_counts
+                .get_mut(&task.target_index)
+                .context("Generation target accounting is missing")?;
             let semantic_admitted = if scope.analysis_protocol == 3 {
                 let row_id = encoder_optimization_core::generation::generated_semantic_row_id(
                     task, row.index,
@@ -243,13 +441,33 @@ pub async fn publish(
             } else {
                 true
             };
+            let contrast_coupled = task
+                .execution_v3
+                .as_ref()
+                .and_then(|execution| execution.contrast_pair_id.as_ref())
+                .map(|pair_id| {
+                    contrast_admitted
+                        .get(&(pair_id.clone(), task.first_row + row.index))
+                        .copied()
+                        .unwrap_or(false)
+                })
+                .unwrap_or(true);
             let record = if !semantic_admitted {
                 semantic_rejections += 1;
                 None
+            } else if !contrast_coupled {
+                counts.semantically_admitted += 1;
+                counts.coupled_excluded += 1;
+                coupled_rejections += 1;
+                None
             } else if seen.insert(row.deduplication_fingerprint.clone()) {
+                counts.semantically_admitted += 1;
+                counts.published += 1;
                 rows.push(row.content.clone());
                 Some(rows.len() as u64)
             } else {
+                counts.semantically_admitted += 1;
+                counts.duplicate_excluded += 1;
                 cross_batch_duplicates += 1;
                 None
             };
@@ -286,8 +504,10 @@ pub async fn publish(
         import_id,
         removed,
         generated,
+        target_counts: target_counts.into_values().collect(),
         generation_rejections,
         semantic_rejections,
+        coupled_rejections,
         cross_batch_duplicates,
     };
     let mut database = connect(Path::new(&workspace.folder), false, false).await?;

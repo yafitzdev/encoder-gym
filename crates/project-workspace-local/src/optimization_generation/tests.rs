@@ -118,6 +118,7 @@ async fn fixture() -> (SqliteConnection, GenerationTask, ProviderLimits) {
         first_row: 0,
         requested_rows: 8,
         request,
+        execution_v3: None,
     };
     (
         database,

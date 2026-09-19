@@ -381,6 +381,9 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         settings = if matches!(mode, "v3_prepare" | "v3_semantic_reject") {
             let mut value = OptimizationAgentSettings::quick_test();
             value.analysis_protocol = 3;
+            value.generation_canary = Some(
+                encoder_optimization_core::generation::GenerationCanaryPolicy::PerCombinationSemanticV3,
+            );
             value
         } else {
             OptimizationAgentSettings::default()
@@ -934,12 +937,13 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     }
     if loop_mode == Some("v3_semantic_reject") {
         let rejected = invoke_iteration();
-        assert!(!rejected.status.success());
         assert!(
-            String::from_utf8_lossy(&rejected.stderr).contains("Every generated row was rejected"),
+            rejected.status.success(),
             "{}",
             String::from_utf8_lossy(&rejected.stderr)
         );
+        let result: serde_json::Value = serde_json::from_slice(&rejected.stdout).unwrap();
+        assert!(result["datasetStep"]["publication"].is_null());
         generator.unwrap().join().unwrap();
         let reviews =
             project_workspace_local::optimization_native_review::ProjectNativeReviewStore::open(
@@ -963,6 +967,26 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
                 .await
                 .is_err()
         );
+        let stopped = project_workspace_local::optimization_repair_execution::not_executed(
+            &folder,
+            reserved.id,
+            1,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            stopped.reason,
+            encoder_optimization_core::generation::RepairNotExecutedReason::CanaryRejected
+        );
+        assert_eq!(stopped.canary.units[0].semantically_admitted, 0);
+        let replay = invoke_iteration();
+        assert!(
+            replay.status.success(),
+            "{}",
+            String::from_utf8_lossy(&replay.stderr)
+        );
+        assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 6);
         return;
     }
     let first = execute();

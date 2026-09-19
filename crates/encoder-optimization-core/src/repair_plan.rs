@@ -12,7 +12,10 @@ use crate::{
         InspectionItem, InspectionPage, restore_inspections,
     },
     fingerprint,
-    generation::{GenerationOutcome, GenerationReservation, GenerationTask},
+    generation::{
+        GenerationOutcome, GenerationPhase, GenerationReservation, GenerationStrategy,
+        GenerationTask,
+    },
     require,
 };
 
@@ -179,14 +182,36 @@ fn generation_progress(
                     "Generation target is absent from the repair plan".into(),
                 )
             })?;
+        let slot_matches = if scope.analysis_protocol == 3 {
+            task.execution_v3.as_ref().is_some_and(|execution| {
+                task.first_row < target.count
+                    && task.first_row + task.requested_rows <= target.count
+                    && match execution.phase {
+                        GenerationPhase::Canary => {
+                            task.first_row == 0
+                                && task.requested_rows
+                                    == match execution.strategy {
+                                        GenerationStrategy::LabelPreservingVariant => {
+                                            target.count.min(2)
+                                        }
+                                        GenerationStrategy::ExistingAnchorContrast => 1,
+                                    }
+                        }
+                        GenerationPhase::Bulk => task.first_row > 0,
+                    }
+            })
+        } else {
+            task.execution_v3.is_none()
+                && task.first_row < target.count
+                && task.first_row % 8 == 0
+                && task.requested_rows == (target.count - task.first_row).min(8)
+        };
         require(
             task.run_id == scope.run_id
                 && task.iteration == scope.iteration
                 && task.proposal_fingerprint == proposal_fingerprint
                 && task.template_row_id == target.template_row_id
-                && task.first_row < target.count
-                && task.first_row % 8 == 0
-                && task.requested_rows == (target.count - task.first_row).min(8),
+                && slot_matches,
             "Generation slot differs from the accepted repair plan",
         )?;
         require(
