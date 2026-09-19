@@ -52,6 +52,14 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     }
     let name, args;
     if (input.scope.analysisProtocol === 3) {
+      const twoIterationMemory = process.env.AGENT_FIXTURE_LOOP === 'v3_two_iterations';
+      if (twoIterationMemory && later && !turns.length) {
+        if (input.repairMemory.length !== 1) throw Error('Second V3 iteration did not receive exactly one prior outcome');
+        const memory = input.repairMemory[0];
+        if (memory.iteration !== 1 || memory.targetId !== 'search-variant' || memory.globalVerdict !== 'reject') throw Error('V3 outcome memory lost target or scientific rejection');
+        if (memory.outputDevelopmentEvidenceFingerprint !== input.scope.developmentEvidenceFingerprint) throw Error('V3 outcome memory is not bound to the current development evidence');
+        if (memory.clusterKeys.length !== 1 || memory.intervention.kind !== 'label_preserving_variants' || memory.intervention.anchorIds.length !== 1) throw Error('V3 outcome memory omitted the prior plan intervention');
+      }
       const clusters = turns[0]?.tools[0]?.result?.items ?? [];
       const cluster = clusters.find(item => item.content.cluster?.dimension === 'expected_capability' && item.content.cluster?.value === 'search') ?? clusters[0];
       if (!turns.length) {
@@ -73,11 +81,29 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
           operation: {kind: 'label_preserving_variants', count: {basis: 'absolute_rows', desiredRows: 1},
             allocationRationale: 'Use one inspected anchor for a minimal falsifiable change.',
             anchors: [{rowId: row.id, rowFingerprint: row.content.investigation.anchorFingerprint, additions: 1}]},
+           targetMetric: {name: 'recall_at_1', direction: 'increase'}
+         }]};
+      } else if (twoIterationMemory && later && turns.length === 3) {
+        const rejected = turns[2].tools.find(tool => tool.name === 'preview_repair_plan');
+        if (!rejected?.result?.constraints?.some(constraint => constraint.code === 'repeated_unchanged_intervention')) throw Error('Repeated V3 intervention was not rejected with the typed constraint');
+        const rows = turns[1].tools[0].result.items;
+        const repeated = rows.find(item => item.content.question.includes('Search')) ?? rows[0];
+        const row = rows.find(item => item.id !== repeated.id);
+        if (!row?.content?.investigation?.anchorFingerprint) throw Error('No distinct inspected anchor for revised V3 intervention');
+        name = 'preview_repair_plan';
+        args = {schemaVersion: 3, summary: 'Revise the search intervention to a distinct inspected native context.', stop: false, targets: [{
+          targetId: 'search-variant', clusterKeys: [cluster.id], evidenceIds: [cluster.id],
+          hypothesis: 'A variant from a different inspected context may improve recall without repeating the unchanged intervention.',
+          evidenceLimitations: 'The preceding candidate was rejected and its measured delta is descriptive, not causal.',
+          intendedFailurePattern: 'Specific search requests rank the retrieval capability below a distractor.',
+          alternativeExplanation: 'The model may need parameter changes rather than another context.',
+          operation: {kind: 'label_preserving_variants', count: {basis: 'absolute_rows', desiredRows: 1},
+            allocationRationale: 'Use the other inspected native context after the first intervention did not change the evidence.',
+            anchors: [{rowId: row.id, rowFingerprint: row.content.investigation.anchorFingerprint, additions: 1}]},
           targetMetric: {name: 'recall_at_1', direction: 'increase'}
         }]};
       } else {
-        const previewTurn = turns.find(turn => turn.tools.some(tool => tool.name === 'preview_repair_plan'));
-        const previewTool = previewTurn?.tools.find(tool => tool.name === 'preview_repair_plan');
+        const previewTool = turns.flatMap(turn => turn.tools).find(tool => tool.name === 'preview_repair_plan' && tool.result?.preview?.fingerprint);
         if (!previewTool?.result?.preview?.fingerprint) throw Error('No accepted V3 preview');
         name = 'submit_repair_plan';
         args = {plan: previewTool.arguments, previewFingerprint: previewTool.result.preview.fingerprint};

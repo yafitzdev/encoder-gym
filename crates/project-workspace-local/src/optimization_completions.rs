@@ -9,6 +9,8 @@ use encoder_experiment_core::{
     domain::ExternalProjectSnapshot, journal::ExperimentEvent, protocol::ExperimentProtocol,
 };
 use project_workspace_core::{
+    OptimizationLaunchAuthorization,
+    optimization_iteration::{IterationDevelopmentEvidence, ProjectOptimizationIteration},
     optimization_iteration_execution::{IterationDevelopmentResult, IterationTrainingBinding},
     optimization_loop::{EvaluatedIteration, IterationCompletion, IterationDecision},
 };
@@ -101,6 +103,7 @@ pub(crate) async fn validate_records(
                 execution::read(db, "optimization_iteration_results", iteration.id)
                     .await?
                     .context("Completed result missing")?;
+            validate_v3_repair_outcomes(db, launch, iteration, &record, &training, &result).await?;
             evaluations.push((iteration, training, result));
         }
         let history: Vec<_> = evaluations
@@ -158,6 +161,134 @@ async fn decision(
         "Completion requires one decision from its exact iteration"
     );
     Ok(record)
+}
+
+async fn validate_v3_repair_outcomes(
+    db: &mut SqliteConnection,
+    launch: &OptimizationLaunchAuthorization,
+    iteration: &ProjectOptimizationIteration,
+    record: &encoder_optimization_core::agent::AgentTurnRecord,
+    training: &IterationTrainingBinding,
+    result: &IterationDevelopmentResult,
+) -> Result<()> {
+    use encoder_optimization_core::{
+        fingerprint,
+        generation::GenerationCanaryPolicy,
+        repair_outcome::{
+            OutcomeIdentity, RepairGlobalVerdict, intervention_fingerprint, intervention_summary,
+        },
+        repair_strategy::RepairPlan,
+    };
+
+    let required = launch.scope.agentic.as_ref().is_some_and(|settings| {
+        settings.analysis_protocol == 3
+            && settings.generation_canary == Some(GenerationCanaryPolicy::PerCombinationSemanticV3)
+    });
+    if !required {
+        return Ok(());
+    }
+    ensure!(
+        iteration.scope.analysis_protocol == 3,
+        "Protocol V3 repair outcomes belong to another iteration"
+    );
+    let submissions = record
+        .tools
+        .iter()
+        .filter(|tool| tool.name == "submit_repair_plan" && !tool.failed)
+        .collect::<Vec<_>>();
+    ensure!(
+        submissions.len() == 1,
+        "Executed protocol V3 iteration has no exact repair plan"
+    );
+    let plan: RepairPlan = serde_json::from_value(
+        submissions[0]
+            .arguments
+            .get("plan")
+            .cloned()
+            .context("Protocol V3 submission plan missing")?,
+    )?;
+    ensure!(
+        !plan.stop && !plan.targets.is_empty(),
+        "Executed protocol V3 iteration has no repair targets"
+    );
+    let outcomes = crate::optimization_repair_outcomes::read_iteration(
+        db,
+        iteration.scope.run_id,
+        iteration.scope.iteration,
+    )
+    .await?;
+    ensure!(
+        outcomes.len() == plan.targets.len(),
+        "Executed protocol V3 iteration requires one outcome per repair target"
+    );
+    let plan_fingerprint = fingerprint(&plan)?;
+    let proposal_fingerprint = fingerprint(
+        record
+            .proposal
+            .as_ref()
+            .context("Protocol V3 compiled proposal missing")?,
+    )?;
+    let output_evidence = IterationDevelopmentEvidence::completed(
+        training,
+        result,
+        &iteration.development.benchmark_definition_fingerprint,
+    )?;
+    let input_dataset = OutcomeIdentity {
+        id: iteration.dataset.id.to_string(),
+        fingerprint: iteration.dataset.fingerprint.clone(),
+    };
+    let output_dataset = OutcomeIdentity {
+        id: training.qualified_dataset.id.to_string(),
+        fingerprint: training.qualified_dataset.fingerprint.clone(),
+    };
+    let expected_reports = result
+        .reports
+        .values()
+        .map(|report| (report.id.to_string(), report.fingerprint.clone()))
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected_verdict = if result.development_passed {
+        RepairGlobalVerdict::Keep
+    } else {
+        RepairGlobalVerdict::Reject
+    };
+    let targets = plan
+        .targets
+        .iter()
+        .map(|target| (target.target_id.as_str(), target))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for outcome in &outcomes {
+        let target = targets
+            .get(outcome.target_id.as_str())
+            .context("Repair outcome target is absent from its plan")?;
+        let mut cluster_keys = target.cluster_keys.clone();
+        cluster_keys.sort();
+        let reports = outcome
+            .reports
+            .iter()
+            .map(|report| (report.id.clone(), report.fingerprint.clone()))
+            .collect::<std::collections::BTreeSet<_>>();
+        ensure!(
+            outcome.repair_plan_fingerprint == plan_fingerprint
+                && outcome.proposal_fingerprint == proposal_fingerprint
+                && outcome.intervention_fingerprint == intervention_fingerprint(target)?
+                && outcome.cluster_keys == cluster_keys
+                && outcome.intervention == intervention_summary(target)
+                && outcome.input_dataset == input_dataset
+                && outcome.output_dataset == output_dataset
+                && outcome.input_development_evidence_fingerprint
+                    == iteration.development.fingerprint
+                && outcome.output_development_evidence_fingerprint == output_evidence.fingerprint
+                && outcome.global_verdict == expected_verdict
+                && reports == expected_reports
+                && outcome.observations.iter().all(|observation| {
+                    target.cluster_keys.contains(&observation.cluster_key)
+                        && observation.metric == target.target_metric.name
+                        && observation.expected_direction == target.target_metric.direction
+                }),
+            "Repair outcome differs from its plan, dataset, or development result"
+        );
+    }
+    Ok(())
 }
 
 /// Complete one exact iteration, or revalidate/reuse an already completed one.
@@ -247,6 +378,8 @@ async fn complete(
                 actual == saved,
                 "Iteration result differs from its scientific journal"
             );
+            validate_v3_repair_outcomes(&mut db, &launch, iteration, &record, &binding, &saved)
+                .await?;
             evaluations.push((iteration, binding, saved));
         }
         let history: Vec<_> = evaluations

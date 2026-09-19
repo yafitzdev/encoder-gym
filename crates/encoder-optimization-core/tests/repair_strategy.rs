@@ -46,6 +46,7 @@ fn context() -> RepairPlanningContext {
             anchor("d", "input-a", "label-a", Some("duplicate-a")),
         ]),
         evidence_ids: BTreeSet::from(["cluster-search".into()]),
+        prior_interventions: BTreeSet::new(),
     }
 }
 
@@ -214,4 +215,34 @@ fn infeasible_allocations_return_typed_constraints_without_silent_trimming() {
         .collect::<BTreeSet<_>>();
     assert!(codes.contains(&RepairPlanConstraintCode::AllocationMismatch));
     assert!(codes.contains(&RepairPlanConstraintCode::AdditionPerAnchorExceeded));
+}
+
+#[test]
+fn unchanged_prior_intervention_is_a_typed_constraint() {
+    let plan = common(RepairOperation::LabelPreservingVariants {
+        count: AdditionCount::AbsoluteRows { desired_rows: 2 },
+        allocation_rationale: "Split over the inspected contexts".into(),
+        anchors: vec![
+            AnchorAllocation {
+                row_id: "a".into(),
+                row_fingerprint: fp("row-a"),
+                additions: 1,
+            },
+            AnchorAllocation {
+                row_id: "b".into(),
+                row_fingerprint: fp("row-b"),
+                additions: 1,
+            },
+        ],
+    });
+    let mut context = context();
+    context.prior_interventions.insert(
+        encoder_optimization_core::repair_outcome::intervention_fingerprint(&plan.targets[0])
+            .unwrap(),
+    );
+    let compiled = compile_repair_plan(&plan, &context).unwrap();
+    assert!(compiled.preview.is_none());
+    assert!(compiled.constraints.iter().any(|constraint| {
+        constraint.code == RepairPlanConstraintCode::RepeatedUnchangedIntervention
+    }));
 }

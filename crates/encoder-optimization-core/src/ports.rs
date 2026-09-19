@@ -14,6 +14,15 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, OptimizationEr
 /// Offsets count items in the stable (optionally filtered) sequence. A host may
 /// shorten a page to a complete prefix and continue at offset + returned count.
 pub trait OptimizationInspection: Send + Sync {
+    /// Bounded summaries from earlier iterations in this root run. Historical
+    /// adapters return an empty list; reading memory never dispatches work.
+    fn repair_memory(
+        &self,
+        _scope: AgentAnalysisScope,
+    ) -> BoxFuture<'_, Vec<crate::repair_outcome::RepairOutcomeSummary>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
     fn development_failures(
         &self,
         scope: AgentAnalysisScope,

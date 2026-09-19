@@ -147,6 +147,16 @@ impl OptimizationAgent {
             };
             let proposal_requirements =
                 tools::proposal_requirements(&scope, &inspected_rows, &inspected_evidence);
+            let repair_memory = if scope.analysis_protocol == 3 {
+                self.inspection.repair_memory(scope.clone()).await?
+            } else {
+                Vec::new()
+            };
+            if repair_memory.len() > 32 || serde_json::to_vec(&repair_memory)?.len() > 131_072 {
+                return Err(OptimizationError::Validation(
+                    "Repair outcome memory exceeds its bounded prompt allowance".into(),
+                ));
+            }
             // The model's proposal schema repeats both bounded reference sets
             // in removals and additions. Reserve those bytes as well as the
             // prompt copy; dynamic enums are not free framing overhead.
@@ -155,6 +165,7 @@ impl OptimizationAgent {
             let initial_prompt = serde_json::to_string(&json!({
                 "scope": scope,
                 "proposalRequirements": proposal_requirements,
+                "repairMemory": repair_memory,
                 "previousTurns": continuation_history(&history)?,
                 "turn": {
                     "sequence": sequence,

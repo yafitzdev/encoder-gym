@@ -6,7 +6,7 @@ use anyhow::{Context, Result, ensure};
 use encoder_experiment_core::ports::ExperimentStore;
 use encoder_experiment_nomos::{
     NomosBackend, NomosDatasetInvestigation, NomosDatasetLandscape, NomosDevelopmentEvidence,
-    NomosGenerationTemplates,
+    NomosGenerationTemplates, NomosRepairMetricPoint, project_repair_metric_points,
 };
 use encoder_optimization_core::{
     OptimizationError,
@@ -15,6 +15,8 @@ use encoder_optimization_core::{
         InspectionSelection,
     },
     ports::{BoxFuture, OptimizationInspection},
+    repair_outcome::RepairOutcomeSummary,
+    repair_strategy::RepairPlan,
 };
 use project_workspace_core::optimization_iteration::ProjectOptimizationIteration;
 use project_workspace_local::dataset_versions;
@@ -26,6 +28,10 @@ pub(super) struct IterationInspection {
     rows: BTreeMap<String, Value>,
     landscape: Option<NomosDatasetLandscape>,
     investigation: Option<NomosDatasetInvestigation>,
+    current_evidence: Vec<NomosDevelopmentEvidence>,
+    baseline_evidence: Vec<NomosDevelopmentEvidence>,
+    repair_memory: Vec<RepairOutcomeSummary>,
+    prior_interventions: std::collections::BTreeSet<String>,
 }
 
 impl IterationInspection {
@@ -185,13 +191,55 @@ impl IterationInspection {
         } else {
             None
         };
+        let outcomes = if iteration.scope.analysis_protocol == 3 {
+            project_workspace_local::optimization_repair_outcomes::list(
+                folder,
+                iteration.scope.run_id,
+            )
+            .await?
+            .into_iter()
+            .filter(|outcome| outcome.iteration < iteration.scope.iteration)
+            .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let prior_interventions = outcomes
+            .iter()
+            .filter(|outcome| {
+                outcome.output_development_evidence_fingerprint == iteration.development.fingerprint
+            })
+            .map(|outcome| outcome.intervention_fingerprint.clone())
+            .collect();
+        let mut repair_memory = Vec::new();
+        for outcome in outcomes.iter().rev().take(32) {
+            let summary = RepairOutcomeSummary::from(outcome);
+            let mut candidate = repair_memory.clone();
+            candidate.push(summary.clone());
+            if serde_json::to_vec(&candidate)?.len() > 131_072 {
+                break;
+            }
+            repair_memory.push(summary);
+        }
+        repair_memory.reverse();
         Ok(Self {
             scope: iteration.scope.clone(),
             failures,
             rows,
             landscape,
             investigation,
+            current_evidence,
+            baseline_evidence,
+            repair_memory,
+            prior_interventions,
         })
+    }
+
+    pub fn repair_metric_points(&self, plan: &RepairPlan) -> Result<Vec<NomosRepairMetricPoint>> {
+        Ok(project_repair_metric_points(
+            plan,
+            &self.current_evidence,
+            &self.baseline_evidence,
+        )?)
     }
 
     pub fn templates(&self, proposal: &DatasetEditProposal) -> Result<NomosGenerationTemplates> {
@@ -223,7 +271,82 @@ impl IterationInspection {
     }
 }
 
+pub(super) async fn result_repair_metric_points(
+    folder: &Path,
+    iteration: &ProjectOptimizationIteration,
+    result: &project_workspace_core::optimization_iteration_execution::IterationDevelopmentResult,
+    plan: &RepairPlan,
+) -> Result<(Vec<NomosRepairMetricPoint>, String)> {
+    let run =
+        project_workspace_local::optimization_runs::show(folder, iteration.scope.run_id).await?;
+    let preparation = run.preparation.as_ref().context("Preparation missing")?;
+    let binding = project_workspace_local::scientific_binding_history(folder)
+        .await?
+        .into_iter()
+        .find(|value| {
+            value.id.to_string() == preparation.execution_binding.id
+                && value.fingerprint == preparation.execution_binding.fingerprint
+        })
+        .context("Pinned runtime missing")?;
+    let training = project_workspace_local::optimization_iteration_execution::training(
+        folder,
+        iteration.scope.run_id,
+        iteration.id,
+    )
+    .await?
+    .context("Iteration training binding missing")?;
+    ensure!(
+        result.training_binding_fingerprint == training.fingerprint
+            && result.fingerprint == result.reproduce()?,
+        "Repair outcome development result changed"
+    );
+    let output_evidence =
+        project_workspace_core::optimization_iteration::IterationDevelopmentEvidence::completed(
+            &training,
+            result,
+            &iteration.development.benchmark_definition_fingerprint,
+        )?;
+    let store = super::super::super::open_bound_store(&folder.to_string_lossy(), &binding).await?;
+    let projected: Result<_> = async {
+        let runtime_project = super::super::super::load_bound_project(&store, &binding).await?;
+        let project = store
+            .get_project(training.scientific_project.id.parse()?)
+            .await?
+            .context("Iteration scientific project missing")?;
+        let protocol = store
+            .get_protocol(training.protocol.id.parse()?)
+            .await?
+            .context("Iteration scientific protocol missing")?;
+        let backend = super::super::super::open_nomos_binding(&binding, &runtime_project)?;
+        let candidate = result
+            .reports
+            .values()
+            .map(|report| {
+                backend.read_development_evidence(&project, &protocol.metric_contract, report)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let baseline = protocol
+            .baseline_development_reports()
+            .into_iter()
+            .map(|report| {
+                backend.read_development_evidence(&project, &protocol.metric_contract, report)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(project_repair_metric_points(plan, &candidate, &baseline)?)
+    }
+    .await;
+    store.pool().close().await;
+    Ok((projected?, output_evidence.fingerprint))
+}
+
 impl OptimizationInspection for IterationInspection {
+    fn repair_memory(&self, scope: AgentAnalysisScope) -> BoxFuture<'_, Vec<RepairOutcomeSummary>> {
+        Box::pin(async move {
+            self.validate(&scope)?;
+            Ok(self.repair_memory.clone())
+        })
+    }
+
     fn development_failures(
         &self,
         scope: AgentAnalysisScope,
@@ -356,7 +479,8 @@ impl OptimizationInspection for IterationInspection {
     ) -> BoxFuture<'_, encoder_optimization_core::repair_strategy::RepairPlanningContext> {
         Box::pin(async move {
             self.validate(&scope)?;
-            self.investigation
+            let mut context = self
+                .investigation
                 .as_ref()
                 .ok_or_else(|| {
                     OptimizationError::Validation(
@@ -369,7 +493,12 @@ impl OptimizationInspection for IterationInspection {
                     &inspected_row_ids,
                     scope.maximum_row_changes,
                 )
-                .map_err(|error| OptimizationError::Validation(error.to_string()))
+                .map_err(|error| OptimizationError::Validation(error.to_string()))?;
+            context
+                .prior_interventions
+                .clone_from(&self.prior_interventions);
+            context.validate()?;
+            Ok(context)
         })
     }
 }

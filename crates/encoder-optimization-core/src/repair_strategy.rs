@@ -179,6 +179,8 @@ pub struct RepairPlanningContext {
     pub clusters: BTreeMap<String, RepairPlanningCluster>,
     pub anchors: BTreeMap<String, RepairPlanningAnchor>,
     pub evidence_ids: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub prior_interventions: BTreeSet<String>,
 }
 
 impl RepairPlanningContext {
@@ -221,7 +223,11 @@ impl RepairPlanningContext {
             )?;
         }
         require(
-            self.evidence_ids.iter().all(|id| valid_id(id)),
+            self.evidence_ids.iter().all(|id| valid_id(id))
+                && self
+                    .prior_interventions
+                    .iter()
+                    .all(|value| canonical_fingerprint(value)),
             "Repair planning evidence identity is invalid",
         )
     }
@@ -344,6 +350,7 @@ pub enum RepairPlanConstraintCode {
     ContrastLabelMismatch,
     DuplicateRemovalUnproven,
     RepeatedEdit,
+    RepeatedUnchangedIntervention,
     RowChangeBudgetExceeded,
 }
 
@@ -451,6 +458,14 @@ impl<'a> Compiler<'a> {
 
     fn compile_target(&mut self, target: &RepairTarget) {
         let id = target.target_id.as_str();
+        if crate::repair_outcome::intervention_fingerprint(target)
+            .is_ok_and(|signature| self.context.prior_interventions.contains(&signature))
+        {
+            self.constraint(
+                RepairPlanConstraintCode::RepeatedUnchangedIntervention,
+                Some(id),
+            );
+        }
         if !valid_id(id)
             || !valid_text(&target.hypothesis, 1_000)
             || !valid_text(&target.evidence_limitations, 1_000)

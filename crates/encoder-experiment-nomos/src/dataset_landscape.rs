@@ -618,6 +618,7 @@ impl NomosDatasetInvestigation {
             clusters,
             anchors,
             evidence_ids: inspected_cluster_ids.iter().cloned().collect(),
+            prior_interventions: BTreeSet::new(),
         };
         context.validate().map_err(adapter_error)?;
         Ok(context)
@@ -727,7 +728,10 @@ fn investigation_selection(
     output
 }
 
-fn stable_cluster_key(dimension: &str, value: &str) -> Result<String, EncoderTaskAdapterError> {
+pub(crate) fn stable_cluster_key(
+    dimension: &str,
+    value: &str,
+) -> Result<String, EncoderTaskAdapterError> {
     Ok(format!(
         "nomos-cluster-{}",
         artifact_core::fingerprint(&json!({

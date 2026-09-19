@@ -54,6 +54,7 @@ struct RepairPlan {
     v3_canary: Option<encoder_optimization_core::generation::V3CanaryGate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     not_executed: Option<encoder_optimization_core::generation::RepairNotExecuted>,
+    outcomes: Vec<encoder_optimization_core::repair_outcome::RepairOutcome>,
 }
 
 #[derive(Serialize)]
@@ -101,6 +102,16 @@ pub(super) async fn read(folder: &Path, run_id: Uuid) -> Result<History> {
     };
     let mut iterations = Vec::new();
     let mut repairs = project_workspace_local::optimization_repair::read(folder, run_id).await?;
+    let mut outcomes = project_workspace_local::optimization_repair_outcomes::list(folder, run_id)
+        .await?
+        .into_iter()
+        .fold(
+            std::collections::BTreeMap::<u32, Vec<_>>::new(),
+            |mut values, outcome| {
+                values.entry(outcome.iteration).or_default().push(outcome);
+                values
+            },
+        );
     for input in inputs {
         let repair_plan = repairs
             .remove(&input.scope.iteration)
@@ -117,6 +128,7 @@ pub(super) async fn read(folder: &Path, run_id: Uuid) -> Result<History> {
                     .map(|item| encoder_experiment_nomos::project_repair_evidence(item, &reports))
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok::<_, anyhow::Error>(RepairPlan {
+                    outcomes: outcomes.remove(&input.scope.iteration).unwrap_or_default(),
                     v3_canary: recorded.v3_canary,
                     not_executed: recorded.not_executed,
                     canary: GenerationCanary {
@@ -234,6 +246,10 @@ pub(super) async fn read(folder: &Path, run_id: Uuid) -> Result<History> {
             repair_plan,
         });
     }
+    ensure!(
+        outcomes.is_empty(),
+        "Repair outcomes have no recorded iteration plan"
+    );
     Ok(History {
         project_id: run.run.project_id,
         run_id,

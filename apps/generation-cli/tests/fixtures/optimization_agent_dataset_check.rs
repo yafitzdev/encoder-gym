@@ -92,6 +92,21 @@ async fn cli_v3_canary_rejection_completes_the_loop_without_training() {
 }
 
 #[tokio::test]
+async fn cli_v3_persists_measured_target_outcome_after_development() {
+    scenario(true, Some("v3_complete")).await;
+}
+
+#[tokio::test]
+async fn cli_v3_outcome_persistence_recovers_without_repeating_work() {
+    scenario(true, Some("v3_outcome_resume")).await;
+}
+
+#[tokio::test]
+async fn cli_v3_second_iteration_receives_outcome_and_rejects_unchanged_intervention() {
+    scenario(true, Some("v3_two_iterations")).await;
+}
+
+#[tokio::test]
 async fn cli_agent_preflight_blocks_irreparable_starting_dataset_before_provider_dispatch() {
     scenario(true, Some("dirty_preflight")).await;
 }
@@ -286,51 +301,67 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+    let generator_requests = if loop_mode == Some("v3_two_iterations") {
+        2
+    } else {
+        1
+    };
     let generator = (!matches!(loop_mode, Some("no_change_first" | "agent_limit" | "generation_limit" | "dirty_preflight"))).then(|| std::thread::spawn(move || {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
-        let mut stream = loop {
-            match listener.accept() {
-                Ok((stream, _)) => break stream,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    assert!(
-                        std::time::Instant::now() < deadline,
-                        "Generator was never invoked"
-                    );
-                    std::thread::sleep(std::time::Duration::from_millis(10));
+        let mut requests = Vec::new();
+        for request_index in 0..generator_requests {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "Generator request {} was never invoked",
+                            request_index + 1
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("{error}"),
                 }
-                Err(error) => panic!("{error}"),
-            }
-        };
-        stream.set_nonblocking(false).unwrap();
-        stream
-            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-            .unwrap();
-        let mut bytes = Vec::new();
-        let mut chunk = [0; 4096];
-        let request: Value = loop {
-            let n = stream.read(&mut chunk).unwrap();
-            assert!(n > 0);
-            bytes.extend_from_slice(&chunk[..n]);
-            if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
-                let headers = String::from_utf8_lossy(&bytes[..end]);
-                let count: usize = headers
-                    .lines()
-                    .find_map(|line| {
-                        line.to_ascii_lowercase()
-                            .strip_prefix("content-length:")
-                            .map(|v| v.trim().parse().unwrap())
-                    })
-                    .unwrap();
-                if bytes.len() >= end + 4 + count {
-                    break serde_json::from_slice(&bytes[end + 4..end + 4 + count]).unwrap();
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut bytes = Vec::new();
+            let mut chunk = [0; 4096];
+            let request: Value = loop {
+                let n = stream.read(&mut chunk).unwrap();
+                assert!(n > 0);
+                bytes.extend_from_slice(&chunk[..n]);
+                if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&bytes[..end]);
+                    let count: usize = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse().unwrap())
+                        })
+                        .unwrap();
+                    if bytes.len() >= end + 4 + count {
+                        break serde_json::from_slice(&bytes[end + 4..end + 4 + count]).unwrap();
+                    }
                 }
-            }
-        };
-        assert_eq!(request["model"], "pinned-generator");
-        assert!(!request.to_string().contains("NEVER_DISCLOSE_HOLDOUT"));
-        let body = json!({"choices":[{"message":{"content":"{\"rows\":[{\"question\":\"Search the exact technical reference\"}]}"}}],"usage":{"prompt_tokens":120,"completion_tokens":40,"total_tokens":160}}).to_string();
-        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
-        request
+            };
+            assert_eq!(request["model"], "pinned-generator");
+            assert!(!request.to_string().contains("NEVER_DISCLOSE_HOLDOUT"));
+            let question = if generator_requests == 1 {
+                "Search the exact technical reference".to_string()
+            } else {
+                format!("Search the exact technical reference {}", request_index + 1)
+            };
+            let content = json!({"rows":[{"question":question}]}).to_string();
+            let body = json!({"choices":[{"message":{"content":content}}],"usage":{"prompt_tokens":120,"completion_tokens":40,"total_tokens":160}}).to_string();
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+            requests.push(request);
+        }
+        requests
     }));
     let provider = |role, model: &str| ProviderConfiguration {
         role,
@@ -385,7 +416,12 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     if let Some(mode) = loop_mode {
         settings = if matches!(
             mode,
-            "v3_prepare" | "v3_semantic_reject" | "v3_loop_semantic_reject"
+            "v3_prepare"
+                | "v3_semantic_reject"
+                | "v3_loop_semantic_reject"
+                | "v3_complete"
+                | "v3_outcome_resume"
+                | "v3_two_iterations"
         ) {
             let mut value = OptimizationAgentSettings::quick_test();
             value.analysis_protocol = 3;
@@ -398,10 +434,14 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         };
         settings.maximum_iterations = if matches!(
             mode,
-            "v3_prepare" | "v3_semantic_reject" | "v3_loop_semantic_reject"
+            "v3_prepare"
+                | "v3_semantic_reject"
+                | "v3_loop_semantic_reject"
+                | "v3_complete"
+                | "v3_outcome_resume"
         ) {
             1
-        } else if mode == "two_iterations" {
+        } else if matches!(mode, "two_iterations" | "v3_two_iterations") {
             2
         } else if matches!(
             mode,
@@ -419,6 +459,10 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         settings.maximum_row_changes = if mode == "row_limit" { 2 } else { 8 };
         if mode == "canary_rejected" {
             settings.maximum_row_changes = 20;
+        }
+        if mode == "v3_two_iterations" {
+            settings.mode = project_workspace_core::OptimizationMode::Standard;
+            settings.maximum_agent_turns_per_iteration = 5;
         }
         settings.training.maximum_seconds_per_iteration = 120;
         if mode == "training_timeout" {
@@ -439,6 +483,9 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     }
     if loop_mode == Some("generation_limit") {
         generation_limits.maximum_input_tokens = 1;
+    }
+    if loop_mode == Some("v3_two_iterations") {
+        run_limits.maximum_requests = 16;
     }
     settings.provider_limits = Some(project_workspace_core::OptimizationProviderLimits {
         advisor: run_limits,
@@ -871,7 +918,14 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     if loop_mode.is_some()
         && !matches!(
             loop_mode,
-            Some("v3_prepare" | "v3_semantic_reject" | "v3_loop_semantic_reject")
+            Some(
+                "v3_prepare"
+                    | "v3_semantic_reject"
+                    | "v3_loop_semantic_reject"
+                    | "v3_complete"
+                    | "v3_outcome_resume"
+                    | "v3_two_iterations"
+            )
         )
     {
         let mut db = SqliteConnection::connect(&format!(
@@ -1038,6 +1092,58 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         );
         return;
     }
+    if loop_mode == Some("v3_outcome_resume") {
+        let database = folder.join("project.sqlite");
+        install_trigger(
+            &database,
+            "CREATE TRIGGER interrupt_repair_outcome BEFORE INSERT ON optimization_repair_outcomes BEGIN SELECT RAISE(ABORT, 'injected repair outcome interruption'); END",
+        )
+        .await;
+        let interrupted = invoke_iteration();
+        assert_injected(interrupted, "injected repair outcome interruption");
+        generator.unwrap().join().unwrap();
+        let calls_before = fs::read(&calls).unwrap();
+        let native_before = fs::read(root.join("runtime/native-invocations.log")).unwrap();
+        assert!(
+            project_workspace_local::optimization_repair_outcomes::list(&folder, reserved.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            project_workspace_local::optimization_completions::list(&folder, reserved.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        drop_trigger(&database, "interrupt_repair_outcome").await;
+        let recovered = execute();
+        assert_eq!(recovered["completion"]["end"], "iteration_limit");
+        assert_eq!(fs::read(&calls).unwrap(), calls_before);
+        assert_eq!(
+            fs::read(root.join("runtime/native-invocations.log")).unwrap(),
+            native_before
+        );
+        let outcomes =
+            project_workspace_local::optimization_repair_outcomes::list(&folder, reserved.id)
+                .await
+                .unwrap();
+        assert_eq!(outcomes.len(), 1);
+        let replay = execute();
+        assert_eq!(replay, recovered);
+        assert_eq!(
+            project_workspace_local::optimization_repair_outcomes::list(&folder, reserved.id)
+                .await
+                .unwrap(),
+            outcomes
+        );
+        assert_eq!(fs::read(&calls).unwrap(), calls_before);
+        assert_eq!(
+            fs::read(root.join("runtime/native-invocations.log")).unwrap(),
+            native_before
+        );
+        return;
+    }
     let first = execute();
     if let Some(generator) = generator {
         generator.join().unwrap();
@@ -1065,6 +1171,53 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 6);
         assert!(first["datasetStep"]["qualification"].is_object());
         assert!(first["datasetStep"]["candidate"].is_null());
+        return;
+    }
+    if loop_mode == Some("v3_complete") {
+        let outcomes =
+            project_workspace_local::optimization_repair_outcomes::list(&folder, reserved.id)
+                .await
+                .unwrap();
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].target_id, "search-variant");
+        assert_eq!(outcomes[0].edits.requested_additions, 1);
+        assert_eq!(outcomes[0].edits.published_additions, 1);
+        assert!(!outcomes[0].observations.is_empty());
+        assert_ne!(
+            outcomes[0].output_development_evidence_fingerprint,
+            project_workspace_local::optimization_iterations::list(&folder, reserved.id)
+                .await
+                .unwrap()
+                .first()
+                .unwrap()
+                .development
+                .fingerprint
+        );
+        assert_eq!(first["completion"]["end"], "iteration_limit");
+        return;
+    }
+    if loop_mode == Some("v3_two_iterations") {
+        let outcomes =
+            project_workspace_local::optimization_repair_outcomes::list(&folder, reserved.id)
+                .await
+                .unwrap();
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0].iteration, 1);
+        assert_eq!(outcomes[1].iteration, 2);
+        assert_eq!(
+            outcomes[0].global_verdict,
+            encoder_optimization_core::repair_outcome::RepairGlobalVerdict::Reject
+        );
+        assert_eq!(
+            outcomes[1].global_verdict,
+            encoder_optimization_core::repair_outcome::RepairGlobalVerdict::Reject
+        );
+        assert_ne!(
+            outcomes[0].intervention_fingerprint,
+            outcomes[1].intervention_fingerprint
+        );
+        assert_eq!(first["completion"]["end"], "iteration_limit");
+        assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 13);
         return;
     }
     if let Some(mode) = loop_mode {

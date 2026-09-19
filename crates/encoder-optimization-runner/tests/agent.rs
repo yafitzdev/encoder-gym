@@ -118,6 +118,7 @@ fn v3_context() -> RepairPlanningContext {
             },
         )]),
         evidence_ids: BTreeSet::from(["dataset-cluster-1".into()]),
+        prior_interventions: BTreeSet::new(),
     }
 }
 

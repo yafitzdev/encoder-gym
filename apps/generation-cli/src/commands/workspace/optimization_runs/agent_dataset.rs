@@ -4,6 +4,7 @@
 pub(super) mod control;
 mod inspection;
 mod iteration_loop;
+mod outcomes;
 mod progress;
 mod providers;
 mod qualification;
@@ -65,6 +66,10 @@ struct DatasetStepResult {
     >,
     #[serde(skip_serializing_if = "Option::is_none")]
     candidate: Option<registration::IterationCandidate>,
+    #[serde(skip)]
+    repair_plan: Option<RepairPlan>,
+    #[serde(skip)]
+    input_metric_points: Vec<encoder_experiment_nomos::NomosRepairMetricPoint>,
 }
 
 pub(super) async fn execute(
@@ -167,6 +172,33 @@ async fn run_step(
             if let Some(qualified) = &result.qualification {
                 let (development, candidate) =
                     training::complete(folder, run_id, qualified).await?;
+                if let (Some(plan), Some(publication)) =
+                    (result.repair_plan.as_ref(), result.publication.as_ref())
+                {
+                    let (candidate_points, output_evidence_fingerprint) =
+                        inspection::result_repair_metric_points(
+                            folder,
+                            iteration,
+                            &development,
+                            plan,
+                        )
+                        .await?;
+                    outcomes::record(
+                        folder,
+                        outcomes::OutcomeSources {
+                            iteration,
+                            plan,
+                            proposal: &result.proposal,
+                            publication,
+                            input_points: &result.input_metric_points,
+                            candidate_points: &candidate_points,
+                            development: &development,
+                            output_development_evidence_fingerprint: &output_evidence_fingerprint,
+                            candidate: &candidate,
+                        },
+                    )
+                    .await?;
+                }
                 result.development = Some(development);
                 result.candidate = Some(candidate);
             }
@@ -280,6 +312,8 @@ async fn drive(
             qualification: None,
             development: None,
             candidate: None,
+            repair_plan: None,
+            input_metric_points: Vec::new(),
         });
     }
     let history = agent_store.history(iteration.scope.clone()).await?;
@@ -317,6 +351,11 @@ async fn drive(
             providers::output_limit(&launch.scope.generation),
         )?
     };
+    let input_metric_points = v3
+        .as_ref()
+        .map(|(plan, _)| inspection.repair_metric_points(plan))
+        .transpose()?
+        .unwrap_or_default();
     if !tasks.is_empty() {
         let backend = providers::generation(run.run.project_id, generation_store.provider())?;
         let generator = OptimizationGenerator {
@@ -406,6 +445,8 @@ async fn drive(
                         qualification: None,
                         development: None,
                         candidate: None,
+                        repair_plan: Some(plan.clone()),
+                        input_metric_points,
                     });
                 }
                 let bulk_outcomes = generator.generate(bulk_tasks.clone()).await?;
@@ -446,6 +487,8 @@ async fn drive(
         qualification: None,
         development: None,
         candidate: None,
+        repair_plan: v3.map(|(plan, _)| plan),
+        input_metric_points,
     })
 }
 

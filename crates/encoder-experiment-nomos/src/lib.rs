@@ -12,6 +12,7 @@ mod native_inventory;
 mod progress;
 mod repair_delta;
 mod repair_evidence;
+mod repair_outcome;
 mod training_clearance;
 pub use agent_training::NomosFineTuneSettings;
 mod training_accounting;
@@ -39,6 +40,7 @@ pub use progress::{
     with_stop_probe,
 };
 pub use repair_evidence::{NomosRepairEvidence, project_repair_evidence};
+pub use repair_outcome::{NomosRepairMetricPoint, project_repair_metric_points};
 pub use training_clearance::NomosTrainingClearance;
 pub use training_data::{VerifiedTrainingData, VerifiedTrainingInput};
 
