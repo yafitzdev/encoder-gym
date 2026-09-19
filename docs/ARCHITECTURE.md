@@ -81,8 +81,14 @@ turn at a time through `agent-runtime-core`; it validates inspected evidence and
 row references rather than trusting model output. `project-workspace-local`
 implements its append-only call journal and cumulative reservation accounting.
 The Nomos adapter owns development-only saved diagnostic inspection and compact
-native training-row projection. Native validation, dataset publication, training
-and deterministic benchmark decisions remain with their existing slice owners.
+native training-row projection. Its version-2 inspection builds a deterministic
+dataset landscape by scanning every pinned training row, grouping rows by the
+same dimensions emitted by the native evaluator, and joining coverage to current
+and original-baseline development metrics. The Agent sees ranked aggregate
+clusters first and can then request content-hash-selected representative rows;
+the generic runner never learns Nomos row or metric shapes. Native validation,
+dataset publication, training and deterministic benchmark decisions remain with
+their existing slice owners.
 The generation slice also owns a narrow structured-output transport port for
 task-native schemas. Its existing OpenAI-compatible adapter implements one
 bounded request without hidden retries; Nomos owns prompt construction and

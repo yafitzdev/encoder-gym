@@ -407,6 +407,49 @@ development benchmark; this may still take time. Quick tests never use final
 holdout or qualify a model for promotion. A plain one-iteration normal run is
 not called a quick test.
 
+## Dataset-intelligence inspection protocol
+
+New standard and Quick-test launches use the version-2 dataset-intelligence
+protocol. The protocol version is an immutable launch input. Historical
+version-1 runs retain their original failure-page and training-row tools so a
+retry cannot change its request fingerprint or scientific meaning.
+
+Version 2 replaces arbitrary first-page inspection with a deterministic,
+task-owned landscape:
+
+1. The task adapter scans the complete selected training version and groups
+   every row by bounded, declared dimensions that also exist in persisted
+   development diagnostics.
+2. It joins training counts and shares to current and original-baseline
+   development metrics for the same dimension/value clusters.
+3. It ranks cluster summaries deterministically by development error mass,
+   regression, and stable cluster identity. The summary explicitly states that
+   dimensions may overlap.
+4. The Agent first calls `inspect_dataset_landscape`, then calls
+   `inspect_dataset_clusters` for one to four chosen cluster identities. The
+   latter returns a deterministic content-addressed sample of rows from each
+   cluster. Only those returned rows may be removed or used as generation
+   templates.
+5. The following turn is proposal-only. Cluster-summary identities are valid
+   development evidence references. The Agent must explain its selected
+   clusters and requested row counts; the deterministic host still validates
+   references and the remaining whole-run edit allowance.
+
+The Nomos version-2 landscape uses existing evaluator dimensions rather than
+changing evaluation: expected capability, task kind, scenario family and legal
+candidate-pool size. It exposes support, recall, reciprocal rank and positive
+margin from already-saved development reports. Training membership is derived
+from the complete immutable dataset using the native row validator. No sealed
+report, row or score can enter the landscape.
+
+This protocol is qualitative dataset diagnosis, not acceptance authority. It
+does not infer that an underrepresented cluster is causal, choose a winning
+model, or make requested edit counts statistically optimal. It gives the Agent
+complete aggregate coverage and relevant examples so its hypothesis is based on
+the dataset rather than lexicographic row order. Future work may add new
+evaluation dimensions, but may not mutate the meaning of this versioned
+contract.
+
 ## Execution and recovery
 
 The root pins baseline, starting dataset, benchmark and both provider revisions.
