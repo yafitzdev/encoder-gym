@@ -34,6 +34,7 @@ export interface EncoderGymBridge {
   cancelInputOptimization(id: string, runId: string): Promise<InputOptimizationRun>;
   stopInputOptimization(id: string, runId: string): Promise<void>;
   inputOptimizationRun(id: string, runId: string): Promise<InputOptimizationRun>;
+  inputOptimizationCases(id: string, runId: string, iteration: number): Promise<import("./optimization-cases.js").OptimizationCases>;
   inputOptimizationRuns(id: string): Promise<InputOptimizationRun[]>;
   queryBenchmarks(id: string, request: BenchmarkQuery): Promise<BenchmarkQueryResult>;
   initializeBenchmark(id: string, progress?: (value: NativeProgress) => void, preparationId?: string): Promise<BenchmarkInitializationResult>;
@@ -106,6 +107,7 @@ const bridge: EncoderGymBridge = {
   cancelInputOptimization: (id, runId) => ipcRenderer.invoke("encoder-gym:cancel-input-optimization", id, runId),
   stopInputOptimization: (id, runId) => ipcRenderer.invoke("encoder-gym:stop-input-optimization", id, runId),
   inputOptimizationRun: (id, runId) => ipcRenderer.invoke("encoder-gym:input-optimization-run", id, runId),
+  inputOptimizationCases: (id, runId, iteration) => ipcRenderer.invoke("encoder-gym:input-optimization-cases", id, runId, iteration),
   inputOptimizationRuns: id => ipcRenderer.invoke("encoder-gym:input-optimization-runs", id),
   queryBenchmarks: (id, request) => ipcRenderer.invoke("encoder-gym:query-benchmarks", id, request),
   initializeBenchmark: (id, receive, preparationId) => {

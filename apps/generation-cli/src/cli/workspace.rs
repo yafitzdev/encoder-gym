@@ -109,6 +109,12 @@ pub enum WorkspaceOptimizationRunCommand {
     Iterations { run_id: Uuid },
     /// Read iteration custody and original development comparisons; never executes work.
     History { run_id: Uuid },
+    /// Compare saved development cases for one completed iteration; no inference.
+    Cases {
+        run_id: Uuid,
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=10))]
+        iteration: u32,
+    },
     /// Pin the first Agent iteration from already-verified inputs and saved development evidence.
     BindIteration { run_id: Uuid },
     /// Execute the pinned Agent and generator, publishing its dataset edits without training.

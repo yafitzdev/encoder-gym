@@ -69,6 +69,20 @@ publication and training; resuming reuses the rejection, without spending again.
 Interrupted/unknown attempts remain charged and follow normal budgeted recovery.
 Older launches retain their original policy, with no retroactive canary claim.
 
+Completed candidate reports offer **Compare saved cases**, an on-demand read for
+the selected iteration. It pairs the original baseline and exact candidate by
+development suite and source-row identity, with side-by-side questions, expected
+and predicted capabilities, and expected-item ranks. Suite/filter controls and
+20-case pages retain both improvements and regressions. Rank comparison also
+requires identical recorded question, task kind and expected capabilities.
+Nomos stores at most 50 disagreements per report, not all predictions: an absent
+case, changed context, or unrecorded rank is **Not comparable**, never an inferred
+fix. Missing/corrupt diagnostics remain unavailable; aggregate gates are unchanged.
+Routine status polling does not load these files, and viewing/reloading never
+invokes inference. CLI: `synth workspace optimization-run <PROJECT> cases <RUN_ID>
+--iteration <N>`. Scientific candidate evaluation must be complete; loop bookkeeping
+does not need to be rerun just to read saved cases.
+
 Use **New project** (the sidebar plus) to choose a local checkpoint, preview its
 format/size, name the project, and choose a parent location. Gym copies the
 checkpoint into a new owned folder and creates its manifest, registry database,

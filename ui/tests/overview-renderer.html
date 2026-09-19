@@ -6,6 +6,7 @@ window.fixtureReady = true;
 window.startFixture = initial => {
   const { workspace, datasets, benchmark, saved, roots } = initial;
   let finish, stopPreparation;
+  window.caseReads=0;
   const bridge = {
     queryDatasets: async () => ({kind:'list',entries:datasets}), queryBenchmarks:async()=>({kind:'list',versions:[benchmark]}),
     optimizationSetups:async()=>[saved], optimizationLaunches:async()=>[], optimizationAgentPresets:async()=>initial.presets,
@@ -14,6 +15,7 @@ window.startFixture = initial => {
     finishInputPreparation:async()=>{},stopInputPreparation:async()=>stopPreparation?.(),
     previewOptimizationSetup:async(_id,_selection,receive)=>{receive({phase:'verifying_file',subject:'model.safetensors',completed:1,total:10});return new Promise((_resolve,reject)=>{stopPreparation=()=>reject(new Error('Run cancelled.'))})},
     inputOptimizationRuns:async()=>roots, projectActivity:async()=>({project_id:saved.inputs.projectId,actions:[]}),
+    inputOptimizationCases:async()=>{window.caseReads++;if(window.caseFixtureError)throw new Error('fixture unreadable');return window.caseFixture},
     startInputOptimization:async()=>({run:{...roots[0],id:'new-root',experimentRunId:undefined,setupId:saved.id,state:'queued',createdAt:'2026-09-14T12:00:00Z',lastSequence:1}}),
     driveInputOptimization:async(_project,id)=>new Promise(resolve=>{finish=()=>resolve({...roots[0],id,experimentRunId:undefined,createdAt:'2026-09-14T12:00:00Z',state:'ready',lastSequence:2})}),
     inputOptimizationRun:async(_project,id)=>({...roots[0],id,experimentRunId:undefined,createdAt:'2026-09-14T12:00:00Z',state:'ready',lastSequence:2}),

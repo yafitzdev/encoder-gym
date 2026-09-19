@@ -5,9 +5,11 @@ import { button } from "./components.js";
 import { comparisonTone } from "./overview-records.js";
 import { delta, metricInfo, score, suiteName } from "./catalog.js";
 import { repairPlanPanel } from "./repair-plan.js";
+import { developmentCasesPanel } from "./development-cases.js";
+import type { DevelopmentCasesController } from "./development-cases-controller.js";
 
 /** These are recorded development verdicts, never promotion or holdout approval. */
-export function iterationReport(iteration: OptimizationIteration | undefined, actions: Actions): HTMLElement {
+export function iterationReport(iteration: OptimizationIteration | undefined, actions: Actions, cases?: {runId: string; controller: DevelopmentCasesController}): HTMLElement {
   if (!iteration) return h("p", { class: "muted" }, "Select an iteration to inspect its report.");
   const decision = iteration.developmentPassed === null ? undefined : iteration.developmentPassed ? "KEEP" : "REJECT";
   const modelId = iteration.modelId, training = iteration.trainingDatasetVersionId, qualified = iteration.qualifiedDatasetVersionId;
@@ -34,5 +36,8 @@ export function iterationReport(iteration: OptimizationIteration | undefined, ac
         return h("tr", { "data-report-id": check.reportId }, h("th", { scope: "row" }, suiteName(check.suite), h("small", {}, metricInfo(check.metric).label)),
           h("td", {}, score(check.baseline, check.metric)), h("td", { class: tone }, score(check.candidate, check.metric)),
           h("td", { class: tone }, delta(check.candidate - check.baseline, check.metric)), h("td", {}, check.passed ? "Pass" : "Fail"));
-      })))) : null);
+      })))) : null,
+    cases && iteration.completed && iteration.modelId && !iteration.noChange ? developmentCasesPanel({
+      state: cases.controller.state(cases.runId, iteration.id), load: retry => { void cases.controller.load(cases.runId, iteration, retry); },
+    }, actions.render) : null);
 }

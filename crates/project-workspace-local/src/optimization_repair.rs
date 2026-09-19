@@ -3,9 +3,10 @@ use std::{collections::BTreeMap, path::Path};
 
 use anyhow::{Context, Result, ensure};
 use encoder_optimization_core::{
-    agent::InspectionItem,
+    agent::{AgentCallReservation, AgentTurnRecord, InspectionItem},
     generation::{
-        AdmittedGenerationRow, GenerationCanaryObservation, GenerationCanaryStatus, canary_passed,
+        AdmittedGenerationRow, GenerationCanaryObservation, GenerationCanaryStatus,
+        GenerationOutcome, GenerationReservation, GenerationTask, canary_passed,
     },
     repair_plan::{DatasetRepairPlan, recorded_plan},
 };
@@ -39,19 +40,63 @@ pub struct RepairPlanRead {
     pub canary_rows: Vec<AdmittedGenerationRow>,
 }
 
-pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPlanRead>> {
+struct ReceiptSnapshot {
+    iteration: project_workspace_core::optimization_iteration::ProjectOptimizationIteration,
+    calls: Vec<(AgentCallReservation, Option<AgentTurnRecord>)>,
+    generation: Vec<(
+        GenerationTask,
+        GenerationReservation,
+        Option<GenerationOutcome>,
+    )>,
+    publication: Option<optimization_dataset::OptimizationDatasetPublication>,
+}
+
+async fn receipt_snapshot(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, ReceiptSnapshot>> {
     let mut db = connect(folder, true, false).await?;
     let mut snapshot = db.begin().await?;
-    // Establish the receipt snapshot before loading the verified iteration
-    // list. Concurrent advancement may add a newer, empty-at-this-snapshot
-    // iteration, but cannot make captured generation look unbound.
-    sqlx::query("SELECT name FROM sqlite_master LIMIT 1")
-        .fetch_optional(&mut *snapshot)
-        .await?;
+    // Capture bindings and all receipts on ONE connection. Never open another
+    // reader while holding this shared lock: a pending rollback-journal writer
+    // would wait on us while our nested reader waits on that writer.
+    let iterations = optimization_iterations::read(&mut snapshot, run_id).await?;
+    let mut generation = BTreeMap::<u32, Vec<_>>::new();
+    if !iterations.is_empty() {
+        for record in optimization_generation::read_calls(&mut snapshot, run_id).await? {
+            generation
+                .entry(record.0.iteration)
+                .or_default()
+                .push(record);
+        }
+    }
+    let mut receipts = BTreeMap::new();
+    for iteration in iterations {
+        let number = iteration.scope.iteration;
+        receipts.insert(
+            number,
+            ReceiptSnapshot {
+                iteration,
+                calls: optimization_agent::read_history(&mut snapshot, run_id, Some(number))
+                    .await?,
+                generation: generation.remove(&number).unwrap_or_default(),
+                publication: optimization_dataset::read_publication(&mut snapshot, run_id, number)
+                    .await?,
+            },
+        );
+    }
+    ensure!(
+        generation.is_empty(),
+        "Generation refers to an unbound iteration"
+    );
+    snapshot.rollback().await?;
+    db.close().await?;
+    Ok(receipts)
+}
+
+pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPlanRead>> {
+    let mut receipts = receipt_snapshot(folder, run_id).await?;
+    // Validate custody only AFTER releasing the receipt snapshot. A concurrent
+    // append may add iterations, but cannot change any captured binding.
     let iterations = optimization_iterations::list(folder, run_id).await?;
-    if iterations.is_empty() {
-        snapshot.rollback().await?;
-        db.close().await?;
+    if receipts.is_empty() {
         return Ok(BTreeMap::new());
     }
     let run = crate::optimization_runs::show(folder, run_id).await?;
@@ -66,21 +111,19 @@ pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPla
         .agentic
         .as_ref()
         .and_then(|settings| settings.generation_canary);
-    let generation = optimization_generation::read_calls(&mut snapshot, run_id).await?;
-    let mut by_iteration = BTreeMap::<u32, Vec<_>>::new();
-    for record in generation {
-        by_iteration
-            .entry(record.0.iteration)
-            .or_default()
-            .push(record);
-    }
     let mut result = BTreeMap::new();
     for iteration in iterations {
         let number = iteration.scope.iteration;
-        let calls = optimization_agent::read_history(&mut snapshot, run_id, Some(number)).await?;
-        let records = by_iteration.remove(&number).unwrap_or_default();
-        let publication =
-            optimization_dataset::read_publication(&mut snapshot, run_id, number).await?;
+        let Some(receipt) = receipts.remove(&number) else {
+            continue;
+        };
+        ensure!(
+            receipt.iteration == iteration,
+            "Repair plan iteration changed"
+        );
+        let calls = receipt.calls;
+        let records = receipt.generation;
+        let publication = receipt.publication;
         let Some(recorded) = recorded_plan(&iteration.scope, &calls, &records)? else {
             ensure!(
                 publication.is_none(),
@@ -280,10 +323,41 @@ pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPla
         );
     }
     ensure!(
-        by_iteration.is_empty(),
-        "Generation refers to an unbound iteration"
+        receipts.is_empty(),
+        "Repair receipts refer to an unbound iteration"
     );
-    snapshot.rollback().await?;
-    db.close().await?;
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn receipt_snapshot_releases_read_lock_before_custody_reads() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut writer = connect(folder.path(), false, true).await.unwrap();
+        sqlx::query("CREATE TABLE project_optimization_iterations(id TEXT, run_id TEXT, iteration INTEGER, scope_fingerprint TEXT, fingerprint TEXT, metadata_json TEXT, created_at TEXT)")
+            .execute(&mut writer).await.unwrap();
+        let before = std::fs::read(folder.path().join(crate::DATABASE)).unwrap();
+        assert!(
+            receipt_snapshot(folder.path(), Uuid::new_v4())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            before,
+            std::fs::read(folder.path().join(crate::DATABASE)).unwrap()
+        );
+        sqlx::query("PRAGMA busy_timeout=0")
+            .execute(&mut writer)
+            .await
+            .unwrap();
+        // A leaked shared snapshot would reject this immediately. Subsequent
+        // custody/model/dataset reads must not keep a pending writer waiting.
+        let transaction = writer.begin_with("BEGIN EXCLUSIVE").await.unwrap();
+        transaction.rollback().await.unwrap();
+        writer.close().await.unwrap();
+    }
 }

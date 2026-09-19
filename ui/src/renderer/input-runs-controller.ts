@@ -5,6 +5,7 @@ import type { WorkspaceSnapshot } from "../workspace.js";
 import type { NativeProgress } from "../managed-control.js";
 import { appendLiveActivity, inputRunActivity, type InputRunActivity, type InputRunActivityEntry } from "./input-run-activity.js";
 import { OptimizationFinalController } from "./optimization-final-controller.js";
+import { DevelopmentCasesController } from "./development-cases-controller.js";
 
 export class InputRunsController {
   runs?: InputOptimizationRun[];
@@ -25,8 +26,10 @@ export class InputRunsController {
   historyLoading = new Set<string>();
   historyErrors = new Map<string, unknown>();
   readonly final: OptimizationFinalController;
+  readonly cases: DevelopmentCasesController;
   constructor(readonly projectId: string, private bridge: EncoderGymBridge, private render: () => void, private updated?: (workspace: ManagedWorkspace, snapshot?: WorkspaceSnapshot) => void) {
     this.final = new OptimizationFinalController(projectId, bridge, render, updated);
+    this.cases = new DevelopmentCasesController(projectId, (runId, iteration) => bridge.inputOptimizationCases(projectId, runId, iteration), render);
   }
   async stop(run: InputOptimizationRun): Promise<void> {
     if (run.projectId !== this.projectId || this.stoppingId || this.runningId !== run.id && !inputOptimizationMayBeActive(run)) return;
@@ -77,7 +80,7 @@ export class InputRunsController {
     finally { this.activityLoading.delete(runId); this.render(); }
   }
   async ensure(): Promise<void> { if (!this.runs && !this.loading && !this.error) await this.load(); }
-  refresh(): void { if (!this.runningId && !this.stoppingId) { this.epoch++; this.runs = undefined; this.error = undefined; this.loading = false; this.activities.clear(); this.activityLoaded.clear(); this.activityErrors.clear(); this.historyLoadedAt.clear(); this.historyErrors.clear(); this.render(); } }
+  refresh(): void { if (!this.runningId && !this.stoppingId) { this.epoch++; this.cases.clear(); this.runs = undefined; this.error = undefined; this.loading = false; this.activities.clear(); this.activityLoaded.clear(); this.activityErrors.clear(); this.historyLoadedAt.clear(); this.historyErrors.clear(); this.render(); } }
   private async load(): Promise<void> {
     const epoch = this.epoch; this.loading = true; this.error = undefined; this.render();
     try {

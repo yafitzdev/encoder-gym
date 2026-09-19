@@ -305,6 +305,7 @@ ipcMain.handle("encoder-gym:start-input-optimization", (event, value: unknown, s
   ]));
 });
 ipcMain.handle("encoder-gym:input-optimization-run", (_event, value: unknown, run: unknown) => backend.optimizationLaunch.show(projectId(value), run));
+ipcMain.handle("encoder-gym:input-optimization-cases", (_event, value: unknown, run: unknown, iteration: unknown) => backend.optimizationLaunch.cases(projectId(value), run, iteration));
 ipcMain.handle("encoder-gym:input-optimization-runs", (_event, value: unknown) => backend.optimizationLaunch.runs(projectId(value)));
 ipcMain.handle("encoder-gym:agent-final-result", (_event, value: unknown, run: unknown) => backend.optimizationFinal.read(projectId(value), run));
 ipcMain.handle("encoder-gym:review-agent-final", (_event, value: unknown, run: unknown) => backend.optimizationFinal.review(projectId(value), run));

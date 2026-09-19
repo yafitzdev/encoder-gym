@@ -49,6 +49,18 @@ function agentRun(wire, state, attemptId = randomUUID(), head = fingerprint) {
   return { ...wire, state, agentExecution: { state: executionState, attemptId, attempts: 1, completion, lastSequence: 2, headFingerprint: head, updatedAt: wire.updatedAt } };
 }
 
+test("saved-case command is one iteration-scoped passive read with a strict response", async () => {
+  const f=fixture(), runId=randomUUID(),calls=[];
+  const source=()=>({reportId:randomUUID(),reportFingerprint:fingerprint,diagnosticsFingerprint:fingerprint,support:11,sampleSize:0});
+  const value={projectId:f.projectId,runId,iterationId:randomUUID(),iteration:2,baselineModelId:randomUUID(),candidateModelId:randomUUID(),comparisons:[{suite:"development",suiteFingerprint:fingerprint,sampleLimit:50,baseline:source(),candidate:source(),cases:[]}]};
+  const backend=new ManagedOptimizationLaunch(ports(f,async args=>{calls.push(args);return value;},async()=>{throw new Error("Reads must not acquire mutation authority");}));
+  assert.deepEqual(await backend.cases(f.projectId,runId,2),value);
+  assert.deepEqual(calls,[["optimization-run","owned-project","cases",runId,"--iteration","2"]]);
+  for(const iteration of [0,11,1.5,"2",null]) await assert.rejects(()=>backend.cases(f.projectId,runId,iteration));
+  assert.equal(calls.length,1);
+  await assert.rejects(()=>backend.cases(f.projectId,randomUUID(),2));
+});
+
 test("presets are a strict core-owned read with no execution or provider credentials", async () => {
   const f = fixture(), presets = agentPresets(), calls = [];
   const backend = new ManagedOptimizationLaunch(ports(f, async (...args) => { calls.push(args); return presets; }));

@@ -305,7 +305,7 @@ async fn insert(
     Ok(())
 }
 
-async fn read(
+pub(crate) async fn read(
     database: &mut SqliteConnection,
     run_id: Uuid,
 ) -> Result<Vec<ProjectOptimizationIteration>> {

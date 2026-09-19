@@ -42,7 +42,7 @@ export async function runAgentJourney(window: BrowserWindow, registry: ProjectRe
       assert.match(await evaluate("document.querySelector('#optimization-generation').textContent"), /pinned-generator/);
       await click("#optimization-start");
       if (phase !== "stop") {
-        const expected = "agent_completed";
+        const expected = phase === "quick" ? "agent_completed" : "agent_failed";
         await until(`document.querySelector('[data-run-state=${expected}]') && !document.getElementById('overview-new-run').disabled`);
         const runs = await backend.optimizationLaunch.runs(id); assert.equal(runs.length, 1);
         const run = await backend.optimizationLaunch.show(id, runs[0]!.id), launch = (await backend.optimizationLaunch.list(id))[0]!;
@@ -55,11 +55,15 @@ export async function runAgentJourney(window: BrowserWindow, registry: ProjectRe
           assert.match(await evaluate("document.body.innerText"), /Diagnostic run/);
           assert.equal(await evaluate("document.querySelectorAll('[aria-label=\"Final acceptance\"]').length"), 0);
           assert.equal(native.split("tools.train_dense_triplet_router").length - 1, 1);
+          await textButton("Compare saved cases");
+          await until("document.querySelector('.saved-case')");
+          assert.match(await evaluate("document.querySelector('.development-cases').textContent"), /prediction unknown/);
+          assert.equal(readFileSync(join(fixture.folder, "../runtime/native-invocations.log"), "utf8"), native, "Case comparison must not rerun native work");
         } else {
-          const rows = await backend.datasetVersions.query(id, { kind: "rows", versionId: run.iterations![0]!.trainingDatasetVersionId, offset: 0, limit: 20 });
-          assert.equal(rows.kind, "rows"); if (rows.kind !== "rows") throw Error("Missing exact trainer rows");
-          assert.equal(rows.page.total, 1); assert.equal(rows.page.rows[0]!.value.question, "Retain this useful example");
-          assert.equal(rows.page.rows[0]!.value.evaluation_partition, "train");
+          assert.equal(run.iterations![0]!.trainingDatasetVersionId, null);
+          assert.equal(run.iterations![0]!.repairPlan?.canary?.status, "rejected");
+          assert.equal(run.iterations![0]!.repairPlan?.publication, null);
+          assert.ok(!native.includes("tools.train_dense_triplet_router"));
           const database = new DatabaseSync(join(fixture.folder, "project.sqlite"), { readOnly: true });
           const outcomes = database.prepare("SELECT metadata_json FROM optimization_generation_outcomes").all().map(row => JSON.parse(row.metadata_json as string)); database.close();
           assert.equal(outcomes[0].admission.accepted.length, 0); assert.equal(outcomes[0].admission.rejected.length, 1);

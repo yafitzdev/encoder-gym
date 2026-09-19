@@ -18,5 +18,10 @@ Each feature is verified and committed independently:
 5. Development-case comparison: saved baseline and exact candidate predictions,
    both improvements and regressions, no rerunning inference or sealed access.
 
+The shipped canary is the first native-admission batch, not a semantic-quality
+judge or a full-population qualification. The case viewer compares saved
+disagreement samples only: missing predictions remain unknown. These limits are
+shown in the interface rather than filled in with inferred outcomes.
+
 Verification uses deterministic tests and isolated fixtures, not paid provider
 calls, production datasets, real training, final evaluation, or promotion.

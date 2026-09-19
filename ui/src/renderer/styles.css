@@ -907,4 +907,8 @@ dialog::backdrop { background: #0008; }
 .repair-plan-state, .repair-plan-outcome { font-weight: 600; }.repair-plan-totals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .repair-plan-totals dt { color: var(--muted); font-size: 12px; }.repair-plan-totals dd { margin: 6px 0 0; font-size: 20px; font-weight: 600; }
 .repair-target, .repair-evidence { border-top: 1px solid var(--line); padding: 16px 0 4px; }.repair-source { margin-bottom: 0; }.repair-evidence-reference { font-size: 13px; }
+.development-cases { margin: 28px 0; min-width: 0; }.development-cases p, .development-cases code { overflow-wrap: anywhere; white-space: normal; }.development-cases code { font-size: 12px; }
+.case-predictions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }.case-predictions > div { min-width: 0; }.case-predictions h5 { font-size: 14px; margin: 12px 0; }
+.saved-case { border-top: 1px solid var(--line); padding: 18px 0; }.saved-case h4 { margin: 0 0 12px; }.development-cases .select-control { min-width: 0; max-width: 100%; }
+@media (max-width: 760px) { .case-predictions { grid-template-columns: minmax(0, 1fr); gap: 8px; } }
 @media (max-width: 760px) { .repair-plan { padding: 16px; }.repair-plan-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

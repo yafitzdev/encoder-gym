@@ -30,6 +30,7 @@ mod final_authorization;
 mod final_execution;
 pub(super) mod final_promotion;
 mod history;
+mod history_cases;
 mod iteration_inputs;
 
 fn emit_progress(phase: &str, completed: Option<u64>, total: Option<u64>) {
@@ -128,6 +129,9 @@ pub(super) async fn execute(folder: &Path, command: WorkspaceOptimizationRunComm
             &project_workspace_local::optimization_iterations::list(folder, run_id).await?,
         ),
         History { run_id } => super::print(&history::read(folder, run_id).await?),
+        Cases { run_id, iteration } => {
+            super::print(&history_cases::read(folder, run_id, iteration).await?)
+        }
         Providers { run_id } => super::print(&optimization_runs::providers(folder, run_id).await?),
         List => super::print(&optimization_runs::list(folder).await?),
         Show { run_id } => super::print(&optimization_runs::show(folder, run_id).await?),

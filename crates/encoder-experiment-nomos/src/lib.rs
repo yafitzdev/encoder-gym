@@ -20,6 +20,8 @@ pub use development_evidence::{NomosDevelopmentCluster, NomosDevelopmentEvidence
 pub use generated_training::NomosGenerationTemplates;
 mod generation_preview;
 pub use generation_preview::{NomosGenerationPreviewRow, project_generation_preview};
+mod development_comparison;
+pub use development_comparison::NomosDevelopmentComparison;
 pub use managed_training::{NomosTrainingDataset, NomosTrainingDatasetWriter};
 pub use progress::{
     NativePhase, NativeProgress, ProgressObserver, TrainingMetrics, with_file_progress,

@@ -4,6 +4,12 @@ import { fileURLToPath } from "node:url";
 
 const root = new URL("../", import.meta.url);
 
+for (const [source, name] of [["optimization-cases", "optimization-cases"], ["renderer/development-cases-controller", "development-cases-controller"]]) await build({
+  entryPoints: [fileURLToPath(new URL(`../src/${source}.ts`, import.meta.url))],
+  outfile: fileURLToPath(new URL(`../dist/evidence/${name}.js`, import.meta.url)),
+  bundle: true, platform: "node", format: "esm", logLevel: "info",
+});
+
 for (const module of ["projects", "project-registry", "provider-connections", "provider-credentials", "managed-backend", "managed-datasets", "managed-benchmarks", "managed-optimization-setup", "managed-optimization-launch", "managed-optimization-final", "optimization-final", "optimization-preparation", "input-optimization", "optimization-history", "optimization-agent-settings", "credential-store", "presentation-errors", "run-activity"]) await build({
   entryPoints: [fileURLToPath(new URL(`../src/${module}.ts`, import.meta.url))],
   outfile: fileURLToPath(new URL(`../dist/evidence/${module}.js`, import.meta.url)),

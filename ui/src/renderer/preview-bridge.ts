@@ -12,7 +12,7 @@ export function previewBridge(): EncoderGymBridge {
     optimizationSetups: unavailable, previewOptimizationSetup: unavailable, saveOptimizationSetup: unavailable,
     optimizationLaunches: unavailable, optimizationAgentPresets: unavailable, previewOptimizationLaunch: unavailable, authorizeOptimizationLaunch: unavailable,
     stopInputPreparation: unavailable, finishInputPreparation: unavailable,
-    startInputOptimization: unavailable, driveInputOptimization: unavailable, cancelInputOptimization: unavailable, stopInputOptimization: unavailable, inputOptimizationRun: unavailable, inputOptimizationRuns: unavailable,
+    startInputOptimization: unavailable, driveInputOptimization: unavailable, cancelInputOptimization: unavailable, stopInputOptimization: unavailable, inputOptimizationRun: unavailable, inputOptimizationRuns: unavailable, inputOptimizationCases: unavailable,
     queryBenchmarks: unavailable, initializeBenchmark: unavailable, previewBenchmark: unavailable, adoptBenchmark: unavailable,
     queryDatasets: unavailable, mutateDataset: unavailable,
     openManagedProject: unavailable, chooseLocalModel: unavailable, chooseProjectParent: unavailable, createManagedProject: unavailable,

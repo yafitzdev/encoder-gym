@@ -11,6 +11,7 @@ import type {
 import { inputOptimizationTerminal, parseInputOptimizationRun, parseInputOptimizationRuns, parseInputOptimizationStarted, type InputOptimizationPhase, type InputOptimizationRun, type InputOptimizationStarted } from "./input-optimization.js";
 import type { NativeProgress } from "./managed-control.js";
 import { parseOptimizationHistory } from "./optimization-history.js";
+import { parseOptimizationCases, type OptimizationCases } from "./optimization-cases.js";
 import { parseOptimizationAgentSettings, parseOptimizationAgentPresets, parseOptimizationProviderLimits, type OptimizationAgentSettings, type OptimizationAgentPresets } from "./optimization-agent-settings.js";
 
 interface Ports {
@@ -204,6 +205,13 @@ export class ManagedOptimizationLaunch {
   async show(projectId: string, runIdValue: unknown): Promise<InputOptimizationRun> {
     const runId = uuid(runIdValue), workspace = await this.ports.open(projectId);
     return this.withHistory(workspace, parseInputOptimizationRun(await this.ports.command<unknown>(["optimization-run", workspace.folder, "show", runId]), projectId));
+  }
+
+  async cases(projectId: string, runIdValue: unknown, iterationValue: unknown): Promise<OptimizationCases> {
+    const runId = uuid(runIdValue);
+    if (typeof iterationValue !== "number" || !Number.isInteger(iterationValue) || iterationValue < 1 || iterationValue > 10) throw new Error("Invalid case comparison iteration.");
+    const workspace = await this.ports.open(projectId);
+    return parseOptimizationCases(await this.ports.command<unknown>(["optimization-run", workspace.folder, "cases", runId, "--iteration", String(iterationValue)]), projectId, runId, iterationValue);
   }
 
   /** Stop/Resume authority must not depend on availability of report rendering. */

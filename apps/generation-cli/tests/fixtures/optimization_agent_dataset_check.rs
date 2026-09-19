@@ -13,6 +13,8 @@ use project_workspace_local::{
 };
 use sqlx::{Connection, SqliteConnection};
 use std::io::{Read, Write};
+#[path = "optimization_cases_check.rs"]
+mod cases_check;
 #[path = "optimization_agent_crash_check.rs"]
 mod crash_check;
 #[path = "optimization_agent_final_check.rs"]
@@ -1122,6 +1124,17 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     let rows = dataset_versions::materialization_rows(&folder, published.version.id)
         .await
         .unwrap();
+    if complete {
+        let report = protocol.baseline_development_reports()[0];
+        let suite = &project.task_configuration["suites"][&report.suite_key];
+        let baseline_path = root
+            .join("runtime/runs/encoder-gym-evaluations/by-content")
+            .join(&report.model.fingerprint[7..])
+            .join("retrieval")
+            .join(&suite["retrieval_fingerprint"].as_str().unwrap()[7..])
+            .join(format!("{}.json", report.suite_key));
+        cases_check::verify(root, &folder, reserved.id, &repair_history, &baseline_path);
+    }
     assert_eq!(rows.len(), 2);
     assert!(
         rows.iter()

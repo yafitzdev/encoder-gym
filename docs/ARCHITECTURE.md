@@ -147,9 +147,12 @@ through real IPC and Pi sessions, not a substituted desktop drive.
 Repair-plan history is a passive projection, not another executor. Optimization
 core reuses the protocol-specific inspection replay contract to validate saved
 decisions and aggregates only their exact generation slots. The local workspace
-adapter reads a consistent SQLite snapshot and verifies publication against
-ordinary Dataset Management membership and source lineage. The CLI asks the
-Nomos adapter to project bounded saved cluster/development evidence before it
+adapter captures iteration bindings and receipts in one short SQLite snapshot,
+releases its read lock, then verifies custody and publication against ordinary
+Dataset Management membership and source lineage. It never opens another
+connection under that snapshot, avoiding a reader/pending-writer lock cycle.
+The CLI asks the Nomos adapter to project bounded saved cluster/development
+evidence before it
 crosses the desktop boundary; opaque native inspection content is never a UI
 contract. Requested edits, native admission, actual publication and later
 development acceptance remain separate facts. No read path migrates, recovers,
@@ -1008,6 +1011,13 @@ uses ordinary reservations and saved outcomes before concurrent dispatch;
 dataset publication independently requires a passed sample under that policy.
 The task adapter supplies only a closed training-question preview, never native
 registry/state payloads. Historical launches without the policy are unchanged.
+The separate `optimization-run cases --iteration` read reuses this custody
+validator, then loads the exact iteration's completed scientific journal and
+original-baseline development reports. Nomos owns bounded saved-diagnostic
+projection and case pairing; no provider/evaluator is invoked. Missing samples
+are explicit, and unmatched cases never establish fixes or regressions. Desktop
+case loading is user-triggered, cached per immutable iteration identity and fenced
+against project refreshes; it is separate from execution/status polling.
 Single-run custody reads replay only the requested root and its Agent history,
 using the same checks as full listings. Checkpoint registration verifies the exact
 source and managed copy (including retries) without auditing unrelated historical
