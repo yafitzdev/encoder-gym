@@ -5,11 +5,15 @@ use std::{collections::BTreeMap, path::Path};
 use anyhow::{Context, Result, ensure};
 use encoder_experiment_core::ports::ExperimentStore;
 use encoder_experiment_nomos::{
-    NomosBackend, NomosDatasetLandscape, NomosDevelopmentEvidence, NomosGenerationTemplates,
+    NomosBackend, NomosDatasetInvestigation, NomosDatasetLandscape, NomosDevelopmentEvidence,
+    NomosGenerationTemplates,
 };
 use encoder_optimization_core::{
     OptimizationError,
-    agent::{AgentAnalysisScope, DatasetEditProposal, InspectionItem, InspectionPage},
+    agent::{
+        AgentAnalysisScope, DatasetEditProposal, InspectionItem, InspectionPage,
+        InspectionSelection,
+    },
     ports::{BoxFuture, OptimizationInspection},
 };
 use project_workspace_core::optimization_iteration::ProjectOptimizationIteration;
@@ -21,6 +25,7 @@ pub(super) struct IterationInspection {
     failures: Vec<InspectionItem>,
     rows: BTreeMap<String, Value>,
     landscape: Option<NomosDatasetLandscape>,
+    investigation: Option<NomosDatasetInvestigation>,
 }
 
 impl IterationInspection {
@@ -115,7 +120,7 @@ impl IterationInspection {
                 failures.extend(evidence.failures.iter().cloned());
                 current_evidence.push(evidence);
             }
-            let baseline_evidence = if iteration.scope.analysis_protocol == 2 {
+            let baseline_evidence = if iteration.scope.analysis_protocol >= 2 {
                 protocol
                     .baseline_development_reports()
                     .into_iter()
@@ -141,11 +146,11 @@ impl IterationInspection {
             // native sample spans many pages of concrete failures.
             failures.insert(0, InspectionItem {id:format!("development-summary-{}", iteration.development.fingerprint),
                 fingerprint:encoder_optimization_core::fingerprint(&content)?, content});
-            Ok((failures, current_evidence, baseline_evidence))
+            Ok((failures, current_evidence, baseline_evidence, backend))
         }
         .await;
         store.pool().close().await;
-        let (failures, current_evidence, baseline_evidence) = result?;
+        let (failures, current_evidence, baseline_evidence, backend) = result?;
         let dataset = dataset_versions::inspect(folder, iteration.dataset.id).await?;
         ensure!(
             dataset.reference() == iteration.dataset,
@@ -163,11 +168,29 @@ impl IterationInspection {
         let landscape = (iteration.scope.analysis_protocol == 2)
             .then(|| NomosDatasetLandscape::build(&rows, &current_evidence, &baseline_evidence))
             .transpose()?;
+        let investigation = if iteration.scope.analysis_protocol == 3 {
+            let inventory = backend
+                .inspect_training_inventory(
+                    iteration.scope.run_id,
+                    &iteration.scope.dataset_fingerprint,
+                    &rows,
+                )
+                .await?;
+            Some(NomosDatasetInvestigation::build(
+                &rows,
+                &current_evidence,
+                &baseline_evidence,
+                &inventory,
+            )?)
+        } else {
+            None
+        };
         Ok(Self {
             scope: iteration.scope.clone(),
             failures,
             rows,
             landscape,
+            investigation,
         })
     }
 
@@ -253,12 +276,19 @@ impl OptimizationInspection for IterationInspection {
     ) -> BoxFuture<'_, InspectionPage> {
         Box::pin(async move {
             self.validate(&scope)?;
-            let landscape = self.landscape.as_ref().ok_or_else(|| {
-                OptimizationError::Validation(
-                    "Dataset landscape is unavailable for analysis protocol V1".into(),
-                )
-            })?;
-            page(landscape.summaries().iter().cloned().map(Ok), offset, limit)
+            let summaries = if let Some(investigation) = &self.investigation {
+                investigation.summaries()
+            } else {
+                self.landscape
+                    .as_ref()
+                    .ok_or_else(|| {
+                        OptimizationError::Validation(
+                            "Dataset landscape is unavailable for analysis protocol V1".into(),
+                        )
+                    })?
+                    .summaries()
+            };
+            page(summaries.iter().cloned().map(Ok), offset, limit)
         })
     }
 
@@ -281,6 +311,67 @@ impl OptimizationInspection for IterationInspection {
             page(rows.into_iter().map(Ok), 0, 20)
         })
     }
+
+    fn dataset_investigation_rows(
+        &self,
+        scope: AgentAnalysisScope,
+        cluster_ids: Vec<String>,
+        cursor: u64,
+        limit: u32,
+    ) -> BoxFuture<'_, InspectionPage> {
+        Box::pin(async move {
+            self.validate(&scope)?;
+            let investigation = self.investigation.as_ref().ok_or_else(|| {
+                OptimizationError::Validation(
+                    "Dataset investigation is unavailable for this analysis protocol".into(),
+                )
+            })?;
+            let selected = investigation
+                .sample_rows(&self.rows, &cluster_ids, cursor, limit)
+                .map_err(|error| OptimizationError::Validation(error.to_string()))?;
+            let returned = selected.items.len() as u64;
+            let next_offset =
+                (cursor + returned < selected.total_inspectable).then_some(cursor + returned);
+            let page = InspectionPage {
+                selection: Some(InspectionSelection {
+                    method: selected.selection_method.into(),
+                    cursor,
+                    selected_count: selected.items.len() as u32,
+                    total_eligible_count: selected.total_eligible,
+                    total_inspectable_count: selected.total_inspectable,
+                }),
+                items: selected.items,
+                next_offset,
+            };
+            page.validate(limit)?;
+            Ok(page)
+        })
+    }
+
+    fn repair_planning_context(
+        &self,
+        scope: AgentAnalysisScope,
+        inspected_cluster_ids: Vec<String>,
+        inspected_row_ids: Vec<String>,
+    ) -> BoxFuture<'_, encoder_optimization_core::repair_strategy::RepairPlanningContext> {
+        Box::pin(async move {
+            self.validate(&scope)?;
+            self.investigation
+                .as_ref()
+                .ok_or_else(|| {
+                    OptimizationError::Validation(
+                        "Repair planning is unavailable for this analysis protocol".into(),
+                    )
+                })?
+                .planning_context(
+                    &self.rows,
+                    &inspected_cluster_ids,
+                    &inspected_row_ids,
+                    scope.maximum_row_changes,
+                )
+                .map_err(|error| OptimizationError::Validation(error.to_string()))
+        })
+    }
 }
 
 fn page(
@@ -300,6 +391,7 @@ fn page(
     let mut output = InspectionPage {
         items: Vec::new(),
         next_offset: None,
+        selection: None,
     };
     // Leave room for JSON framing and the continuation offset. Large rows may
     // shorten a page; the cursor always advances by the rows actually returned.

@@ -56,6 +56,7 @@ fn fixture() -> (
                     content,
                 }],
                 next_offset: None,
+                selection: None,
             })
             .unwrap(),
             failed: false,

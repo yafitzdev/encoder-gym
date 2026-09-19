@@ -198,8 +198,7 @@ impl RepairPlanningContext {
                 "Repair planning cluster is invalid",
             )?;
             require(
-                !cluster.metrics.is_empty()
-                    && cluster.metrics.iter().all(|name| valid_text(name, 128)),
+                cluster.metrics.iter().all(|name| valid_text(name, 128)),
                 "Repair planning cluster metrics are invalid",
             )?;
         }

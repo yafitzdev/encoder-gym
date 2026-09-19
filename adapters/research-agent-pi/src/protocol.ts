@@ -56,6 +56,8 @@ export const ENCODER_OPTIMIZATION_TOOL_NAMES = [
   "inspect_training_rows",
   "inspect_dataset_landscape",
   "inspect_dataset_clusters",
+  "preview_repair_plan",
+  "submit_repair_plan",
   "propose_dataset_edits",
 ] as const;
 export type EncoderOptimizationToolName = (typeof ENCODER_OPTIMIZATION_TOOL_NAMES)[number];
@@ -103,7 +105,9 @@ export interface PiRunRequest {
     | "encoder_optimization_v1"
     | "encoder_optimization_proposal_v1"
     | "encoder_optimization_v2"
-    | "encoder_optimization_proposal_v2";
+    | "encoder_optimization_proposal_v2"
+    | "encoder_optimization_v3"
+    | "encoder_optimization_proposal_v3";
   runId: string;
   runSpecificationFingerprint: string;
   provider: string;

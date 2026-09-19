@@ -103,6 +103,86 @@ function proposalSchema(requirements?: ProposalRequirements) {
   );
 }
 
+const anchorReference = Type.Object({
+  rowId: identity,
+  rowFingerprint: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+});
+const additionCount = Type.Union([
+  Type.Object({
+    basis: Type.Literal("absolute_rows"),
+    desiredRows: Type.Integer({ minimum: 1 }),
+  }),
+  Type.Object({
+    basis: Type.Literal("relative_cluster_growth"),
+    sourceClusterKey: identity,
+    pinnedSourceRows: Type.Integer({ minimum: 1 }),
+    basisPoints: Type.Integer({ minimum: 1, maximum: 10_000 }),
+    desiredRows: Type.Integer({ minimum: 1 }),
+  }),
+]);
+const repairOperation = Type.Union([
+  Type.Object({
+    kind: Type.Literal("label_preserving_variants"),
+    count: additionCount,
+    allocationRationale: Type.String({ minLength: 1, maxLength: 1_000 }),
+    anchors: Type.Array(
+      Type.Object({
+        ...anchorReference.properties,
+        additions: Type.Integer({ minimum: 1, maximum: 8 }),
+      }),
+      { minItems: 1, maxItems: 8 },
+    ),
+  }),
+  Type.Object({
+    kind: Type.Literal("existing_anchor_contrast"),
+    count: additionCount,
+    allocationRationale: Type.String({ minLength: 1, maxLength: 1_000 }),
+    pairs: Type.Array(
+      Type.Object({
+        pairId: identity,
+        left: anchorReference,
+        right: anchorReference,
+        additionsPerSide: Type.Integer({ minimum: 1, maximum: 8 }),
+      }),
+      { minItems: 1, maxItems: 4 },
+    ),
+  }),
+  Type.Object({
+    kind: Type.Literal("proven_redundant_row_removal"),
+    removals: Type.Array(
+      Type.Object({
+        ...anchorReference.properties,
+        retainedRowId: identity,
+        retainedRowFingerprint: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+        reason: explanation,
+      }),
+      { minItems: 1, maxItems: 8 },
+    ),
+  }),
+]);
+const repairPlanSchema = Type.Object({
+  schemaVersion: Type.Literal(3),
+  summary: Type.String({ minLength: 1, maxLength: 400 }),
+  stop: Type.Boolean(),
+  targets: Type.Array(
+    Type.Object({
+      targetId: identity,
+      clusterKeys: Type.Array(identity, { minItems: 1, maxItems: 4, uniqueItems: true }),
+      evidenceIds: Type.Array(identity, { minItems: 1, maxItems: 20, uniqueItems: true }),
+      hypothesis: Type.String({ minLength: 1, maxLength: 1_000 }),
+      evidenceLimitations: Type.String({ minLength: 1, maxLength: 1_000 }),
+      intendedFailurePattern: Type.String({ minLength: 1, maxLength: 1_000 }),
+      alternativeExplanation: Type.String({ minLength: 1, maxLength: 1_000 }),
+      operation: repairOperation,
+      targetMetric: Type.Object({
+        name: Type.String({ minLength: 1, maxLength: 128 }),
+        direction: Type.Union([Type.Literal("increase"), Type.Literal("decrease")]),
+      }),
+    }),
+    { maxItems: 4 },
+  ),
+});
+
 const schemas = {
   inspect_development_failures: Type.Object({
     offset: Type.Integer({ minimum: 0 }),
@@ -121,6 +201,16 @@ const schemas = {
     clusterIds: Type.Array(identity, { minItems: 1, maxItems: 4, uniqueItems: true }),
     examplesPerCluster: Type.Integer({ minimum: 1, maximum: 4 }),
   }),
+  inspect_dataset_clusters_v3: Type.Object({
+    clusterIds: Type.Array(identity, { minItems: 1, maxItems: 4, uniqueItems: true }),
+    cursor: Type.Integer({ minimum: 0 }),
+    limit: Type.Integer({ minimum: 1, maximum: 32 }),
+  }),
+  preview_repair_plan: repairPlanSchema,
+  submit_repair_plan: Type.Object({
+    plan: repairPlanSchema,
+    previewFingerprint: Type.String({ pattern: "^sha256:[0-9a-f]{64}$" }),
+  }),
   propose_dataset_edits: proposalSchema(),
 };
 
@@ -133,12 +223,26 @@ const descriptions: Record<EncoderOptimizationToolName, string> = {
     "Inspect ranked aggregate clusters built by scanning the complete pinned training dataset and joining development metrics. Compare evaluation support, errors and regression with training coverage; coverage is descriptive, not causal. No sealed evidence is accessible.",
   inspect_dataset_clusters:
     "Inspect deterministic representative training rows for 1–4 exact cluster IDs already returned by inspect_dataset_landscape. This reveals qualitative row content without reading the full dataset.",
+  preview_repair_plan:
+    "Compile a structured repair hypothesis into exact per-anchor edits and projected cluster shares. Infeasible plans return typed constraints and are never silently trimmed.",
+  submit_repair_plan:
+    "Submit the exact structured plan and fingerprint from a successful earlier preview. No inspection or revision is available in this reserved final turn.",
   propose_dataset_edits:
     "Submit evidence-linked removals and targeted generation instructions, or stop without changes. Keep summary within 400 characters and state the intended bounded coverage shift. Use only exact outer IDs returned by the active inspection protocol. Total removals plus requested additions must fit the remaining row-change budget. The host validates every proposal; this tool cannot train, approve or change a benchmark.",
 };
 
 export function encoderOptimizationModelTools(tools: Tool[], initialPrompt?: string): Tool[] {
   const proposal = proposalSchema(proposalRequirements(initialPrompt));
+  let analysisProtocol = 1;
+  if (initialPrompt) {
+    try {
+      const parsed = JSON.parse(initialPrompt) as { scope?: { analysisProtocol?: unknown } };
+      if (parsed.scope?.analysisProtocol === 2 || parsed.scope?.analysisProtocol === 3)
+        analysisProtocol = parsed.scope.analysisProtocol;
+    } catch {
+      // Historical callers may provide plain text.
+    }
+  }
   return tools.map((tool) => {
     if (!Object.hasOwn(schemas, tool.name)) {
       throw new Error("Unexpected encoder optimization tool");
@@ -148,7 +252,9 @@ export function encoderOptimizationModelTools(tools: Tool[], initialPrompt?: str
       parameters:
         tool.name === "propose_dataset_edits"
           ? proposal
-          : schemas[tool.name as EncoderOptimizationToolName],
+          : tool.name === "inspect_dataset_clusters" && analysisProtocol === 3
+            ? schemas.inspect_dataset_clusters_v3
+            : schemas[tool.name as EncoderOptimizationToolName],
     };
   });
 }
@@ -157,12 +263,14 @@ export function createEncoderOptimizationTools(
   runId: string,
   executor: ToolExecutor,
   proposalOnly = false,
-  analysisProtocol: 1 | 2 = 1,
+  analysisProtocol: 1 | 2 | 3 = 1,
 ): AgentTool[] {
   const names: EncoderOptimizationToolName[] = proposalOnly
-    ? ["propose_dataset_edits"]
-    : analysisProtocol === 2
-      ? ["inspect_dataset_landscape", "inspect_dataset_clusters"]
+    ? [analysisProtocol === 3 ? "submit_repair_plan" : "propose_dataset_edits"]
+    : analysisProtocol >= 2
+      ? analysisProtocol === 3
+        ? ["inspect_dataset_landscape", "inspect_dataset_clusters", "preview_repair_plan"]
+        : ["inspect_dataset_landscape", "inspect_dataset_clusters"]
       : ["inspect_development_failures", "inspect_training_rows", "propose_dataset_edits"];
   return names.map((name) => ({
     name,

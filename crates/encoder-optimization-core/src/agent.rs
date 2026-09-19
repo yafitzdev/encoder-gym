@@ -43,8 +43,12 @@ impl AgentAnalysisScope {
             "Agent turn ceiling must be 1–32",
         )?;
         require(
-            matches!(self.analysis_protocol, 1 | 2),
-            "Agent analysis protocol must be version 1 or 2",
+            matches!(self.analysis_protocol, 1..=3),
+            "Agent analysis protocol must be version 1, 2 or 3",
+        )?;
+        require(
+            self.analysis_protocol != 3 || self.maximum_turns >= 4,
+            "Agent analysis protocol version 3 requires at least four turns",
         )?;
         require(
             self.maximum_row_changes <= 5000,
@@ -231,6 +235,18 @@ pub struct InspectionItem {
 pub struct InspectionPage {
     pub items: Vec<InspectionItem>,
     pub next_offset: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<InspectionSelection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InspectionSelection {
+    pub method: String,
+    pub cursor: u64,
+    pub selected_count: u32,
+    pub total_eligible_count: u64,
+    pub total_inspectable_count: u64,
 }
 
 impl InspectionPage {
@@ -243,6 +259,23 @@ impl InspectionPage {
             serde_json::to_vec(self)?.len() <= 262144,
             "Agent inspection page exceeds 256 KiB",
         )?;
+        if let Some(selection) = &self.selection {
+            require(
+                !selection.method.trim().is_empty()
+                    && selection.method.len() <= 128
+                    && selection.selected_count as usize == self.items.len()
+                    && selection.total_inspectable_count <= selection.total_eligible_count
+                    && selection.cursor <= selection.total_inspectable_count
+                    && selection
+                        .cursor
+                        .checked_add(u64::from(selection.selected_count))
+                        .is_some_and(|end| end <= selection.total_inspectable_count)
+                    && self.next_offset.is_none_or(|next| {
+                        next > selection.cursor && next <= selection.total_inspectable_count
+                    }),
+                "Inspection selection metadata is invalid",
+            )?;
+        }
         let mut ids = BTreeSet::new();
         for item in &self.items {
             require(
@@ -281,10 +314,11 @@ pub fn restore_inspections(
             continue;
         }
         let target = match (analysis_protocol, tool.name.as_str()) {
-            (1, "inspect_training_rows") | (2, "inspect_dataset_clusters") => &mut *rows,
-            (1, "inspect_development_failures") | (2, "inspect_dataset_landscape") => {
+            (1, "inspect_training_rows") | (2 | 3, "inspect_dataset_clusters") => &mut *rows,
+            (1, "inspect_development_failures") | (2 | 3, "inspect_dataset_landscape") => {
                 &mut *evidence
             }
+            (3, "preview_repair_plan") | (3, "submit_repair_plan") => continue,
             (1 | 2, "propose_dataset_edits") => continue,
             _ => {
                 return Err(OptimizationError::Validation(
@@ -380,19 +414,34 @@ impl AgentTurnRecord {
         let accepted: Vec<_> = self
             .tools
             .iter()
-            .filter(|tool| tool.name == "propose_dataset_edits" && !tool.failed)
+            .filter(|tool| {
+                matches!(
+                    tool.name.as_str(),
+                    "propose_dataset_edits" | "submit_repair_plan"
+                ) && !tool.failed
+            })
             .collect();
         require(
             accepted.len() <= 1,
             "Multiple accepted proposals in one Agent turn",
         )?;
         if let Some(proposal) = &self.proposal {
-            require(
-                accepted.len() == 1
-                    && serde_json::from_value::<DatasetEditProposal>(
-                        accepted[0].arguments.clone(),
+            let matching = accepted.len() == 1
+                && accepted[0].result.get("accepted").and_then(Value::as_bool) == Some(true)
+                && if accepted[0].name == "propose_dataset_edits" {
+                    serde_json::from_value::<DatasetEditProposal>(accepted[0].arguments.clone())?
+                        == *proposal
+                } else {
+                    serde_json::from_value::<DatasetEditProposal>(
+                        accepted[0]
+                            .result
+                            .get("compiledProposal")
+                            .cloned()
+                            .unwrap_or(Value::Null),
                     )? == *proposal
-                    && accepted[0].result.get("accepted").and_then(Value::as_bool) == Some(true),
+                };
+            require(
+                matching,
                 "Proposal has no matching accepted Agent tool call",
             )?;
         } else if !self.interrupted {

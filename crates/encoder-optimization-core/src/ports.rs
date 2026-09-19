@@ -57,6 +57,37 @@ pub trait OptimizationInspection: Send + Sync {
             ))
         })
     }
+
+    /// Context-stratified protocol-V3 examples. Cursor counts rows in the
+    /// adapter's deterministic, per-cluster bounded selection.
+    fn dataset_investigation_rows(
+        &self,
+        _scope: AgentAnalysisScope,
+        _cluster_ids: Vec<String>,
+        _cursor: u64,
+        _limit: u32,
+    ) -> BoxFuture<'_, InspectionPage> {
+        Box::pin(async {
+            Err(OptimizationError::Validation(
+                "Dataset investigation is not supported by this task adapter".into(),
+            ))
+        })
+    }
+
+    /// Host-owned facts for pure repair-plan compilation. The adapter must
+    /// include only landscape and row identities actually returned this turn.
+    fn repair_planning_context(
+        &self,
+        _scope: AgentAnalysisScope,
+        _inspected_cluster_ids: Vec<String>,
+        _inspected_row_ids: Vec<String>,
+    ) -> BoxFuture<'_, crate::repair_strategy::RepairPlanningContext> {
+        Box::pin(async {
+            Err(OptimizationError::Validation(
+                "Repair planning is not supported by this task adapter".into(),
+            ))
+        })
+    }
 }
 
 /// Implementations atomically enforce cumulative launch-provider budgets,

@@ -25,15 +25,24 @@ export function configureProjectPayload(request: PiRunRequest, payload: unknown)
   }
   if (
     request.capabilitySet === "encoder_optimization_proposal_v1" ||
-    request.capabilitySet === "encoder_optimization_proposal_v2"
+    request.capabilitySet === "encoder_optimization_proposal_v2" ||
+    request.capabilitySet === "encoder_optimization_proposal_v3"
   ) {
     configured.tool_choice = isResponsesPayload
       ? "required"
       : {
           type: "function",
-          function: { name: "propose_dataset_edits" },
+          function: {
+            name:
+              request.capabilitySet === "encoder_optimization_proposal_v3"
+                ? "submit_repair_plan"
+                : "propose_dataset_edits",
+          },
         };
-  } else if (request.capabilitySet === "encoder_optimization_v2") {
+  } else if (
+    request.capabilitySet === "encoder_optimization_v2" ||
+    request.capabilitySet === "encoder_optimization_v3"
+  ) {
     configured.tool_choice = "required";
   }
   return configured;

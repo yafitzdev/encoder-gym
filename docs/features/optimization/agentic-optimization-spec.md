@@ -457,6 +457,44 @@ task-owned landscape:
    clusters and requested row counts; the deterministic host still validates
    references and the remaining whole-run edit allowance.
 
+Version 3 extends that contract without changing existing V1/V2 launches. It is
+currently an explicitly pinned protocol, not the default, until its semantic
+admission and publication path passes connected CLI acceptance. V3 has four
+persisted stages and rejects a launch with fewer than four Agent turns:
+
+1. `inspect_dataset_landscape` returns the complete aggregate landscape using
+   stable semantic cluster keys, native-context counts, generation capacity,
+   and exact-duplicate or contradictory-label findings.
+2. `inspect_dataset_clusters` accepts one to four returned cluster keys plus a
+   continuation cursor and returns at most 32 distinct rows per iteration.
+   Selection takes distinct native-context strata first and then stable content
+   fingerprints. Its result records the method, returned count, eligible count,
+   inspectable count, and cursor. Only returned rows become planning anchors.
+3. `preview_repair_plan` compiles a structured `repair-plan.v3` against those
+   host-owned cluster and anchor facts. It returns either typed constraints or
+   exact additions/removals, allocations, projected shares, unused allowance,
+   and an immutable preview fingerprint. It never silently trims a plan.
+4. The next persisted turn is proposal-only. `submit_repair_plan` must reproduce
+   the exact feasible plan and preview fingerprint; the host recompiles it
+   before accepting a compatibility proposal for the existing downstream loop.
+
+The structured plan supports only label-preserving variants, existing-anchor
+contrasts, and native-proven redundant-row removals. It carries explicit
+hypotheses, limitations, alternatives, evidence, target metrics, count bases,
+and per-anchor allocation. Relative growth is integer basis points of a pinned
+source-cluster row count, rounded up once. The frozen limits are four targets,
+eight anchors per target, 32 inspected rows per iteration, and eight additions
+per anchor. These limits bound authority; they do not prescribe edit volume.
+Contradictory labels remain findings, not automatic corrections or deletions.
+
+V3 replay restores returned identities and valid preview fingerprints from the
+append-only Agent trace. A resumed run never upgrades protocols, reopens a
+submitted turn, accepts an unseen anchor, or dispatches another provider call
+for an already accepted proposal. The later native semantic-assessment and
+per-target-canary policy is a separate pinned execution component; until it is
+connected, V3 remains non-default and must not be presented as end-to-end data
+repair.
+
 The Nomos version-2 landscape uses existing evaluator dimensions rather than
 changing evaluation: expected capability, task kind, scenario family and legal
 candidate-pool size. It exposes support, recall, reciprocal rank and positive

@@ -113,6 +113,39 @@ test("analysis protocol V2 exposes only landscape, cluster drill-down and propos
   assert.equal(configured.tool_choice, "required");
 });
 
+test("analysis protocol V3 exposes investigation, preview and exact submission tools", () => {
+  const executor = {
+    async execute() {
+      return { content: {} };
+    },
+  };
+  const tools = createEncoderOptimizationTools("run", executor, false, 3);
+  assert.deepEqual(
+    tools.map((tool) => tool.name),
+    ["inspect_dataset_landscape", "inspect_dataset_clusters", "preview_repair_plan"],
+  );
+  const prompt = JSON.stringify({ scope: { analysisProtocol: 3 } });
+  const schemas = encoderOptimizationModelTools(tools, prompt);
+  const clusterSchema = JSON.parse(JSON.stringify(schemas[1]?.parameters));
+  assert.deepEqual(Object.keys(clusterSchema.properties), ["clusterIds", "cursor", "limit"]);
+  assert.equal(clusterSchema.properties.limit.maximum, 32);
+  const previewSchema = JSON.parse(JSON.stringify(schemas[2]?.parameters));
+  assert.equal(previewSchema.properties.schemaVersion.const, 3);
+  assert.equal(previewSchema.properties.targets.maxItems, 4);
+
+  const submission = createEncoderOptimizationTools("run", executor, true, 3);
+  assert.deepEqual(
+    submission.map((tool) => tool.name),
+    ["submit_repair_plan"],
+  );
+  const input = request("http://127.0.0.1:1/v1");
+  input.capabilitySet = "encoder_optimization_proposal_v3";
+  const configured = configureProjectPayload(input, { messages: [] }) as {
+    tool_choice: { function: { name: string } };
+  };
+  assert.equal(configured.tool_choice.function.name, "submit_repair_plan");
+});
+
 test("selected project endpoint and model execute real Pi tool calls without catalog substitution", async () => {
   const requests: Record<string, unknown>[] = [];
   const server = createServer(async (incoming, outgoing) => {

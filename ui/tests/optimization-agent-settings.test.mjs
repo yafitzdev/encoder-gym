@@ -13,6 +13,8 @@ test("settings preserve legacy shape and strictly bound optional whole-run provi
   assert.throws(() => parseOptimizationAgentSettings({ ...presets.standard, generationCanary: "invented" }));
   assert.equal(parseOptimizationAgentSettings(legacy).analysisProtocol, 1);
   assert.equal(parseOptimizationAgentSettings(presets.standard).analysisProtocol, 2);
+  assert.equal(parseOptimizationAgentSettings({ ...presets.standard, analysisProtocol: 3 }).analysisProtocol, 3);
+  assert.throws(() => parseOptimizationAgentSettings({ ...presets.standard, analysisProtocol: 3, maximumAgentTurnsPerIteration: 3 }));
   assert.equal(Object.hasOwn(parseOptimizationAgentSettings(presets.standard), "providerLimits"), false);
   const settings = { ...presets.standard, providerLimits: { advisor: { ...limits }, generation: { ...limits } } };
   assert.deepEqual(parseOptimizationAgentSettings(settings), settings);

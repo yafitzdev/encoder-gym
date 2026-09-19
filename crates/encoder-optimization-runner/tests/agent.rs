@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, BTreeSet, VecDeque},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -14,9 +14,15 @@ use encoder_optimization_core::{
     OptimizationError,
     agent::{
         AgentAnalysisScope, AgentCallReservation, AgentTurnRecord, InspectionItem, InspectionPage,
+        InspectionSelection,
     },
     fingerprint,
     ports::{BoxFuture, OptimizationAgentStore, OptimizationInspection},
+    repair_strategy::{
+        AdditionCount, AnchorAllocation, MetricDirection, RepairOperation, RepairPlan,
+        RepairPlanningAnchor, RepairPlanningCluster, RepairPlanningContext, RepairTarget,
+        TargetMetric, compile_repair_plan,
+    },
 };
 use encoder_optimization_runner::{AgentSelection, OptimizationAgent};
 use serde_json::{Value, json};
@@ -85,6 +91,68 @@ fn page(id: &str, content: Value) -> InspectionPage {
             content,
         }],
         next_offset: None,
+        selection: None,
+    }
+}
+
+fn v3_context() -> RepairPlanningContext {
+    RepairPlanningContext {
+        dataset_rows: 40,
+        remaining_row_changes: 2,
+        clusters: BTreeMap::from([(
+            "dataset-cluster-1".into(),
+            RepairPlanningCluster {
+                training_rows: 8,
+                metrics: BTreeSet::from(["recall_at_1".into()]),
+            },
+        )]),
+        anchors: BTreeMap::from([(
+            "row-1".into(),
+            RepairPlanningAnchor {
+                fingerprint: fingerprint(&"v3-anchor-row-1").unwrap(),
+                cluster_keys: BTreeSet::from(["dataset-cluster-1".into()]),
+                native_context_fingerprint: fingerprint(&"native-context-1").unwrap(),
+                native_model_input_fingerprint: fingerprint(&"native-input-1").unwrap(),
+                label_fingerprint: fingerprint(&"native-label-1").unwrap(),
+                exact_duplicate_group_id: None,
+            },
+        )]),
+        evidence_ids: BTreeSet::from(["dataset-cluster-1".into()]),
+    }
+}
+
+fn v3_plan() -> RepairPlan {
+    let context = v3_context();
+    RepairPlan {
+        schema_version: 3,
+        summary: "Test one additional read-routing variant across inspected native context.".into(),
+        stop: false,
+        targets: vec![RepairTarget {
+            target_id: "read-routing-repair".into(),
+            cluster_keys: vec!["dataset-cluster-1".into()],
+            evidence_ids: vec!["dataset-cluster-1".into()],
+            hypothesis: "One more precise read-only question may reduce the observed miss rate."
+                .into(),
+            evidence_limitations: "Saved development evidence is diagnostic, not causal proof."
+                .into(),
+            intended_failure_pattern: "Read-only requests routed to another capability.".into(),
+            alternative_explanation:
+                "The weakness may come from model capacity rather than coverage.".into(),
+            operation: RepairOperation::LabelPreservingVariants {
+                count: AdditionCount::AbsoluteRows { desired_rows: 1 },
+                allocation_rationale: "Use the single returned native context for a minimal test."
+                    .into(),
+                anchors: vec![AnchorAllocation {
+                    row_id: "row-1".into(),
+                    row_fingerprint: context.anchors["row-1"].fingerprint.clone(),
+                    additions: 1,
+                }],
+            },
+            target_metric: TargetMetric {
+                name: "recall_at_1".into(),
+                direction: MetricDirection::Increase,
+            },
+        }],
     }
 }
 
@@ -141,6 +209,57 @@ impl OptimizationInspection for Inspection {
                 "row-1",
                 json!({"question":"ambiguous route","selectedForClusters":cluster_ids}),
             ))
+        })
+    }
+
+    fn dataset_investigation_rows(
+        &self,
+        _scope: AgentAnalysisScope,
+        cluster_ids: Vec<String>,
+        cursor: u64,
+        limit: u32,
+    ) -> BoxFuture<'_, InspectionPage> {
+        Box::pin(async move {
+            assert_eq!(cluster_ids, vec!["dataset-cluster-1"]);
+            assert_eq!(cursor, 0);
+            assert_eq!(limit, 1);
+            let context = v3_context();
+            let content = json!({
+                "question": "ambiguous route",
+                "selectedForClusters": cluster_ids,
+                "investigation": {
+                    "anchorFingerprint": context.anchors["row-1"].fingerprint,
+                    "selectionReason": "distinct_native_context"
+                }
+            });
+            Ok(InspectionPage {
+                items: vec![InspectionItem {
+                    id: "row-1".into(),
+                    fingerprint: fingerprint(&content).unwrap(),
+                    content,
+                }],
+                next_offset: None,
+                selection: Some(InspectionSelection {
+                    method: "distinct_native_context_then_content_fingerprint".into(),
+                    cursor: 0,
+                    selected_count: 1,
+                    total_eligible_count: 1,
+                    total_inspectable_count: 1,
+                }),
+            })
+        })
+    }
+
+    fn repair_planning_context(
+        &self,
+        _scope: AgentAnalysisScope,
+        inspected_cluster_ids: Vec<String>,
+        inspected_row_ids: Vec<String>,
+    ) -> BoxFuture<'_, RepairPlanningContext> {
+        Box::pin(async move {
+            assert_eq!(inspected_cluster_ids, vec!["dataset-cluster-1"]);
+            assert_eq!(inspected_row_ids, vec!["row-1"]);
+            Ok(v3_context())
         })
     }
 }
@@ -322,6 +441,7 @@ impl OptimizationInspection for LargeInspection {
                     })
                     .collect(),
                 next_offset: (offset + u64::from(limit) < 20).then_some(offset + u64::from(limit)),
+                selection: None,
             })
         })
     }
@@ -479,6 +599,78 @@ async fn v2_requires_landscape_then_cluster_rows_and_uses_cluster_evidence() {
             .iter()
             .all(|record| record.validate().is_ok())
     );
+}
+
+#[tokio::test]
+async fn v3_requires_four_persisted_stages_and_replays_the_exact_preview() {
+    let plan = v3_plan();
+    let preview = compile_repair_plan(&plan, &v3_context())
+        .unwrap()
+        .preview
+        .unwrap();
+    let turns = vec![
+        turn(
+            "inspect_dataset_landscape",
+            json!({"offset":0,"limit":20}),
+            "Inspect the ranked native inventory before selecting a repair target.",
+        ),
+        turn(
+            "inspect_dataset_clusters",
+            json!({"clusterIds":["dataset-cluster-1"],"cursor":0,"limit":1}),
+            "Inspect one context-diverse anchor from the weak cluster.",
+        ),
+        turn(
+            "preview_repair_plan",
+            serde_json::to_value(&plan).unwrap(),
+            "Preview the exact bounded intervention before submission.",
+        ),
+        turn(
+            "submit_repair_plan",
+            json!({"plan":plan,"previewFingerprint":preview.fingerprint}),
+            "Submit the exact feasible preview in the reserved turn.",
+        ),
+    ];
+    let (agent, store, runtime) = setup(turns);
+    let mut scope = scope();
+    scope.analysis_protocol = 3;
+    let proposal = agent.analyze(scope.clone()).await.unwrap();
+    assert_eq!(proposal.additions.len(), 1);
+    assert_eq!(proposal.additions[0].template_row_id, "row-1");
+    assert_eq!(proposal.additions[0].count, 1);
+    assert!(
+        proposal.additions[0]
+            .instruction
+            .contains("label_preserving_variants")
+    );
+
+    let saved = store.history.lock().unwrap().clone();
+    assert_eq!(saved.len(), 4);
+    assert!(saved.iter().all(|record| record.validate().is_ok()));
+    {
+        let requests = runtime.requests.lock().unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| request.capability_set.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "encoder_optimization_v3",
+                "encoder_optimization_v3",
+                "encoder_optimization_v3",
+                "encoder_optimization_proposal_v3",
+            ]
+        );
+        assert!(
+            requests[..3]
+                .iter()
+                .all(|request| request.initial_prompt.contains("\"proposalOnly\":false"))
+        );
+        assert!(requests[3].initial_prompt.contains("\"proposalOnly\":true"));
+    }
+
+    assert_eq!(agent.analyze(scope).await.unwrap(), proposal);
+    assert_eq!(*store.history.lock().unwrap(), saved);
+    assert_eq!(runtime.requests.lock().unwrap().len(), 4);
 }
 
 #[tokio::test]

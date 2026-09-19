@@ -62,7 +62,7 @@ export function optimizationSettings(options: Options): HTMLElement {
       onInput: (event: Event) => edit(next => { next.objective = (event.target as HTMLTextAreaElement).value; }) }), "Cannot change evidence access, acceptance rules or execution budgets."),
     h("div", { class: "advanced-grid" },
       number("iterations", "Maximum iterations", settings.maximumIterations, quick ? 1 : 10, value => edit(next => { next.maximumIterations = value; }), 1, 1, quick),
-      number("turns", "Agent turns per iteration", settings.maximumAgentTurnsPerIteration, quick ? 4 : 32, value => edit(next => { next.maximumAgentTurnsPerIteration = value; }), settings.analysisProtocol === 2 ? 3 : 1),
+      number("turns", "Agent turns per iteration", settings.maximumAgentTurnsPerIteration, quick ? 4 : 32, value => edit(next => { next.maximumAgentTurnsPerIteration = value; }), settings.analysisProtocol === 3 ? 4 : settings.analysisProtocol === 2 ? 3 : 1),
       number("edits", "Row additions + removals · whole run", settings.maximumRowChanges, quick ? 8 : 5_000, value => edit(next => { next.maximumRowChanges = value; })),
       number("concurrency", "Generation requests in flight", settings.generationConcurrency, 16, value => edit(next => { next.generationConcurrency = value; }))),
     h("fieldset", {}, h("legend", {}, "Training"), h("div", { class: "advanced-grid" },

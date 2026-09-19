@@ -4,7 +4,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use encoder_optimization_core::agent::InspectionItem;
+use encoder_optimization_core::{
+    agent::InspectionItem,
+    repair_strategy::{RepairPlanningAnchor, RepairPlanningCluster, RepairPlanningContext},
+};
 use serde_json::{Value, json};
 
 use crate::{
@@ -39,6 +42,7 @@ pub struct NomosDatasetInvestigation {
     summaries: Vec<InspectionItem>,
     clusters: BTreeMap<String, InvestigationCluster>,
     identities: BTreeMap<String, InvestigationIdentity>,
+    memberships: BTreeMap<String, BTreeSet<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +58,7 @@ struct InvestigationIdentity {
     model_input: String,
     label: String,
     content: String,
+    exact_duplicate_group_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -304,7 +309,7 @@ impl NomosDatasetInvestigation {
             ));
         }
         let legacy = NomosDatasetLandscape::build(rows, current, baseline)?;
-        let identities = rows
+        let mut identities = rows
             .iter()
             .map(|(id, row)| {
                 let projected = native[id.as_str()];
@@ -315,14 +320,22 @@ impl NomosDatasetInvestigation {
                         model_input: projected.native_model_input_fingerprint.clone(),
                         label: projected.label_fingerprint.clone(),
                         content: artifact_core::fingerprint(row).map_err(adapter_error)?,
+                        exact_duplicate_group_id: None,
                     },
                 ))
             })
             .collect::<Result<BTreeMap<_, _>, EncoderTaskAdapterError>>()?;
         let groups = input_groups(&identities)?;
+        for identity in identities.values_mut() {
+            let group = &groups[&identity.model_input];
+            if group.members.len() > 1 && group.labels.len() == 1 {
+                identity.exact_duplicate_group_id = Some(group.id.clone());
+            }
+        }
         let context_labels = context_labels(&identities);
         let mut summaries = Vec::with_capacity(legacy.summaries.len());
         let mut clusters = BTreeMap::new();
+        let mut memberships = BTreeMap::<String, BTreeSet<String>>::new();
         for summary in legacy.summaries {
             let legacy_members = legacy
                 .members
@@ -335,6 +348,12 @@ impl NomosDatasetInvestigation {
                 .as_str()
                 .ok_or_else(|| adapter_error("Dataset landscape cluster value is missing"))?;
             let stable_key = stable_cluster_key(dimension, value)?;
+            for member in legacy_members {
+                memberships
+                    .entry(member.clone())
+                    .or_default()
+                    .insert(stable_key.clone());
+            }
             let member_set = legacy_members.iter().collect::<BTreeSet<_>>();
             let distinct_contexts = legacy_members
                 .iter()
@@ -431,6 +450,7 @@ impl NomosDatasetInvestigation {
             summaries,
             clusters,
             identities,
+            memberships,
         })
     }
 
@@ -476,12 +496,18 @@ impl NomosDatasetInvestigation {
         }
         let start = usize::try_from(offset)
             .map_err(|_| adapter_error("Dataset investigation cursor exceeds this platform"))?;
+        if start > selectable.len() {
+            return Err(adapter_error(
+                "Dataset investigation cursor exceeds the inspectable selection",
+            ));
+        }
         let mut items = Vec::new();
         for row_id in selectable.iter().skip(start).take(limit as usize) {
             let row = rows.get(row_id).ok_or_else(|| {
                 adapter_error("Dataset investigation member is missing from the pinned version")
             })?;
             let mut item = NomosBackend::training_row_for_agent(row_id, row)?;
+            let anchor_fingerprint = item.fingerprint.clone();
             let content = item
                 .content
                 .as_object_mut()
@@ -509,6 +535,7 @@ impl NomosDatasetInvestigation {
                     "nativeContextFingerprint": identity.context,
                     "nativeModelInputFingerprint": identity.model_input,
                     "labelFingerprint": identity.label,
+                    "anchorFingerprint": anchor_fingerprint,
                     "selections": cluster_selections,
                 }),
             );
@@ -521,6 +548,79 @@ impl NomosDatasetInvestigation {
             total_eligible: eligible.len() as u64,
             total_inspectable: selectable.len() as u64,
         })
+    }
+
+    pub fn planning_context(
+        &self,
+        rows: &BTreeMap<String, Value>,
+        inspected_cluster_ids: &[String],
+        inspected_row_ids: &[String],
+        remaining_row_changes: u32,
+    ) -> Result<RepairPlanningContext, EncoderTaskAdapterError> {
+        let mut clusters = BTreeMap::new();
+        let summaries = self
+            .summaries
+            .iter()
+            .map(|summary| (summary.id.as_str(), summary))
+            .collect::<BTreeMap<_, _>>();
+        for id in inspected_cluster_ids {
+            let summary = summaries.get(id.as_str()).ok_or_else(|| {
+                adapter_error("Repair planning references an uninspected dataset cluster")
+            })?;
+            let metrics = summary.content["development"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|suite| suite["current"].as_object())
+                .flat_map(|metrics| metrics.keys().cloned())
+                .collect::<BTreeSet<_>>();
+            clusters.insert(
+                id.clone(),
+                RepairPlanningCluster {
+                    training_rows: summary.content["training"]["rows"].as_u64().ok_or_else(
+                        || adapter_error("Dataset cluster training count is missing"),
+                    )?,
+                    metrics,
+                },
+            );
+        }
+        let mut anchors = BTreeMap::new();
+        for id in inspected_row_ids {
+            let row = rows.get(id).ok_or_else(|| {
+                adapter_error("Repair planning references an uninspected training row")
+            })?;
+            let identity = self.identities.get(id).ok_or_else(|| {
+                adapter_error("Repair planning row has no native inventory identity")
+            })?;
+            let projection = NomosBackend::training_row_for_agent(id, row)?;
+            anchors.insert(
+                id.clone(),
+                RepairPlanningAnchor {
+                    fingerprint: projection.fingerprint,
+                    cluster_keys: self
+                        .memberships
+                        .get(id)
+                        .into_iter()
+                        .flatten()
+                        .filter(|key| clusters.contains_key(*key))
+                        .cloned()
+                        .collect(),
+                    native_context_fingerprint: identity.context.clone(),
+                    native_model_input_fingerprint: identity.model_input.clone(),
+                    label_fingerprint: identity.label.clone(),
+                    exact_duplicate_group_id: identity.exact_duplicate_group_id.clone(),
+                },
+            );
+        }
+        let context = RepairPlanningContext {
+            dataset_rows: rows.len() as u64,
+            remaining_row_changes,
+            clusters,
+            anchors,
+            evidence_ids: inspected_cluster_ids.iter().cloned().collect(),
+        };
+        context.validate().map_err(adapter_error)?;
+        Ok(context)
     }
 }
 
@@ -1051,6 +1151,33 @@ mod tests {
             page.items[0].content["investigation"]["selections"][0]["role"],
             "suspect_contradictory_label"
         );
+        let inspected_ids = page
+            .items
+            .iter()
+            .map(|item| item.id.clone())
+            .collect::<Vec<_>>();
+        let context = investigation
+            .planning_context(&rows, std::slice::from_ref(&route.id), &inspected_ids, 12)
+            .unwrap();
+        assert_eq!(context.dataset_rows, 4);
+        assert_eq!(context.remaining_row_changes, 12);
+        assert_eq!(context.clusters.len(), 1);
+        assert_eq!(context.anchors.len(), 2);
+        for item in &page.items {
+            assert_eq!(
+                context.anchors[&item.id].fingerprint,
+                item.content["investigation"]["anchorFingerprint"]
+            );
+            assert_eq!(
+                context.anchors[&item.id].cluster_keys,
+                BTreeSet::from([route.id.clone()])
+            );
+            assert_eq!(
+                context.anchors[&item.id].exact_duplicate_group_id, None,
+                "contradictory labels are findings, not proven exact duplicates"
+            );
+        }
+        assert!(!context.anchors.contains_key("row-c"));
         let refreshed = NomosDatasetInvestigation::build(
             &rows,
             &[evidence("development", 0.2)],

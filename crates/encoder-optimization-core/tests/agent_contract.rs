@@ -109,3 +109,13 @@ fn mixed_reference_namespaces_report_wrong_positions_without_echoing_untrusted_i
     value.additions[0].evidence_ids = vec!["report:failure".into()];
     value.validate(&scope(), &rows, &evidence).unwrap();
 }
+
+#[test]
+fn protocol_v3_rejects_a_scope_without_all_four_planning_stages() {
+    let mut value = scope();
+    value.analysis_protocol = 3;
+    value.maximum_turns = 4;
+    value.validate().unwrap();
+    value.maximum_turns = 3;
+    assert!(value.validate().is_err());
+}

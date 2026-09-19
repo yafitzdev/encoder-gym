@@ -142,12 +142,16 @@ impl OptimizationAgentSettings {
             "Agent objective must contain at most 4,000 characters and no control codes.",
         )?;
         require(
-            matches!(self.analysis_protocol, 1 | 2),
-            "Agent analysis protocol must be version 1 or 2.",
+            matches!(self.analysis_protocol, 1..=3),
+            "Agent analysis protocol must be version 1, 2 or 3.",
         )?;
         require(
             self.analysis_protocol != 2 || self.maximum_agent_turns_per_iteration >= 3,
             "Agent analysis protocol version 2 requires at least three turns per iteration.",
+        )?;
+        require(
+            self.analysis_protocol != 3 || self.maximum_agent_turns_per_iteration >= 4,
+            "Agent analysis protocol version 3 requires at least four turns per iteration.",
         )?;
         require(
             (1..=10).contains(&self.maximum_iterations)
@@ -220,6 +224,21 @@ mod tests {
             ..OptimizationAgentSettings::default()
         };
         assert!(too_few_turns.validate().is_err());
+    }
+
+    #[test]
+    fn protocol_v3_requires_its_four_persisted_planning_stages() {
+        let valid = OptimizationAgentSettings {
+            analysis_protocol: 3,
+            maximum_agent_turns_per_iteration: 4,
+            ..OptimizationAgentSettings::default()
+        };
+        valid.validate().unwrap();
+        let invalid = OptimizationAgentSettings {
+            maximum_agent_turns_per_iteration: 3,
+            ..valid
+        };
+        assert!(invalid.validate().is_err());
     }
 
     #[test]
