@@ -18,6 +18,17 @@ pub const NATIVE_ASSESSMENT_SCHEMA_VERSION: u32 = 1;
 pub const MAX_NATIVE_ASSESSMENT_BATCH: usize = 8;
 pub const MAX_NATIVE_CANDIDATES: usize = 128;
 
+/// Provider usage may be unavailable on custom endpoints. Missing values are
+/// explicit so the optimization store can retain the reserved ceiling instead
+/// of interpreting an SDK placeholder zero as free work.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NativeReviewUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub cost_microusd: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NativeCandidateSemantics {

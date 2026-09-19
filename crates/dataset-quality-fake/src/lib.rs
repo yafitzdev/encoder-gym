@@ -16,7 +16,7 @@ use dataset_quality_core::{
     lifecycle::ProviderUsage,
     native_assessment::{
         NativeAssessmentIssueCode, NativeBlindAssessmentDraft, NativeBlindAssessmentRequest,
-        NativeTargetFitDraft, NativeTargetFitRequest,
+        NativeReviewUsage, NativeTargetFitDraft, NativeTargetFitRequest,
     },
     policy::BasisPoints,
     ports::{
@@ -288,7 +288,7 @@ fn lexical_tokens(value: &str) -> BTreeSet<String> {
 fn native_usage(
     request: &impl Serialize,
     response: &impl Serialize,
-) -> Result<ProviderUsage, QualityEvaluationError> {
+) -> Result<NativeReviewUsage, QualityEvaluationError> {
     let input = serde_json::to_vec(request)
         .map_err(configuration_error)?
         .len() as u64;
@@ -297,11 +297,10 @@ fn native_usage(
         .len() as u64;
     let input_tokens = input.div_ceil(4).max(1);
     let output_tokens = output.div_ceil(4).max(1);
-    Ok(ProviderUsage {
-        input_tokens,
-        output_tokens,
-        total_tokens: input_tokens.saturating_add(output_tokens),
-        cost_microusd: 0,
+    Ok(NativeReviewUsage {
+        input_tokens: Some(input_tokens),
+        output_tokens: Some(output_tokens),
+        cost_microusd: Some(0),
     })
 }
 

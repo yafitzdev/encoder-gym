@@ -22,8 +22,8 @@ use crate::{
         ProviderUsage, QualityAuditRun,
     },
     native_assessment::{
-        NativeBlindAssessmentDraft, NativeBlindAssessmentRequest, NativeTargetFitDraft,
-        NativeTargetFitRequest,
+        NativeBlindAssessmentDraft, NativeBlindAssessmentRequest, NativeReviewUsage,
+        NativeTargetFitDraft, NativeTargetFitRequest,
     },
     population::{AuditPlan, CheckedAuditPlan},
 };
@@ -149,7 +149,7 @@ pub trait QualityEvaluator: Send + Sync {
 #[serde(deny_unknown_fields)]
 pub struct NativeBlindBatchOutput {
     pub assessments: Vec<NativeBlindAssessmentDraft>,
-    pub usage: ProviderUsage,
+    pub usage: NativeReviewUsage,
     #[serde(default)]
     pub metadata: Value,
 }
@@ -158,7 +158,7 @@ pub struct NativeBlindBatchOutput {
 #[serde(deny_unknown_fields)]
 pub struct NativeTargetFitBatchOutput {
     pub assessments: Vec<NativeTargetFitDraft>,
-    pub usage: ProviderUsage,
+    pub usage: NativeReviewUsage,
     #[serde(default)]
     pub metadata: Value,
 }
