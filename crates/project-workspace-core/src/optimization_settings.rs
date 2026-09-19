@@ -92,11 +92,13 @@ impl Default for OptimizationAgentSettings {
         Self {
             mode: OptimizationMode::Standard,
             objective: String::new(),
-            analysis_protocol: 2,
+            analysis_protocol: 3,
             maximum_iterations: 3,
             maximum_agent_turns_per_iteration: 8,
             generation_concurrency: 1,
-            generation_canary: Some(encoder_optimization_core::generation::GenerationCanaryPolicy::FirstBatchAllAdmittedV1),
+            generation_canary: Some(
+                encoder_optimization_core::generation::GenerationCanaryPolicy::PerCombinationSemanticV3,
+            ),
             maximum_row_changes: 192,
             training: OptimizationTrainingSettings {
                 device: OptimizationDevice::Auto,
@@ -284,9 +286,17 @@ mod tests {
     }
 
     #[test]
-    fn historical_settings_remain_v1_while_new_presets_pin_v2() {
+    fn historical_settings_remain_v1_or_v2_while_new_presets_pin_v3() {
         let current = serde_json::to_value(OptimizationAgentSettings::default()).unwrap();
-        assert_eq!(current["analysisProtocol"], 2);
+        assert_eq!(current["analysisProtocol"], 3);
+        assert_eq!(current["generationCanary"], "per_combination_semantic_v3");
+        let mut v2 = current.clone();
+        v2["analysisProtocol"] = 2.into();
+        v2["generationCanary"] = "first_batch_all_admitted_v1".into();
+        let decoded_v2: OptimizationAgentSettings = serde_json::from_value(v2.clone()).unwrap();
+        decoded_v2.validate().unwrap();
+        assert_eq!(serde_json::to_value(decoded_v2).unwrap(), v2);
+
         let mut historical = current;
         historical
             .as_object_mut()

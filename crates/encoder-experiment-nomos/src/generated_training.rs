@@ -436,6 +436,7 @@ mod tests {
         let proposal = DatasetEditProposal {
             summary: "Fill the measured gap".into(),
             stop: false,
+            stop_reason: None,
             removals: vec![],
             additions: vec![
                 GenerationTarget {
@@ -456,6 +457,7 @@ mod tests {
             schema_version: REPAIR_PLAN_SCHEMA_VERSION,
             summary: proposal.summary.clone(),
             stop: false,
+            stop_reason: None,
             targets: vec![repair_target(
                 "search-gap",
                 RepairOperation::LabelPreservingVariants {
@@ -519,6 +521,7 @@ mod tests {
         let proposal = DatasetEditProposal {
             summary: "Test the confusion boundary".into(),
             stop: false,
+            stop_reason: None,
             removals: vec![],
             additions: ["left", "right"]
                 .into_iter()
@@ -534,6 +537,7 @@ mod tests {
             schema_version: REPAIR_PLAN_SCHEMA_VERSION,
             summary: proposal.summary.clone(),
             stop: false,
+            stop_reason: None,
             targets: vec![repair_target(
                 "confusion",
                 RepairOperation::ExistingAnchorContrast {
@@ -616,6 +620,7 @@ mod tests {
         let proposal = DatasetEditProposal {
             summary: "Fill evidence gap".into(),
             stop: false,
+            stop_reason: None,
             removals: vec![],
             additions: vec![GenerationTarget {
                 template_row_id: "member".into(),

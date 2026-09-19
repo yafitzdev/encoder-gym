@@ -1006,11 +1006,22 @@ The desktop validates this closed response and joins child experiments by exact
 identity. Stop/Resume authority reads do not depend on report availability.
 Artifact links refresh the project inventory before ordinary viewer navigation,
 fencing late responses against project/navigation changes without restarting work.
-New launch presets pin a core-owned first-batch generation canary. The runner
-uses ordinary reservations and saved outcomes before concurrent dispatch;
-dataset publication independently requires a passed sample under that policy.
-The task adapter supplies only a closed training-question preview, never native
-registry/state payloads. Historical launches without the policy are unchanged.
+New launch presets pin analysis protocol V3 and its core-owned per-combination
+semantic canary. Before bulk dispatch, the runner uses ordinary durable
+reservations to structurally admit and then blindly review the first planned
+batch for every target/anchor/strategy combination. Dataset publication requires
+all canary units to pass and records per-target structural, semantic, coupling,
+duplicate and publication counts. A rejected gate produces an immutable normal
+non-execution receipt and no training; historical V1/V2 launches retain their
+original disabled or first-batch canary behavior. The task adapter supplies only
+closed training-question/native-candidate projections, never raw development or
+sealed rows, persuasive Agent rationale, or unrestricted registry/state payloads.
+V3 stop proposals must name `no_change` or `unsupported_repair`. A rejected
+canary and a passed canary followed by `zero_surviving_edits` use separate typed
+non-execution receipts. CLI history preserves those identities instead of
+collapsing them into provider, budget, training, or scientific failure.
+Completed V3 iterations also persist target-level measured outcomes, and only a
+bounded summary from the same root run is fed into the next Agent scope.
 The separate `optimization-run cases --iteration` read reuses this custody
 validator, then loads the exact iteration's completed scientific journal and
 original-baseline development reports. Nomos owns bounded saved-diagnostic

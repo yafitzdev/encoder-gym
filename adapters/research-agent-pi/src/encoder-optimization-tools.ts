@@ -164,6 +164,12 @@ const repairPlanSchema = Type.Object({
   schemaVersion: Type.Literal(3),
   summary: Type.String({ minLength: 1, maxLength: 400 }),
   stop: Type.Boolean(),
+  stopReason: Type.Optional(
+    Type.Union([Type.Literal("no_change"), Type.Literal("unsupported_repair")], {
+      description:
+        "Required exactly when stop=true: no_change means the evidence supports no edit; unsupported_repair means a weakness exists but no legal inspected repair is available.",
+    }),
+  ),
   targets: Type.Array(
     Type.Object({
       targetId: identity,
@@ -224,7 +230,7 @@ const descriptions: Record<EncoderOptimizationToolName, string> = {
   inspect_dataset_clusters:
     "Inspect deterministic representative training rows for 1–4 exact cluster IDs already returned by inspect_dataset_landscape. This reveals qualitative row content without reading the full dataset.",
   preview_repair_plan:
-    "Compile a structured repair hypothesis into exact per-anchor edits and projected cluster shares. Infeasible plans return typed constraints and are never silently trimmed.",
+    "Compile a structured repair hypothesis into exact per-anchor edits and projected cluster shares. Infeasible plans return typed constraints and are never silently trimmed. A stop plan must use stopReason=no_change or stopReason=unsupported_repair.",
   submit_repair_plan:
     "Submit the exact structured plan and fingerprint from a successful earlier preview. No inspection or revision is available in this reserved final turn.",
   propose_dataset_edits:

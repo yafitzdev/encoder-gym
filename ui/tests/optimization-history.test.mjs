@@ -52,6 +52,38 @@ test("canary history preserves bounded samples and rejects unsafe or contradicto
   assert.equal(parseOptimizationHistory(value,projectId,runId)[0].repairPlan.canary.status,"disabled");
 });
 
+test("V3 canary and non-execution history preserve semantic counts without pretending to train", () => {
+  const value=history(),plan=repair(),combination="sha256:"+"c".repeat(64),repairPlanFingerprint="sha256:"+"d".repeat(64);
+  Object.assign(value.iterations[0],{completed:true,noChange:false,developmentPassed:null,checks:[],modelId:null,experimentRunId:null,qualifiedDatasetVersionId:null,trainingDatasetVersionId:null});
+  plan.publication=null;
+  plan.canary={policy:"per_combination_semantic_v3",status:"rejected",callId:null,requested:2,admitted:1,rejected:[],rows:[{index:0,fingerprint:"sha256:"+"e".repeat(64),question:"Find the exact paper",taskKind:"route"}]};
+  plan.v3Canary={status:"rejected",units:[{targetId:"search-variant",combinationId:combination,strategy:"label_preserving_variant",contrastPairId:null,requested:2,structurallyAdmitted:1,semanticallyAdmitted:1,rejectedRowIds:["generation:task:1"]}]};
+  plan.notExecuted={schemaVersion:1,runId,iteration:1,proposalFingerprint:plan.proposalFingerprint,repairPlanFingerprint,reason:"canary_rejected",canary:structuredClone(plan.v3Canary)};
+  plan.outcomes=[];
+  value.iterations[0].repairPlan=plan;
+  assert.deepEqual(parseOptimizationHistory(value,projectId,runId)[0].repairPlan,plan);
+  for(const alter of [p=>p.v3Canary.status="passed",p=>p.v3Canary.units[0].semanticallyAdmitted=2,p=>p.notExecuted.proposalFingerprint="sha256:"+"f".repeat(64),p=>p.outcomes=[{sealedRows:[]}]] ){
+    const bad=structuredClone(value);alter(bad.iterations[0].repairPlan);assert.throws(()=>parseOptimizationHistory(bad,projectId,runId));
+  }
+
+  value.iterations[0].end="zero_surviving_edits";
+  plan.canary={...plan.canary,status:"passed",admitted:2,rows:[...plan.canary.rows,{index:1,fingerprint:"sha256:"+"f".repeat(64),question:"Find the exact dataset",taskKind:"route"}]};
+  plan.v3Canary={...plan.v3Canary,status:"passed",units:[{...plan.v3Canary.units[0],structurallyAdmitted:2,semanticallyAdmitted:2,rejectedRowIds:[]}]};
+  plan.notExecuted={...plan.notExecuted,reason:"zero_surviving_edits",canary:structuredClone(plan.v3Canary)};
+  assert.equal(parseOptimizationHistory(value,projectId,runId)[0].repairPlan.notExecuted.reason,"zero_surviving_edits");
+});
+
+test("V3 unsupported repair is distinct from an ordinary no-change stop", () => {
+  const value=history(),plan=repair();
+  Object.assign(value.iterations[0],{completed:true,noChange:false,end:"unsupported_repair",developmentPassed:null,checks:[],modelId:null,experimentRunId:null,qualifiedDatasetVersionId:null,trainingDatasetVersionId:null});
+  plan.proposal={summary:"The weak cluster has no inspected legal anchor.",stop:true,stopReason:"unsupported_repair",removals:[],additions:[]};
+  plan.generation=[];plan.publication=null;plan.evidence=[];plan.canary={policy:"per_combination_semantic_v3",status:"not_required",callId:null,requested:0,admitted:0,rejected:[],rows:[]};plan.outcomes=[];
+  value.iterations[0].repairPlan=plan;
+  assert.equal(parseOptimizationHistory(value,projectId,runId)[0].end,"unsupported_repair");
+  const bad=structuredClone(value);bad.iterations[0].repairPlan.proposal.stopReason="no_change";
+  assert.throws(()=>parseOptimizationHistory(bad,projectId,runId));
+});
+
 test("history preserves rejected candidate custody and explicit lower-is-better comparisons", () => {
   assert.deepEqual(parseOptimizationHistory(history(), projectId, runId), [first]);
   const value = history(); value.iterations.push({ ...first, id: randomUUID(), number: 2, noChange: true, developmentPassed: null,

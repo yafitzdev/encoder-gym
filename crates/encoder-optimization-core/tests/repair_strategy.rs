@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use encoder_optimization_core::{
+    agent::RepairStopReason,
     fingerprint,
     repair_strategy::{
         AdditionCount, AnchorAllocation, AnchorReference, ContrastPairAllocation, MetricDirection,
@@ -55,6 +56,7 @@ fn common(operation: RepairOperation) -> RepairPlan {
         schema_version: REPAIR_PLAN_SCHEMA_VERSION,
         summary: "Test a bounded search-coverage repair.".into(),
         stop: false,
+        stop_reason: None,
         targets: vec![RepairTarget {
             target_id: "target-search".into(),
             cluster_keys: vec!["cluster-search".into()],
@@ -245,4 +247,33 @@ fn unchanged_prior_intervention_is_a_typed_constraint() {
     assert!(compiled.constraints.iter().any(|constraint| {
         constraint.code == RepairPlanConstraintCode::RepeatedUnchangedIntervention
     }));
+}
+
+#[test]
+fn stop_plan_requires_an_explicit_v3_disposition() {
+    let mut plan = common(RepairOperation::LabelPreservingVariants {
+        count: AdditionCount::AbsoluteRows { desired_rows: 1 },
+        allocation_rationale: "unused for stop fixture".into(),
+        anchors: vec![],
+    });
+    plan.stop = true;
+    plan.targets.clear();
+    assert!(
+        compile_repair_plan(&plan, &context())
+            .unwrap()
+            .preview
+            .is_none()
+    );
+    for reason in [
+        RepairStopReason::NoChange,
+        RepairStopReason::UnsupportedRepair,
+    ] {
+        plan.stop_reason = Some(reason);
+        let preview = compile_repair_plan(&plan, &context())
+            .unwrap()
+            .preview
+            .unwrap();
+        assert_eq!(preview.desired_additions, 0);
+        assert_eq!(preview.removals, 0);
+    }
 }

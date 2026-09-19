@@ -417,6 +417,7 @@ fn compile_legacy_proposal(plan: &RepairPlan) -> Result<DatasetEditProposal, Opt
     Ok(DatasetEditProposal {
         summary: plan.summary.clone(),
         stop: plan.stop,
+        stop_reason: plan.stop_reason,
         removals,
         additions,
     })

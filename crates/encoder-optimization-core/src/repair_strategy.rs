@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{OptimizationError, fingerprint, require};
+use crate::{OptimizationError, agent::RepairStopReason, fingerprint, require};
 
 pub const REPAIR_PLAN_SCHEMA_VERSION: u32 = 3;
 pub const MAX_REPAIR_TARGETS: usize = 4;
@@ -23,6 +23,8 @@ pub struct RepairPlan {
     pub schema_version: u32,
     pub summary: String,
     pub stop: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<RepairStopReason>,
     pub targets: Vec<RepairTarget>,
 }
 
@@ -433,6 +435,7 @@ impl<'a> Compiler<'a> {
         if self.plan.schema_version != REPAIR_PLAN_SCHEMA_VERSION
             || !valid_text(&self.plan.summary, 400)
             || self.plan.stop != self.plan.targets.is_empty()
+            || self.plan.stop != self.plan.stop_reason.is_some()
         {
             self.constraint(RepairPlanConstraintCode::InvalidPlanShape, None);
         }

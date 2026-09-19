@@ -1,6 +1,8 @@
 # Goal: Evidence-driven dataset repair V3
 
-Status: backend implementation in progress; V3 is not yet the default.
+Status: backend/CLI release accepted; V3 is the default for new Standard and
+Quick-test launches. Existing Overview presentation remains deferred pending
+explicit UI authorization.
 Owner: managed Nomos optimization loop.
 Last updated: 19 September 2026.
 
@@ -144,6 +146,11 @@ must include:
 - Desired edit count, count basis, rationale, and exact per-anchor allocation.
 - One existing target metric and desired direction.
 
+A V3 plan with no edit targets is valid only when it carries one explicit stop
+reason: `no_change` when the evidence supports leaving the dataset unchanged, or
+`unsupported_repair` when the observed weakness cannot be repaired with the
+inspected legal operations. Historical protocols keep their legacy stop shape.
+
 Supported operations are limited to:
 
 1. Label-preserving question variants from inspected training anchors.
@@ -241,6 +248,11 @@ edit survives. Before training, run the existing complete-population native
 qualification and benchmark-isolation checks over the exact candidate dataset.
 Generated duplicates are checked against the full selected population and one
 another using native model-input identity.
+
+If the canary passes but later admission or qualification leaves no publishable
+edit, persist `repair_not_executed: zero_surviving_edits`. It is terminal for the
+iteration, publishes no dataset, starts no training, and remains distinct from
+`canary_rejected`, `no_change`, and `unsupported_repair`.
 
 ### 4.6 Training, evaluation, and target outcomes
 
@@ -347,68 +359,63 @@ below means code is committed; the release is not accepted until Stage 7 passes.
 | 3 | Structured V3 plan, exact allocation compiler, preview/submission | Implemented and committed |
 | 4 | Blind native semantic assessment, transport, accounting, persistence | Implemented and committed |
 | 5 | Per-combination canaries, contrast coupling, gated publication | Implemented and committed |
-| 6 | Per-target outcomes and bounded within-run outcome memory | In progress; not yet accepted |
-| 7 | Recovery matrix, legacy/isolation regression, full gates, V3 preset activation | Not started |
+| 6 | Per-target outcomes and bounded within-run outcome memory | Implemented and committed |
+| 7 | Recovery matrix, legacy/isolation regression, full gates, V3 preset activation | Accepted and committed |
 | 8 | Existing Overview V3 presentation | Deferred; requires explicit UI authorization |
 
-### Stage 6: finish next
+### Stage 6: completed outcome feedback
 
-1. Finish immutable outcome persistence and history projection.
-2. Require the matching outcome records before a newly executed V3 iteration
-   can be marked complete.
-3. Add a connected two-iteration fixture where iteration 2 receives iteration
-   1's measured outcome.
-4. Prove that an unchanged intervention is rejected with the typed
-   `repeated_unchanged_intervention` constraint and a revised inspected anchor
-   can proceed.
-5. Prove candidate scientific rejection remains visible as REJECT and does not
-   become a causal claim or an execution failure.
+Immutable per-target outcomes are now required before a newly executed V3
+iteration completes. History projects their measured target direction and
+unchanged global KEEP/REJECT verdict, and a bounded summary is supplied to the
+next iteration. Connected fixtures prove recovery without repeated work,
+scientific REJECT remains distinct from execution failure, and an unchanged
+intervention is rejected as `repeated_unchanged_intervention` while materially
+revised evidence remains eligible.
 
-### Stage 7: release acceptance and activation
+### Stage 7: accepted release and activation
 
-1. Cover stop/crash/restart at each new durable boundary, including unknown
-   provider attempts and outcome persistence.
-2. Cover successful publication, semantic row rejection, canary rejection,
-   partial bulk admission, zero surviving edits, no-change, budget exhaustion,
-   execution failure, and scientific rejection.
-3. Replay V1/V2 persisted fixtures unchanged.
-4. Run sealed-sentinel tests across every adaptive payload.
-5. Run all repository gates and the managed production-CLI fixture.
-6. Only after all above pass, change new Standard and Quick-test presets from V2
-   plus the legacy canary to V3 plus the per-combination semantic canary.
-7. Re-run setup/preview compatibility tests and document the activated policy.
+The release matrix is covered by unit, persistence, adapter, UI-decoder, and
+managed production-CLI fixtures. New Standard and Quick-test presets now pin
+analysis protocol V3 and `per_combination_semantic_v3`; historical missing
+fields and explicitly pinned V1/V2 launches preserve their prior behavior and
+fingerprints. Terminal history distinguishes no-change, unsupported repair,
+canary rejection, zero surviving edits, budget exhaustion, execution failure,
+KEEP, and REJECT. The full repository gates passed on the release tree; the
+Windows CLI integration suite was also run serially to avoid unrelated SQLite
+contention between parallel process fixtures.
 
 ## 9. Acceptance matrix
 
 The backend/CLI release is complete only when deterministic fixtures prove:
 
-- [ ] 1,000 retrieval states, 16 Agent sessions, and 50 saved disagreements
+- [x] 1,000 retrieval states, 16 Agent sessions, and 50 saved disagreements
       remain separate valid populations; a 100-state cluster reports 10%
       retrieval support.
-- [ ] Complete dataset counts and context-aware duplicate groups are exact while
+- [x] Complete dataset counts and context-aware duplicate groups are exact while
       the Agent receives only bounded samples.
-- [ ] Only inspected training rows can be used; an unsupported empty cluster
+- [x] Only inspected training rows can be used; an unsupported empty cluster
       produces an explicit no-execution result.
-- [ ] `relative_cluster_growth` of 500 basis points on 400 rows compiles to 20
+- [x] `relative_cluster_growth` of 500 basis points on 400 rows compiles to 20
       additions with deterministic multi-anchor allocation.
-- [ ] A proven redundant row names its retained equivalent; a suspected label
+- [x] A proven redundant row names its retained equivalent; a suspected label
       conflict is reported but not deleted or relabeled.
-- [ ] A schema-valid wrong-label or ambiguous generated row fails semantic
+- [x] A schema-valid wrong-label or ambiguous generated row fails semantic
       admission, and an unassessed row cannot train.
-- [ ] Every target/anchor/strategy canary gates all bulk work and a contrast pair
+- [x] Every target/anchor/strategy canary gates all bulk work and a contrast pair
       cannot be partially admitted.
-- [ ] Published counts reproduce exact immutable dataset membership and training
+- [x] Published counts reproduce exact immutable dataset membership and training
       input; complete native qualification still gates training.
-- [ ] A second iteration consumes the first plan/outcome, includes a REJECT case,
+- [x] A second iteration consumes the first plan/outcome, includes a REJECT case,
       blocks an unchanged intervention, and can submit a materially revised one.
-- [ ] No-change, unsupported repair, canary rejection, zero surviving edits,
+- [x] No-change, unsupported repair, canary rejection, zero surviving edits,
       budget exhaustion, execution failure, KEEP, and REJECT remain distinct in
       CLI status and history.
-- [ ] Stop/crash/restart never duplicates an external call, publication,
+- [x] Stop/crash/restart never duplicates an external call, publication,
       training run, or outcome and preserves conservative unknown charges.
-- [ ] V1/V2 fixtures replay unchanged and sealed sentinels never appear in an
+- [x] V1/V2 fixtures replay unchanged and sealed sentinels never appear in an
       adaptive request, diagnostic projection, or outcome.
-- [ ] `cargo fmt-check`, `cargo check-all`, `cargo lint`, and `cargo test-all`
+- [x] `cargo fmt-check`, `cargo check-all`, `cargo lint`, and `cargo test-all`
       pass from a clean worktree, together with the managed CLI acceptance test.
 
 The later UI phase is complete only when the existing Overview shows the same
@@ -418,9 +425,10 @@ IPC, renderer, and narrow-window checks.
 
 ## 10. Stop condition
 
-Stop the backend release when the Stage 7 matrix passes and V3 presets are
-activated. Do not expand the release to improve the evaluator, replace the
-trainer, add a provider, add autonomous workers, or redesign the app.
+The backend release stopped after the Stage 7 matrix passed and the V3 presets
+were activated. Do not expand it to improve the evaluator, replace the trainer,
+add a provider, add autonomous workers, or redesign the app. Stage 8 is a
+separate product phase and starts only after explicit UI authorization.
 
 Do not claim completion from a plan preview, isolated unit tests, a larger row
 count, or one successful model run. Release completion requires the connected

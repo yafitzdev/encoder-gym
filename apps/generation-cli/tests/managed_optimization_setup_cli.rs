@@ -308,6 +308,11 @@ async fn agent_settings_preview_and_authority_are_immutable_and_cannot_run_as_a_
     );
     assert_eq!(standard["scope"]["limits"]["maximumIterations"], 3);
     assert_eq!(standard["scope"]["limits"]["maximumDatasetRowChanges"], 192);
+    assert_eq!(standard["scope"]["agentic"]["analysisProtocol"], 3);
+    assert_eq!(
+        standard["scope"]["agentic"]["generationCanary"],
+        "per_combination_semantic_v3"
+    );
     let preview = run(
         root,
         &[
@@ -321,6 +326,11 @@ async fn agent_settings_preview_and_authority_are_immutable_and_cannot_run_as_a_
     );
     assert_eq!(before, fs::read(folder.join("project.sqlite")).unwrap());
     assert_eq!(preview["scope"]["agentic"]["mode"], "quick_test");
+    assert_eq!(preview["scope"]["agentic"]["analysisProtocol"], 3);
+    assert_eq!(
+        preview["scope"]["agentic"]["generationCanary"],
+        "per_combination_semantic_v3"
+    );
     assert_eq!(preview["scope"]["agentic"]["generationConcurrency"], 1);
     assert_eq!(preview["scope"]["limits"]["maximumIterations"], 1);
     assert_eq!(preview["scope"]["limits"]["maximumTrainingSeconds"], 120);

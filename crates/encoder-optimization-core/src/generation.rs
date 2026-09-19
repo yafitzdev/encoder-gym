@@ -145,6 +145,7 @@ pub struct V3CanaryGate {
 #[serde(rename_all = "snake_case")]
 pub enum RepairNotExecutedReason {
     CanaryRejected,
+    ZeroSurvivingEdits,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -165,8 +166,14 @@ impl RepairNotExecuted {
             self.schema_version == 1
                 && !self.run_id.is_nil()
                 && (1..=10).contains(&self.iteration)
-                && self.reason == RepairNotExecutedReason::CanaryRejected
-                && self.canary.status == V3CanaryStatus::Rejected
+                && match self.reason {
+                    RepairNotExecutedReason::CanaryRejected => {
+                        self.canary.status == V3CanaryStatus::Rejected
+                    }
+                    RepairNotExecutedReason::ZeroSurvivingEdits => {
+                        self.canary.status == V3CanaryStatus::Passed
+                    }
+                }
                 && !self.canary.units.is_empty(),
             "Invalid repair-not-executed receipt",
         )?;

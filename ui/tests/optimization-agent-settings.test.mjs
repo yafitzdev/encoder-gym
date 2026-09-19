@@ -9,11 +9,13 @@ test("settings preserve legacy shape and strictly bound optional whole-run provi
   const legacy = structuredClone(presets.standard); delete legacy.analysisProtocol;
   delete legacy.generationCanary;
   assert.equal(Object.hasOwn(parseOptimizationAgentSettings(legacy), "generationCanary"), false);
-  assert.equal(parseOptimizationAgentSettings(presets.standard).generationCanary, "first_batch_all_admitted_v1");
+  assert.equal(parseOptimizationAgentSettings(presets.standard).generationCanary, "per_combination_semantic_v3");
   assert.throws(() => parseOptimizationAgentSettings({ ...presets.standard, generationCanary: "invented" }));
   assert.equal(parseOptimizationAgentSettings(legacy).analysisProtocol, 1);
-  assert.equal(parseOptimizationAgentSettings(presets.standard).analysisProtocol, 2);
+  assert.equal(parseOptimizationAgentSettings(presets.standard).analysisProtocol, 3);
   assert.equal(parseOptimizationAgentSettings({ ...presets.standard, analysisProtocol: 3 }).analysisProtocol, 3);
+  assert.throws(() => parseOptimizationAgentSettings({ ...presets.standard, analysisProtocol: 2 }));
+  assert.equal(parseOptimizationAgentSettings({ ...presets.standard, analysisProtocol: 2, generationCanary: "first_batch_all_admitted_v1" }).analysisProtocol, 2);
   assert.throws(() => parseOptimizationAgentSettings({ ...presets.standard, analysisProtocol: 3, maximumAgentTurnsPerIteration: 3 }));
   assert.equal(Object.hasOwn(parseOptimizationAgentSettings(presets.standard), "providerLimits"), false);
   const settings = { ...presets.standard, providerLimits: { advisor: { ...limits }, generation: { ...limits } } };

@@ -2,25 +2,34 @@
 
 ## Frozen generation canary
 
-New standard and quick-test presets pin `generationCanary` to
-`first_batch_all_admitted_v1`. Before concurrent dispatch, the runner submits
-only the first ordinary generation slot (at most eight rows). Every sample row
-must pass the task adapter's existing native admission before remaining slots
-are dispatched. The canary is part of the planned rows and existing request,
-token, spend and edit ceilings, not an extra generation call or human approval.
-It tests one target/context only; it is not a semantic-label assessment or full
-benchmark-isolation check. Normal full-population qualification still precedes
-training.
+New standard and quick-test presets pin analysis protocol V3 and
+`generationCanary` to `per_combination_semantic_v3`. The runner reserves the
+first planned batch of at most two rows for every distinct
+target/anchor/strategy combination. A contrast pair is one coupled canary unit.
+All units must pass structural admission, blind native-answer assessment and
+target-fit assessment before any bulk slot is dispatched. Canary rows remain
+part of the requested repair and consume the existing request, token, spend and
+row-change ceilings; they are not extra examples or a separate approval step.
 
-A saved rejected sample prevents publication and further generation; explicit
-resume reuses the same rejection without another provider call. Interrupted or
-unknown attempts retain their reservation and require an ordinary budgeted retry.
-Completed samples replay from the existing generation journal. Historical launch
-documents without this optional policy retain their exact identity and behavior.
-Read-only CLI history exposes the bounded admitted questions, task kinds, row
-fingerprints, rejection reasons and exact call identity; native registries and
-state are not presentation payloads. The desktop displays these saved facts in
-the iteration's repair plan and shows the policy before launch.
+One rejected unit prevents all bulk work and dataset publication for that
+iteration. The runner persists a typed `canary_rejected` non-execution receipt
+and completes the iteration without training. Resume reuses that terminal
+evidence and cannot dispatch another provider call. Interrupted or unknown
+provider attempts retain their reservation and may receive only the one
+explicit, budgeted recovery attempt allowed by the V3 review contract.
+
+Historical V1/V2 launch documents keep their exact protocol and canary policy.
+An explicitly pinned `first_batch_all_admitted_v1` launch therefore retains the
+legacy one-slot structural canary. Read-only CLI history projects the applicable
+legacy or V3 gate, bounded generated-row previews, publication accounting and
+non-execution receipt without exposing native registry/state payloads.
+
+V3 proposal stops carry an explicit `stopReason`: `no_change` means the inspected
+evidence supports leaving the dataset unchanged, while `unsupported_repair`
+means the weakness cannot be addressed with the inspected legal operations. If
+canaries pass but later admission or qualification leaves no publishable edit,
+the runner records `zero_surviving_edits`. These outcomes remain distinct from
+`canary_rejected`, budget exhaustion, execution failure and scientific REJECT.
 
 Implementation status: settings contracts, strict CLI preview/authorization and
 desktop history compatibility are implemented. The new execution components now
@@ -265,9 +274,10 @@ successful call to each owned inspection capability, every later model call for
 that iteration exposes only `propose_dataset_edits`; the OpenAI-compatible
 transport also requires that single tool. The last permitted call is
 proposal-only even when inspection did not complete, so the Agent must submit a
-validated evidence-linked edit or an explicit no-change stop. Invalid proposal
-attempts remain in the append-only trace and may be corrected within the
-remaining turn budget. Pi advertises the strict tool schemas to the model but
+validated evidence-linked edit or an explicit `no_change`/`unsupported_repair`
+stop. Invalid proposal attempts remain in the append-only trace and may be
+corrected within the remaining turn budget. Pi advertises the strict tool
+schemas to the model but
 forwards submitted arguments unchanged to the host validator. It must not drop
 schema-invalid proposals or silently coerce their values before the host can
 record the rejection; a rejected attempt still consumes its reserved call and
@@ -431,10 +441,10 @@ not called a quick test.
 
 ## Dataset-intelligence inspection protocol
 
-New standard and Quick-test launches use the version-2 dataset-intelligence
-protocol. The protocol version is an immutable launch input. Historical
-version-1 runs retain their original failure-page and training-row tools so a
-retry cannot change its request fingerprint or scientific meaning.
+New standard and Quick-test launches use the version-3 evidence-driven repair
+protocol. The protocol version is an immutable launch input. Historical V1 and
+V2 runs retain their original tools and fingerprints so a retry cannot change
+their scientific meaning.
 
 Version 2 replaces arbitrary first-page inspection with a deterministic,
 task-owned landscape:
@@ -458,9 +468,9 @@ task-owned landscape:
    references and the remaining whole-run edit allowance.
 
 Version 3 extends that contract without changing existing V1/V2 launches. It is
-currently an explicitly pinned protocol, not the default, until its semantic
-admission and publication path passes connected CLI acceptance. V3 has four
-persisted stages and rejects a launch with fewer than four Agent turns:
+the default for new launches after connected CLI, recovery, isolation and
+legacy-replay acceptance. V3 has four persisted planning stages and rejects a
+launch with fewer than four Agent turns:
 
 1. `inspect_dataset_landscape` returns the complete aggregate landscape using
    stable semantic cluster keys, native-context counts, generation capacity,
@@ -490,10 +500,21 @@ Contradictory labels remain findings, not automatic corrections or deletions.
 V3 replay restores returned identities and valid preview fingerprints from the
 append-only Agent trace. A resumed run never upgrades protocols, reopens a
 submitted turn, accepts an unseen anchor, or dispatches another provider call
-for an already accepted proposal. The later native semantic-assessment and
-per-target-canary policy is a separate pinned execution component; until it is
-connected, V3 remains non-default and must not be presented as end-to-end data
-repair.
+for an already accepted proposal. Its separately pinned execution component
+performs blind native-answer and target-fit review, gates bulk work with the
+per-combination semantic canary, publishes only admitted rows and validated
+removals, and records exact per-target publication counts.
+
+After ordinary training and development evaluation, the loop records one
+immutable outcome per repair target. Each outcome binds the input/output
+datasets, candidate and reports; separates requested, generated, admitted,
+published and removed counts; compares only population-compatible target
+metrics; and retains the unchanged global KEEP/REJECT verdict. A bounded summary
+of earlier plans and outcomes is available to the next iteration in the same
+root run. Repeating the same cluster/strategy/anchor intervention on unchanged
+evidence is a typed constraint, while a different inspected anchor or new
+evidence may support another plan. These observations describe association, not
+causation, and do not change the existing scientific gates.
 
 The Nomos version-2 landscape uses existing evaluator dimensions rather than
 changing evaluation: expected capability, task kind, scenario family and legal
@@ -541,10 +562,12 @@ possible and prevents the next step from dispatching; immutable completed work
 is retained. Rejected edits and failed attempts still consume their budgets.
 
 After each development result the next iteration gets the previous result and
-best eligible dataset so far. Finite limits and an explicit no-change decision
-can end the loop early. Final holdout is used at most once, after all adaptive
-work, for the deterministically selected candidate, only under matching launch
-authority. It never feeds another iteration. The baseline is not auto-promoted.
+best eligible dataset so far. Finite limits and an explicit `no_change` or
+`unsupported_repair` decision can end the loop early. A passed canary followed
+by no publishable edits records `zero_surviving_edits` and starts no training.
+Final holdout is used at most once, after all adaptive work, for the
+deterministically selected candidate, only under matching launch authority. It
+never feeds another iteration. The baseline is not auto-promoted.
 
 ## Presentation
 

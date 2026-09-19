@@ -6,6 +6,7 @@ export interface OptimizationIteration {
   experimentRunId: string | null; qualifiedDatasetVersionId: string | null;
   trainingDatasetVersionId: string | null; modelId: string | null;
   completed: boolean; noChange: boolean; selected: boolean; developmentPassed: boolean | null;
+  end?: "no_change" | "unsupported_repair" | "canary_rejected" | "zero_surviving_edits" | "iteration_limit" | "row_change_limit";
   checks: { reportId: string; suite: string; metric: string; direction: "higher_is_better" | "lower_is_better"; baseline: number; candidate: number; passed: boolean }[];
   repairPlan?: DatasetRepairPlan | null;
 }
@@ -28,7 +29,8 @@ export function parseOptimizationHistory(value: unknown, projectId: string, runI
   if (uuid(history.projectId) !== projectId || uuid(history.runId) !== runId || !Array.isArray(history.iterations)) throw new Error("Iteration history belongs to another run.");
   const iterations = history.iterations.map((value: unknown, index: number): OptimizationIteration => {
     const hasRepair = !!value && typeof value === "object" && Object.hasOwn(value, "repairPlan");
-    const item = object(value, ["id", "number", "createdAt", "startingModelId", "inputDatasetVersionId", "benchmarkVersionId", "experimentRunId", "qualifiedDatasetVersionId", "trainingDatasetVersionId", "modelId", "completed", "noChange", "selected", "developmentPassed", "checks", ...(hasRepair ? ["repairPlan"] : [])]);
+    const hasEnd = !!value && typeof value === "object" && Object.hasOwn(value, "end");
+    const item = object(value, ["id", "number", "createdAt", "startingModelId", "inputDatasetVersionId", "benchmarkVersionId", "experimentRunId", "qualifiedDatasetVersionId", "trainingDatasetVersionId", "modelId", "completed", "noChange", "selected", "developmentPassed", "checks", ...(hasEnd ? ["end"] : []), ...(hasRepair ? ["repairPlan"] : [])]);
     if (item.number !== index + 1 || typeof item.createdAt !== "string" || !Number.isFinite(Date.parse(item.createdAt)) || !Array.isArray(item.checks)) throw new Error("Invalid iteration ordering.");
     const nullableId = (key: string): string | null => item[key] === null ? null : uuid(item[key]);
     const iteration: OptimizationIteration = {
@@ -36,6 +38,7 @@ export function parseOptimizationHistory(value: unknown, projectId: string, runI
       startingModelId: uuid(item.startingModelId), inputDatasetVersionId: uuid(item.inputDatasetVersionId), benchmarkVersionId: uuid(item.benchmarkVersionId),
       experimentRunId: nullableId("experimentRunId"), qualifiedDatasetVersionId: nullableId("qualifiedDatasetVersionId"), trainingDatasetVersionId: nullableId("trainingDatasetVersionId"), modelId: nullableId("modelId"),
       completed: bool(item.completed), noChange: bool(item.noChange), selected: bool(item.selected), developmentPassed: item.developmentPassed === null ? null : bool(item.developmentPassed),
+      ...(hasEnd ? (() => { if (!["no_change", "unsupported_repair", "canary_rejected", "zero_surviving_edits", "iteration_limit", "row_change_limit"].includes(String(item.end))) throw new Error("Invalid iteration status."); return { end: item.end as OptimizationIteration["end"] }; })() : {}),
       checks: item.checks.map(value => {
         const check = object(value, ["reportId", "suite", "metric", "direction", "baseline", "candidate", "passed"]);
         if (check.direction !== "higher_is_better" && check.direction !== "lower_is_better") throw new Error("Invalid metric direction.");
@@ -49,7 +52,13 @@ export function parseOptimizationHistory(value: unknown, projectId: string, runI
       || iteration.noChange && (!iteration.completed || iteration.developmentPassed !== null || iteration.modelId !== null)
       || iteration.developmentPassed !== null && (!iteration.completed || !iteration.modelId)
       || iteration.selected && iteration.developmentPassed !== true
-      || iteration.repairPlan && (iteration.completed && iteration.noChange !== iteration.repairPlan.proposal.stop
+      || iteration.end !== undefined && !iteration.completed
+      || iteration.end !== undefined && (iteration.end === "no_change") !== iteration.noChange
+      || iteration.repairPlan && (iteration.completed && iteration.end === undefined && iteration.noChange !== iteration.repairPlan.proposal.stop
+        || iteration.end === "no_change" && iteration.repairPlan.proposal.stopReason !== undefined && iteration.repairPlan.proposal.stopReason !== "no_change"
+        || iteration.end === "unsupported_repair" && iteration.repairPlan.proposal.stopReason !== "unsupported_repair"
+        || iteration.end === "canary_rejected" && iteration.repairPlan.notExecuted?.reason !== "canary_rejected"
+        || iteration.end === "zero_surviving_edits" && iteration.repairPlan.notExecuted?.reason !== "zero_surviving_edits"
         || iteration.qualifiedDatasetVersionId !== null && iteration.repairPlan.publication?.datasetVersionId !== iteration.qualifiedDatasetVersionId)) throw new Error("Inconsistent iteration custody.");
     return iteration;
   });

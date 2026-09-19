@@ -413,6 +413,10 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     .await
     .unwrap();
     let mut settings = OptimizationAgentSettings::quick_test();
+    settings.analysis_protocol = 2;
+    settings.generation_canary = Some(
+        encoder_optimization_core::generation::GenerationCanaryPolicy::FirstBatchAllAdmittedV1,
+    );
     if let Some(mode) = loop_mode {
         settings = if matches!(
             mode,
@@ -430,7 +434,13 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
             );
             value
         } else {
-            OptimizationAgentSettings::default()
+            OptimizationAgentSettings {
+                analysis_protocol: 2,
+                generation_canary: Some(
+                    encoder_optimization_core::generation::GenerationCanaryPolicy::FirstBatchAllAdmittedV1,
+                ),
+                ..OptimizationAgentSettings::default()
+            }
         };
         settings.maximum_iterations = if matches!(
             mode,

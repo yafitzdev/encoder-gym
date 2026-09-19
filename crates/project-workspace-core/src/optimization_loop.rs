@@ -18,7 +18,9 @@ use uuid::Uuid;
 #[serde(rename_all = "snake_case")]
 pub enum AgentLoopEnd {
     NoChange,
+    UnsupportedRepair,
     CanaryRejected,
+    ZeroSurvivingEdits,
     IterationLimit,
     RowChangeLimit,
 }
@@ -190,9 +192,23 @@ impl IterationCompletion {
             bound(result.experiment_run_id, &result.fingerprint)
         });
         let end = if proposal.stop {
-            Some(AgentLoopEnd::NoChange)
-        } else if not_executed.is_some() {
-            Some(AgentLoopEnd::CanaryRejected)
+            Some(match proposal.stop_reason {
+                Some(encoder_optimization_core::agent::RepairStopReason::UnsupportedRepair) => {
+                    AgentLoopEnd::UnsupportedRepair
+                }
+                Some(encoder_optimization_core::agent::RepairStopReason::NoChange) | None => {
+                    AgentLoopEnd::NoChange
+                }
+            })
+        } else if let Some(stopped) = not_executed {
+            Some(match stopped.reason {
+                encoder_optimization_core::generation::RepairNotExecutedReason::CanaryRejected => {
+                    AgentLoopEnd::CanaryRejected
+                }
+                encoder_optimization_core::generation::RepairNotExecutedReason::ZeroSurvivingEdits => {
+                    AgentLoopEnd::ZeroSurvivingEdits
+                }
+            })
         } else if number == settings.maximum_iterations {
             Some(AgentLoopEnd::IterationLimit)
         } else if total_row_changes == settings.maximum_row_changes {
@@ -270,12 +286,20 @@ impl IterationCompletion {
                 && self.row_changes <= self.total_row_changes
                 && self.total_row_changes <= 5000
                 && match (&self.result, &self.end, self.row_changes) {
-                    (None, Some(AgentLoopEnd::NoChange), 0) => true,
-                    (None, Some(AgentLoopEnd::CanaryRejected), changes) => changes > 0,
+                    (None, Some(AgentLoopEnd::NoChange | AgentLoopEnd::UnsupportedRepair), 0) => {
+                        true
+                    }
+                    (
+                        None,
+                        Some(AgentLoopEnd::CanaryRejected | AgentLoopEnd::ZeroSurvivingEdits),
+                        changes,
+                    ) => changes > 0,
                     (Some(_), end, changes) => {
                         changes > 0
                             && *end != Some(AgentLoopEnd::NoChange)
+                            && *end != Some(AgentLoopEnd::UnsupportedRepair)
                             && *end != Some(AgentLoopEnd::CanaryRejected)
+                            && *end != Some(AgentLoopEnd::ZeroSurvivingEdits)
                     }
                     _ => false,
                 }
@@ -293,4 +317,42 @@ fn bound(id: Uuid, fingerprint: &str) -> BoundIdentity {
 }
 fn invalid(error: impl std::fmt::Display) -> Invalid {
     Invalid(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn completion(end: AgentLoopEnd, row_changes: u32) -> IterationCompletion {
+        let identity = || BoundIdentity {
+            id: Uuid::new_v4().to_string(),
+            fingerprint: artifact_core::fingerprint(&Uuid::new_v4()).unwrap(),
+        };
+        let mut value = IterationCompletion {
+            run: identity(),
+            iteration: identity(),
+            number: 1,
+            proposal_call_id: Uuid::new_v4(),
+            proposal_fingerprint: artifact_core::fingerprint(&"proposal").unwrap(),
+            result: None,
+            selected: None,
+            row_changes,
+            total_row_changes: row_changes,
+            end: Some(end),
+            created_at: Utc::now(),
+            fingerprint: String::new(),
+        };
+        value.fingerprint = value.reproduce().unwrap();
+        value
+    }
+
+    #[test]
+    fn unsupported_and_zero_surviving_are_distinct_valid_terminal_results() {
+        let unsupported = completion(AgentLoopEnd::UnsupportedRepair, 0);
+        unsupported.validate_identity().unwrap();
+        let zero = completion(AgentLoopEnd::ZeroSurvivingEdits, 1);
+        zero.validate_identity().unwrap();
+        assert_ne!(unsupported.end, zero.end);
+        assert_ne!(unsupported.fingerprint, zero.fingerprint);
+    }
 }

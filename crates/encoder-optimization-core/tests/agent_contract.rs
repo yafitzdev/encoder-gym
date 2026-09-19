@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 
 use encoder_optimization_core::{
-    agent::{AgentAnalysisScope, DatasetEditProposal, GenerationTarget, RowRemoval},
+    agent::{
+        AgentAnalysisScope, DatasetEditProposal, GenerationTarget, RepairStopReason, RowRemoval,
+    },
     fingerprint,
 };
 use uuid::Uuid;
@@ -25,6 +27,7 @@ fn proposal() -> DatasetEditProposal {
     DatasetEditProposal {
         summary: "Remove the conflicting example and fill the observed gap.".into(),
         stop: false,
+        stop_reason: None,
         removals: vec![RowRemoval {
             row_id: "row".into(),
             reason: "Conflicting label".into(),
@@ -118,4 +121,34 @@ fn protocol_v3_rejects_a_scope_without_all_four_planning_stages() {
     value.validate().unwrap();
     value.maximum_turns = 3;
     assert!(value.validate().is_err());
+}
+
+#[test]
+fn protocol_v3_stop_distinguishes_no_change_from_unsupported_repair() {
+    let mut v3 = scope();
+    v3.analysis_protocol = 3;
+    let mut stopped = proposal();
+    stopped.stop = true;
+    stopped.removals.clear();
+    stopped.additions.clear();
+    assert!(
+        stopped
+            .validate(&v3, &BTreeSet::new(), &BTreeSet::new())
+            .is_err()
+    );
+    for reason in [
+        RepairStopReason::NoChange,
+        RepairStopReason::UnsupportedRepair,
+    ] {
+        stopped.stop_reason = Some(reason);
+        stopped
+            .validate(&v3, &BTreeSet::new(), &BTreeSet::new())
+            .unwrap();
+    }
+    stopped.stop = false;
+    assert!(
+        stopped
+            .validate(&v3, &BTreeSet::new(), &BTreeSet::new())
+            .is_err()
+    );
 }

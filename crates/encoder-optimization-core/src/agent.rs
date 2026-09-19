@@ -106,11 +106,20 @@ pub struct GenerationTarget {
     pub evidence_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepairStopReason {
+    NoChange,
+    UnsupportedRepair,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DatasetEditProposal {
     pub summary: String,
     pub stop: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<RepairStopReason>,
     pub removals: Vec<RowRemoval>,
     pub additions: Vec<GenerationTarget>,
 }
@@ -151,6 +160,14 @@ impl DatasetEditProposal {
         require(
             if self.stop { changes == 0 } else { changes > 0 },
             "Stop requires no edits; continuation requires an explicit edit",
+        )?;
+        require(
+            if scope.analysis_protocol == 3 {
+                self.stop == self.stop_reason.is_some()
+            } else {
+                self.stop_reason.is_none()
+            },
+            "Protocol V3 stop decisions require one explicit reason; legacy decisions cannot add one",
         )?;
         let mut removed = BTreeSet::new();
         for (index, row) in self.removals.iter().enumerate() {

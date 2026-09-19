@@ -116,6 +116,7 @@ mod tests {
             schema_version: REPAIR_PLAN_SCHEMA_VERSION,
             summary: "Target search".into(),
             stop: false,
+            stop_reason: None,
             targets: vec![RepairTarget {
                 target_id: "search".into(),
                 cluster_keys: vec![cluster.clone()],

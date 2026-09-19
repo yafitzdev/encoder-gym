@@ -128,6 +128,7 @@ fn v3_plan() -> RepairPlan {
         schema_version: 3,
         summary: "Test one additional read-routing variant across inspected native context.".into(),
         stop: false,
+        stop_reason: None,
         targets: vec![RepairTarget {
             target_id: "read-routing-repair".into(),
             cluster_keys: vec!["dataset-cluster-1".into()],
@@ -261,6 +262,85 @@ impl OptimizationInspection for Inspection {
             assert_eq!(inspected_cluster_ids, vec!["dataset-cluster-1"]);
             assert_eq!(inspected_row_ids, vec!["row-1"]);
             Ok(v3_context())
+        })
+    }
+}
+
+struct EmptyClusterInspection;
+
+impl OptimizationInspection for EmptyClusterInspection {
+    fn development_failures(
+        &self,
+        scope: AgentAnalysisScope,
+        offset: u64,
+        limit: u32,
+    ) -> BoxFuture<'_, InspectionPage> {
+        Inspection.development_failures(scope, offset, limit)
+    }
+
+    fn training_rows(
+        &self,
+        scope: AgentAnalysisScope,
+        offset: u64,
+        limit: u32,
+        query: Option<String>,
+    ) -> BoxFuture<'_, InspectionPage> {
+        Inspection.training_rows(scope, offset, limit, query)
+    }
+
+    fn dataset_landscape(
+        &self,
+        scope: AgentAnalysisScope,
+        offset: u64,
+        limit: u32,
+    ) -> BoxFuture<'_, InspectionPage> {
+        Inspection.dataset_landscape(scope, offset, limit)
+    }
+
+    fn dataset_cluster_rows(
+        &self,
+        scope: AgentAnalysisScope,
+        cluster_ids: Vec<String>,
+        examples_per_cluster: u32,
+    ) -> BoxFuture<'_, InspectionPage> {
+        Inspection.dataset_cluster_rows(scope, cluster_ids, examples_per_cluster)
+    }
+
+    fn dataset_investigation_rows(
+        &self,
+        _scope: AgentAnalysisScope,
+        cluster_ids: Vec<String>,
+        cursor: u64,
+        _limit: u32,
+    ) -> BoxFuture<'_, InspectionPage> {
+        Box::pin(async move {
+            assert_eq!(cluster_ids, vec!["dataset-cluster-1"]);
+            Ok(InspectionPage {
+                items: vec![],
+                next_offset: None,
+                selection: Some(InspectionSelection {
+                    method: "distinct_native_context_then_content_fingerprint".into(),
+                    cursor,
+                    selected_count: 0,
+                    total_eligible_count: 0,
+                    total_inspectable_count: 0,
+                }),
+            })
+        })
+    }
+
+    fn repair_planning_context(
+        &self,
+        _scope: AgentAnalysisScope,
+        inspected_cluster_ids: Vec<String>,
+        inspected_row_ids: Vec<String>,
+    ) -> BoxFuture<'_, RepairPlanningContext> {
+        Box::pin(async move {
+            assert_eq!(inspected_cluster_ids, vec!["dataset-cluster-1"]);
+            assert!(inspected_row_ids.is_empty());
+            let mut context = v3_context();
+            context.anchors.clear();
+            Ok(context)
         })
     }
 }
@@ -672,6 +752,61 @@ async fn v3_requires_four_persisted_stages_and_replays_the_exact_preview() {
     assert_eq!(agent.analyze(scope).await.unwrap(), proposal);
     assert_eq!(*store.history.lock().unwrap(), saved);
     assert_eq!(runtime.requests.lock().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn v3_empty_cluster_ends_as_explicit_unsupported_repair() {
+    let plan = json!({
+        "schemaVersion": 3,
+        "summary": "The observed weakness has no inspected legal training anchor.",
+        "stop": true,
+        "stopReason": "unsupported_repair",
+        "targets": []
+    });
+    let typed: RepairPlan = serde_json::from_value(plan.clone()).unwrap();
+    let mut context = v3_context();
+    context.anchors.clear();
+    let preview = compile_repair_plan(&typed, &context)
+        .unwrap()
+        .preview
+        .unwrap();
+    let turns = vec![
+        turn(
+            "inspect_dataset_landscape",
+            json!({"offset":0,"limit":20}),
+            "Inspect the weak cluster.",
+        ),
+        turn(
+            "inspect_dataset_clusters",
+            json!({"clusterIds":["dataset-cluster-1"],"cursor":0,"limit":8}),
+            "Check whether the cluster has a legal inspected anchor.",
+        ),
+        turn(
+            "preview_repair_plan",
+            plan.clone(),
+            "Record that the observed weakness has no supported repair.",
+        ),
+        turn(
+            "submit_repair_plan",
+            json!({"plan":plan,"previewFingerprint":preview.fingerprint}),
+            "Submit the exact unsupported-repair result.",
+        ),
+    ];
+    let (agent, store, runtime) = setup_with_inspection(turns, Arc::new(EmptyClusterInspection));
+    let mut scope = scope();
+    scope.analysis_protocol = 3;
+    let proposal = agent.analyze(scope).await.unwrap();
+    assert!(proposal.stop);
+    assert_eq!(
+        proposal.stop_reason,
+        Some(encoder_optimization_core::agent::RepairStopReason::UnsupportedRepair)
+    );
+    assert_eq!(store.history.lock().unwrap().len(), 4);
+    assert!(
+        runtime.requests.lock().unwrap()[3]
+            .initial_prompt
+            .contains("unsupported_repair")
+    );
 }
 
 #[tokio::test]

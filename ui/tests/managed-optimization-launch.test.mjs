@@ -75,6 +75,7 @@ test("Advanced settings reach the same start command and uncertain retries reuse
   const f = fixture(), files = [], calls = [], wire = f.run(), authorization = agentAuthorization(f);
   const settings = structuredClone(authorization.scope.agentic);
   settings.analysisProtocol = 2;
+  settings.generationCanary = "first_batch_all_admitted_v1";
   settings.generationConcurrency = 4; settings.training.device = "cpu"; settings.training.learningRateNanos = 4000;
   settings.providerLimits = { advisor: { ...f.scope.advisor, maximumRequests: 2 }, generation: { ...f.scope.generation, maximumRequests: 3 } };
   const options = { id: f.launchId, settings };

@@ -34,6 +34,8 @@ struct Iteration {
     model_id: Option<Uuid>,
     completed: bool,
     no_change: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end: Option<project_workspace_core::optimization_loop::AgentLoopEnd>,
     selected: bool,
     development_passed: Option<bool>,
     checks: Vec<Check>,
@@ -237,6 +239,7 @@ pub(super) async fn read(folder: &Path, run_id: Uuid) -> Result<History> {
             no_change: completion.is_some_and(|value| {
                 value.end == Some(project_workspace_core::optimization_loop::AgentLoopEnd::NoChange)
             }),
+            end: completion.and_then(|value| value.end.clone()),
             selected: completed
                 .last()
                 .and_then(|value| value.selected.as_ref())

@@ -36,6 +36,7 @@ async fn fixture() -> (SqliteConnection, GenerationTask, ProviderLimits) {
     let proposal = DatasetEditProposal {
         summary: "Generate two bounded batches".into(),
         stop: false,
+        stop_reason: None,
         removals: vec![],
         additions: vec![GenerationTarget {
             template_row_id: "member".into(),

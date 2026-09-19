@@ -13,7 +13,7 @@ export interface OptimizationAgentSettings {
   maximumAgentTurnsPerIteration: number;
   generationConcurrency: number;
   /** Absent historical policy remains disabled; never filled from defaults. */
-  generationCanary?: "first_batch_all_admitted_v1";
+  generationCanary?: "first_batch_all_admitted_v1" | "per_combination_semantic_v3";
   maximumRowChanges: number;
   training: {
     device: "auto" | "cpu" | "cuda";
@@ -81,11 +81,12 @@ export function parseOptimizationAgentSettings(value: unknown): OptimizationAgen
     result.providerLimits = { advisor: parseOptimizationProviderLimits(limits.advisor), generation: parseOptimizationProviderLimits(limits.generation) };
   }
   if (item.generationCanary !== undefined) {
-    if (item.generationCanary !== "first_batch_all_admitted_v1") throw new Error("Invalid generation canary policy.");
+    if (item.generationCanary !== "first_batch_all_admitted_v1" && item.generationCanary !== "per_combination_semantic_v3") throw new Error("Invalid generation canary policy.");
     result.generationCanary = item.generationCanary;
   }
   if (result.analysisProtocol === 2 && result.maximumAgentTurnsPerIteration < 3) throw new Error("Dataset-intelligence analysis requires at least three Agent turns.");
   if (result.analysisProtocol === 3 && result.maximumAgentTurnsPerIteration < 4) throw new Error("Evidence-driven repair analysis requires at least four Agent turns.");
+  if (result.generationCanary === "per_combination_semantic_v3" && result.analysisProtocol !== 3) throw new Error("Semantic per-combination canaries require analysis protocol V3.");
   if (result.mode === "quick_test" && (result.maximumIterations !== 1 || result.maximumAgentTurnsPerIteration > 4 || result.maximumRowChanges > 8 || result.training.maximumEpochs !== 1 || result.training.maximumSecondsPerIteration > 120 || result.training.maximumTrainingRows === null || result.training.maximumTrainingRows > 64)) throw new Error("Quick-test limits are invalid.");
   return result;
 }

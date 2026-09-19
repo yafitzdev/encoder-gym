@@ -31,6 +31,7 @@ fn fixture() -> (
     let proposal = DatasetEditProposal {
         summary: "Fill the observed gap".into(),
         stop: false,
+        stop_reason: None,
         removals: vec![RowRemoval {
             row_id: "row".into(),
             reason: "Conflicting example".into(),
@@ -172,6 +173,7 @@ fn partial_and_no_change_decisions_remain_distinct() {
     let proposal = DatasetEditProposal {
         summary: "No justified change".into(),
         stop: true,
+        stop_reason: None,
         removals: vec![],
         additions: vec![],
     };
@@ -280,4 +282,40 @@ fn v3_contrast_canary_is_coupled_and_semantic_rejection_fails_the_gate() {
     decisions.remove(&generated_semantic_row_id(&tasks[1], 0));
     assert!(evaluate_v3_canaries(&tasks, &outcomes, &decisions).is_err());
     assert!(evaluate_v3_canaries(&tasks[..1], &outcomes[..1], &decisions).is_err());
+}
+
+#[test]
+fn canary_rejection_and_zero_surviving_edits_are_distinct_non_execution_receipts() {
+    let run_id = Uuid::new_v4();
+    let left = contrast_canary(run_id, ContrastSide::Left);
+    let right = contrast_canary(run_id, ContrastSide::Right);
+    let tasks = vec![left.0.clone(), right.0.clone()];
+    let outcomes = vec![left.1, right.1];
+    let mut decisions = std::collections::BTreeMap::from([
+        (generated_semantic_row_id(&tasks[0], 0), true),
+        (generated_semantic_row_id(&tasks[1], 0), true),
+    ]);
+    let passed = evaluate_v3_canaries(&tasks, &outcomes, &decisions).unwrap();
+    let receipt = |reason, canary| RepairNotExecuted {
+        schema_version: 1,
+        run_id,
+        iteration: 1,
+        proposal_fingerprint: fingerprint(&"proposal").unwrap(),
+        repair_plan_fingerprint: fingerprint(&"plan").unwrap(),
+        reason,
+        canary,
+    };
+    receipt(RepairNotExecutedReason::ZeroSurvivingEdits, passed)
+        .validate()
+        .unwrap();
+    decisions.insert(generated_semantic_row_id(&tasks[1], 0), false);
+    let rejected = evaluate_v3_canaries(&tasks, &outcomes, &decisions).unwrap();
+    receipt(RepairNotExecutedReason::CanaryRejected, rejected.clone())
+        .validate()
+        .unwrap();
+    assert!(
+        receipt(RepairNotExecutedReason::ZeroSurvivingEdits, rejected)
+            .validate()
+            .is_err()
+    );
 }
