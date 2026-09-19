@@ -631,6 +631,21 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
             invoke_iteration(),
             "injected dataset publication interruption",
         );
+        let pending_plan = run(
+            root,
+            &[
+                "optimization-run",
+                "project",
+                "history",
+                &reserved.id.to_string(),
+            ],
+        );
+        let pending_plan = &pending_plan["iterations"][0]["repairPlan"];
+        assert_eq!(pending_plan["generation"][0]["admitted"], 1);
+        assert!(
+            pending_plan["publication"].is_null(),
+            "Admission alone must not claim published changes"
+        );
         drop_trigger(&project_database, "interrupt_dataset_publication").await;
 
         install_trigger(
@@ -990,6 +1005,65 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     assert_eq!(published.parent, dataset.reference());
     assert_eq!(published.removed.len(), 1);
     assert_eq!(published.generated.len(), 1);
+    let database_before_plan = fs::read(folder.join("project.sqlite")).unwrap();
+    let repair_history = run(
+        root,
+        &[
+            "optimization-run",
+            "project",
+            "history",
+            &reserved.id.to_string(),
+        ],
+    );
+    let repair_plan = &repair_history["iterations"][0]["repairPlan"];
+    assert_eq!(
+        repair_plan["proposalFingerprint"],
+        published.proposal_fingerprint
+    );
+    assert_eq!(repair_plan["inputRows"], 2);
+    assert_eq!(
+        repair_plan["proposal"]["removals"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(repair_plan["generation"][0]["requested"], 1);
+    assert_eq!(repair_plan["generation"][0]["admitted"], 1);
+    assert_eq!(repair_plan["generation"][0]["unresolved"], 0);
+    assert_eq!(repair_plan["publication"]["added"], 1);
+    assert_eq!(repair_plan["publication"]["removed"], 1);
+    assert_eq!(
+        repair_plan["publication"]["datasetVersionId"],
+        published.version.id.to_string()
+    );
+    assert_eq!(
+        repair_plan["strategy"],
+        "question_variants_preserve_context"
+    );
+    assert!(!repair_plan["evidence"].as_array().unwrap().is_empty());
+    assert!(
+        !repair_history
+            .to_string()
+            .contains("NEVER_DISCLOSE_HOLDOUT")
+    );
+    assert!(!repair_history.to_string().contains("tool_registry"));
+    assert_eq!(
+        run(
+            root,
+            &[
+                "optimization-run",
+                "project",
+                "history",
+                &reserved.id.to_string()
+            ]
+        ),
+        repair_history
+    );
+    assert_eq!(
+        fs::read(folder.join("project.sqlite")).unwrap(),
+        database_before_plan
+    );
     let rows = dataset_versions::materialization_rows(&folder, published.version.id)
         .await
         .unwrap();

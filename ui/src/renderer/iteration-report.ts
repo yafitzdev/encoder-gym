@@ -4,6 +4,7 @@ import { h } from "./dom.js";
 import { button } from "./components.js";
 import { comparisonTone } from "./overview-records.js";
 import { delta, metricInfo, score, suiteName } from "./catalog.js";
+import { repairPlanPanel } from "./repair-plan.js";
 
 /** These are recorded development verdicts, never promotion or holdout approval. */
 export function iterationReport(iteration: OptimizationIteration | undefined, actions: Actions): HTMLElement {
@@ -24,6 +25,7 @@ export function iterationReport(iteration: OptimizationIteration | undefined, ac
       qualified ? button("Dataset changes", () => open({ page: "dataset", id: qualified, tab: "changes" }), "secondary") : null,
       training ? button("Training dataset", () => open({ page: "dataset", id: training, tab: "rows" }), "secondary") : null,
       button("Evaluation reports", () => open({ page: "benchmarks", id: iteration.benchmarkVersionId, tab: "results" }), "secondary")),
+    repairPlanPanel(iteration.repairPlan, actions.render),
     iteration.checks.length ? h("p", { class: "muted" }, "Recorded comparisons against this run’s original baseline") : null,
     iteration.checks.length ? h("div", { class: "focus-table-scroll" }, h("table", { class: "focus-comparison", "aria-label": "Original baseline comparison" },
       h("thead", {}, h("tr", {}, ...["Benchmark", "Baseline", "Candidate", "Change", "Gate"].map(label => h("th", { scope: "col" }, label)))),

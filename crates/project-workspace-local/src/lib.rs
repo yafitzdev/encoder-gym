@@ -17,6 +17,7 @@ pub mod optimization_generation;
 pub mod optimization_iteration_execution;
 pub mod optimization_iterations;
 pub mod optimization_launch;
+pub mod optimization_repair;
 pub mod optimization_runs;
 pub mod optimization_setup;
 pub mod optimization_training_time;

@@ -56,9 +56,21 @@ pub async fn publication(
     iteration: u32,
 ) -> Result<OptimizationDatasetPublication> {
     let mut database = connect(folder, true, false).await?;
-    let row = sqlx::query("SELECT metadata_json,fingerprint,version_id FROM optimization_dataset_publications WHERE run_id=? AND iteration=?")
-        .bind(run_id.to_string()).bind(i64::from(iteration)).fetch_one(&mut database).await?;
+    let value = read_publication(&mut database, run_id, iteration).await?;
     database.close().await?;
+    value.context("Published dataset record is missing")
+}
+
+pub(crate) async fn read_publication(
+    database: &mut sqlx::SqliteConnection,
+    run_id: Uuid,
+    iteration: u32,
+) -> Result<Option<OptimizationDatasetPublication>> {
+    let row = sqlx::query("SELECT metadata_json,fingerprint,version_id FROM optimization_dataset_publications WHERE run_id=? AND iteration=?")
+        .bind(run_id.to_string()).bind(i64::from(iteration)).fetch_optional(database).await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
     let value: OptimizationDatasetPublication =
         serde_json::from_str(&row.get::<String, _>("metadata_json"))?;
     ensure!(
@@ -68,7 +80,7 @@ pub async fn publication(
             && fingerprint(&value)? == row.get::<String, _>("fingerprint"),
         "Published dataset record changed"
     );
-    Ok(value)
+    Ok(Some(value))
 }
 
 pub async fn publish(

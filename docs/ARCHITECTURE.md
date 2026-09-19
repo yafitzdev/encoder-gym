@@ -144,6 +144,17 @@ custody, with independent historical-stage navigation and ordinary artifact link
 The offline connected Electron acceptance invokes this production composition
 through real IPC and Pi sessions, not a substituted desktop drive.
 
+Repair-plan history is a passive projection, not another executor. Optimization
+core reuses the protocol-specific inspection replay contract to validate saved
+decisions and aggregates only their exact generation slots. The local workspace
+adapter reads a consistent SQLite snapshot and verifies publication against
+ordinary Dataset Management membership and source lineage. The CLI asks the
+Nomos adapter to project bounded saved cluster/development evidence before it
+crosses the desktop boundary; opaque native inspection content is never a UI
+contract. Requested edits, native admission, actual publication and later
+development acceptance remain separate facts. No read path migrates, recovers,
+dispatches a provider or changes run authority.
+
 `project-workspace-core::optimization_final` binds post-loop final consent to
 the last completion and its development-selected full-data checkpoint. It
 consumes the existing completion and scientific replay contracts, not a new

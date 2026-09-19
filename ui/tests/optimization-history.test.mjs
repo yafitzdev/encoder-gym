@@ -10,6 +10,32 @@ const first = { id: randomUUID(), number: 1, createdAt: new Date().toISOString()
   checks: [{ reportId: randomUUID(), suite: "development", metric: "loss", direction: "lower_is_better", baseline: .5, candidate: .6, passed: false }] };
 const history = () => ({ projectId, runId, iterations: [structuredClone(first)] });
 
+const repair = () => ({ decisionCallId: randomUUID(), proposalFingerprint: "sha256:" + "a".repeat(64), maximumRowChanges: 3, inputRows: 2, strategy: "question_variants_preserve_context",
+  proposal: { summary: "Fix ambiguous wording", stop: false, removals: [{rowId:"row",reason:"Conflicting example",evidenceIds:["cluster"]}], additions:[{templateRowId:"row",instruction:"Generate a clear search request",count:2,evidenceIds:["cluster"]}] },
+  generation:[{targetIndex:0,requested:2,admitted:1,rejected:1,unresolved:0,attempts:1,rejectionReasons:{"Duplicate native input":1}}],
+  publication:{datasetVersionId:first.qualifiedDatasetVersionId,added:1,removed:1,rows:2,crossBatchDuplicates:0},
+  evidence:[{id:"cluster",fingerprint:"sha256:"+"b".repeat(64),label:"expected capability: search",trainingRows:1,totalTrainingRows:2,overlapping:true,development:[{suite:"development",support:4,recallAt1:0,originalBaselineRecallAt1:.5}]}] });
+
+test("repair plans retain exact requested, rejected and published counts without inventing old history", () => {
+  const value = history(); value.iterations[0].repairPlan = repair();
+  assert.deepEqual(parseOptimizationHistory(value, projectId, runId)[0].repairPlan, value.iterations[0].repairPlan);
+  value.iterations[0].repairPlan = null;
+  assert.equal(parseOptimizationHistory(value, projectId, runId)[0].repairPlan, null);
+  delete value.iterations[0].repairPlan;
+  assert.equal(parseOptimizationHistory(value, projectId, runId)[0].repairPlan, undefined);
+});
+
+test("repair plans reject invented membership, inconsistent counts and injected native or sealed payloads", () => {
+  for (const alter of [
+    p => p.rawRows = [], p => p.evidence[0].sealedScore = 1, p => p.evidence[0].development[0].recallAt1 = Infinity,
+    p => p.publication.datasetVersionId = randomUUID(), p => p.publication.added = 2, p => p.publication.rows = 0,
+    p => p.proposal.additions[0].evidenceIds = ["invented"], p => p.proposal.removals.push(p.proposal.removals[0]),
+    p => p.maximumRowChanges = 2, p => p.evidence.push(p.evidence[0]), p => p.evidence[0].totalTrainingRows = 3,
+    p => p.generation[0].unresolved = 1, p => p.generation[0].rejectionReasons = {}, p => p.generation[0].attempts = 0,
+    p => p.generation[0].requested = 3, p => p.proposal.stop = true, p => p.strategy = "modify_benchmark",
+  ]) { const value = history(); value.iterations[0].repairPlan = repair(); alter(value.iterations[0].repairPlan); assert.throws(() => parseOptimizationHistory(value, projectId, runId)); }
+});
+
 test("history preserves rejected candidate custody and explicit lower-is-better comparisons", () => {
   assert.deepEqual(parseOptimizationHistory(history(), projectId, runId), [first]);
   const value = history(); value.iterations.push({ ...first, id: randomUUID(), number: 2, noChange: true, developmentPassed: null,

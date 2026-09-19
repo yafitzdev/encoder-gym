@@ -1,4 +1,5 @@
 /** Development-only read model, produced by the CLI's verified custody readers. */
+import { parseDatasetRepairPlan, type DatasetRepairPlan } from "./optimization-repair.js";
 export interface OptimizationIteration {
   id: string; number: number; createdAt: string;
   startingModelId: string; inputDatasetVersionId: string; benchmarkVersionId: string;
@@ -6,6 +7,7 @@ export interface OptimizationIteration {
   trainingDatasetVersionId: string | null; modelId: string | null;
   completed: boolean; noChange: boolean; selected: boolean; developmentPassed: boolean | null;
   checks: { reportId: string; suite: string; metric: string; direction: "higher_is_better" | "lower_is_better"; baseline: number; candidate: number; passed: boolean }[];
+  repairPlan?: DatasetRepairPlan | null;
 }
 
 function object(value: unknown, keys: string[]): Record<string, unknown> {
@@ -25,7 +27,8 @@ export function parseOptimizationHistory(value: unknown, projectId: string, runI
   const history = object(value, ["projectId", "runId", "iterations"]);
   if (uuid(history.projectId) !== projectId || uuid(history.runId) !== runId || !Array.isArray(history.iterations)) throw new Error("Iteration history belongs to another run.");
   const iterations = history.iterations.map((value: unknown, index: number): OptimizationIteration => {
-    const item = object(value, ["id", "number", "createdAt", "startingModelId", "inputDatasetVersionId", "benchmarkVersionId", "experimentRunId", "qualifiedDatasetVersionId", "trainingDatasetVersionId", "modelId", "completed", "noChange", "selected", "developmentPassed", "checks"]);
+    const hasRepair = !!value && typeof value === "object" && Object.hasOwn(value, "repairPlan");
+    const item = object(value, ["id", "number", "createdAt", "startingModelId", "inputDatasetVersionId", "benchmarkVersionId", "experimentRunId", "qualifiedDatasetVersionId", "trainingDatasetVersionId", "modelId", "completed", "noChange", "selected", "developmentPassed", "checks", ...(hasRepair ? ["repairPlan"] : [])]);
     if (item.number !== index + 1 || typeof item.createdAt !== "string" || !Number.isFinite(Date.parse(item.createdAt)) || !Array.isArray(item.checks)) throw new Error("Invalid iteration ordering.");
     const nullableId = (key: string): string | null => item[key] === null ? null : uuid(item[key]);
     const iteration: OptimizationIteration = {
@@ -38,13 +41,16 @@ export function parseOptimizationHistory(value: unknown, projectId: string, runI
         if (check.direction !== "higher_is_better" && check.direction !== "lower_is_better") throw new Error("Invalid metric direction.");
         return { reportId: uuid(check.reportId), suite: text(check.suite), metric: text(check.metric), direction: check.direction, baseline: number(check.baseline), candidate: number(check.candidate), passed: bool(check.passed) };
       }),
+      ...(hasRepair ? { repairPlan: parseDatasetRepairPlan(item.repairPlan) } : {}),
     };
     if ((iteration.experimentRunId === null) !== (iteration.trainingDatasetVersionId === null)
       || (iteration.experimentRunId === null) !== (iteration.qualifiedDatasetVersionId === null)
       || iteration.modelId !== null && iteration.experimentRunId === null
       || iteration.noChange && (!iteration.completed || iteration.developmentPassed !== null || iteration.modelId !== null)
       || iteration.developmentPassed !== null && (!iteration.completed || !iteration.modelId)
-      || iteration.selected && iteration.developmentPassed !== true) throw new Error("Inconsistent iteration custody.");
+      || iteration.selected && iteration.developmentPassed !== true
+      || iteration.repairPlan && (iteration.completed && iteration.noChange !== iteration.repairPlan.proposal.stop
+        || iteration.qualifiedDatasetVersionId !== null && iteration.repairPlan.publication?.datasetVersionId !== iteration.qualifiedDatasetVersionId)) throw new Error("Inconsistent iteration custody.");
     return iteration;
   });
   if (new Set(iterations.map(item => item.id)).size !== iterations.length || iterations.filter(item => item.selected).length > 1) throw new Error("Conflicting iteration history.");

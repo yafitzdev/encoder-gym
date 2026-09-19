@@ -9,6 +9,7 @@ mod generated_training;
 mod managed_training;
 mod progress;
 mod repair_delta;
+mod repair_evidence;
 mod training_clearance;
 pub use agent_training::NomosFineTuneSettings;
 mod training_accounting;
@@ -22,6 +23,7 @@ pub use progress::{
     NativePhase, NativeProgress, ProgressObserver, TrainingMetrics, with_file_progress,
     with_stop_probe,
 };
+pub use repair_evidence::{NomosRepairEvidence, project_repair_evidence};
 pub use training_clearance::NomosTrainingClearance;
 pub use training_data::{VerifiedTrainingData, VerifiedTrainingInput};
 

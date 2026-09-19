@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use agent_runtime_core::AgentToolRequest;
 use encoder_optimization_core::{
     OptimizationError,
-    agent::{AgentAnalysisScope, AgentTurnRecord, DatasetEditProposal, InspectionPage},
+    agent::{AgentAnalysisScope, DatasetEditProposal, InspectionPage},
     ports::OptimizationInspection,
 };
 use serde::Deserialize;
@@ -214,34 +214,7 @@ fn page_limit(limit: u32) -> Result<(), OptimizationError> {
     }
 }
 
-pub(super) fn restore_inspections(
-    record: &AgentTurnRecord,
-    analysis_protocol: u32,
-    rows: &mut BTreeSet<String>,
-    evidence: &mut BTreeSet<String>,
-) -> Result<(), OptimizationError> {
-    for tool in &record.tools {
-        if tool.failed {
-            continue;
-        }
-        let target = match (analysis_protocol, tool.name.as_str()) {
-            (1, "inspect_training_rows") | (2, "inspect_dataset_clusters") => &mut *rows,
-            (1, "inspect_development_failures") | (2, "inspect_dataset_landscape") => {
-                &mut *evidence
-            }
-            (1 | 2, "propose_dataset_edits") => continue,
-            _ => {
-                return Err(OptimizationError::Validation(
-                    "Persisted Agent tool is not permitted".into(),
-                ));
-            }
-        };
-        let page: InspectionPage = serde_json::from_value(tool.result.clone())?;
-        page.validate(20)?;
-        target.extend(page.items.into_iter().map(|item| item.id));
-    }
-    Ok(())
-}
+pub(super) use encoder_optimization_core::agent::restore_inspections;
 
 #[cfg(test)]
 mod tests {

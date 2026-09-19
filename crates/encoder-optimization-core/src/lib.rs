@@ -4,6 +4,7 @@
 pub mod agent;
 pub mod generation;
 pub mod ports;
+pub mod repair_plan;
 
 use thiserror::Error;
 

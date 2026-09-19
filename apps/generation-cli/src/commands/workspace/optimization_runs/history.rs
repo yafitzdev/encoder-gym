@@ -1,4 +1,4 @@
-//! Row-free desktop history through the existing custody and benchmark readers.
+//! Development-only desktop history through existing custody and benchmark readers.
 //! Does not execute/reconcile work or expose protocol/holdout payloads.
 use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Utc};
@@ -37,6 +37,18 @@ struct Iteration {
     selected: bool,
     development_passed: Option<bool>,
     checks: Vec<Check>,
+    repair_plan: Option<RepairPlan>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RepairPlan {
+    #[serde(flatten)]
+    decision: encoder_optimization_core::repair_plan::DatasetRepairPlan,
+    input_rows: u64,
+    strategy: &'static str,
+    publication: Option<project_workspace_local::optimization_repair::RepairPublication>,
+    evidence: Vec<encoder_experiment_nomos::NomosRepairEvidence>,
 }
 
 #[derive(Serialize)]
@@ -75,7 +87,31 @@ pub(super) async fn read(folder: &Path, run_id: Uuid) -> Result<History> {
         None => None,
     };
     let mut iterations = Vec::new();
+    let mut repairs = project_workspace_local::optimization_repair::read(folder, run_id).await?;
     for input in inputs {
+        let repair_plan = repairs
+            .remove(&input.scope.iteration)
+            .map(|recorded| {
+                let reports = input
+                    .development
+                    .reports
+                    .iter()
+                    .map(|(suite, report)| (suite.clone(), report.id.clone()))
+                    .collect();
+                let evidence = recorded
+                    .evidence
+                    .iter()
+                    .map(|item| encoder_experiment_nomos::project_repair_evidence(item, &reports))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok::<_, anyhow::Error>(RepairPlan {
+                    decision: recorded.plan,
+                    input_rows: recorded.input_rows,
+                    strategy: "question_variants_preserve_context",
+                    publication: recorded.publication,
+                    evidence,
+                })
+            })
+            .transpose()?;
         let training = optimization_iteration_execution::training(folder, run_id, input.id).await?;
         let completion = completed
             .iter()
@@ -170,6 +206,7 @@ pub(super) async fn read(folder: &Path, run_id: Uuid) -> Result<History> {
                 .is_some_and(|value| value.iteration.id == input.id.to_string()),
             development_passed,
             checks,
+            repair_plan,
         });
     }
     Ok(History {

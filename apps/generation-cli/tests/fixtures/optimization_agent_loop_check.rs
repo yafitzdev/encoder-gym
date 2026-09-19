@@ -362,6 +362,22 @@ pub(super) async fn assert_loop(
         assert_eq!(row["startingModelId"], inputs[0].starting_model.id);
         assert_eq!(row["benchmarkVersionId"], benchmark.id.to_string());
         assert_eq!(row["completed"], true);
+        assert_eq!(row["repairPlan"]["proposal"]["stop"], index >= full_cycles);
+        if index >= full_cycles {
+            assert!(row["repairPlan"]["publication"].is_null());
+            assert!(
+                row["repairPlan"]["generation"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+        } else {
+            assert_eq!(
+                row["repairPlan"]["publication"]["added"],
+                u64::from(index == 0)
+            );
+            assert_eq!(row["repairPlan"]["publication"]["removed"], 1);
+        }
         assert_eq!(row["selected"], mode == "eligible" && index == 0);
         if index >= full_cycles {
             assert_eq!(row["noChange"], true);

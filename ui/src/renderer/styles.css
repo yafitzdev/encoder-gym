@@ -901,3 +901,10 @@ dialog::backdrop { background: #0008; }
 .diagnostic-notice { color: var(--text); border-left: 3px solid var(--line); padding-left: 12px; }
 .run-mode-label { display: block; font-size: 12px; font-weight: 400; margin-top: 4px; }
 @media (max-width: 600px) { .advanced-grid { grid-template-columns: minmax(0, 1fr); gap: 0; } }
+.repair-plan { margin: 24px 0; padding: 24px; border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
+.repair-plan h3 { margin-top: 0; }.repair-plan h4 { font-size: 16px; margin: 24px 0 12px; }.repair-plan h5 { font-size: 14px; margin: 0 0 10px; }
+.repair-plan p { line-height: 1.6; overflow-wrap: anywhere; }.repair-plan code { font-size: 12px; overflow-wrap: anywhere; white-space: normal; }
+.repair-plan-state, .repair-plan-outcome { font-weight: 600; }.repair-plan-totals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.repair-plan-totals dt { color: var(--muted); font-size: 12px; }.repair-plan-totals dd { margin: 6px 0 0; font-size: 20px; font-weight: 600; }
+.repair-target, .repair-evidence { border-top: 1px solid var(--line); padding: 16px 0 4px; }.repair-source { margin-bottom: 0; }.repair-evidence-reference { font-size: 13px; }
+@media (max-width: 760px) { .repair-plan { padding: 16px; }.repair-plan-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

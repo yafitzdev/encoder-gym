@@ -41,6 +41,25 @@ cross the CLI progress stream and desktop boundary. Desktop activity records
 retain them for the exact run and iteration; older runs and CLI-only executions
 without an activity recorder do not acquire telemetry retroactively.
 
+An iteration's Report includes its **Dataset repair plan** as soon as an accepted
+decision is saved. It shows the agent's public rationale, exact addition and
+removal targets, linked saved development/cluster evidence, remaining edit
+ceiling, per-target admitted/rejected/unresolved counts and rejection reasons.
+Publication is shown separately with the actual row delta and cross-batch
+duplicates. An unresolved slot does not establish a live worker, and generation
+admission is not full-population training clearance. Details are paginated in
+groups of 20 without dropping targets. Coverage is descriptive, not a claim that
+more rows will improve quality. Nomos currently generates question variants while
+retaining the template context, registry and labels. Older unavailable details
+are labelled rather than reconstructed from today's data.
+
+The same passive projection is available through
+`synth workspace optimization-run <PROJECT> history <RUN_ID>` in each iteration's
+`repairPlan`. It verifies the saved scope, decision, generation slots, publication
+and ordinary dataset lineage; reading it never calls a provider, publishes data,
+qualifies a dataset or reruns inference. Raw inspection payloads and sealed
+evidence are not included.
+
 Use **New project** (the sidebar plus) to choose a local checkpoint, preview its
 format/size, name the project, and choose a parent location. Gym copies the
 checkpoint into a new owned folder and creates its manifest, registry database,
