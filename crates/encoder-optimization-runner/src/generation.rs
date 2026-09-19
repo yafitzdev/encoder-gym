@@ -6,7 +6,10 @@ use std::{collections::BTreeSet, sync::Arc, time::Duration};
 use encoder_optimization_core::{
     OptimizationError,
     agent::AgentTokenUsage,
-    generation::{GenerationOutcome, GenerationReservation, GenerationTask},
+    generation::{
+        GenerationCanaryPolicy, GenerationOutcome, GenerationReservation, GenerationTask,
+        canary_passed,
+    },
     ports::{OptimizationGenerationAdmission, OptimizationGenerationStore},
 };
 use generation_core::structured::StructuredGenerationBackend;
@@ -23,19 +26,59 @@ pub struct OptimizationGenerator {
 }
 
 impl OptimizationGenerator {
+    /// Validate every task before spending on the first slot. A saved rejected
+    /// canary remains rejected on resume; it does not authorize another attempt.
+    pub async fn generate_with_canary(
+        &self,
+        mut tasks: Vec<GenerationTask>,
+        policy: Option<GenerationCanaryPolicy>,
+    ) -> Result<Vec<GenerationOutcome>, OptimizationError> {
+        self.validate_tasks(&tasks)?;
+        if policy.is_none() || tasks.is_empty() {
+            return self.generate(tasks).await;
+        }
+        let first = tasks.remove(0);
+        if first.target_index != 0 || first.first_row != 0 {
+            return Err(OptimizationError::Validation(
+                "Generation canary is not the first proposal slot".into(),
+            ));
+        }
+        let outcome = self.one(first.clone()).await?;
+        if !canary_passed(&first, &outcome)? {
+            return Err(OptimizationError::Validation(format!(
+                "Generation canary rejected {} of {} sample rows; remaining batches were not dispatched. The saved rejection will not be retried.",
+                outcome
+                    .admission
+                    .as_ref()
+                    .map_or(0, |value| value.rejected.len()),
+                first.requested_rows
+            )));
+        }
+        let mut results = vec![outcome];
+        results.extend(self.generate(tasks).await?);
+        Ok(results)
+    }
+
     pub async fn generate(
         &self,
         tasks: Vec<GenerationTask>,
     ) -> Result<Vec<GenerationOutcome>, OptimizationError> {
+        self.validate_tasks(&tasks)?;
+        self.dispatch(tasks).await
+    }
+
+    fn validate_tasks(&self, tasks: &[GenerationTask]) -> Result<(), OptimizationError> {
         if !(1..=16).contains(&self.concurrency) || tasks.len() > 5000 {
             return Err(OptimizationError::Validation(
                 "Invalid generation concurrency or task count".into(),
             ));
         }
         let mut ids = BTreeSet::new();
-        for task in &tasks {
+        let mut slots = BTreeSet::new();
+        for task in tasks {
             task.validate()?;
             if !ids.insert(task.id)
+                || !slots.insert((task.target_index, task.first_row))
                 || tasks.first().is_some_and(|first| {
                     first.run_id != task.run_id
                         || first.iteration != task.iteration
@@ -47,6 +90,13 @@ impl OptimizationGenerator {
                 ));
             }
         }
+        Ok(())
+    }
+
+    async fn dispatch(
+        &self,
+        tasks: Vec<GenerationTask>,
+    ) -> Result<Vec<GenerationOutcome>, OptimizationError> {
         let mut pending = tasks.into_iter().enumerate();
         let mut workers = JoinSet::new();
         let mut results = Vec::new();

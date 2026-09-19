@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 export const fingerprint = "sha256:" + "a".repeat(64);
 // Deterministic test fixtures only; the application loads presets from the core CLI.
 export function agentPresets() {
-  const standard = { mode: "standard", objective: "", analysisProtocol: 2, maximumIterations: 3, maximumAgentTurnsPerIteration: 8, generationConcurrency: 1, maximumRowChanges: 192,
+  const standard = { mode: "standard", objective: "", analysisProtocol: 2, generationCanary: "first_batch_all_admitted_v1", maximumIterations: 3, maximumAgentTurnsPerIteration: 8, generationConcurrency: 1, maximumRowChanges: 192,
     training: { device: "auto", maximumEpochs: 1, batchSize: 64, learningRateNanos: 3000, maximumSecondsPerIteration: 7200, maximumTrainingRows: null } };
   const quickTest = { ...structuredClone(standard), mode: "quick_test", maximumIterations: 1, maximumAgentTurnsPerIteration: 4, maximumRowChanges: 8 };
   Object.assign(quickTest.training, { batchSize: 8, maximumSecondsPerIteration: 120, maximumTrainingRows: 64 });

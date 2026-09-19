@@ -285,7 +285,9 @@ async fn drive(
             concurrency: settings.generation_concurrency,
             maximum_cost_microusd_per_call: providers::cost_limit(&launch.scope.generation),
         };
-        generator.generate(tasks).await?;
+        generator
+            .generate_with_canary(tasks, settings.generation_canary)
+            .await?;
     }
     ensure!(
         !agent_store.stopped(run_id).await?,

@@ -36,6 +36,22 @@ test("repair plans reject invented membership, inconsistent counts and injected 
   ]) { const value = history(); value.iterations[0].repairPlan = repair(); alter(value.iterations[0].repairPlan); assert.throws(() => parseOptimizationHistory(value, projectId, runId)); }
 });
 
+test("canary history preserves bounded samples and rejects unsafe or contradictory receipts", () => {
+  const value = history(); const plan = repair(); value.iterations[0].repairPlan = plan;
+  Object.assign(value.iterations[0], {completed:false,developmentPassed:null,checks:[],modelId:null,experimentRunId:null,qualifiedDatasetVersionId:null,trainingDatasetVersionId:null});
+  plan.canary = { policy: "first_batch_all_admitted_v1", status: "rejected", callId: randomUUID(), requested: 2, admitted: 1,
+    rejected: [{index:1,reason:"Duplicate native input"}], rows: [{index:0,fingerprint:"sha256:"+"f".repeat(64),question:"Find the primary paper",taskKind:"route"}] };
+  plan.publication = null;
+  assert.deepEqual(parseOptimizationHistory(value, projectId, runId)[0].repairPlan.canary, plan.canary);
+  for (const alter of [p=>p.canary.rows[0].registry={},p=>p.canary.rows[0].index=1,p=>p.canary.requested=9,
+    p=>p.canary.status="passed",p=>p.canary.policy=null,p=>p.canary.callId=null,p=>p.canary.rows[0].question="x".repeat(8193),
+    p=>p.publication=repair().publication,p=>p.canary.rejected[0].reason="",p=>p.canary.rows.push(p.canary.rows[0])]) {
+    const bad=structuredClone(value);alter(bad.iterations[0].repairPlan);assert.throws(()=>parseOptimizationHistory(bad,projectId,runId));
+  }
+  plan.canary = {policy:null,status:"disabled",callId:null,requested:0,admitted:0,rejected:[],rows:[]};
+  assert.equal(parseOptimizationHistory(value,projectId,runId)[0].repairPlan.canary.status,"disabled");
+});
+
 test("history preserves rejected candidate custody and explicit lower-is-better comparisons", () => {
   assert.deepEqual(parseOptimizationHistory(history(), projectId, runId), [first]);
   const value = history(); value.iterations.push({ ...first, id: randomUUID(), number: 2, noChange: true, developmentPassed: null,

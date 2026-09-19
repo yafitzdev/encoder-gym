@@ -12,6 +12,8 @@ export interface OptimizationAgentSettings {
   maximumIterations: number;
   maximumAgentTurnsPerIteration: number;
   generationConcurrency: number;
+  /** Absent historical policy remains disabled; never filled from defaults. */
+  generationCanary?: "first_batch_all_admitted_v1";
   maximumRowChanges: number;
   training: {
     device: "auto" | "cpu" | "cuda";
@@ -54,7 +56,7 @@ export function parseOptimizationAgentSettings(value: unknown): OptimizationAgen
     if (typeof item !== "number" || !Number.isSafeInteger(item) || item < 1 || item > maximum) throw new Error("Agent settings exceed supported limits.");
     return item;
   };
-  const item = object(value, ["mode", "objective", "maximumIterations", "maximumAgentTurnsPerIteration", "generationConcurrency", "maximumRowChanges", "training"], ["providerLimits", "analysisProtocol"]);
+  const item = object(value, ["mode", "objective", "maximumIterations", "maximumAgentTurnsPerIteration", "generationConcurrency", "maximumRowChanges", "training"], ["providerLimits", "analysisProtocol", "generationCanary"]);
   const training = object(item.training, ["device", "maximumEpochs", "batchSize", "learningRateNanos", "maximumSecondsPerIteration", "maximumTrainingRows"]);
   if ((item.mode !== "standard" && item.mode !== "quick_test") || typeof item.objective !== "string" || [...item.objective].length > 4_000 || /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(item.objective)) throw new Error("Invalid agent objective or mode.");
   if (training.device !== "auto" && training.device !== "cpu" && training.device !== "cuda") throw new Error("Invalid training device.");
@@ -77,6 +79,10 @@ export function parseOptimizationAgentSettings(value: unknown): OptimizationAgen
   if (item.providerLimits !== undefined) {
     const limits = object(item.providerLimits, ["advisor", "generation"]);
     result.providerLimits = { advisor: parseOptimizationProviderLimits(limits.advisor), generation: parseOptimizationProviderLimits(limits.generation) };
+  }
+  if (item.generationCanary !== undefined) {
+    if (item.generationCanary !== "first_batch_all_admitted_v1") throw new Error("Invalid generation canary policy.");
+    result.generationCanary = item.generationCanary;
   }
   if (result.analysisProtocol === 2 && result.maximumAgentTurnsPerIteration < 3) throw new Error("Dataset-intelligence analysis requires at least three Agent turns.");
   if (result.mode === "quick_test" && (result.maximumIterations !== 1 || result.maximumAgentTurnsPerIteration > 4 || result.maximumRowChanges > 8 || result.training.maximumEpochs !== 1 || result.training.maximumSecondsPerIteration > 120 || result.training.maximumTrainingRows === null || result.training.maximumTrainingRows > 64)) throw new Error("Quick-test limits are invalid.");

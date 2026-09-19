@@ -82,6 +82,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
           removals: [{rowId: rows[0].id, reason: 'Changed candidate evidence identifies conflicting retain coverage.', evidenceIds: [evidence.id]}], additions: []};
       }
     }
+    if (process.env.AGENT_FIXTURE_LOOP === 'canary_rejected' && name === 'propose_dataset_edits') args.additions[0].count = 17;
     send({type: 'tool_request', runId, callId: 'fixture-tool', name, arguments: args});
   } else if (message.type === 'tool_result') {
     send({type: 'event', event: {type: 'turn_completed', runId, sequence: 1, inputTokens: 150, outputTokens: 70, costMicrousd: 0}});

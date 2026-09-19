@@ -110,6 +110,11 @@ async fn cli_generation_run_token_ceiling_stops_before_dispatch_and_cannot_retry
 }
 
 #[tokio::test]
+async fn cli_canary_rejection_prevents_remaining_batches_publication_and_training() {
+    scenario(true, Some("canary_rejected")).await;
+}
+
+#[tokio::test]
 async fn cli_agent_loop_keeps_best_eligible_dataset_but_inspects_latest_result() {
     scenario(true, Some("eligible")).await;
 }
@@ -375,6 +380,9 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
             3
         };
         settings.maximum_row_changes = if mode == "row_limit" { 2 } else { 8 };
+        if mode == "canary_rejected" {
+            settings.maximum_row_changes = 20;
+        }
         settings.training.maximum_seconds_per_iteration = 120;
         if mode == "training_timeout" {
             settings.training.maximum_seconds_per_iteration = 1;
@@ -515,6 +523,44 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
     let before_native = fs::read(root.join("runtime/native-invocations.log")).unwrap();
+    if loop_mode == Some("canary_rejected") {
+        for _ in 0..2 {
+            let rejected = invoke_iteration();
+            assert!(!rejected.status.success());
+            assert!(
+                String::from_utf8_lossy(&rejected.stderr)
+                    .contains("Generation canary rejected 8 of 8"),
+                "{}",
+                String::from_utf8_lossy(&rejected.stderr)
+            );
+            let history = run(
+                root,
+                &[
+                    "optimization-run",
+                    "project",
+                    "history",
+                    &reserved.id.to_string(),
+                ],
+            );
+            let plan = &history["iterations"][0]["repairPlan"];
+            assert_eq!(plan["canary"]["status"], "rejected");
+            assert_eq!(plan["canary"]["rejected"].as_array().unwrap().len(), 8);
+            assert_eq!(plan["generation"][0]["attempts"], 1);
+            assert_eq!(plan["generation"][0]["unresolved"], 9);
+            assert!(plan["publication"].is_null());
+            assert!(history["iterations"][0]["experimentRunId"].is_null());
+        }
+        generator.unwrap().join().unwrap();
+        assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 3);
+        let publication =
+            project_workspace_local::optimization_dataset::publish(&folder, reserved.id, 1)
+                .await
+                .unwrap_err();
+        assert!(publication.to_string().contains("passed generation canary"));
+        let native = fs::read_to_string(root.join("runtime/native-invocations.log")).unwrap();
+        assert!(!native[before_native.len()..].contains("tools.train_dense"));
+        return;
+    }
     if loop_mode == Some("dirty_preflight") {
         let rejected = invoke_iteration();
         assert!(!rejected.status.success());
@@ -1031,6 +1077,15 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     assert_eq!(repair_plan["generation"][0]["requested"], 1);
     assert_eq!(repair_plan["generation"][0]["admitted"], 1);
     assert_eq!(repair_plan["generation"][0]["unresolved"], 0);
+    assert_eq!(repair_plan["canary"]["status"], "passed");
+    assert_eq!(
+        repair_plan["canary"]["rows"][0]["question"],
+        "Search the exact technical reference"
+    );
+    assert_eq!(
+        repair_plan["canary"]["rows"][0].as_object().unwrap().len(),
+        4
+    );
     assert_eq!(repair_plan["publication"]["added"], 1);
     assert_eq!(repair_plan["publication"]["removed"], 1);
     assert_eq!(

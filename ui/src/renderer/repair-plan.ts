@@ -1,6 +1,7 @@
 import type { DatasetRepairPlan, RepairEvidence } from "../optimization-repair.js";
 import { button } from "./components.js";
 import { h } from "./dom.js";
+import { generationCanaryPanel } from "./generation-canary.js";
 
 // Presentation-only pagination, keyed by immutable decision identity.
 const pages = new Map<string, number>();
@@ -32,6 +33,7 @@ export function repairPlanPanel(plan: DatasetRepairPlan | null | undefined, rend
       metric("Requested removals", count(plan.proposal.removals.length)), metric("Remaining edit ceiling at decision", count(plan.maximumRowChanges))),
     published ? h("p", { class: "repair-plan-outcome" }, `Published +${count(published.added)} / −${count(published.removed)} rows · ${count(published.rows)} rows total. ${count(published.crossBatchDuplicates)} cross-batch duplicates excluded.`) : null,
     !plan.proposal.stop ? h("p", { class: "muted" }, "Generation changes questions only; template context, registry and labels are retained. Admission is not full-dataset qualification or permission to train.") : null,
+    generationCanaryPanel(plan.canary),
     plan.proposal.additions.length ? paged("Addition targets", plan.proposal.additions, (target, index) => {
       const observed = plan.generation[index]!;
       return h("article", { class: "repair-target", "data-key": `addition-${index}` }, h("h5", {}, `Target ${index + 1} · ${count(target.count)} requested`),

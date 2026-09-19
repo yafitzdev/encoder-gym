@@ -8,6 +8,46 @@ use uuid::Uuid;
 
 use crate::{OptimizationError, agent::AgentTokenUsage, fingerprint, require};
 
+/// Frozen launch policy. The first existing slot is the canary, not an extra
+/// provider request. It checks native admission, not semantic correctness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GenerationCanaryPolicy {
+    FirstBatchAllAdmittedV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GenerationCanaryStatus {
+    Disabled,
+    NotRequired,
+    Pending,
+    Interrupted,
+    Passed,
+    Rejected,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerationCanaryObservation {
+    pub policy: Option<GenerationCanaryPolicy>,
+    pub status: GenerationCanaryStatus,
+    pub call_id: Option<Uuid>,
+    pub requested: u32,
+    pub admitted: u32,
+    pub rejected: Vec<RejectedGenerationRow>,
+}
+
+pub fn canary_passed(
+    task: &GenerationTask,
+    outcome: &GenerationOutcome,
+) -> Result<bool, OptimizationError> {
+    outcome.validate(task)?;
+    Ok(outcome.admission.as_ref().is_some_and(|admission| {
+        admission.accepted.len() == task.requested_rows as usize && admission.rejected.is_empty()
+    }))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GenerationTask {

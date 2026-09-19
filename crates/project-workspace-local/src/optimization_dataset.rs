@@ -118,6 +118,42 @@ pub async fn publish(
     let proposal_fingerprint = fingerprint(proposal)?;
     let generated_calls = optimization_generation::read_calls(&mut database, run_id).await?;
     database.close().await?;
+    let run = crate::optimization_runs::show(folder, run_id).await?;
+    let launches = crate::optimization_launch::list(folder).await?;
+    let launch = launches
+        .iter()
+        .find(|launch| launch.id.to_string() == run.run.launch.id)
+        .context("Dataset publication launch is missing")?;
+    run.run.validate(launch)?;
+    ensure!(
+        scope.launch_fingerprint == launch.fingerprint,
+        "Dataset publication launch changed"
+    );
+    if launch
+        .scope
+        .agentic
+        .as_ref()
+        .and_then(|settings| settings.generation_canary)
+        .is_some()
+        && !proposal.additions.is_empty()
+    {
+        let (task, _, outcome) = generated_calls
+            .iter()
+            .filter(|(task, _, _)| {
+                task.iteration == iteration
+                    && task.target_index == 0
+                    && task.first_row == 0
+                    && task.proposal_fingerprint == proposal_fingerprint
+            })
+            .max_by_key(|(_, call, _)| call.attempt)
+            .context("Generation canary has no recorded result")?;
+        ensure!(
+            outcome.as_ref().is_some_and(|outcome| {
+                encoder_optimization_core::generation::canary_passed(task, outcome).unwrap_or(false)
+            }),
+            "Dataset publication requires a passed generation canary"
+        );
+    }
     let parent = dataset_versions::inspect(folder, scope.dataset_version_id).await?;
     ensure!(
         parent.fingerprint == scope.dataset_fingerprint,

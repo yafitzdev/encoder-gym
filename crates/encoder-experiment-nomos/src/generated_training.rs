@@ -286,6 +286,27 @@ mod tests {
         assert_eq!(row["tool_registry"], template()["tool_registry"]);
         assert_eq!(row["evaluation_partition"], "train");
         assert_ne!(row["decision_state_id"], "original");
+        let preview = crate::project_generation_preview(&admitted.accepted[0]).unwrap();
+        let displayed = serde_json::to_value(preview).unwrap();
+        assert_eq!(displayed["question"], row["question"]);
+        assert_eq!(displayed.as_object().unwrap().len(), 4);
+        assert!(displayed.get("tool_registry").is_none());
+        let mut missing_kind = admitted.accepted[0].clone();
+        missing_kind
+            .content
+            .as_object_mut()
+            .unwrap()
+            .remove("task_kind");
+        missing_kind.fingerprint = fingerprint(&missing_kind.content).unwrap();
+        assert!(
+            crate::project_generation_preview(&missing_kind)
+                .unwrap()
+                .task_kind
+                .is_none()
+        );
+        missing_kind.content["sealed"] = true.into();
+        missing_kind.fingerprint = fingerprint(&missing_kind.content).unwrap();
+        assert!(crate::project_generation_preview(&missing_kind).is_err());
         assert_eq!(
             admitted,
             templates.validate_output(&tasks[0], output).unwrap()

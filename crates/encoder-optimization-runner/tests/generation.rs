@@ -10,8 +10,8 @@ use std::{
 use encoder_optimization_core::{
     OptimizationError, fingerprint,
     generation::{
-        AdmittedGenerationRow, GenerationAdmission, GenerationOutcome, GenerationReservation,
-        GenerationTask,
+        AdmittedGenerationRow, GenerationAdmission, GenerationCanaryPolicy, GenerationOutcome,
+        GenerationReservation, GenerationTask, RejectedGenerationRow,
     },
     ports::{BoxFuture, OptimizationGenerationAdmission, OptimizationGenerationStore},
 };
@@ -81,6 +81,7 @@ struct Backend {
     calls: AtomicUsize,
     failing: AtomicBool,
     slow: bool,
+    require_canary: AtomicBool,
 }
 
 impl StructuredGenerationBackend for Backend {
@@ -96,7 +97,16 @@ impl StructuredGenerationBackend for Backend {
                 !self.store.pending.lock().unwrap().is_empty(),
                 "reservation precedes dispatch"
             );
-            self.calls.fetch_add(1, Ordering::SeqCst);
+            let call_index = self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.require_canary.load(Ordering::SeqCst) && call_index > 0 {
+                assert!(self.store.history.lock().unwrap().iter().any(|outcome| {
+                    !outcome.interrupted
+                        && outcome
+                            .admission
+                            .as_ref()
+                            .is_some_and(|value| value.rejected.is_empty())
+                }));
+            }
             let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
             self.peak.fetch_max(active, Ordering::SeqCst);
             struct Active<'a>(&'a AtomicUsize);
@@ -164,6 +174,7 @@ fn fixture(
         calls: AtomicUsize::new(0),
         failing: AtomicBool::new(false),
         slow,
+        require_canary: AtomicBool::new(false),
     });
     let generator = OptimizationGenerator {
         backend: backend.clone(),
@@ -252,6 +263,7 @@ async fn stop_interrupts_live_calls_and_resume_uses_new_attempts_not_completed_s
         calls: AtomicUsize::new(0),
         failing: AtomicBool::new(false),
         slow: false,
+        require_canary: AtomicBool::new(false),
     });
     generator.backend = next.clone();
     let results = generator.generate(tasks.clone()).await.unwrap();
@@ -275,4 +287,117 @@ async fn failed_calls_and_budget_exhaustion_stop_further_dispatch() {
     ));
     assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
     assert_eq!(store.history.lock().unwrap()[1].reservation.attempt, 2);
+}
+
+const CANARY: Option<GenerationCanaryPolicy> =
+    Some(GenerationCanaryPolicy::FirstBatchAllAdmittedV1);
+
+#[tokio::test]
+async fn canary_precedes_concurrent_generation_and_replays_without_extra_spend() {
+    let (generator, store, backend, tasks) = fixture(3, 4, false);
+    backend.require_canary.store(true, Ordering::SeqCst);
+    let outcomes = generator
+        .generate_with_canary(tasks.clone(), CANARY)
+        .await
+        .unwrap();
+    assert_eq!(outcomes.len(), 4);
+    assert_eq!(
+        store.history.lock().unwrap()[0].reservation.task_id,
+        tasks[0].id
+    );
+    assert_eq!(backend.peak.load(Ordering::SeqCst), 3);
+    assert_eq!(
+        generator.generate_with_canary(tasks, CANARY).await.unwrap(),
+        outcomes
+    );
+    assert_eq!(store.reservations.load(Ordering::SeqCst), 4);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 4);
+}
+
+struct Reject;
+impl OptimizationGenerationAdmission for Reject {
+    fn admit(&self, task: GenerationTask, _: String) -> BoxFuture<'_, GenerationAdmission> {
+        Box::pin(async move {
+            Ok(GenerationAdmission {
+                accepted: vec![],
+                rejected: (0..task.requested_rows)
+                    .map(|index| RejectedGenerationRow {
+                        index,
+                        reason: "invalid sample".into(),
+                    })
+                    .collect(),
+            })
+        })
+    }
+}
+
+#[tokio::test]
+async fn rejected_canary_stops_all_other_dispatch_and_cannot_be_retried() {
+    let (mut generator, store, backend, tasks) = fixture(16, 20, false);
+    generator.admission = Arc::new(Reject);
+    for _ in 0..2 {
+        let error = generator
+            .generate_with_canary(tasks.clone(), CANARY)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("rejected 1 of 1"));
+    }
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(store.reservations.load(Ordering::SeqCst), 1);
+    assert!(!store.history.lock().unwrap()[0].interrupted);
+    // Missing historical policy preserves the earlier admitted-subset behavior.
+    assert_eq!(
+        generator
+            .generate_with_canary(tasks, None)
+            .await
+            .unwrap()
+            .len(),
+        4
+    );
+}
+
+#[tokio::test]
+async fn canary_validates_all_tasks_before_dispatch_and_unknown_outcome_uses_budgeted_retry() {
+    let (generator, store, backend, tasks) = fixture(3, 5, false);
+    let mut invalid = tasks.clone();
+    invalid[3].requested_rows = 9;
+    assert!(
+        generator
+            .generate_with_canary(invalid, CANARY)
+            .await
+            .is_err()
+    );
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    backend.failing.store(true, Ordering::SeqCst);
+    assert!(
+        generator
+            .generate_with_canary(tasks.clone(), CANARY)
+            .await
+            .is_err()
+    );
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    assert!(store.history.lock().unwrap()[0].interrupted);
+    let results = generator.generate_with_canary(tasks, CANARY).await.unwrap();
+    assert_eq!(results[0].reservation.attempt, 2);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 5);
+}
+
+#[tokio::test]
+async fn stopping_during_canary_never_dispatches_the_remaining_slots() {
+    let (generator, store, backend, tasks) = fixture(16, 20, true);
+    let running = tokio::spawn(async move { generator.generate_with_canary(tasks, CANARY).await });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while backend.calls.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    store.stopped.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        running.await.unwrap(),
+        Err(OptimizationError::Stopped)
+    ));
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    assert!(store.history.lock().unwrap()[0].interrupted);
 }

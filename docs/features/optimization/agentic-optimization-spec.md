@@ -1,5 +1,27 @@
 # Input-first agentic optimization
 
+## Frozen generation canary
+
+New standard and quick-test presets pin `generationCanary` to
+`first_batch_all_admitted_v1`. Before concurrent dispatch, the runner submits
+only the first ordinary generation slot (at most eight rows). Every sample row
+must pass the task adapter's existing native admission before remaining slots
+are dispatched. The canary is part of the planned rows and existing request,
+token, spend and edit ceilings, not an extra generation call or human approval.
+It tests one target/context only; it is not a semantic-label assessment or full
+benchmark-isolation check. Normal full-population qualification still precedes
+training.
+
+A saved rejected sample prevents publication and further generation; explicit
+resume reuses the same rejection without another provider call. Interrupted or
+unknown attempts retain their reservation and require an ordinary budgeted retry.
+Completed samples replay from the existing generation journal. Historical launch
+documents without this optional policy retain their exact identity and behavior.
+Read-only CLI history exposes the bounded admitted questions, task kinds, row
+fingerprints, rejection reasons and exact call identity; native registries and
+state are not presentation payloads. The desktop displays these saved facts in
+the iteration's repair plan and shows the policy before launch.
+
 Implementation status: settings contracts, strict CLI preview/authorization and
 desktop history compatibility are implemented. The new execution components now
 include a bounded Pi inspection/proposal loop, selected OpenAI-compatible model

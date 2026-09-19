@@ -7,6 +7,10 @@ test("settings preserve legacy shape and strictly bound optional whole-run provi
   const presets = agentPresets(), limits = setupFixture().workspace.providerCatalog.providers[0].limits;
   assert.deepEqual(parseOptimizationAgentPresets(presets), presets);
   const legacy = structuredClone(presets.standard); delete legacy.analysisProtocol;
+  delete legacy.generationCanary;
+  assert.equal(Object.hasOwn(parseOptimizationAgentSettings(legacy), "generationCanary"), false);
+  assert.equal(parseOptimizationAgentSettings(presets.standard).generationCanary, "first_batch_all_admitted_v1");
+  assert.throws(() => parseOptimizationAgentSettings({ ...presets.standard, generationCanary: "invented" }));
   assert.equal(parseOptimizationAgentSettings(legacy).analysisProtocol, 1);
   assert.equal(parseOptimizationAgentSettings(presets.standard).analysisProtocol, 2);
   assert.equal(Object.hasOwn(parseOptimizationAgentSettings(presets.standard), "providerLimits"), false);

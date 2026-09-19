@@ -4,6 +4,9 @@ use std::{collections::BTreeMap, path::Path};
 use anyhow::{Context, Result, ensure};
 use encoder_optimization_core::{
     agent::InspectionItem,
+    generation::{
+        AdmittedGenerationRow, GenerationCanaryObservation, GenerationCanaryStatus, canary_passed,
+    },
     repair_plan::{DatasetRepairPlan, recorded_plan},
 };
 use serde::Serialize;
@@ -32,6 +35,8 @@ pub struct RepairPlanRead {
     pub input_rows: u64,
     pub publication: Option<RepairPublication>,
     pub evidence: Vec<InspectionItem>,
+    pub canary: GenerationCanaryObservation,
+    pub canary_rows: Vec<AdmittedGenerationRow>,
 }
 
 pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPlanRead>> {
@@ -49,6 +54,18 @@ pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPla
         db.close().await?;
         return Ok(BTreeMap::new());
     }
+    let run = crate::optimization_runs::show(folder, run_id).await?;
+    let launches = crate::optimization_launch::list(folder).await?;
+    let launch = launches
+        .iter()
+        .find(|launch| launch.id.to_string() == run.run.launch.id)
+        .context("Repair plan launch is missing")?;
+    run.run.validate(launch)?;
+    let canary_policy = launch
+        .scope
+        .agentic
+        .as_ref()
+        .and_then(|settings| settings.generation_canary);
     let generation = optimization_generation::read_calls(&mut snapshot, run_id).await?;
     let mut by_iteration = BTreeMap::<u32, Vec<_>>::new();
     for record in generation {
@@ -77,6 +94,66 @@ pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPla
             "Repair plan input dataset changed"
         );
         let plan = recorded.plan;
+        let mut canary = GenerationCanaryObservation {
+            policy: canary_policy,
+            status: if canary_policy.is_none() {
+                GenerationCanaryStatus::Disabled
+            } else if plan.proposal.additions.is_empty() {
+                GenerationCanaryStatus::NotRequired
+            } else {
+                GenerationCanaryStatus::Pending
+            },
+            call_id: None,
+            requested: if canary_policy.is_some() {
+                plan.proposal
+                    .additions
+                    .first()
+                    .map_or(0, |target| target.count.min(8))
+            } else {
+                0
+            },
+            admitted: 0,
+            rejected: Vec::new(),
+        };
+        let mut canary_rows = Vec::new();
+        if canary_policy.is_some() {
+            if let Some((task, call, outcome)) = records
+                .iter()
+                .filter(|(task, _, _)| task.target_index == 0 && task.first_row == 0)
+                .max_by_key(|(_, call, _)| call.attempt)
+            {
+                canary.call_id = Some(call.id);
+                if let Some(outcome) = outcome {
+                    canary.status = if outcome.interrupted {
+                        GenerationCanaryStatus::Interrupted
+                    } else if canary_passed(task, outcome)? {
+                        GenerationCanaryStatus::Passed
+                    } else {
+                        GenerationCanaryStatus::Rejected
+                    };
+                    if let Some(admission) = &outcome.admission {
+                        canary.admitted = admission.accepted.len() as u32;
+                        canary.rejected.clone_from(&admission.rejected);
+                        canary_rows.clone_from(&admission.accepted);
+                    }
+                }
+            }
+            ensure!(
+                canary.status == GenerationCanaryStatus::Passed
+                    || records
+                        .iter()
+                        .all(|(task, _, _)| task.target_index == 0 && task.first_row == 0),
+                "Generation continued without a passed canary"
+            );
+            ensure!(
+                publication.is_none()
+                    || matches!(
+                        canary.status,
+                        GenerationCanaryStatus::Passed | GenerationCanaryStatus::NotRequired
+                    ),
+                "Dataset was published without a passed canary"
+            );
+        }
         let published = if let Some(publication) = publication {
             let removed: Vec<_> = plan
                 .proposal
@@ -197,6 +274,8 @@ pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPla
                 input_rows: parent.members.len() as u64,
                 publication: published,
                 evidence: recorded.evidence,
+                canary,
+                canary_rows,
             },
         );
     }

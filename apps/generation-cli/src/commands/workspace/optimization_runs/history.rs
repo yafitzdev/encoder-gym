@@ -49,6 +49,15 @@ struct RepairPlan {
     strategy: &'static str,
     publication: Option<project_workspace_local::optimization_repair::RepairPublication>,
     evidence: Vec<encoder_experiment_nomos::NomosRepairEvidence>,
+    canary: GenerationCanary,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GenerationCanary {
+    #[serde(flatten)]
+    observation: encoder_optimization_core::generation::GenerationCanaryObservation,
+    rows: Vec<encoder_experiment_nomos::NomosGenerationPreviewRow>,
 }
 
 #[derive(Serialize)]
@@ -104,6 +113,14 @@ pub(super) async fn read(folder: &Path, run_id: Uuid) -> Result<History> {
                     .map(|item| encoder_experiment_nomos::project_repair_evidence(item, &reports))
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok::<_, anyhow::Error>(RepairPlan {
+                    canary: GenerationCanary {
+                        observation: recorded.canary,
+                        rows: recorded
+                            .canary_rows
+                            .iter()
+                            .map(encoder_experiment_nomos::project_generation_preview)
+                            .collect::<Result<Vec<_>, _>>()?,
+                    },
                     decision: recorded.plan,
                     input_rows: recorded.input_rows,
                     strategy: "question_variants_preserve_context",

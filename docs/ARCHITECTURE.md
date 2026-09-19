@@ -996,13 +996,18 @@ search arbitrary co-located projects, or rewrite the baseline context.
 
 `optimization-run history` composes those same verified development projections
 with ordered iteration inputs, training custody and completion receipts. Its
-row-free response links each iteration to its original model, input/full/trainer
+metadata links each iteration to its original model, input/full/trainer
 dataset versions, saved model and original-baseline gate values. Development
 gate verdicts and best-so-far selection remain distinct from final approval.
 The desktop validates this closed response and joins child experiments by exact
 identity. Stop/Resume authority reads do not depend on report availability.
 Artifact links refresh the project inventory before ordinary viewer navigation,
 fencing late responses against project/navigation changes without restarting work.
+New launch presets pin a core-owned first-batch generation canary. The runner
+uses ordinary reservations and saved outcomes before concurrent dispatch;
+dataset publication independently requires a passed sample under that policy.
+The task adapter supplies only a closed training-question preview, never native
+registry/state payloads. Historical launches without the policy are unchanged.
 Single-run custody reads replay only the requested root and its Agent history,
 using the same checks as full listings. Checkpoint registration verifies the exact
 source and managed copy (including retries) without auditing unrelated historical

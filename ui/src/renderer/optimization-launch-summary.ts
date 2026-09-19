@@ -33,6 +33,7 @@ export function optimizationLaunchSummary(options: LaunchSummary): HTMLElement {
     settings ? h("div", { class: "launch-limits" },
       h("strong", {}, diagnostic ? "Diagnostic run" : "Standard run"),
       h("p", {}, `Up to ${settings.maximumIterations} iteration${settings.maximumIterations === 1 ? "" : "s"} · ${settings.maximumRowChanges.toLocaleString()} row changes total`),
+      h("p", {}, settings.generationCanary ? "Generation canary: check the first batch (up to 8 rows) before the rest. Uses the existing generation budget." : "No generation canary in these saved settings."),
       h("p", {}, `${settings.training.device.toUpperCase()} · ${settings.training.maximumEpochs} epoch${settings.training.maximumEpochs === 1 ? "" : "s"} · batch ${settings.training.batchSize}`),
       h("p", {}, `Training limit: ${settings.training.maximumSecondsPerIteration.toLocaleString()} seconds per iteration${settings.training.maximumTrainingRows == null ? " · all rows" : ` · up to ${settings.training.maximumTrainingRows.toLocaleString()} rows`}`),
       diagnostic ? h("p", { class: "diagnostic-notice" }, "Development only. No final holdout or promotion.") : null) : h("p", { class: "muted" }, "Run limits not recorded."),

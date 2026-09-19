@@ -13,6 +13,15 @@ export interface DatasetRepairPlan {
   generation: { targetIndex: number; requested: number; admitted: number; rejected: number; unresolved: number; attempts: number; rejectionReasons: Record<string, number> }[];
   publication: { datasetVersionId: string; added: number; removed: number; rows: number; crossBatchDuplicates: number } | null;
   evidence: RepairEvidence[];
+  canary?: GenerationCanary;
+}
+
+export interface GenerationCanary {
+  policy: "first_batch_all_admitted_v1" | null;
+  status: "disabled" | "not_required" | "pending" | "interrupted" | "passed" | "rejected";
+  callId: string | null; requested: number; admitted: number;
+  rejected: { index: number; reason: string }[];
+  rows: { index: number; fingerprint: string; question: string; taskKind: string | null }[];
 }
 
 function reject(): never { throw new Error("Invalid saved dataset repair plan."); }
@@ -31,7 +40,8 @@ function references(value: unknown): string[] { const result = array(value, 20).
 
 export function parseDatasetRepairPlan(value: unknown): DatasetRepairPlan | null {
   if (value === null) return null;
-  const plan = object(value, ["decisionCallId", "proposalFingerprint", "maximumRowChanges", "proposal", "generation", "inputRows", "strategy", "publication", "evidence"]);
+  const hasCanary = !!value && typeof value === "object" && Object.hasOwn(value, "canary");
+  const plan = object(value, ["decisionCallId", "proposalFingerprint", "maximumRowChanges", "proposal", "generation", "inputRows", "strategy", "publication", "evidence", ...(hasCanary ? ["canary"] : [])]);
   if (plan.strategy !== "question_variants_preserve_context") reject();
   const proposal = object(plan.proposal, ["summary", "stop", "removals", "additions"]);
   const result: DatasetRepairPlan = {
@@ -69,5 +79,27 @@ export function parseDatasetRepairPlan(value: unknown): DatasetRepairPlan | null
   if (result.publication && (stop || result.generation.some(target => target.unresolved > 0) || result.publication.removed !== removals.length
     || result.publication.added + result.publication.crossBatchDuplicates !== result.generation.reduce((sum, target) => sum + target.admitted, 0)
     || result.publication.rows !== result.inputRows - result.publication.removed + result.publication.added)) reject();
+  if (hasCanary) {
+    const raw = object(plan.canary, ["policy", "status", "callId", "requested", "admitted", "rejected", "rows"]);
+    if (raw.policy !== null && raw.policy !== "first_batch_all_admitted_v1" || !["disabled", "not_required", "pending", "interrupted", "passed", "rejected"].includes(String(raw.status))) reject();
+    const canary: GenerationCanary = { policy: raw.policy as GenerationCanary["policy"], status: raw.status as GenerationCanary["status"], callId: raw.callId === null ? null : uuid(raw.callId), requested: integer(raw.requested, 8), admitted: integer(raw.admitted, 8),
+      rejected: array(raw.rejected, 8).map(value => { const row = object(value, ["index", "reason"]); return { index: integer(row.index, 7), reason: text(row.reason, 400) }; }),
+      rows: array(raw.rows, 8).map(value => { const row = object(value, ["index", "fingerprint", "question", "taskKind"]); return { index: integer(row.index, 7), fingerprint: hash(row.fingerprint), question: text(row.question, 8192), taskKind: row.taskKind === null ? null : text(row.taskKind, 200) }; }) };
+    const indices = [...canary.rows, ...canary.rejected].map(row => row.index);
+    const terminal = canary.status === "passed" || canary.status === "rejected";
+    if ((canary.policy === null) !== (canary.status === "disabled") || canary.rows.length !== canary.admitted
+      || new Set(indices).size !== indices.length || indices.some(index => index >= canary.requested)
+      || canary.requested !== (canary.policy ? Math.min(additions[0]?.count ?? 0, 8) : 0)
+      || canary.policy && (canary.status === "not_required") !== (additions.length === 0)
+      || terminal && (!canary.callId || indices.length !== canary.requested || !canary.requested)
+      || !terminal && indices.length !== 0
+      || canary.status === "passed" && canary.rejected.length !== 0
+      || canary.status === "rejected" && canary.rejected.length === 0
+      || canary.status === "interrupted" && !canary.callId
+      || ["disabled", "not_required"].includes(canary.status) && canary.callId !== null
+      || result.publication && canary.policy && !["passed", "not_required"].includes(canary.status)
+      || result.generation[0] && (canary.admitted > result.generation[0].admitted || canary.rejected.length > result.generation[0].rejected)) reject();
+    result.canary = canary;
+  }
   return result;
 }

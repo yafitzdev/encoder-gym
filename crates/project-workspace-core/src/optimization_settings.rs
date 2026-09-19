@@ -48,6 +48,9 @@ pub struct OptimizationAgentSettings {
     pub maximum_iterations: u32,
     pub maximum_agent_turns_per_iteration: u32,
     pub generation_concurrency: u32,
+    /// Missing historical policy must not silently change an authorized run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_canary: Option<encoder_optimization_core::generation::GenerationCanaryPolicy>,
     /// Additions plus removals, across the whole run, including rejected edits.
     pub maximum_row_changes: u32,
     pub training: OptimizationTrainingSettings,
@@ -93,6 +96,7 @@ impl Default for OptimizationAgentSettings {
             maximum_iterations: 3,
             maximum_agent_turns_per_iteration: 8,
             generation_concurrency: 1,
+            generation_canary: Some(encoder_optimization_core::generation::GenerationCanaryPolicy::FirstBatchAllAdmittedV1),
             maximum_row_changes: 192,
             training: OptimizationTrainingSettings {
                 device: OptimizationDevice::Auto,
@@ -259,9 +263,14 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("analysisProtocol");
+        historical
+            .as_object_mut()
+            .unwrap()
+            .remove("generationCanary");
         let decoded: OptimizationAgentSettings =
             serde_json::from_value(historical.clone()).unwrap();
         assert_eq!(decoded.analysis_protocol, 1);
+        assert_eq!(decoded.generation_canary, None);
         assert_eq!(serde_json::to_value(decoded).unwrap(), historical);
     }
 }

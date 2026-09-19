@@ -60,6 +60,15 @@ and ordinary dataset lineage; reading it never calls a provider, publishes data,
 qualifies a dataset or reruns inference. Raw inspection payloads and sealed
 evidence are not included.
 
+New launch presets enable a bounded **Generation canary**: all rows in the first
+ordinary batch (up to eight) must pass native admission before remaining batches
+are dispatched. This consumes the same planned rows and provider ceilings. The
+repair plan displays the saved sample questions and rejection reasons; it is not
+a semantic judge or full benchmark-isolation test. A rejected sample blocks
+publication and training; resuming reuses the rejection, without spending again.
+Interrupted/unknown attempts remain charged and follow normal budgeted recovery.
+Older launches retain their original policy, with no retroactive canary claim.
+
 Use **New project** (the sidebar plus) to choose a local checkpoint, preview its
 format/size, name the project, and choose a parent location. Gym copies the
 checkpoint into a new owned folder and creates its manifest, registry database,
