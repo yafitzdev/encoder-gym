@@ -18,6 +18,7 @@ use uuid::Uuid;
 #[serde(rename_all = "snake_case")]
 pub enum AgentLoopEnd {
     NoChange,
+    CanaryRejected,
     IterationLimit,
     RowChangeLimit,
 }
@@ -37,6 +38,12 @@ pub struct EvaluatedIteration<'a> {
     pub iteration: &'a ProjectOptimizationIteration,
     pub training: &'a IterationTrainingBinding,
     pub result: &'a IterationDevelopmentResult,
+}
+
+pub struct IterationDecision<'a> {
+    pub proposal_call_id: Uuid,
+    pub proposal: &'a DatasetEditProposal,
+    pub not_executed: Option<&'a encoder_optimization_core::generation::RepairNotExecuted>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,12 +67,16 @@ impl IterationCompletion {
     pub fn create(
         iteration: &ProjectOptimizationIteration,
         launch: &OptimizationLaunchAuthorization,
-        proposal_call_id: Uuid,
-        proposal: &DatasetEditProposal,
+        decision: IterationDecision<'_>,
         history: &[EvaluatedIteration<'_>],
         previous: Option<&Self>,
         created_at: DateTime<Utc>,
     ) -> Result<Self, Invalid> {
+        let IterationDecision {
+            proposal_call_id,
+            proposal,
+            not_executed,
+        } = decision;
         let settings = launch
             .scope
             .agentic
@@ -81,6 +92,17 @@ impl IterationCompletion {
             "Completion belongs to another launch or has no Agent call",
         )?;
         let number = iteration.scope.iteration;
+        if let Some(stopped) = not_executed {
+            stopped.validate().map_err(invalid)?;
+            require(
+                !proposal.stop
+                    && stopped.run_id == iteration.scope.run_id
+                    && stopped.iteration == number
+                    && stopped.proposal_fingerprint
+                        == encoder_optimization_core::fingerprint(proposal).map_err(invalid)?,
+                "Repair execution stop belongs to another proposal",
+            )?;
+        }
         let previous_changes = match previous {
             Some(previous) => {
                 previous.validate_identity()?;
@@ -117,7 +139,8 @@ impl IterationCompletion {
                 && total_row_changes <= settings.maximum_row_changes
                 && proposal.stop == (row_changes == 0)
                 && number <= settings.maximum_iterations
-                && history.len() == (number - u32::from(proposal.stop)) as usize,
+                && history.len()
+                    == (number - u32::from(proposal.stop || not_executed.is_some())) as usize,
             "Completion is missing an evaluation, exceeds its limits, or contradicts the proposal",
         )?;
         let mut candidates = Vec::new();
@@ -139,7 +162,7 @@ impl IterationCompletion {
                 suite_assessments: entry.result.assessments.clone(),
             });
         }
-        if !proposal.stop {
+        if !proposal.stop && not_executed.is_none() {
             require(
                 history
                     .last()
@@ -162,12 +185,14 @@ impl IterationCompletion {
                 result: bound(entry.result.experiment_run_id, &entry.result.fingerprint),
             }
         });
-        let result = (!proposal.stop).then(|| {
+        let result = (!proposal.stop && not_executed.is_none()).then(|| {
             let result = history.last().expect("evaluation count checked").result;
             bound(result.experiment_run_id, &result.fingerprint)
         });
         let end = if proposal.stop {
             Some(AgentLoopEnd::NoChange)
+        } else if not_executed.is_some() {
+            Some(AgentLoopEnd::CanaryRejected)
         } else if number == settings.maximum_iterations {
             Some(AgentLoopEnd::IterationLimit)
         } else if total_row_changes == settings.maximum_row_changes {
@@ -244,10 +269,15 @@ impl IterationCompletion {
                 && !self.proposal_call_id.is_nil()
                 && self.row_changes <= self.total_row_changes
                 && self.total_row_changes <= 5000
-                && if self.row_changes == 0 {
-                    self.result.is_none() && self.end == Some(AgentLoopEnd::NoChange)
-                } else {
-                    self.result.is_some() && self.end != Some(AgentLoopEnd::NoChange)
+                && match (&self.result, &self.end, self.row_changes) {
+                    (None, Some(AgentLoopEnd::NoChange), 0) => true,
+                    (None, Some(AgentLoopEnd::CanaryRejected), changes) => changes > 0,
+                    (Some(_), end, changes) => {
+                        changes > 0
+                            && *end != Some(AgentLoopEnd::NoChange)
+                            && *end != Some(AgentLoopEnd::CanaryRejected)
+                    }
+                    _ => false,
                 }
                 && self.fingerprint == self.reproduce()?,
             "Iteration completion changed",

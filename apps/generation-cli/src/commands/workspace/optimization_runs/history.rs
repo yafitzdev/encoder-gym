@@ -222,7 +222,9 @@ pub(super) async fn read(folder: &Path, run_id: Uuid) -> Result<History> {
             training_dataset_version_id: training.as_ref().map(|value| value.training_dataset.id),
             model_id: model.map(|value| value.id),
             completed: completion.is_some(),
-            no_change: completion.is_some_and(|value| value.result.is_none()),
+            no_change: completion.is_some_and(|value| {
+                value.end == Some(project_workspace_core::optimization_loop::AgentLoopEnd::NoChange)
+            }),
             selected: completed
                 .last()
                 .and_then(|value| value.selected.as_ref())

@@ -24,7 +24,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
           rowId: row.rowId,
           rowFingerprint: row.rowFingerprint,
           requestFingerprint: input.fingerprint,
-          supportedCandidateIds: [row.candidates[process.env.AGENT_FIXTURE_LOOP === 'v3_semantic_reject' ? row.candidates.length - 1 : 0].candidateId],
+          supportedCandidateIds: [row.candidates[['v3_semantic_reject', 'v3_loop_semantic_reject'].includes(process.env.AGENT_FIXTURE_LOOP) ? row.candidates.length - 1 : 0].candidateId],
           ambiguous: false,
           contextConsistent: true,
           issueCodes: [],

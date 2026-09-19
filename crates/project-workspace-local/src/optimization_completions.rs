@@ -10,7 +10,7 @@ use encoder_experiment_core::{
 };
 use project_workspace_core::{
     optimization_iteration_execution::{IterationDevelopmentResult, IterationTrainingBinding},
-    optimization_loop::{EvaluatedIteration, IterationCompletion},
+    optimization_loop::{EvaluatedIteration, IterationCompletion, IterationDecision},
 };
 use sqlx::{Connection, Row, SqliteConnection};
 use std::path::Path;
@@ -86,7 +86,13 @@ pub(crate) async fn validate_records(
             .proposal
             .as_ref()
             .context("Recorded decision missing")?;
-        if !proposal.stop {
+        let not_executed = crate::optimization_repair_execution::read_not_executed(
+            db,
+            iteration.scope.run_id,
+            iteration.scope.iteration,
+        )
+        .await?;
+        if !proposal.stop && not_executed.is_none() {
             let training: IterationTrainingBinding =
                 execution::read(db, "optimization_iteration_training", iteration.id)
                     .await?
@@ -108,8 +114,11 @@ pub(crate) async fn validate_records(
         let expected = IterationCompletion::create(
             iteration,
             launch,
-            record.call.id,
-            proposal,
+            IterationDecision {
+                proposal_call_id: record.call.id,
+                proposal,
+                not_executed: not_executed.as_ref(),
+            },
             &history,
             index.checked_sub(1).map(|i| &completions[i]),
             completion.created_at,
@@ -209,7 +218,13 @@ async fn complete(
     for iteration in iterations.iter().take(number as usize) {
         let record = decision(&mut db, iteration).await?;
         let proposal = record.proposal.as_ref().expect("filtered proposal");
-        if !proposal.stop {
+        let not_executed = crate::optimization_repair_execution::read_not_executed(
+            &mut db,
+            iteration.scope.run_id,
+            iteration.scope.iteration,
+        )
+        .await?;
+        if !proposal.stop && not_executed.is_none() {
             let binding: IterationTrainingBinding =
                 execution::read(&mut db, "optimization_iteration_training", iteration.id)
                     .await?
@@ -248,8 +263,11 @@ async fn complete(
         let value = IterationCompletion::create(
             iteration,
             &launch,
-            record.call.id,
-            proposal,
+            IterationDecision {
+                proposal_call_id: record.call.id,
+                proposal,
+                not_executed: not_executed.as_ref(),
+            },
             &history,
             completed.last(),
             prior.map_or_else(Utc::now, |value| value.created_at),

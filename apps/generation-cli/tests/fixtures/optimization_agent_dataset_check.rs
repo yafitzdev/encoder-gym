@@ -87,6 +87,11 @@ async fn cli_v3_wrong_label_review_is_durable_and_never_published() {
 }
 
 #[tokio::test]
+async fn cli_v3_canary_rejection_completes_the_loop_without_training() {
+    scenario(true, Some("v3_loop_semantic_reject")).await;
+}
+
+#[tokio::test]
 async fn cli_agent_preflight_blocks_irreparable_starting_dataset_before_provider_dispatch() {
     scenario(true, Some("dirty_preflight")).await;
 }
@@ -378,7 +383,10 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     .unwrap();
     let mut settings = OptimizationAgentSettings::quick_test();
     if let Some(mode) = loop_mode {
-        settings = if matches!(mode, "v3_prepare" | "v3_semantic_reject") {
+        settings = if matches!(
+            mode,
+            "v3_prepare" | "v3_semantic_reject" | "v3_loop_semantic_reject"
+        ) {
             let mut value = OptimizationAgentSettings::quick_test();
             value.analysis_protocol = 3;
             value.generation_canary = Some(
@@ -388,7 +396,10 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         } else {
             OptimizationAgentSettings::default()
         };
-        settings.maximum_iterations = if matches!(mode, "v3_prepare" | "v3_semantic_reject") {
+        settings.maximum_iterations = if matches!(
+            mode,
+            "v3_prepare" | "v3_semantic_reject" | "v3_loop_semantic_reject"
+        ) {
             1
         } else if mode == "two_iterations" {
             2
@@ -857,7 +868,12 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
             .unwrap();
         db.close().await.unwrap();
     }
-    if loop_mode.is_some() && !matches!(loop_mode, Some("v3_prepare" | "v3_semantic_reject")) {
+    if loop_mode.is_some()
+        && !matches!(
+            loop_mode,
+            Some("v3_prepare" | "v3_semantic_reject" | "v3_loop_semantic_reject")
+        )
+    {
         let mut db = SqliteConnection::connect(&format!(
             "sqlite://{}",
             folder.join("project.sqlite").display()
@@ -987,6 +1003,39 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
             String::from_utf8_lossy(&replay.stderr)
         );
         assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 6);
+        return;
+    }
+    if loop_mode == Some("v3_loop_semantic_reject") {
+        let output = invoke_iteration();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        generator.unwrap().join().unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["completion"]["end"], "canary_rejected");
+        assert!(result["completion"]["result"].is_null());
+        assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 6);
+        assert!(
+            project_workspace_local::optimization_dataset::publication(&folder, reserved.id, 1)
+                .await
+                .is_err()
+        );
+        assert!(
+            project_workspace_local::optimization_iteration_execution::training(
+                &folder,
+                reserved.id,
+                result["completion"]["iteration"]["id"]
+                    .as_str()
+                    .unwrap()
+                    .parse()
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .is_none()
+        );
         return;
     }
     let first = execute();
