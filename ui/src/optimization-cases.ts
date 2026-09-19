@@ -5,7 +5,11 @@ export interface SavedCasePrediction {
 }
 export type SavedCaseChange = "rank_improved" | "rank_regressed" | "rank_unchanged" | "not_comparable";
 export interface SavedCasePair { sourceRowId: string; baseline: SavedCasePrediction | null; candidate: SavedCasePrediction | null; change: SavedCaseChange }
-export interface SavedCaseSource { reportId: string; reportFingerprint: string; diagnosticsFingerprint: string | null; support: number; sampleSize: number | null }
+export type SavedDiagnosticAvailability = "available_sample" | "available_empty" | "missing" | "corrupt" | "incompatible";
+export interface SavedCaseSource {
+  reportId: string; reportFingerprint: string; diagnosticsFingerprint: string | null;
+  reportSupport: number; retrievalSupport: number | null; availability: SavedDiagnosticAvailability; sampleSize: number | null;
+}
 export interface DevelopmentCaseComparison { suite: string; suiteFingerprint: string; sampleLimit: 50; baseline: SavedCaseSource; candidate: SavedCaseSource; cases: SavedCasePair[] }
 export interface OptimizationCases {
   projectId: string; runId: string; iterationId: string; iteration: number;
@@ -34,10 +38,16 @@ function prediction(value: unknown): SavedCasePrediction | null {
     expectedCapabilities: capabilities(item.expectedCapabilities), predictedCapabilities: capabilities(item.predictedCapabilities), expectedRank: rank };
 }
 function source(value: unknown): SavedCaseSource {
-  const item = object(value, ["reportId", "reportFingerprint", "diagnosticsFingerprint", "support", "sampleSize"]);
-  if ((item.sampleSize === null) !== (item.diagnosticsFingerprint === null)) invalid();
-  const result = { reportId: uuid(item.reportId), reportFingerprint: hash(item.reportFingerprint), diagnosticsFingerprint: item.diagnosticsFingerprint === null ? null : hash(item.diagnosticsFingerprint), support: count(item.support), sampleSize: item.sampleSize === null ? null : count(item.sampleSize, 50) };
-  if (result.sampleSize !== null && result.sampleSize > result.support) invalid();
+  const item = object(value, ["reportId", "reportFingerprint", "diagnosticsFingerprint", "reportSupport", "retrievalSupport", "availability", "sampleSize"]);
+  if (!(["available_sample", "available_empty", "missing", "corrupt", "incompatible"] as unknown[]).includes(item.availability)) invalid();
+  const result: SavedCaseSource = { reportId: uuid(item.reportId), reportFingerprint: hash(item.reportFingerprint), diagnosticsFingerprint: item.diagnosticsFingerprint === null ? null : hash(item.diagnosticsFingerprint),
+    reportSupport: count(item.reportSupport), retrievalSupport: item.retrievalSupport === null ? null : count(item.retrievalSupport), availability: item.availability as SavedDiagnosticAvailability,
+    sampleSize: item.sampleSize === null ? null : count(item.sampleSize, 50) };
+  if (!result.reportSupport || result.retrievalSupport === 0) invalid();
+  const available = result.availability === "available_sample" || result.availability === "available_empty";
+  if (available !== (result.sampleSize !== null && result.diagnosticsFingerprint !== null && result.retrievalSupport !== null)) invalid();
+  if (result.availability === "available_sample" && !result.sampleSize || result.availability === "available_empty" && result.sampleSize !== 0) invalid();
+  if (result.sampleSize !== null && result.retrievalSupport !== null && result.sampleSize > result.retrievalSupport) invalid();
   return result;
 }
 export function caseChange(left: SavedCasePrediction | null, right: SavedCasePrediction | null): SavedCaseChange {
@@ -58,7 +68,7 @@ export function parseOptimizationCases(value: unknown, projectId: string, runId:
         if (!baseline && !candidate || pair.change !== change) invalid();
         return { sourceRowId: text(pair.sourceRowId, 200), baseline, candidate, change };
       }) };
-      if (new Set(comparison.cases.map(pair => pair.sourceRowId)).size !== comparison.cases.length || comparison.baseline.support !== comparison.candidate.support
+      if (new Set(comparison.cases.map(pair => pair.sourceRowId)).size !== comparison.cases.length
         || comparison.cases.filter(pair => pair.baseline).length !== (comparison.baseline.sampleSize ?? 0)
         || comparison.cases.filter(pair => pair.candidate).length !== (comparison.candidate.sampleSize ?? 0)) invalid();
       return comparison;

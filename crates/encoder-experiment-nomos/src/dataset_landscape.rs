@@ -47,7 +47,7 @@ impl NomosDatasetLandscape {
         let baseline_clusters = development_clusters(baseline)?;
         let current_support: BTreeMap<_, _> = current
             .iter()
-            .map(|evidence| (evidence.suite_key.clone(), evidence.support))
+            .map(|evidence| (evidence.suite_key.clone(), evidence.retrieval_support))
             .collect();
         let mut keys: BTreeSet<_> = training_members.keys().cloned().collect();
         keys.extend(current_clusters.keys().map(|(_, key)| key.clone()));
@@ -87,6 +87,11 @@ impl NomosDatasetLandscape {
                 development.push(json!({
                     "suite": evidence.suite_key,
                     "support": observed.support,
+                    "population": {
+                        "retrievalStates": evidence.retrieval_support,
+                        "scientificReportSupport": evidence.report_support,
+                        "agent": evidence.agent_population,
+                    },
                     "supportSharePpm": support_share_ppm,
                     "trainingSharePpm": training_share_ppm,
                     "coverageGapPpm": coverage_gap_ppm,
@@ -421,16 +426,29 @@ mod tests {
     }
 
     fn evidence(suite: &str, recall: f64) -> NomosDevelopmentEvidence {
+        evidence_with_support(suite, recall, 10, 10, 10)
+    }
+
+    fn evidence_with_support(
+        suite: &str,
+        recall: f64,
+        report_support: u64,
+        retrieval_support: u64,
+        cluster_support: u64,
+    ) -> NomosDevelopmentEvidence {
         NomosDevelopmentEvidence {
+            schema_version: crate::development_evidence::DEVELOPMENT_EVIDENCE_SCHEMA_VERSION,
             report_id: uuid::Uuid::new_v4(),
             report_fingerprint: format!("sha256:{}", "1".repeat(64)),
             suite_key: suite.into(),
             artifact_fingerprint: format!("sha256:{}", "2".repeat(64)),
-            support: 10,
+            report_support,
+            retrieval_support,
+            agent_population: crate::NomosAgentPopulation::NotRequired,
             clusters: vec![NomosDevelopmentCluster {
                 dimension: "expected_capability".into(),
                 value: "search".into(),
-                support: 10,
+                support: cluster_support,
                 metrics: metric(recall),
             }],
             failures: vec![],
@@ -484,5 +502,45 @@ mod tests {
                 .as_array()
                 .is_some_and(|ids| ids.iter().any(|id| id == &search.id))
         }));
+    }
+
+    #[test]
+    fn retrieval_cluster_share_does_not_use_smaller_agent_report_support() {
+        let rows = BTreeMap::from([("row-a".into(), row("find alpha"))]);
+        let mut current = evidence_with_support("development", 0.5, 16, 1_000, 100);
+        current.agent_population = crate::NomosAgentPopulation::Available {
+            artifact_fingerprint: format!("sha256:{}", "3".repeat(64)),
+            sessions: 16,
+            tool_call_attempts: 32,
+            valid_execution_attempts: 30,
+            metric_denominators: BTreeMap::from([
+                ("agent_success_rate".into(), Some(16)),
+                ("agent_wrong_tool_execution_rate".into(), Some(30)),
+            ]),
+        };
+        let landscape = NomosDatasetLandscape::build(
+            &rows,
+            &[current],
+            &[evidence_with_support("development", 0.8, 16, 1_000, 100)],
+        )
+        .unwrap();
+        let search = landscape
+            .summaries()
+            .iter()
+            .find(|item| item.content["cluster"]["value"] == "search")
+            .unwrap();
+        assert_eq!(search.content["development"][0]["supportSharePpm"], 100_000);
+        assert_eq!(
+            search.content["development"][0]["population"]["retrievalStates"],
+            1_000
+        );
+        assert_eq!(
+            search.content["development"][0]["population"]["scientificReportSupport"],
+            16
+        );
+        assert_eq!(
+            search.content["development"][0]["population"]["agent"]["sessions"],
+            16
+        );
     }
 }

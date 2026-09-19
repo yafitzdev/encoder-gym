@@ -464,6 +464,18 @@ margin from already-saved development reports. Training membership is derived
 from the complete immutable dataset using the native row validator. No sealed
 report, row or score can enter the landscape.
 
+The saved diagnostic projection separates evidence populations. Retrieval
+cluster shares and the at-most-fifty disagreement sample are bounded by the
+native retrieval state's `metrics.states` count, never by the scientific
+report's conservative cross-component support. When Agent-session evaluation is
+part of the same metric contract, its saved session, tool-attempt and valid-
+execution denominators are projected separately; a denominator the native
+artifact does not contain remains explicitly unavailable. An Agent report with
+sixteen sessions therefore cannot make fifty saved retrieval disagreements or a
+hundred-of-one-thousand retrieval cluster invalid. Missing, corrupt,
+incompatible, available-empty and available-sample diagnostic states remain
+distinct, and passive reads never rerun evaluation to fill a missing artifact.
+
 This protocol is qualitative dataset diagnosis, not acceptance authority. It
 does not infer that an underrepresented cluster is causal, choose a winning
 model, or make requested edit counts statistically optimal. It gives the Agent

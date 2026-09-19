@@ -16,7 +16,9 @@ mod training_accounting;
 mod training_data;
 pub use benchmark::NomosBenchmarkPlan;
 pub use dataset_landscape::NomosDatasetLandscape;
-pub use development_evidence::{NomosDevelopmentCluster, NomosDevelopmentEvidence};
+pub use development_evidence::{
+    NomosAgentPopulation, NomosDevelopmentCluster, NomosDevelopmentEvidence,
+};
 pub use generated_training::NomosGenerationTemplates;
 mod generation_preview;
 pub use generation_preview::{NomosGenerationPreviewRow, project_generation_preview};

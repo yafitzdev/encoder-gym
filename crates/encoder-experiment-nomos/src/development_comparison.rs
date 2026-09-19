@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::{
     EncoderTaskAdapterError, EvaluationReport, EvidenceRole, ExternalProjectSnapshot,
     MetricContract, NomosBackend, NomosDevelopmentEvidence, Value, adapter_error,
+    development_evidence::NomosDevelopmentEvidenceRead,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -45,9 +46,23 @@ pub struct SavedCaseSource {
     pub report_id: Uuid,
     pub report_fingerprint: String,
     pub diagnostics_fingerprint: Option<String>,
-    pub support: u64,
-    /// None means diagnostics could not be verified, not an empty sample.
+    /// The conservative support on the combined scientific report. This may
+    /// be the smaller Agent-session population and is never a retrieval label.
+    pub report_support: u64,
+    pub retrieval_support: Option<u64>,
+    pub availability: SavedDiagnosticAvailability,
+    /// None means diagnostics were unavailable, not an empty sample.
     pub sample_size: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SavedDiagnosticAvailability {
+    AvailableSample,
+    AvailableEmpty,
+    Missing,
+    Corrupt,
+    Incompatible,
 }
 
 #[derive(Debug, Serialize)]
@@ -75,7 +90,6 @@ impl NomosBackend {
             || candidate.evidence_role != EvidenceRole::Development
             || baseline.suite_key != candidate.suite_key
             || baseline.suite_fingerprint != candidate.suite_fingerprint
-            || baseline.support != candidate.support
             || baseline.model != project.baseline_model
         {
             return Err(adapter_error(
@@ -88,42 +102,81 @@ impl NomosBackend {
         candidate
             .validate_integrity(project, contract)
             .map_err(adapter_error)?;
-        let read = |report: &EvaluationReport| {
-            self.read_development_evidence(project, contract, report)
-                .and_then(|evidence| {
-                    let cases = project_cases(&evidence)?;
-                    Ok((evidence.artifact_fingerprint, cases))
-                })
-                .ok()
+        let read = |report: &EvaluationReport| -> Result<SavedCases, EncoderTaskAdapterError> {
+            Ok(
+                match self.read_development_evidence_status(project, contract, report)? {
+                    NomosDevelopmentEvidenceRead::Available(evidence) => {
+                        match project_cases(&evidence) {
+                            Ok(cases) => SavedCases::Available { evidence, cases },
+                            Err(_) => SavedCases::Incompatible,
+                        }
+                    }
+                    NomosDevelopmentEvidenceRead::Missing => SavedCases::Missing,
+                    NomosDevelopmentEvidenceRead::Corrupt => SavedCases::Corrupt,
+                    NomosDevelopmentEvidenceRead::Incompatible => SavedCases::Incompatible,
+                },
+            )
         };
         // Missing, corrupt or incompatible native diagnostics remain explicitly
         // unavailable. Do not rerun inference or discard the aggregate report.
-        let left = read(baseline);
-        let right = read(candidate);
-        let source =
-            |report: &EvaluationReport,
-             saved: &Option<(String, BTreeMap<String, SavedCasePrediction>)>| {
-                SavedCaseSource {
-                    report_id: report.id,
-                    report_fingerprint: report.fingerprint.clone(),
-                    diagnostics_fingerprint: saved
-                        .as_ref()
-                        .map(|(fingerprint, _)| fingerprint.clone()),
-                    support: report.support,
-                    sample_size: saved.as_ref().map(|(_, cases)| cases.len() as u32),
-                }
-            };
+        let left = read(baseline)?;
+        let right = read(candidate)?;
+        let source = |report: &EvaluationReport, saved: &SavedCases| {
+            let (diagnostics_fingerprint, retrieval_support, availability, sample_size) =
+                match saved {
+                    SavedCases::Available { evidence, cases } => (
+                        Some(evidence.artifact_fingerprint.clone()),
+                        Some(evidence.retrieval_support),
+                        if cases.is_empty() {
+                            SavedDiagnosticAvailability::AvailableEmpty
+                        } else {
+                            SavedDiagnosticAvailability::AvailableSample
+                        },
+                        Some(cases.len() as u32),
+                    ),
+                    SavedCases::Missing => (None, None, SavedDiagnosticAvailability::Missing, None),
+                    SavedCases::Corrupt => (None, None, SavedDiagnosticAvailability::Corrupt, None),
+                    SavedCases::Incompatible => {
+                        (None, None, SavedDiagnosticAvailability::Incompatible, None)
+                    }
+                };
+            SavedCaseSource {
+                report_id: report.id,
+                report_fingerprint: report.fingerprint.clone(),
+                diagnostics_fingerprint,
+                report_support: report.support,
+                retrieval_support,
+                availability,
+                sample_size,
+            }
+        };
         Ok(NomosDevelopmentComparison {
             suite: baseline.suite_key.clone(),
             suite_fingerprint: baseline.suite_fingerprint.clone(),
             sample_limit: 50,
             baseline: source(baseline, &left),
             candidate: source(candidate, &right),
-            cases: pair_cases(
-                left.map(|(_, cases)| cases).unwrap_or_default(),
-                right.map(|(_, cases)| cases).unwrap_or_default(),
-            ),
+            cases: pair_cases(left.into_cases(), right.into_cases()),
         })
+    }
+}
+
+enum SavedCases {
+    Available {
+        evidence: Box<NomosDevelopmentEvidence>,
+        cases: BTreeMap<String, SavedCasePrediction>,
+    },
+    Missing,
+    Corrupt,
+    Incompatible,
+}
+
+impl SavedCases {
+    fn into_cases(self) -> BTreeMap<String, SavedCasePrediction> {
+        match self {
+            Self::Available { cases, .. } => cases,
+            Self::Missing | Self::Corrupt | Self::Incompatible => BTreeMap::new(),
+        }
     }
 }
 
@@ -132,7 +185,7 @@ fn project_cases(
 ) -> Result<BTreeMap<String, SavedCasePrediction>, EncoderTaskAdapterError> {
     if evidence.failure_sample_limit != 50
         || evidence.failures.len() > 50
-        || evidence.failures.len() as u64 > evidence.support
+        || evidence.failures.len() as u64 > evidence.retrieval_support
     {
         return Err(adapter_error("Unsupported saved diagnostic sample"));
     }
@@ -251,11 +304,14 @@ mod tests {
             "question":"Find primary evidence","taskKind":"route","expectedCapabilities":["search"],"predictedCapabilities":["write"],"expectedRank":3,
             "privateNativeField":"NEVER_DISPLAY"});
         NomosDevelopmentEvidence {
+            schema_version: crate::development_evidence::DEVELOPMENT_EVIDENCE_SCHEMA_VERSION,
             report_id,
             report_fingerprint: artifact_core::fingerprint(&1).unwrap(),
             suite_key: "development".into(),
             artifact_fingerprint: artifact_core::fingerprint(&2).unwrap(),
-            support: 100,
+            report_support: 16,
+            retrieval_support: 100,
+            agent_population: crate::NomosAgentPopulation::NotRequired,
             clusters: vec![],
             failures: vec![InspectionItem {
                 id: "sample".into(),
@@ -331,5 +387,34 @@ mod tests {
         let mut tampered = evidence();
         tampered.failures[0].content["expectedRank"] = 1.into();
         assert!(project_cases(&tampered).is_err());
+    }
+
+    #[test]
+    fn retrieval_sample_is_bounded_by_retrieval_states_not_agent_report_support() {
+        let mut evidence = evidence();
+        evidence.report_support = 16;
+        evidence.retrieval_support = 1_000;
+        evidence.failures = (0..50)
+            .map(|index| {
+                let content = json!({
+                    "reportId": evidence.report_id,
+                    "suite": "development",
+                    "sourceRowId": format!("row-{index}"),
+                    "evidenceScope": "retrieval_failure_sample",
+                    "sampleLimit": 50,
+                    "question": format!("Find evidence {index}"),
+                    "taskKind": "route",
+                    "expectedCapabilities": ["search"],
+                    "predictedCapabilities": ["write"],
+                    "expectedRank": 3,
+                });
+                InspectionItem {
+                    id: format!("sample-{index}"),
+                    fingerprint: artifact_core::fingerprint(&content).unwrap(),
+                    content,
+                }
+            })
+            .collect();
+        assert_eq!(project_cases(&evidence).unwrap().len(), 50);
     }
 }

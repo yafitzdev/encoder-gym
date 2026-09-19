@@ -46,7 +46,13 @@ export function developmentCasesPanel(view: DevelopmentCasesView, render: () => 
 }
 
 function sourceCard(label: string, source: SavedCaseSource): HTMLElement {
-  return h("div", {}, h("h4", {}, label), h("p", {}, source.sampleSize === null ? "Saved diagnostics missing or unverifiable." : `${source.sampleSize} saved disagreements · ${source.support.toLocaleString()} evaluated cases`),
+  const unavailable = source.availability === "missing" ? "Saved diagnostics are missing."
+    : source.availability === "corrupt" ? "Saved diagnostics are corrupt."
+      : source.availability === "incompatible" ? "Saved diagnostics are incompatible with this reader."
+        : null;
+  const population = source.retrievalSupport === null ? null
+    : `${source.retrievalSupport.toLocaleString()} retrieval states${source.reportSupport === source.retrievalSupport ? "" : ` · combined report support ${source.reportSupport.toLocaleString()}`}`;
+  return h("div", {}, h("h4", {}, label), h("p", {}, unavailable ?? `${source.sampleSize} saved disagreements · ${population}`),
     h("p", { class: "muted" }, "Report ", h("code", {}, source.reportId)));
 }
 function predictionCard(label: string, value: SavedCasePrediction | null, source: SavedCaseSource): HTMLElement {

@@ -7,7 +7,7 @@ import { DevelopmentCasesController } from "../dist/evidence/development-cases-c
 const hash = "sha256:" + "a".repeat(64);
 function fixture() {
   const prediction = rank => ({fingerprint:hash,question:"Find primary evidence",taskKind:"route",expectedCapabilities:["search"],predictedCapabilities:["write"],expectedRank:rank});
-  const source = () => ({reportId:randomUUID(),reportFingerprint:hash,diagnosticsFingerprint:hash,support:200,sampleSize:1});
+  const source = () => ({reportId:randomUUID(),reportFingerprint:hash,diagnosticsFingerprint:hash,reportSupport:16,retrievalSupport:200,availability:"available_sample",sampleSize:1});
   return {projectId:randomUUID(),runId:randomUUID(),iterationId:randomUUID(),iteration:1,baselineModelId:randomUUID(),candidateModelId:randomUUID(),
     comparisons:[{suite:"development",suiteFingerprint:hash,sampleLimit:50,baseline:source(),candidate:source(),cases:[{sourceRowId:"row",baseline:prediction(3),candidate:prediction(2),change:"rank_improved"}]}]};
 }
@@ -18,13 +18,14 @@ test("saved comparisons validate exact evidence and both rank directions without
   pair.candidate.expectedRank=4;pair.change="rank_regressed";assert.deepEqual(parse(value),value);
   pair.candidate.expectedRank=3;pair.change="rank_unchanged";assert.deepEqual(parse(value),value);
   pair.candidate.question="Changed input";pair.change="not_comparable";assert.deepEqual(parse(value),value);
-  pair.candidate=null;value.comparisons[0].candidate.sampleSize=0;assert.deepEqual(parse(value),value);
-  value.comparisons[0].candidate.sampleSize=null;value.comparisons[0].candidate.diagnosticsFingerprint=null;assert.deepEqual(parse(value),value);
+  pair.candidate=null;value.comparisons[0].candidate.sampleSize=0;value.comparisons[0].candidate.availability="available_empty";assert.deepEqual(parse(value),value);
+  value.comparisons[0].candidate.sampleSize=null;value.comparisons[0].candidate.diagnosticsFingerprint=null;value.comparisons[0].candidate.retrievalSupport=null;value.comparisons[0].candidate.availability="missing";assert.deepEqual(parse(value),value);
+  for (const availability of ["corrupt","incompatible"]) { value.comparisons[0].candidate.availability=availability;assert.deepEqual(parse(value),value); }
   assert.equal(caseChange(null,pair.baseline),"not_comparable");
 });
 test("case decoder rejects foreign identities, injected native payloads and false comparison claims", () => {
   for (const change of [v=>v.comparisons[0].sealedScore=1,v=>v.comparisons[0].cases[0].candidate.rawTrace="secret",
-    v=>v.comparisons[0].candidate.sampleSize=0,v=>v.comparisons[0].candidate.support=201,v=>v.comparisons[0].sampleLimit=100,
+    v=>v.comparisons[0].candidate.sampleSize=0,v=>v.comparisons[0].candidate.retrievalSupport=0,v=>v.comparisons[0].sampleLimit=100,
     v=>v.comparisons[0].cases[0].change="rank_regressed",v=>v.comparisons[0].cases[0].candidate.expectedRank=0,
     v=>v.comparisons[0].cases[0].candidate.expectedCapabilities.push("search"),v=>v.comparisons[0].cases[0].candidate.question=null,
     v=>v.comparisons[0].cases.push(v.comparisons[0].cases[0]),v=>v.comparisons.push(v.comparisons[0]),v=>v.comparisons=[]]) {

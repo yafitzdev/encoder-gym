@@ -51,7 +51,7 @@ function agentRun(wire, state, attemptId = randomUUID(), head = fingerprint) {
 
 test("saved-case command is one iteration-scoped passive read with a strict response", async () => {
   const f=fixture(), runId=randomUUID(),calls=[];
-  const source=()=>({reportId:randomUUID(),reportFingerprint:fingerprint,diagnosticsFingerprint:fingerprint,support:11,sampleSize:0});
+  const source=()=>({reportId:randomUUID(),reportFingerprint:fingerprint,diagnosticsFingerprint:fingerprint,reportSupport:4,retrievalSupport:11,availability:"available_empty",sampleSize:0});
   const value={projectId:f.projectId,runId,iterationId:randomUUID(),iteration:2,baselineModelId:randomUUID(),candidateModelId:randomUUID(),comparisons:[{suite:"development",suiteFingerprint:fingerprint,sampleLimit:50,baseline:source(),candidate:source(),cases:[]}]};
   const backend=new ManagedOptimizationLaunch(ports(f,async args=>{calls.push(args);return value;},async()=>{throw new Error("Reads must not acquire mutation authority");}));
   assert.deepEqual(await backend.cases(f.projectId,runId,2),value);

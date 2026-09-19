@@ -8,18 +8,27 @@ use serde::Serialize;
 
 use crate::{
     EncoderTaskAdapterError, EvaluationReport, EvidenceRole, ExternalProjectSnapshot,
-    MetricContract, NomosBackend, Value, adapter_error, evaluation_component_root,
-    evaluation_model_root, workspace_relative,
+    MetricContract, NativeAgentEvaluation, NomosBackend, Value, adapter_error,
+    evaluation_component_root, evaluation_model_root, workspace_relative,
 };
+
+pub const DEVELOPMENT_EVIDENCE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NomosDevelopmentEvidence {
+    pub schema_version: u32,
     pub report_id: uuid::Uuid,
     pub report_fingerprint: String,
     pub suite_key: String,
+    /// Canonical fingerprint of the saved native retrieval report.
     pub artifact_fingerprint: String,
-    pub support: u64,
+    /// The scientific report's conservative cross-component support. This is
+    /// not a retrieval denominator when Agent sessions are also evaluated.
+    pub report_support: u64,
+    /// Exact number of retrieval states from the saved native retrieval report.
+    pub retrieval_support: u64,
+    pub agent_population: NomosAgentPopulation,
     /// Complete aggregate evaluator slices. These contain no row text and are
     /// safe for development-only dataset-landscape analysis.
     pub clusters: Vec<NomosDevelopmentCluster>,
@@ -27,6 +36,36 @@ pub struct NomosDevelopmentEvidence {
     /// The native evaluator stores at most fifty retrieval disagreements.
     /// This is a recorded diagnostic sample, not all predictions.
     pub failure_sample_limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "availability", rename_all = "snake_case")]
+pub enum NomosAgentPopulation {
+    NotRequired,
+    Missing,
+    Corrupt,
+    Incompatible,
+    Available {
+        #[serde(rename = "artifactFingerprint")]
+        artifact_fingerprint: String,
+        sessions: u64,
+        #[serde(rename = "toolCallAttempts")]
+        tool_call_attempts: u64,
+        #[serde(rename = "validExecutionAttempts")]
+        valid_execution_attempts: u64,
+        /// A null value means the saved native report does not expose the
+        /// underlying count needed to state that metric's denominator.
+        #[serde(rename = "metricDenominators")]
+        metric_denominators: BTreeMap<String, Option<u64>>,
+    },
+}
+
+#[derive(Debug)]
+pub(crate) enum NomosDevelopmentEvidenceRead {
+    Available(Box<NomosDevelopmentEvidence>),
+    Missing,
+    Corrupt,
+    Incompatible,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -87,6 +126,26 @@ impl NomosBackend {
         contract: &MetricContract,
         report: &EvaluationReport,
     ) -> Result<NomosDevelopmentEvidence, EncoderTaskAdapterError> {
+        match self.read_development_evidence_status(project, contract, report)? {
+            NomosDevelopmentEvidenceRead::Available(evidence) => Ok(*evidence),
+            NomosDevelopmentEvidenceRead::Missing => Err(adapter_error(
+                "The pinned development report has no saved retrieval diagnostics; no evaluation was rerun",
+            )),
+            NomosDevelopmentEvidenceRead::Corrupt => Err(adapter_error(
+                "The pinned development report's saved retrieval diagnostics are corrupt",
+            )),
+            NomosDevelopmentEvidenceRead::Incompatible => Err(adapter_error(
+                "The pinned development report's saved retrieval diagnostics are incompatible",
+            )),
+        }
+    }
+
+    pub(crate) fn read_development_evidence_status(
+        &self,
+        project: &ExternalProjectSnapshot,
+        contract: &MetricContract,
+        report: &EvaluationReport,
+    ) -> Result<NomosDevelopmentEvidenceRead, EncoderTaskAdapterError> {
         // Check the role and full report binding before even resolving a path.
         if report.evidence_role != EvidenceRole::Development {
             return Err(adapter_error(
@@ -116,30 +175,136 @@ impl NomosBackend {
         let directory =
             evaluation_component_root(&model_root, "retrieval", &suite.retrieval_fingerprint)?;
         let expected = directory.join(format!("{}.json", report.suite_key));
-        let path = self.resolve_existing(&workspace_relative(&self.root, &expected)?).map_err(|_| adapter_error("The pinned development report has no saved retrieval diagnostics; no evaluation was rerun"))?;
-        if std::fs::metadata(&path).map_err(adapter_error)?.len() > 4_194_304 {
-            return Err(adapter_error(
-                "Development diagnostics exceed the 4 MiB inspection limit",
-            ));
+        if !expected.exists() {
+            return Ok(NomosDevelopmentEvidenceRead::Missing);
         }
-        let raw: Value = serde_json::from_slice(&std::fs::read(path).map_err(adapter_error)?)
-            .map_err(|_| adapter_error("Saved development diagnostics are not valid JSON"))?;
+        let path = match self.resolve_existing(&workspace_relative(&self.root, &expected)?) {
+            Ok(path) => path,
+            Err(_) => return Ok(NomosDevelopmentEvidenceRead::Corrupt),
+        };
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) if bytes.len() <= 4_194_304 => bytes,
+            _ => return Ok(NomosDevelopmentEvidenceRead::Corrupt),
+        };
+        let raw: Value = match serde_json::from_slice(&bytes) {
+            Ok(raw) => raw,
+            Err(_) => return Ok(NomosDevelopmentEvidenceRead::Corrupt),
+        };
         // Analysis consumes saved predictions, not checkpoint weights. Their
         // immutable model identity already determines the diagnostic path.
         // Do not rehash a multi-gigabyte checkpoint merely to read its failures.
         crate::validate_relative(&report.model.key)?;
         let expected_model = report.model.key.replace('\\', "/");
-        let (failures, clusters) =
-            normalize_development_evidence(&raw, &expected_model, &suite.path, report)?;
-        Ok(NomosDevelopmentEvidence {
-            report_id: report.id,
-            report_fingerprint: report.fingerprint.clone(),
-            suite_key: report.suite_key.clone(),
+        let (retrieval_support, failures, clusters) =
+            match normalize_development_evidence(&raw, &expected_model, &suite.path, report) {
+                Ok(evidence) => evidence,
+                Err(_) => return Ok(NomosDevelopmentEvidenceRead::Incompatible),
+            };
+        let agent_population =
+            self.read_agent_population(&model_root, &configuration, suite, contract, report)?;
+        Ok(NomosDevelopmentEvidenceRead::Available(Box::new(
+            NomosDevelopmentEvidence {
+                schema_version: DEVELOPMENT_EVIDENCE_SCHEMA_VERSION,
+                report_id: report.id,
+                report_fingerprint: report.fingerprint.clone(),
+                suite_key: report.suite_key.clone(),
+                artifact_fingerprint: artifact_core::fingerprint(&raw).map_err(adapter_error)?,
+                report_support: report.support,
+                retrieval_support,
+                agent_population,
+                clusters,
+                failures,
+                failure_sample_limit: 50,
+            },
+        )))
+    }
+
+    fn read_agent_population(
+        &self,
+        model_root: &std::path::Path,
+        configuration: &crate::TaskConfiguration,
+        suite: &crate::SuiteConfiguration,
+        contract: &MetricContract,
+        report: &EvaluationReport,
+    ) -> Result<NomosAgentPopulation, EncoderTaskAdapterError> {
+        let agent_metrics: Vec<_> = contract
+            .definitions
+            .iter()
+            .filter(|definition| definition.key.starts_with("agent_"))
+            .map(|definition| definition.key.clone())
+            .collect();
+        if agent_metrics.is_empty() {
+            return Ok(NomosAgentPopulation::NotRequired);
+        }
+        let agent = &configuration.agent_evaluation;
+        let agent_suite = agent.suite(suite.role);
+        let root = evaluation_component_root(model_root, "agent", &suite.agent_fingerprint)?;
+        let output = root.join(format!("{}.json", report.suite_key));
+        let trace = root.join(format!("{}.trace.jsonl", report.suite_key));
+        if !output.is_file() || !trace.is_file() {
+            return Ok(NomosAgentPopulation::Missing);
+        }
+        let output = match self.resolve_existing(&workspace_relative(&self.root, &output)?) {
+            Ok(path) => path,
+            Err(_) => return Ok(NomosAgentPopulation::Corrupt),
+        };
+        if self
+            .resolve_existing(&workspace_relative(&self.root, &trace)?)
+            .is_err()
+        {
+            return Ok(NomosAgentPopulation::Corrupt);
+        }
+        let bytes = match std::fs::read(output) {
+            Ok(bytes) if bytes.len() <= 4_194_304 => bytes,
+            _ => return Ok(NomosAgentPopulation::Corrupt),
+        };
+        let raw: Value = match serde_json::from_slice(&bytes) {
+            Ok(raw) => raw,
+            Err(_) => return Ok(NomosAgentPopulation::Corrupt),
+        };
+        let native: NativeAgentEvaluation = match serde_json::from_value(raw.clone()) {
+            Ok(native) => native,
+            Err(_) => return Ok(NomosAgentPopulation::Incompatible),
+        };
+        let summary = match native.validate_and_summary(agent, agent_suite) {
+            Ok(summary) => summary,
+            Err(_) => return Ok(NomosAgentPopulation::Incompatible),
+        };
+        let normalized = match summary.normalized_metrics() {
+            Ok(normalized) => normalized,
+            Err(_) => return Ok(NomosAgentPopulation::Incompatible),
+        };
+        if agent_metrics
+            .iter()
+            .any(|key| normalized.get(key).copied() != report.metrics.get(key).copied())
+        {
+            return Ok(NomosAgentPopulation::Incompatible);
+        }
+        let valid_execution_attempts = summary.tool_call_attempts - summary.invalid_calls;
+        let mut metric_denominators = BTreeMap::new();
+        for key in agent_metrics {
+            let denominator = match key.as_str() {
+                "agent_success_rate" | "agent_mean_completed_stage_rate" => Some(summary.sessions),
+                "agent_successful_execution_rate"
+                | "agent_tool_selection_accuracy"
+                | "agent_schema_valid_call_rate"
+                | "agent_visible_oracle_hit_rate"
+                | "agent_invalid_call_rate"
+                | "agent_prompt_tokens_per_attempt" => Some(summary.tool_call_attempts),
+                "agent_wrong_tool_execution_rate" => Some(valid_execution_attempts),
+                // The native report stores only this rate, not the underlying
+                // sum of available tool descriptions.
+                "agent_tool_description_reduction" => None,
+                _ => None,
+            };
+            metric_denominators.insert(key, denominator);
+        }
+        Ok(NomosAgentPopulation::Available {
             artifact_fingerprint: artifact_core::fingerprint(&raw).map_err(adapter_error)?,
-            support: report.support,
-            clusters,
-            failures,
-            failure_sample_limit: 50,
+            sessions: summary.sessions,
+            tool_call_attempts: summary.tool_call_attempts,
+            valid_execution_attempts,
+            metric_denominators,
         })
     }
 }
@@ -149,7 +314,7 @@ fn normalize_development_evidence(
     model: &str,
     input: &str,
     report: &EvaluationReport,
-) -> Result<(Vec<InspectionItem>, Vec<NomosDevelopmentCluster>), EncoderTaskAdapterError> {
+) -> Result<(u64, Vec<InspectionItem>, Vec<NomosDevelopmentCluster>), EncoderTaskAdapterError> {
     if report.evidence_role != EvidenceRole::Development
         || raw
             .get("model")
@@ -181,6 +346,16 @@ fn normalize_development_evidence(
         .get("metrics")
         .and_then(Value::as_object)
         .ok_or_else(|| adapter_error("Native diagnostics metrics are missing"))?;
+    let retrieval_support = metrics
+        .get("states")
+        .and_then(Value::as_u64)
+        .filter(|value| *value > 0)
+        .ok_or_else(|| adapter_error("Native diagnostics retrieval support is invalid"))?;
+    if report.support > retrieval_support {
+        return Err(adapter_error(
+            "Scientific report support exceeds its retrieval population",
+        ));
+    }
     for (name, score) in &report.metrics {
         if name.starts_with("agent_") {
             continue;
@@ -192,6 +367,14 @@ fn normalize_development_evidence(
         }
     }
     let clusters = normalize_clusters(value)?;
+    if clusters
+        .iter()
+        .any(|cluster| cluster.support > retrieval_support)
+    {
+        return Err(adapter_error(
+            "Native development cluster exceeds its retrieval population",
+        ));
+    }
     let disagreements = value
         .get("disagreements")
         .and_then(Value::as_array)
@@ -240,7 +423,12 @@ fn normalize_development_evidence(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok((failures, clusters))
+    if failures.len() as u64 > retrieval_support {
+        return Err(adapter_error(
+            "Native failure sample exceeds its retrieval population",
+        ));
+    }
+    Ok((retrieval_support, failures, clusters))
 }
 
 fn normalize_clusters(
@@ -340,19 +528,20 @@ mod tests {
     }
 
     fn raw() -> Value {
-        serde_json::json!({"model":"models/candidate", "private_native_field":"must not enter inspection", "inputs":{"data/development.jsonl":{"metrics":{"mrr":0.75},"disagreements":[{"decision_state_id":"dev-1","task_kind":"read","question":"Find the relevant reference","expected_capabilities":["read"],"predicted_capabilities":["write"],"expected_rank":2,"unrelated_trace":"must not enter inspection"}]}}})
+        serde_json::json!({"model":"models/candidate", "private_native_field":"must not enter inspection", "inputs":{"data/development.jsonl":{"metrics":{"states":100,"mrr":0.75},"disagreements":[{"decision_state_id":"dev-1","task_kind":"read","question":"Find the relevant reference","expected_capabilities":["read"],"predicted_capabilities":["write"],"expected_rank":2,"unrelated_trace":"must not enter inspection"}]}}})
     }
 
     #[test]
     fn persisted_failures_are_scoped_to_the_exact_model_input_and_report_metrics() {
         let report = report();
-        let (failures, clusters) = normalize_development_evidence(
+        let (retrieval_support, failures, clusters) = normalize_development_evidence(
             &raw(),
             "models/candidate",
             "data/development.jsonl",
             &report,
         )
         .unwrap();
+        assert_eq!(retrieval_support, 100);
         assert_eq!(failures.len(), 1);
         assert!(clusters.is_empty());
         assert_eq!(failures[0].content["sourceRowId"], "dev-1");

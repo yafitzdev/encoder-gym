@@ -206,6 +206,9 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
         let mut saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         saved["model"] = report.model.key.clone().into();
         let count = if loop_mode == Some("eligible") { 50 } else { 1 };
+        if count == 50 {
+            saved["inputs"][suite["path"].as_str().unwrap()]["metrics"]["states"] = 50.into();
+        }
         saved["inputs"][suite["path"].as_str().unwrap()]["disagreements"] = json!((0..count).map(|index| json!({
             "decision_state_id":format!("dev-failure-{index}"), "question":"Search for an exact reference", "task_kind":"route", "expected_rank":2,
             "expected_capabilities":["search"], "predicted_capabilities":["write"]})).collect::<Vec<_>>());
