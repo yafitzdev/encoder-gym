@@ -305,6 +305,12 @@ async fn reserve(
         "Invalid Agent call reservation"
     );
     let history = read_history(database, scope.run_id, None).await?;
+    let (review_requests, pending_reviews, review_input, review_output, review_cost) =
+        crate::optimization_native_review::budget_usage(database, scope.run_id).await?;
+    ensure!(
+        pending_reviews == 0,
+        "Another native semantic review call is still pending; inspect its process before recovering"
+    );
     ensure!(
         history.iter().all(|(_, outcome)| outcome.is_some()),
         "Another Agent call is still pending; inspect its process before recovering"
@@ -321,12 +327,21 @@ async fn reserve(
         "Agent sequence is stale or the iteration already has a proposal"
     );
     ensure!(
-        history.len() < limits.maximum_requests as usize,
+        history.len().saturating_add(review_requests) < limits.maximum_requests as usize,
         OptimizationError::Budget("Agent request budget exhausted".into())
     );
-    let mut input = call.input_token_ceiling;
-    let mut output = call.output_token_ceiling;
-    let mut cost = call.cost_ceiling_microusd;
+    let mut input = call
+        .input_token_ceiling
+        .checked_add(review_input)
+        .context("Agent input accounting overflow")?;
+    let mut output = call
+        .output_token_ceiling
+        .checked_add(review_output)
+        .context("Agent output accounting overflow")?;
+    let mut cost = call
+        .cost_ceiling_microusd
+        .checked_add(review_cost)
+        .context("Agent cost accounting overflow")?;
     for (previous, outcome) in &history {
         let known = outcome.as_ref();
         let interrupted = known.is_none_or(|record| record.interrupted);

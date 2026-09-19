@@ -1,5 +1,14 @@
 use super::*;
 
+use std::collections::BTreeMap;
+
+use dataset_quality_core::native_assessment::{
+    NativeBlindAssessmentRequest, NativeBlindContext, NativeBlindRow, NativeCandidateSemantics,
+    NativeReviewCallOutcome, NativeReviewCallReservation, NativeReviewOperationCategory,
+    NativeReviewRequest, NativeReviewUsage,
+};
+use serde_json::Value;
+
 async fn fixture() -> (SqliteConnection, AgentAnalysisScope, ProviderLimits) {
     let mut database = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     // Minimal parent contract for these adapter unit tests. Ordinary workspace
@@ -66,6 +75,40 @@ fn outcome(call: AgentCallReservation, interrupted: bool) -> AgentTurnRecord {
         },
         proposal: None,
         interrupted,
+    }
+}
+
+fn native_call(scope: &AgentAnalysisScope) -> NativeReviewCallReservation {
+    let row = NativeBlindRow {
+        row_id: "generated:0".into(),
+        row_fingerprint: fingerprint(&"generated-row").unwrap(),
+        question: "Find the saved invoice".into(),
+        context: NativeBlindContext::new(BTreeMap::from([(
+            "task_kind".into(),
+            Value::String("retrieval".into()),
+        )]))
+        .unwrap(),
+        candidates: vec![
+            NativeCandidateSemantics::new("read", "Read a saved record", vec!["retrieve".into()])
+                .unwrap(),
+        ],
+    };
+    let request = NativeBlindAssessmentRequest::new(
+        Uuid::new_v4(),
+        scope.run_id,
+        scope.iteration,
+        fingerprint(&"reviewer").unwrap(),
+        vec![row],
+    )
+    .unwrap();
+    NativeReviewCallReservation {
+        id: Uuid::new_v4(),
+        category: NativeReviewOperationCategory::BlindSemanticAssessment,
+        request: NativeReviewRequest::Blind(request),
+        attempt: 1,
+        input_token_ceiling: 100,
+        output_token_ceiling: 50,
+        cost_ceiling_microusd: 10,
     }
 }
 
@@ -255,4 +298,43 @@ async fn cancellation_wins_before_reservation_and_scope_changes_cannot_replace_h
             .to_string()
             .contains("cancelled")
     );
+}
+
+#[tokio::test]
+async fn agent_reservations_share_limits_and_exclusivity_with_native_reviews() {
+    let (mut db, scope, mut limits) = fixture().await;
+    sqlx::raw_sql(include_str!(
+        "../../migrations/0025_optimization_native_review.sql"
+    ))
+    .execute(&mut db)
+    .await
+    .unwrap();
+    let review = native_call(&scope);
+    crate::optimization_native_review::reserve(&mut db, &review, &limits)
+        .await
+        .unwrap();
+    let error = reserve(&mut db, &scope, &call(&scope, 1), &limits)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("native semantic review call is still pending"));
+
+    crate::optimization_native_review::insert_outcome(
+        &mut db,
+        &NativeReviewCallOutcome {
+            reservation: review,
+            usage: NativeReviewUsage::default(),
+            response: None,
+            failure: None,
+            interrupted: true,
+        },
+    )
+    .await
+    .unwrap();
+    limits.maximum_requests = 1;
+    let error = reserve(&mut db, &scope, &call(&scope, 1), &limits)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("request budget exhausted"), "{error}");
 }

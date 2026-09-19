@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 project-workspace-core.workspace = true
 dataset-core.workspace = true
+dataset-quality-core.workspace = true
 encoder-experiment-core.workspace = true
 encoder-optimization-core.workspace = true
 artifact-core.workspace = true

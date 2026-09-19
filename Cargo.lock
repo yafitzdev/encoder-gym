@@ -2388,6 +2388,7 @@ dependencies = [
  "artifact-core",
  "chrono",
  "dataset-core",
+ "dataset-quality-core",
  "encoder-experiment-core",
  "encoder-optimization-core",
  "project-workspace-core",

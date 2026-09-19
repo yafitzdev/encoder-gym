@@ -22,8 +22,9 @@ use crate::{
         ProviderUsage, QualityAuditRun,
     },
     native_assessment::{
-        NativeBlindAssessmentDraft, NativeBlindAssessmentRequest, NativeReviewUsage,
-        NativeTargetFitDraft, NativeTargetFitRequest,
+        NativeAdmissionRecord, NativeBlindAssessmentDraft, NativeBlindAssessmentRequest,
+        NativeReviewCallOutcome, NativeReviewCallReservation, NativeReviewRequest,
+        NativeReviewUsage, NativeTargetFitDraft, NativeTargetFitRequest,
     },
     population::{AuditPlan, CheckedAuditPlan},
 };
@@ -178,6 +179,36 @@ pub trait NativeSemanticReviewer: Send + Sync {
         &self,
         request: NativeTargetFitRequest,
     ) -> BoxFuture<'_, Result<NativeTargetFitBatchOutput, QualityEvaluationError>>;
+}
+
+/// Durable optimizer-owned semantic review journal. Reservations atomically
+/// enforce the launch's cumulative advisor limits before provider dispatch.
+pub trait NativeReviewStore: Send + Sync {
+    fn history(
+        &self,
+        request: NativeReviewRequest,
+    ) -> BoxFuture<'_, Result<Vec<NativeReviewCallOutcome>, QualityAdapterError>>;
+
+    fn reserve(
+        &self,
+        reservation: NativeReviewCallReservation,
+    ) -> BoxFuture<'_, Result<(), QualityAdapterError>>;
+
+    fn finish(
+        &self,
+        outcome: NativeReviewCallOutcome,
+    ) -> BoxFuture<'_, Result<(), QualityAdapterError>>;
+
+    fn record_admissions(
+        &self,
+        records: Vec<NativeAdmissionRecord>,
+    ) -> BoxFuture<'_, Result<(), QualityAdapterError>>;
+
+    fn admissions(
+        &self,
+        run_id: Uuid,
+        iteration: u32,
+    ) -> BoxFuture<'_, Result<Vec<NativeAdmissionRecord>, QualityAdapterError>>;
 }
 
 /// Durable quality evidence and curation storage. Transactional methods make

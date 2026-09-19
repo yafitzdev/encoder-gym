@@ -29,6 +29,14 @@ pub struct NativeReviewUsage {
     pub cost_microusd: Option<u64>,
 }
 
+impl NativeReviewUsage {
+    pub fn exceeds(&self, input: u64, output: u64, cost: u64) -> bool {
+        self.input_tokens.is_some_and(|value| value > input)
+            || self.output_tokens.is_some_and(|value| value > output)
+            || self.cost_microusd.is_some_and(|value| value > cost)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NativeCandidateSemantics {
@@ -649,6 +657,282 @@ pub struct NativeAdmissionEvidence {
     pub fingerprint: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "pass", content = "request", rename_all = "snake_case")]
+pub enum NativeReviewRequest {
+    Blind(NativeBlindAssessmentRequest),
+    TargetFit(NativeTargetFitRequest),
+}
+
+impl NativeReviewRequest {
+    pub fn validate(&self) -> Result<(), QualityError> {
+        match self {
+            Self::Blind(value) => value.validate(),
+            Self::TargetFit(value) => value.validate(),
+        }
+    }
+
+    pub fn id(&self) -> Uuid {
+        match self {
+            Self::Blind(value) => value.id,
+            Self::TargetFit(value) => value.id,
+        }
+    }
+
+    pub fn run_id(&self) -> Uuid {
+        match self {
+            Self::Blind(value) => value.run_id,
+            Self::TargetFit(value) => value.run_id,
+        }
+    }
+
+    pub fn iteration(&self) -> u32 {
+        match self {
+            Self::Blind(value) => value.iteration,
+            Self::TargetFit(value) => value.iteration,
+        }
+    }
+
+    pub fn fingerprint(&self) -> &str {
+        match self {
+            Self::Blind(value) => &value.fingerprint,
+            Self::TargetFit(value) => &value.fingerprint,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeReviewOperationCategory {
+    BlindSemanticAssessment,
+    RepairTargetFitAssessment,
+}
+
+impl NativeReviewOperationCategory {
+    pub fn matches(self, request: &NativeReviewRequest) -> bool {
+        matches!(
+            (self, request),
+            (Self::BlindSemanticAssessment, NativeReviewRequest::Blind(_))
+                | (
+                    Self::RepairTargetFitAssessment,
+                    NativeReviewRequest::TargetFit(_)
+                )
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NativeReviewCallReservation {
+    pub id: Uuid,
+    pub category: NativeReviewOperationCategory,
+    pub request: NativeReviewRequest,
+    pub attempt: u32,
+    pub input_token_ceiling: u64,
+    pub output_token_ceiling: u64,
+    pub cost_ceiling_microusd: u64,
+}
+
+impl NativeReviewCallReservation {
+    pub fn validate(&self) -> Result<(), QualityError> {
+        self.request.validate()?;
+        if self.id.is_nil()
+            || !self.category.matches(&self.request)
+            || !(1..=2).contains(&self.attempt)
+            || self.input_token_ceiling == 0
+            || self.output_token_ceiling == 0
+        {
+            return Err(QualityError::Validation(
+                "native review reservation is invalid".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "pass", content = "assessments", rename_all = "snake_case")]
+pub enum NativeReviewResponse {
+    Blind(Vec<NativeBlindAssessmentEvidence>),
+    TargetFit(Vec<NativeTargetFitEvidence>),
+}
+
+impl NativeReviewResponse {
+    pub fn validate(&self, request: &NativeReviewRequest) -> Result<(), QualityError> {
+        match (self, request) {
+            (Self::Blind(values), NativeReviewRequest::Blind(request)) => {
+                if values.len() != request.rows.len() {
+                    return Err(QualityError::Validation(
+                        "native blind response does not cover its request".into(),
+                    ));
+                }
+                for (value, row) in values.iter().zip(&request.rows) {
+                    value.validate(request)?;
+                    if value.draft.row_id != row.row_id {
+                        return Err(QualityError::Validation(
+                            "native blind response order changed".into(),
+                        ));
+                    }
+                }
+            }
+            (Self::TargetFit(values), NativeReviewRequest::TargetFit(request)) => {
+                if values.len() != request.rows.len() {
+                    return Err(QualityError::Validation(
+                        "native target-fit response does not cover its request".into(),
+                    ));
+                }
+                for (value, row) in values.iter().zip(&request.rows) {
+                    value.validate(request)?;
+                    if value.draft.row_id != row.row.row_id {
+                        return Err(QualityError::Validation(
+                            "native target-fit response order changed".into(),
+                        ));
+                    }
+                }
+            }
+            _ => {
+                return Err(QualityError::Validation(
+                    "native review response pass differs from its request".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeReviewFailureKind {
+    Configuration,
+    Authentication,
+    InvalidResponse,
+    RateLimit,
+    Transport,
+    Provider,
+    Budget,
+    Stopped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NativeReviewFailure {
+    pub kind: NativeReviewFailureKind,
+    pub summary: String,
+}
+
+impl NativeReviewFailure {
+    pub fn validate(&self) -> Result<(), QualityError> {
+        if !valid_text(&self.summary, 400) {
+            return Err(QualityError::Validation(
+                "native review failure summary is invalid".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NativeReviewCallOutcome {
+    pub reservation: NativeReviewCallReservation,
+    pub usage: NativeReviewUsage,
+    pub response: Option<NativeReviewResponse>,
+    pub failure: Option<NativeReviewFailure>,
+    pub interrupted: bool,
+}
+
+impl NativeReviewCallOutcome {
+    pub fn validate(&self) -> Result<(), QualityError> {
+        self.reservation.validate()?;
+        if usize::from(self.response.is_some())
+            + usize::from(self.failure.is_some())
+            + usize::from(self.interrupted)
+            != 1
+        {
+            return Err(QualityError::Validation(
+                "native review outcome must be successful, failed, or interrupted".into(),
+            ));
+        }
+        if let Some(response) = &self.response {
+            response.validate(&self.reservation.request)?;
+            if self.usage.exceeds(
+                self.reservation.input_token_ceiling,
+                self.reservation.output_token_ceiling,
+                self.reservation.cost_ceiling_microusd,
+            ) {
+                return Err(QualityError::Validation(
+                    "native review overrun cannot produce accepted evidence".into(),
+                ));
+            }
+        }
+        if let Some(failure) = &self.failure {
+            failure.validate()?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NativeAdmissionRecord {
+    pub run_id: Uuid,
+    pub iteration: u32,
+    pub evaluator_identity_fingerprint: String,
+    pub authority: NativeLabelAuthority,
+    pub blind: NativeBlindAssessmentEvidence,
+    pub target_fit: NativeTargetFitEvidence,
+    pub admission: NativeAdmissionEvidence,
+    pub fingerprint: String,
+}
+
+impl NativeAdmissionRecord {
+    pub fn new(
+        run_id: Uuid,
+        iteration: u32,
+        evaluator_identity_fingerprint: impl Into<String>,
+        authority: NativeLabelAuthority,
+        blind: NativeBlindAssessmentEvidence,
+        target_fit: NativeTargetFitEvidence,
+    ) -> Result<Self, QualityError> {
+        let admission = decide_native_admission(&authority, Some(&blind), Some(&target_fit))?;
+        let mut value = Self {
+            run_id,
+            iteration,
+            evaluator_identity_fingerprint: evaluator_identity_fingerprint.into(),
+            authority,
+            blind,
+            target_fit,
+            admission,
+            fingerprint: String::new(),
+        };
+        value.fingerprint = value.reproduce_fingerprint()?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn validate(&self) -> Result<(), QualityError> {
+        self.authority.validate()?;
+        self.admission
+            .validate(&self.authority, Some(&self.blind), Some(&self.target_fit))?;
+        if self.run_id.is_nil()
+            || !(1..=10).contains(&self.iteration)
+            || !canonical_fingerprint(&self.evaluator_identity_fingerprint)
+            || self.fingerprint != self.reproduce_fingerprint()?
+        {
+            return Err(QualityError::Validation(
+                "native admission record identity is invalid".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn reproduce_fingerprint(&self) -> Result<String, QualityError> {
+        let mut value = self.clone();
+        value.fingerprint.clear();
+        fingerprint(&value)
+    }
+}
+
 impl NativeAdmissionEvidence {
     pub fn admitted(&self) -> bool {
         self.decision == NativeAdmissionDecision::Admitted
@@ -942,5 +1226,73 @@ mod tests {
             )]))
             .is_err()
         );
+    }
+
+    #[test]
+    fn durable_review_calls_are_single_pass_bounded_and_fail_closed() {
+        let request = request();
+        let evidence = blind(&request, &["read"]);
+        let reservation = NativeReviewCallReservation {
+            id: Uuid::new_v4(),
+            category: NativeReviewOperationCategory::BlindSemanticAssessment,
+            request: NativeReviewRequest::Blind(request.clone()),
+            attempt: 1,
+            input_token_ceiling: 100,
+            output_token_ceiling: 50,
+            cost_ceiling_microusd: 10,
+        };
+        reservation.validate().unwrap();
+        NativeReviewCallOutcome {
+            reservation: reservation.clone(),
+            usage: NativeReviewUsage::default(),
+            response: Some(NativeReviewResponse::Blind(vec![evidence])),
+            failure: None,
+            interrupted: false,
+        }
+        .validate()
+        .unwrap();
+
+        let mut mismatched = reservation.clone();
+        mismatched.category = NativeReviewOperationCategory::RepairTargetFitAssessment;
+        assert!(mismatched.validate().is_err());
+        let contradictory = NativeReviewCallOutcome {
+            reservation,
+            usage: NativeReviewUsage::default(),
+            response: None,
+            failure: Some(NativeReviewFailure {
+                kind: NativeReviewFailureKind::Provider,
+                summary: "Provider failed.".into(),
+            }),
+            interrupted: true,
+        };
+        assert!(contradictory.validate().is_err());
+    }
+
+    #[test]
+    fn admission_record_reproduces_host_private_authority_and_both_reviews() {
+        let request = request();
+        let authority = NativeLabelAuthority::new(
+            &request.rows[0],
+            vec!["read".into()],
+            "nomos-compatible-answer-set-v1",
+        )
+        .unwrap();
+        let blind = blind(&request, &["read"]);
+        let target_fit = target(&request, &blind);
+        let record = NativeAdmissionRecord::new(
+            request.run_id,
+            request.iteration,
+            request.evaluator_identity_fingerprint.clone(),
+            authority,
+            blind,
+            target_fit,
+        )
+        .unwrap();
+        assert!(record.admission.admitted());
+        record.validate().unwrap();
+
+        let mut tampered = record;
+        tampered.admission.decision = NativeAdmissionDecision::LabelMismatch;
+        assert!(tampered.validate().is_err());
     }
 }
