@@ -1,7 +1,7 @@
 //! Development-only inspection of already-persisted native retrieval failures.
 //! This path never invokes Python or an evaluator and never opens suite rows.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use encoder_optimization_core::agent::InspectionItem;
 use serde::Serialize;
@@ -19,10 +19,23 @@ pub struct NomosDevelopmentEvidence {
     pub report_fingerprint: String,
     pub suite_key: String,
     pub artifact_fingerprint: String,
+    pub support: u64,
+    /// Complete aggregate evaluator slices. These contain no row text and are
+    /// safe for development-only dataset-landscape analysis.
+    pub clusters: Vec<NomosDevelopmentCluster>,
     pub failures: Vec<InspectionItem>,
     /// The native evaluator stores at most fifty retrieval disagreements.
     /// This is a recorded diagnostic sample, not all predictions.
     pub failure_sample_limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NomosDevelopmentCluster {
+    pub dimension: String,
+    pub value: String,
+    pub support: u64,
+    pub metrics: BTreeMap<String, f64>,
 }
 
 impl NomosBackend {
@@ -116,24 +129,27 @@ impl NomosBackend {
         // Do not rehash a multi-gigabyte checkpoint merely to read its failures.
         crate::validate_relative(&report.model.key)?;
         let expected_model = report.model.key.replace('\\', "/");
-        let failures = normalize_failures(&raw, &expected_model, &suite.path, report)?;
+        let (failures, clusters) =
+            normalize_development_evidence(&raw, &expected_model, &suite.path, report)?;
         Ok(NomosDevelopmentEvidence {
             report_id: report.id,
             report_fingerprint: report.fingerprint.clone(),
             suite_key: report.suite_key.clone(),
             artifact_fingerprint: artifact_core::fingerprint(&raw).map_err(adapter_error)?,
+            support: report.support,
+            clusters,
             failures,
             failure_sample_limit: 50,
         })
     }
 }
 
-fn normalize_failures(
+fn normalize_development_evidence(
     raw: &Value,
     model: &str,
     input: &str,
     report: &EvaluationReport,
-) -> Result<Vec<InspectionItem>, EncoderTaskAdapterError> {
+) -> Result<(Vec<InspectionItem>, Vec<NomosDevelopmentCluster>), EncoderTaskAdapterError> {
     if report.evidence_role != EvidenceRole::Development
         || raw
             .get("model")
@@ -175,6 +191,7 @@ fn normalize_failures(
             ));
         }
     }
+    let clusters = normalize_clusters(value)?;
     let disagreements = value
         .get("disagreements")
         .and_then(Value::as_array)
@@ -185,7 +202,7 @@ fn normalize_failures(
         ));
     }
     let mut ids = BTreeSet::new();
-    disagreements
+    let failures = disagreements
         .iter()
         .map(|failure| {
             let source_id = failure
@@ -222,7 +239,73 @@ fn normalize_failures(
                 content,
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((failures, clusters))
+}
+
+fn normalize_clusters(
+    value: &Value,
+) -> Result<Vec<NomosDevelopmentCluster>, EncoderTaskAdapterError> {
+    let dimensions = [
+        ("by_expected_capability", "expected_capability"),
+        ("by_task_kind", "task_kind"),
+        ("by_scenario_family", "scenario_family"),
+        ("by_pool_size", "candidate_pool_size"),
+    ];
+    let mut clusters = Vec::new();
+    for (field, dimension) in dimensions {
+        let Some(groups) = value.get(field) else {
+            // Historical reports predate aggregate slices. They remain valid
+            // V1 evidence but cannot satisfy a V2 landscape.
+            continue;
+        };
+        let groups = groups
+            .as_object()
+            .ok_or_else(|| adapter_error("Native development cluster map is invalid"))?;
+        for (group, raw_metrics) in groups {
+            if group.trim().is_empty() || group.len() > 200 {
+                return Err(adapter_error("Native development cluster value is invalid"));
+            }
+            let raw_metrics = raw_metrics
+                .as_object()
+                .ok_or_else(|| adapter_error("Native development cluster metrics are invalid"))?;
+            let support = raw_metrics
+                .get("states")
+                .and_then(Value::as_u64)
+                .filter(|value| *value > 0)
+                .ok_or_else(|| adapter_error("Native development cluster support is invalid"))?;
+            let mut metrics = BTreeMap::new();
+            for name in [
+                "recall_at_1",
+                "recall_at_2",
+                "recall_at_3",
+                "mrr",
+                "mean_positive_margin",
+            ] {
+                let metric = raw_metrics
+                    .get(name)
+                    .and_then(Value::as_f64)
+                    .filter(|value| value.is_finite())
+                    .ok_or_else(|| adapter_error("Native development cluster metric is invalid"))?;
+                if name != "mean_positive_margin" && !(0.0..=1.0).contains(&metric) {
+                    return Err(adapter_error("Native development cluster rate is invalid"));
+                }
+                metrics.insert(name.into(), metric);
+            }
+            clusters.push(NomosDevelopmentCluster {
+                dimension: dimension.into(),
+                value: group.clone(),
+                support,
+                metrics,
+            });
+        }
+    }
+    clusters.sort_by(|left, right| {
+        left.dimension
+            .cmp(&right.dimension)
+            .then_with(|| left.value.cmp(&right.value))
+    });
+    Ok(clusters)
 }
 
 #[cfg(test)]
@@ -263,7 +346,7 @@ mod tests {
     #[test]
     fn persisted_failures_are_scoped_to_the_exact_model_input_and_report_metrics() {
         let report = report();
-        let failures = normalize_failures(
+        let (failures, clusters) = normalize_development_evidence(
             &raw(),
             "models/candidate",
             "data/development.jsonl",
@@ -271,6 +354,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(failures.len(), 1);
+        assert!(clusters.is_empty());
         assert_eq!(failures[0].content["sourceRowId"], "dev-1");
         assert_eq!(failures[0].content["expectedRank"], 2);
         assert_eq!(
@@ -284,15 +368,22 @@ mod tests {
                 .contains("must not enter inspection")
         );
         assert!(
-            normalize_failures(&raw(), "models/other", "data/development.jsonl", &report).is_err()
+            normalize_development_evidence(
+                &raw(),
+                "models/other",
+                "data/development.jsonl",
+                &report
+            )
+            .is_err()
         );
         assert!(
-            normalize_failures(&raw(), "models/candidate", "data/other.jsonl", &report).is_err()
+            normalize_development_evidence(&raw(), "models/candidate", "data/other.jsonl", &report)
+                .is_err()
         );
         let mut changed = raw();
         changed["inputs"]["data/development.jsonl"]["metrics"]["mrr"] = 0.5.into();
         assert!(
-            normalize_failures(
+            normalize_development_evidence(
                 &changed,
                 "models/candidate",
                 "data/development.jsonl",
@@ -307,7 +398,7 @@ mod tests {
         let mut report = report();
         report.evidence_role = EvidenceRole::SealedAcceptance;
         assert!(
-            normalize_failures(
+            normalize_development_evidence(
                 &raw(),
                 "models/candidate",
                 "data/development.jsonl",
@@ -323,7 +414,7 @@ mod tests {
             .unwrap()
             .push(failure);
         assert!(
-            normalize_failures(
+            normalize_development_evidence(
                 &repeated,
                 "models/candidate",
                 "data/development.jsonl",
@@ -334,7 +425,7 @@ mod tests {
         repeated["inputs"]["data/development.jsonl"]["disagreements"][0]["decision_state_id"] =
             Value::Null;
         assert!(
-            normalize_failures(
+            normalize_development_evidence(
                 &repeated,
                 "models/candidate",
                 "data/development.jsonl",
@@ -348,5 +439,34 @@ mod tests {
     fn training_inspection_cannot_admit_a_protected_partition() {
         let row = serde_json::json!({"schema_version":"decision-state.v2","evaluation_partition":"sealed","accepted":true});
         assert!(NomosBackend::training_row_for_agent("row-1", &row).is_err());
+    }
+
+    #[test]
+    fn native_aggregate_dimensions_are_normalized_for_dataset_intelligence() {
+        let metrics = serde_json::json!({
+            "states": 4,
+            "recall_at_1": 0.5,
+            "recall_at_2": 0.75,
+            "recall_at_3": 1.0,
+            "mrr": 0.7,
+            "mean_positive_margin": -0.1,
+        });
+        let value = serde_json::json!({
+            "by_expected_capability": {"search": metrics},
+            "by_task_kind": {"route": metrics},
+            "by_scenario_family": {"politics": metrics},
+            "by_pool_size": {"8": metrics},
+        });
+        let clusters = normalize_clusters(&value).unwrap();
+        assert_eq!(clusters.len(), 4);
+        assert!(clusters.iter().any(|cluster| {
+            cluster.dimension == "expected_capability"
+                && cluster.value == "search"
+                && cluster.support == 4
+                && cluster.metrics["recall_at_1"] == 0.5
+        }));
+        assert!(clusters.iter().any(|cluster| {
+            cluster.dimension == "scenario_family" && cluster.value == "politics"
+        }));
     }
 }

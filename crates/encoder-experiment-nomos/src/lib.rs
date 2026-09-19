@@ -2,6 +2,7 @@
 
 mod agent_training;
 mod benchmark;
+mod dataset_landscape;
 mod development_evidence;
 mod evaluation;
 mod generated_training;
@@ -13,7 +14,8 @@ pub use agent_training::NomosFineTuneSettings;
 mod training_accounting;
 mod training_data;
 pub use benchmark::NomosBenchmarkPlan;
-pub use development_evidence::NomosDevelopmentEvidence;
+pub use dataset_landscape::NomosDatasetLandscape;
+pub use development_evidence::{NomosDevelopmentCluster, NomosDevelopmentEvidence};
 pub use generated_training::NomosGenerationTemplates;
 pub use managed_training::{NomosTrainingDataset, NomosTrainingDatasetWriter};
 pub use progress::{
