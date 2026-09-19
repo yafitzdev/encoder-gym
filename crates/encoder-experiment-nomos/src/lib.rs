@@ -106,6 +106,8 @@ const REPAIR_TRAINING_RECEIPT_SCHEMA: &str = "encoder-gym-nomos-repair-training-
 const REPAIR_TRAINING_RECEIPT_NAME: &str = "encoder_gym_repair_training_receipt.json";
 const REPAIR_DELTA_ADAPTER_NAME: &str = "nomos-native-repair-delta";
 const REPAIR_DELTA_ADAPTER_PROTOCOL: &str = "nomos-native-repair-delta-v1";
+const NATIVE_SPAWN_RETRY_DELAYS: [Duration; 2] =
+    [Duration::from_millis(100), Duration::from_millis(250)];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NativePackage {
@@ -1078,14 +1080,6 @@ impl NomosBackend {
                 "Nomos process requires a positive time limit",
             ));
         }
-        let mut command = Command::new(&self.python);
-        command
-            .args(arguments)
-            .current_dir(&self.root)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
         use tokio::io::AsyncReadExt;
         let training = arguments.get(1).is_some_and(|module| {
             matches!(
@@ -1093,9 +1087,7 @@ impl NomosBackend {
                 "tools.train_dense_triplet_router" | "tools.train_dense_router"
             )
         });
-        let mut child = command
-            .spawn()
-            .map_err(|error| adapter_error(format!("could not start Nomos process: {error}")))?;
+        let mut child = self.spawn_native_process(arguments).await?;
         let mut stdout = child.stdout.take().expect("piped stdout");
         let mut stderr = child.stderr.take().expect("piped stderr");
         let drain = async {
@@ -1167,6 +1159,50 @@ impl NomosBackend {
             )));
         }
         Ok(())
+    }
+
+    async fn spawn_native_process(
+        &self,
+        arguments: &[String],
+    ) -> Result<tokio::process::Child, EncoderTaskAdapterError> {
+        for (attempt, retry_delay) in NATIVE_SPAWN_RETRY_DELAYS
+            .iter()
+            .map(Some)
+            .chain(std::iter::once(None))
+            .enumerate()
+        {
+            let mut command = Command::new(&self.python);
+            command
+                .args(arguments)
+                .current_dir(&self.root)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+            match command.spawn() {
+                Ok(child) => return Ok(child),
+                Err(error)
+                    if retry_delay.is_some()
+                        && matches!(
+                            error.kind(),
+                            std::io::ErrorKind::NotFound | std::io::ErrorKind::Interrupted
+                        ) =>
+                {
+                    tokio::time::sleep(*retry_delay.expect("guarded retry delay")).await;
+                }
+                Err(error) => {
+                    return Err(adapter_error(format!(
+                        "could not start Nomos process after {} attempt(s): {error}; executable={} ({}); working directory={} ({})",
+                        attempt + 1,
+                        self.python.display(),
+                        path_state(&self.python, false),
+                        self.root.display(),
+                        path_state(&self.root, true),
+                    )));
+                }
+            }
+        }
+        unreachable!("native process launch loop always returns")
     }
 
     fn candidate_output(&self, candidate: &TrainingCandidate) -> PathBuf {
@@ -3755,6 +3791,19 @@ fn prefixed(value: &str) -> String {
 
 fn bounded_text(bytes: &[u8], maximum: usize) -> String {
     String::from_utf8_lossy(&bytes[..bytes.len().min(maximum)]).into_owned()
+}
+
+fn path_state(path: &Path, expect_directory: bool) -> String {
+    match fs::metadata(path) {
+        Ok(metadata) if expect_directory && metadata.is_dir() => "directory exists".into(),
+        Ok(metadata) if !expect_directory && metadata.is_file() => "file exists".into(),
+        Ok(_) if expect_directory => "exists but is not a directory".into(),
+        Ok(_) => "exists but is not a file".into(),
+        Err(error) if !path.is_absolute() && path.components().count() == 1 => {
+            format!("PATH lookup required; direct check failed: {error}")
+        }
+        Err(error) => format!("unavailable: {error}"),
+    }
 }
 
 fn adapter_error(error: impl std::fmt::Display) -> EncoderTaskAdapterError {

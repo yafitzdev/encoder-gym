@@ -199,25 +199,15 @@ pub(crate) fn saved_training_metrics(manifest: &serde_json::Value) -> Option<Nat
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::*;
+    use std::path::PathBuf;
 
-    #[test]
-    #[ignore = "child-process helper; invoked only by the bounded Stop test"]
-    fn native_stop_child() {
-        std::fs::write("child-started", "ready").unwrap();
-        std::thread::sleep(std::time::Duration::from_secs(30));
-        panic!("native child was not terminated");
-    }
-
-    #[tokio::test]
-    async fn native_stop_terminates_the_child_before_acknowledging_interruption() {
-        use crate::*;
-        use std::sync::atomic::{AtomicBool, Ordering};
-        let temp = tempfile::tempdir().unwrap();
+    fn backend(root: PathBuf, python: PathBuf) -> NomosBackend {
         let identity =
             BackendIdentity::new("fixture", "v1", format!("sha256:{}", "a".repeat(64))).unwrap();
-        let backend = NomosBackend {
-            root: temp.path().to_owned(),
-            python: std::env::current_exe().unwrap(),
+        NomosBackend {
+            root,
+            python,
             native_package: NativePackage::Nomos,
             manifest: crate::tests::manifest_with_named_suites(),
             baseline_override: None,
@@ -227,7 +217,26 @@ mod tests {
             repair_delta_identity: identity,
             progress: None,
             training_accounting: None,
-        };
+        }
+    }
+
+    #[test]
+    #[ignore = "child-process helper; invoked only by the bounded Stop test"]
+    fn native_stop_child() {
+        std::fs::write("child-started", "ready").unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        panic!("native child was not terminated");
+    }
+
+    #[test]
+    #[ignore = "child-process helper; invoked only by the transient launch test"]
+    fn native_success_child() {}
+
+    #[tokio::test]
+    async fn native_stop_terminates_the_child_before_acknowledging_interruption() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let temp = tempfile::tempdir().unwrap();
+        let backend = backend(temp.path().to_owned(), std::env::current_exe().unwrap());
         let signal = Arc::new(AtomicBool::new(false));
         let observed = signal.clone();
         let ready = temp.path().join("child-started");
@@ -259,6 +268,48 @@ mod tests {
             EncoderTaskAdapterError::Failure("Optimization stopped".into())
         );
     }
+
+    #[tokio::test]
+    async fn native_launch_retries_a_process_that_has_not_started() {
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join(if cfg!(windows) {
+            "late-native.exe"
+        } else {
+            "late-native"
+        });
+        let backend = backend(temp.path().to_owned(), executable.clone());
+        let publish = async {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+        };
+        let arguments = [
+            "--exact",
+            "progress::tests::native_success_child",
+            "--ignored",
+            "--nocapture",
+        ]
+        .map(String::from);
+        let (result, ()) = tokio::join!(backend.run_bounded(&arguments, 5), publish);
+        result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn native_launch_failure_reports_both_resolved_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join(if cfg!(windows) {
+            "missing-native.exe"
+        } else {
+            "missing-native"
+        });
+        let backend = backend(temp.path().to_owned(), executable.clone());
+        let error = backend.run_bounded(&[], 1).await.unwrap_err().to_string();
+        assert!(error.contains("after 3 attempt(s)"));
+        assert!(error.contains(&executable.display().to_string()));
+        assert!(error.contains("unavailable:"));
+        assert!(error.contains(&temp.path().display().to_string()));
+        assert!(error.contains("directory exists"));
+    }
+
     #[tokio::test]
     async fn stop_interrupts_native_hashing_and_is_task_scoped() {
         use std::sync::atomic::{AtomicUsize, Ordering};
