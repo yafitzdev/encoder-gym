@@ -61,12 +61,18 @@ export const ENCODER_OPTIMIZATION_TOOL_NAMES = [
   "propose_dataset_edits",
 ] as const;
 export type EncoderOptimizationToolName = (typeof ENCODER_OPTIMIZATION_TOOL_NAMES)[number];
+export const NATIVE_SEMANTIC_REVIEW_TOOL_NAMES = [
+  "submit_native_blind_assessments",
+  "submit_native_target_fit_assessments",
+] as const;
+export type NativeSemanticReviewToolName = (typeof NATIVE_SEMANTIC_REVIEW_TOOL_NAMES)[number];
 export type AgentToolName =
   | ResearchToolName
   | ArchitectToolName
   | BenchmarkArchitectToolName
   | SupervisorToolName
-  | EncoderOptimizationToolName;
+  | EncoderOptimizationToolName
+  | NativeSemanticReviewToolName;
 
 export interface ToolExecutionRequest {
   runId: string;
@@ -107,7 +113,9 @@ export interface PiRunRequest {
     | "encoder_optimization_v2"
     | "encoder_optimization_proposal_v2"
     | "encoder_optimization_v3"
-    | "encoder_optimization_proposal_v3";
+    | "encoder_optimization_proposal_v3"
+    | "encoder_optimization_native_blind_v1"
+    | "encoder_optimization_native_target_fit_v1";
   runId: string;
   runSpecificationFingerprint: string;
   provider: string;

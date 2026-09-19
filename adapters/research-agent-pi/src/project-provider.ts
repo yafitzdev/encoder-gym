@@ -23,7 +23,20 @@ export function configureProjectPayload(request: PiRunRequest, payload: unknown)
       configured.reasoning_effort = "none";
     }
   }
-  if (
+  const nativeReviewTool =
+    request.capabilitySet === "encoder_optimization_native_blind_v1"
+      ? "submit_native_blind_assessments"
+      : request.capabilitySet === "encoder_optimization_native_target_fit_v1"
+        ? "submit_native_target_fit_assessments"
+        : undefined;
+  if (nativeReviewTool) {
+    configured.tool_choice = isResponsesPayload
+      ? "required"
+      : {
+          type: "function",
+          function: { name: nativeReviewTool },
+        };
+  } else if (
     request.capabilitySet === "encoder_optimization_proposal_v1" ||
     request.capabilitySet === "encoder_optimization_proposal_v2" ||
     request.capabilitySet === "encoder_optimization_proposal_v3"

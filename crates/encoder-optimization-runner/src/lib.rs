@@ -3,6 +3,7 @@
 //! become the next turn's input only after their immutable record is saved.
 
 pub mod generation;
+pub mod semantic_review;
 mod tools;
 
 use std::{

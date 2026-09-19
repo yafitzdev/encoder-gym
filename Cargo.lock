@@ -1013,6 +1013,7 @@ name = "encoder-optimization-runner"
 version = "0.1.0"
 dependencies = [
  "agent-runtime-core",
+ "dataset-quality-core",
  "encoder-optimization-core",
  "serde",
  "serde_json",

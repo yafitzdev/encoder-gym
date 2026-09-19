@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 agent-runtime-core.workspace = true
+dataset-quality-core.workspace = true
 encoder-optimization-core.workspace = true
 generation-core.workspace = true
 serde.workspace = true
