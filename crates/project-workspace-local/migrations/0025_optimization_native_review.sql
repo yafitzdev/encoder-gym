@@ -1,4 +1,4 @@
-CREATE TABLE optimization_native_review_calls (
+CREATE TABLE IF NOT EXISTS optimization_native_review_calls (
     id TEXT PRIMARY KEY NOT NULL,
     run_id TEXT NOT NULL REFERENCES project_optimization_runs(id),
     iteration INTEGER NOT NULL CHECK(iteration BETWEEN 1 AND 10),
@@ -13,23 +13,23 @@ CREATE TABLE optimization_native_review_calls (
     created_at TEXT NOT NULL,
     UNIQUE(request_fingerprint, attempt)
 );
-CREATE TRIGGER immutable_optimization_native_review_calls_update BEFORE UPDATE ON optimization_native_review_calls
+CREATE TRIGGER IF NOT EXISTS immutable_optimization_native_review_calls_update BEFORE UPDATE ON optimization_native_review_calls
 BEGIN SELECT RAISE(ABORT, 'Native review call reservations are immutable'); END;
-CREATE TRIGGER immutable_optimization_native_review_calls_delete BEFORE DELETE ON optimization_native_review_calls
+CREATE TRIGGER IF NOT EXISTS immutable_optimization_native_review_calls_delete BEFORE DELETE ON optimization_native_review_calls
 BEGIN SELECT RAISE(ABORT, 'Native review call reservations are immutable'); END;
 
-CREATE TABLE optimization_native_review_outcomes (
+CREATE TABLE IF NOT EXISTS optimization_native_review_outcomes (
     call_id TEXT PRIMARY KEY NOT NULL REFERENCES optimization_native_review_calls(id),
     fingerprint TEXT NOT NULL,
     metadata_json TEXT NOT NULL CHECK(json_valid(metadata_json)),
     created_at TEXT NOT NULL
 );
-CREATE TRIGGER immutable_optimization_native_review_outcomes_update BEFORE UPDATE ON optimization_native_review_outcomes
+CREATE TRIGGER IF NOT EXISTS immutable_optimization_native_review_outcomes_update BEFORE UPDATE ON optimization_native_review_outcomes
 BEGIN SELECT RAISE(ABORT, 'Native review outcomes are immutable'); END;
-CREATE TRIGGER immutable_optimization_native_review_outcomes_delete BEFORE DELETE ON optimization_native_review_outcomes
+CREATE TRIGGER IF NOT EXISTS immutable_optimization_native_review_outcomes_delete BEFORE DELETE ON optimization_native_review_outcomes
 BEGIN SELECT RAISE(ABORT, 'Native review outcomes are immutable'); END;
 
-CREATE TABLE optimization_native_admissions (
+CREATE TABLE IF NOT EXISTS optimization_native_admissions (
     run_id TEXT NOT NULL REFERENCES project_optimization_runs(id),
     iteration INTEGER NOT NULL CHECK(iteration BETWEEN 1 AND 10),
     row_id TEXT NOT NULL,
@@ -40,7 +40,7 @@ CREATE TABLE optimization_native_admissions (
     created_at TEXT NOT NULL,
     PRIMARY KEY(run_id, iteration, row_id)
 );
-CREATE TRIGGER immutable_optimization_native_admissions_update BEFORE UPDATE ON optimization_native_admissions
+CREATE TRIGGER IF NOT EXISTS immutable_optimization_native_admissions_update BEFORE UPDATE ON optimization_native_admissions
 BEGIN SELECT RAISE(ABORT, 'Native admission evidence is immutable'); END;
-CREATE TRIGGER immutable_optimization_native_admissions_delete BEFORE DELETE ON optimization_native_admissions
+CREATE TRIGGER IF NOT EXISTS immutable_optimization_native_admissions_delete BEFORE DELETE ON optimization_native_admissions
 BEGIN SELECT RAISE(ABORT, 'Native admission evidence is immutable'); END;

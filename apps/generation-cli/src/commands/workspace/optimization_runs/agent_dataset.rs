@@ -15,11 +15,25 @@ use std::{collections::BTreeSet, path::Path, sync::Arc};
 
 use anyhow::{Context, Result, ensure};
 use chrono::Utc;
-use encoder_optimization_core::{
-    agent::{DatasetEditProposal, InspectionPage},
-    ports::OptimizationAgentStore,
+use dataset_quality_core::{
+    native_assessment::{
+        NativeAdmissionRecord, NativeBlindAssessmentEvidence, NativeBlindAssessmentRequest,
+        NativeTargetFitEvidence, NativeTargetFitRequest,
+    },
+    ports::{NativeReviewStore, NativeSemanticReviewer},
 };
-use encoder_optimization_runner::{OptimizationAgent, generation::OptimizationGenerator};
+use encoder_experiment_nomos::{NomosNativeAssessmentBinding, nomos_native_target_brief};
+use encoder_optimization_core::{
+    agent::{AgentTurnRecord, DatasetEditProposal, InspectionPage},
+    generation::GenerationTask,
+    ports::{OptimizationAgentStore, OptimizationGenerationStore},
+    repair_strategy::{RepairOperation, RepairPlan},
+};
+use encoder_optimization_runner::{
+    OptimizationAgent,
+    generation::OptimizationGenerator,
+    semantic_review::{DurableNativeReviewRunner, PiNativeSemanticReviewer},
+};
 use project_workspace_core::{
     ActivityEventState, ActivityFailure, ActivityReference, ActivitySource,
     optimization_iteration::ProjectOptimizationIteration,
@@ -27,7 +41,7 @@ use project_workspace_core::{
 use project_workspace_local::{
     AppendActivity, append_activity, initialize_activity, optimization_agent::ProjectAgentStore,
     optimization_dataset, optimization_generation::ProjectGenerationStore, optimization_launch,
-    optimization_runs,
+    optimization_native_review::ProjectNativeReviewStore, optimization_runs,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -233,6 +247,13 @@ async fn drive(
     // still alive. A missing response does not itself authorize a replacement.
     agent_store.recover_interrupted(&iteration.scope).await?;
     generation_store.recover_interrupted().await?;
+    let native_review_store = if iteration.scope.analysis_protocol == 3 {
+        let store = Arc::new(ProjectNativeReviewStore::open(folder, run_id).await?);
+        store.recover_interrupted().await?;
+        Some(store)
+    } else {
+        None
+    };
     let selected = providers::agent(
         run.run.project_id,
         agent_store.provider(),
@@ -240,10 +261,10 @@ async fn drive(
         runtime,
     )?;
     let agent = OptimizationAgent::new(
-        selected.runtime,
+        selected.runtime.clone(),
         agent_store.clone(),
         inspection.clone(),
-        selected.selection,
+        selected.selection.clone(),
     );
     let proposal = agent.analyze(iteration.scope.clone()).await?;
     if proposal.stop {
@@ -281,13 +302,32 @@ async fn drive(
         let generator = OptimizationGenerator {
             backend,
             admission: templates,
-            store: generation_store,
+            store: generation_store.clone(),
             concurrency: settings.generation_concurrency,
             maximum_cost_microusd_per_call: providers::cost_limit(&launch.scope.generation),
         };
         generator
-            .generate_with_canary(tasks, settings.generation_canary)
+            .generate_with_canary(tasks.clone(), settings.generation_canary)
             .await?;
+        if let Some(review_store) = native_review_store {
+            let target_briefs = v3_target_briefs(&history, &proposal)?;
+            let reviewer = Arc::new(PiNativeSemanticReviewer::new(
+                selected.runtime,
+                selected.selection.clone(),
+            )?);
+            let reviewer_identity = reviewer.native_identity();
+            let review_runner =
+                DurableNativeReviewRunner::new(reviewer, review_store.clone(), selected.selection)?;
+            review_generated_rows(
+                &tasks,
+                &target_briefs,
+                generation_store,
+                review_store,
+                &review_runner,
+                &reviewer_identity.fingerprint,
+            )
+            .await?;
+        }
     }
     ensure!(
         !agent_store.stopped(run_id).await?,
@@ -307,4 +347,163 @@ async fn drive(
         development: None,
         candidate: None,
     })
+}
+
+fn v3_target_briefs(
+    history: &[AgentTurnRecord],
+    proposal: &DatasetEditProposal,
+) -> Result<Vec<dataset_quality_core::native_assessment::NativeTargetBrief>> {
+    let submitted = history
+        .iter()
+        .flat_map(|turn| &turn.tools)
+        .find(|tool| tool.name == "submit_repair_plan" && !tool.failed)
+        .context("Protocol V3 has no accepted structured repair plan")?;
+    let plan: RepairPlan = serde_json::from_value(
+        submitted
+            .arguments
+            .get("plan")
+            .cloned()
+            .context("Submitted repair plan payload is missing")?,
+    )?;
+    let mut result = Vec::new();
+    for target in &plan.targets {
+        let brief = nomos_native_target_brief(target)?;
+        match &target.operation {
+            RepairOperation::LabelPreservingVariants { anchors, .. } => {
+                for anchor in anchors {
+                    result.push((anchor.row_id.clone(), anchor.additions, brief.clone()));
+                }
+            }
+            RepairOperation::ExistingAnchorContrast { pairs, .. } => {
+                for pair in pairs {
+                    for anchor in [&pair.left, &pair.right] {
+                        result.push((
+                            anchor.row_id.clone(),
+                            pair.additions_per_side,
+                            brief.clone(),
+                        ));
+                    }
+                }
+            }
+            RepairOperation::ProvenRedundantRowRemoval { .. } => {}
+        }
+    }
+    ensure!(
+        result.len() == proposal.additions.len()
+            && result
+                .iter()
+                .zip(&proposal.additions)
+                .all(
+                    |((row_id, count, _), addition)| row_id == &addition.template_row_id
+                        && count == &addition.count
+                ),
+        "Structured repair targets do not reproduce the compiled generation plan"
+    );
+    Ok(result.into_iter().map(|(_, _, brief)| brief).collect())
+}
+
+async fn review_generated_rows(
+    tasks: &[GenerationTask],
+    target_briefs: &[dataset_quality_core::native_assessment::NativeTargetBrief],
+    generation_store: Arc<ProjectGenerationStore>,
+    review_store: Arc<ProjectNativeReviewStore>,
+    review_runner: &DurableNativeReviewRunner,
+    reviewer_identity_fingerprint: &str,
+) -> Result<()> {
+    for task in tasks {
+        let history = generation_store.history(task.clone()).await?;
+        let completed = history
+            .iter()
+            .filter_map(|outcome| outcome.admission.as_ref())
+            .collect::<Vec<_>>();
+        ensure!(
+            completed.len() == 1,
+            "Native semantic review requires one completed structural generation outcome"
+        );
+        let admission = completed[0];
+        if admission.accepted.is_empty() {
+            continue;
+        }
+        let target = target_briefs
+            .get(task.target_index as usize)
+            .context("Generated task has no structured repair target")?
+            .clone();
+        let bindings = admission
+            .accepted
+            .iter()
+            .map(|row| {
+                NomosNativeAssessmentBinding::from_generated(
+                    encoder_optimization_core::generation::generated_semantic_row_id(
+                        task, row.index,
+                    ),
+                    &row.content,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let blind_request = NativeBlindAssessmentRequest::new(
+            encoder_optimization_core::child_id(&serde_json::json!({
+                "protocol": "native-blind-review-v1",
+                "task": task.id,
+                "rows": bindings.iter().map(|binding| &binding.blind_row.row_fingerprint).collect::<Vec<_>>(),
+                "reviewer": reviewer_identity_fingerprint,
+            }))?,
+            task.run_id,
+            task.iteration,
+            reviewer_identity_fingerprint,
+            bindings
+                .iter()
+                .map(|binding| binding.blind_row.clone())
+                .collect(),
+        )?;
+        // Re-running the explicit CLI command is the only authorization for
+        // the single replacement of a recovered interrupted provider call.
+        let blind_output = review_runner
+            .assess_blind(blind_request.clone(), true)
+            .await?;
+        let blind_evidence = blind_output
+            .assessments
+            .into_iter()
+            .map(|draft| NativeBlindAssessmentEvidence::record(&blind_request, draft))
+            .collect::<Result<Vec<_>, _>>()?;
+        let target_request = NativeTargetFitRequest::new(
+            encoder_optimization_core::child_id(&serde_json::json!({
+                "protocol": "native-target-fit-review-v1",
+                "blindRequest": blind_request.fingerprint,
+                "target": target.fingerprint,
+                "reviewer": reviewer_identity_fingerprint,
+            }))?,
+            &blind_request,
+            reviewer_identity_fingerprint,
+            blind_evidence
+                .iter()
+                .cloned()
+                .map(|evidence| (evidence, target.clone()))
+                .collect(),
+        )?;
+        let fit_output = review_runner
+            .assess_target_fit(target_request.clone(), true)
+            .await?;
+        let fit_evidence = fit_output
+            .assessments
+            .into_iter()
+            .map(|draft| NativeTargetFitEvidence::record(&target_request, draft))
+            .collect::<Result<Vec<_>, _>>()?;
+        let records = bindings
+            .into_iter()
+            .zip(blind_evidence)
+            .zip(fit_evidence)
+            .map(|((binding, blind), target_fit)| {
+                NativeAdmissionRecord::new(
+                    task.run_id,
+                    task.iteration,
+                    reviewer_identity_fingerprint,
+                    binding.label_authority,
+                    blind,
+                    target_fit,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        review_store.record_admissions(records).await?;
+    }
+    Ok(())
 }

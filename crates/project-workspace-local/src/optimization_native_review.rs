@@ -240,32 +240,41 @@ impl NativeReviewStore for ProjectNativeReviewStore {
                 return Err(adapter("Native admission query is outside this run"));
             }
             let mut database = connect(&self.folder, true, false).await.map_err(adapter)?;
-            let rows = sqlx::query("SELECT row_id,row_fingerprint,fingerprint,metadata_json FROM optimization_native_admissions WHERE run_id=? AND iteration=? ORDER BY row_id")
-                .bind(run_id.to_string())
-                .bind(i64::from(iteration))
-                .fetch_all(&mut database)
+            let result = read_admissions(&mut database, run_id, iteration)
                 .await
                 .map_err(adapter)?;
-            let mut result = Vec::with_capacity(rows.len());
-            for row in rows {
-                let value: NativeAdmissionRecord =
-                    serde_json::from_str(&row.get::<String, _>("metadata_json"))
-                        .map_err(adapter)?;
-                value.validate().map_err(adapter)?;
-                if value.run_id != run_id
-                    || value.iteration != iteration
-                    || value.authority.row_id != row.get::<String, _>("row_id")
-                    || value.authority.row_fingerprint != row.get::<String, _>("row_fingerprint")
-                    || value.fingerprint != row.get::<String, _>("fingerprint")
-                {
-                    return Err(adapter("Native admission evidence binding changed"));
-                }
-                result.push(value);
-            }
             database.close().await.map_err(adapter)?;
             Ok(result)
         })
     }
+}
+
+pub(crate) async fn read_admissions(
+    database: &mut SqliteConnection,
+    run_id: Uuid,
+    iteration: u32,
+) -> Result<Vec<NativeAdmissionRecord>> {
+    let rows = sqlx::query("SELECT row_id,row_fingerprint,fingerprint,metadata_json FROM optimization_native_admissions WHERE run_id=? AND iteration=? ORDER BY row_id")
+        .bind(run_id.to_string())
+        .bind(i64::from(iteration))
+        .fetch_all(database)
+        .await?;
+    let mut result = Vec::with_capacity(rows.len());
+    for row in rows {
+        let value: NativeAdmissionRecord =
+            serde_json::from_str(&row.get::<String, _>("metadata_json"))?;
+        value.validate()?;
+        ensure!(
+            value.run_id == run_id
+                && value.iteration == iteration
+                && value.authority.row_id == row.get::<String, _>("row_id")
+                && value.authority.row_fingerprint == row.get::<String, _>("row_fingerprint")
+                && value.fingerprint == row.get::<String, _>("fingerprint"),
+            "Native admission evidence binding changed"
+        );
+        result.push(value);
+    }
+    Ok(result)
 }
 
 pub(crate) async fn reserve(

@@ -27,6 +27,7 @@ pub struct RepairPublication {
     pub removed: u64,
     pub rows: u64,
     pub cross_batch_duplicates: u64,
+    pub semantic_rejections: u64,
 }
 
 /// Native inspection content is not a presentation contract. The composition
@@ -278,7 +279,9 @@ pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPla
                     && version.changes.replaced.is_empty()
                     && version.changes.added.len() as u64 == added
                     && publication.cross_batch_duplicates
-                        == publication.generated.len() as u64 - added
+                        == publication.generated.len() as u64
+                            - added
+                            - publication.semantic_rejections
                     && version.changes.apply(&parent.members)? == version.members,
                 "Published dataset membership differs from its repair receipt"
             );
@@ -306,6 +309,7 @@ pub async fn read(folder: &Path, run_id: Uuid) -> Result<BTreeMap<u32, RepairPla
                 removed: removed.len() as u64,
                 rows: version.members.len() as u64,
                 cross_batch_duplicates: publication.cross_batch_duplicates,
+                semantic_rejections: publication.semantic_rejections,
             })
         } else {
             None

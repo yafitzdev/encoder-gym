@@ -131,6 +131,12 @@ pub struct AdmittedGenerationRow {
     pub content: Value,
 }
 
+/// Stable cross-slice identity for semantic evidence about one structurally
+/// admitted generated row. It contains no model-authored content.
+pub fn generated_semantic_row_id(task: &GenerationTask, row_index: u32) -> String {
+    format!("generation:{}:{row_index}", task.id)
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GenerationAdmission {

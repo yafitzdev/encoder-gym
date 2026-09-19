@@ -3,7 +3,7 @@
 //! not training/benchmark qualification or permission to train.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs::File,
     io::{BufWriter, Write},
     path::Path,
@@ -30,7 +30,8 @@ pub struct GeneratedRowLink {
     pub task_id: Uuid,
     pub row_index: u32,
     pub content_fingerprint: String,
-    /// Empty only for a rejected cross-batch duplicate, never an admitted row.
+    /// Empty for a semantic rejection or a later cross-batch duplicate. Exact
+    /// semantic reasons live in the immutable native-admission ledger.
     pub source_record: Option<u64>,
 }
 
@@ -46,7 +47,13 @@ pub struct OptimizationDatasetPublication {
     pub removed: Vec<String>,
     pub generated: Vec<GeneratedRowLink>,
     pub generation_rejections: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub semantic_rejections: u64,
     pub cross_batch_duplicates: u64,
+}
+
+const fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 /// Read the exact published edit result without generating or publishing work.
@@ -117,6 +124,11 @@ pub async fn publish(
     );
     let proposal_fingerprint = fingerprint(proposal)?;
     let generated_calls = optimization_generation::read_calls(&mut database, run_id).await?;
+    let native_admissions = if scope.analysis_protocol == 3 {
+        crate::optimization_native_review::read_admissions(&mut database, run_id, iteration).await?
+    } else {
+        Vec::new()
+    };
     database.close().await?;
     let run = crate::optimization_runs::show(folder, run_id).await?;
     let launches = crate::optimization_launch::list(folder).await?;
@@ -202,7 +214,12 @@ pub async fn publish(
     let mut generated = Vec::new();
     let mut seen = BTreeSet::new();
     let mut generation_rejections = 0;
+    let mut semantic_rejections = 0;
     let mut cross_batch_duplicates = 0;
+    let mut native_admissions = native_admissions
+        .into_iter()
+        .map(|record| (record.authority.row_id.clone(), record))
+        .collect::<BTreeMap<_, _>>();
     // Proposal/slot order, not response completion order, selects the survivor.
     for (task, call, outcome) in completed {
         let admission = outcome
@@ -211,7 +228,25 @@ pub async fn publish(
             .context("Generation admission is missing")?;
         generation_rejections += admission.rejected.len() as u64;
         for row in &admission.accepted {
-            let record = if seen.insert(row.deduplication_fingerprint.clone()) {
+            let semantic_admitted = if scope.analysis_protocol == 3 {
+                let row_id = encoder_optimization_core::generation::generated_semantic_row_id(
+                    task, row.index,
+                );
+                let semantic = native_admissions
+                    .remove(&row_id)
+                    .context("Protocol V3 generated row has no native semantic admission")?;
+                ensure!(
+                    semantic.authority.row_fingerprint == row.fingerprint,
+                    "Native semantic admission belongs to different generated content"
+                );
+                semantic.admission.admitted()
+            } else {
+                true
+            };
+            let record = if !semantic_admitted {
+                semantic_rejections += 1;
+                None
+            } else if seen.insert(row.deduplication_fingerprint.clone()) {
                 rows.push(row.content.clone());
                 Some(rows.len() as u64)
             } else {
@@ -227,6 +262,10 @@ pub async fn publish(
             });
         }
     }
+    ensure!(
+        native_admissions.is_empty(),
+        "Native semantic admissions contain rows outside the recorded generation plan"
+    );
     ensure!(
         !rows.is_empty() || !proposal.removals.is_empty(),
         "Every generated row was rejected; no dataset change can be published"
@@ -248,6 +287,7 @@ pub async fn publish(
         removed,
         generated,
         generation_rejections,
+        semantic_rejections,
         cross_batch_duplicates,
     };
     let mut database = connect(Path::new(&workspace.folder), false, false).await?;

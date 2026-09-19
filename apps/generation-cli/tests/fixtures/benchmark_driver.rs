@@ -20,7 +20,11 @@ async fn main() -> Result<()> {
         return desktop_agent_seed::create(&arguments[1..]).await;
     }
     if arguments.first().is_some_and(|value| value == "-B") {
-        return native_capabilities(&arguments);
+        return if arguments.len() == 4 {
+            native_inventory(&arguments)
+        } else {
+            native_capabilities(&arguments)
+        };
     }
     if arguments
         .first()
@@ -107,7 +111,7 @@ names=['torch','sentence_transformers','transformers','datasets','accelerate','n
 print(json.dumps({'version':'.'.join(map(str,sys.version_info[:3])),'major':sys.version_info[0],'minor':sys.version_info[1],'modules':{name:importlib.util.find_spec(name) is not None for name in names}}))"#;
     ensure!(
         arguments == ["-B", "-c", SCRIPT],
-        "Unexpected native capability program"
+        "Unexpected native capability program: {arguments:?}"
     );
     println!(
         "{}",
@@ -120,6 +124,60 @@ print(json.dumps({'version':'.'.join(map(str,sys.version_info[:3])),'major':sys.
             },
         })
     );
+    Ok(())
+}
+
+fn native_inventory(arguments: &[String]) -> Result<()> {
+    const PROGRAM: &str = include_str!(
+        "../../../../crates/encoder-experiment-nomos/src/inspect_training_inventory.py"
+    );
+    ensure!(
+        arguments.get(1).map(String::as_str) == Some("-c")
+            && arguments.get(2).map(String::as_str) == Some(PROGRAM),
+        "Unexpected native inventory program"
+    );
+    let root = env::current_dir()?;
+    let request_path = root.join(arguments.get(3).context("Missing inventory request")?);
+    let request: serde_json::Value = serde_json::from_slice(&fs::read(&request_path)?)?;
+    let members_path = root.join(
+        request["membersKey"]
+            .as_str()
+            .context("Missing inventory members")?,
+    );
+    let members = fs::read_to_string(members_path)?
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(serde_json::from_str::<serde_json::Value>)
+        .collect::<Result<Vec<_>, _>>()?;
+    ensure!(
+        request["rows"].as_u64() == Some(members.len() as u64),
+        "Inventory member count changed"
+    );
+    let projected = members
+        .iter()
+        .map(|member| {
+            let id = member["memberId"]
+                .as_str()
+                .context("Missing inventory member identity")?;
+            Ok(serde_json::json!({
+                "memberId": id,
+                "nativeContextFingerprint": artifact_core::fingerprint(&serde_json::json!(["fixture-context", id]))?,
+                "nativeModelInputFingerprint": artifact_core::fingerprint(&serde_json::json!(["fixture-model-input", id, member["row"]["question"]]))?,
+                "labelFingerprint": artifact_core::fingerprint(&member["row"]["label"])?
+            }))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let output = serde_json::json!({
+        "protocol": "nomos-training-inventory-v1",
+        "requestFingerprint": request["fingerprint"],
+        "datasetFingerprint": request["datasetFingerprint"],
+        "rows": projected.len(),
+        "members": projected,
+    });
+    fs::write(
+        request_path.with_file_name("result.json"),
+        serde_json::to_vec(&output)?,
+    )?;
     Ok(())
 }
 

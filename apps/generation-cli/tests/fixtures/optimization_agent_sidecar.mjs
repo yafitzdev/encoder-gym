@@ -13,6 +13,35 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     if (request.model !== 'pinned-agent' || !request.openaiCompatible) throw Error('Wrong pinned provider');
     if (JSON.stringify(request).includes('NEVER_DISCLOSE_HOLDOUT')) throw Error('Protected evidence leaked');
     const input = JSON.parse(request.initialPrompt);
+    if (request.capabilitySet === 'encoder_optimization_native_blind_v1' || request.capabilitySet === 'encoder_optimization_native_target_fit_v1') {
+      appendFileSync(process.env.AGENT_FIXTURE_CALLS, JSON.stringify({model: request.model, runId, iteration: input.iteration, review: request.capabilitySet}) + '\n');
+      send({ type: 'event', event: {type: 'turn_started', runId, sequence: 1} });
+      const blind = request.capabilitySet === 'encoder_optimization_native_blind_v1';
+      const name = blind ? 'submit_native_blind_assessments' : 'submit_native_target_fit_assessments';
+      const assessments = input.rows.map(item => {
+        const row = item.row ?? item;
+        return blind ? {
+          rowId: row.rowId,
+          rowFingerprint: row.rowFingerprint,
+          requestFingerprint: input.fingerprint,
+          supportedCandidateIds: [row.candidates[process.env.AGENT_FIXTURE_LOOP === 'v3_semantic_reject' ? row.candidates.length - 1 : 0].candidateId],
+          ambiguous: false,
+          contextConsistent: true,
+          issueCodes: [],
+          rationale: 'The generated question clearly requests the first legal retrieval capability.'
+        } : {
+          rowId: row.rowId,
+          rowFingerprint: row.rowFingerprint,
+          requestFingerprint: input.fingerprint,
+          blindAssessmentFingerprint: item.blindAssessmentFingerprint,
+          targetFits: true,
+          issueCodes: [],
+          rationale: 'The generated question is a specific label-preserving variant for the target cluster.'
+        };
+      });
+      send({type: 'tool_request', runId, callId: 'fixture-native-review', name, arguments: {assessments}});
+      return;
+    }
     appendFileSync(process.env.AGENT_FIXTURE_CALLS, JSON.stringify({model: request.model, runId, iteration: input.scope.iteration, evidence: input.scope.developmentEvidenceFingerprint}) + '\n');
     const turns = input.previousTurns.filter(turn => !turn.interrupted);
     const later = input.scope.iteration > 1;
@@ -22,7 +51,38 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
       return;
     }
     let name, args;
-    if (input.scope.analysisProtocol === 2) {
+    if (input.scope.analysisProtocol === 3) {
+      const clusters = turns[0]?.tools[0]?.result?.items ?? [];
+      const cluster = clusters.find(item => item.content.cluster?.dimension === 'expected_capability' && item.content.cluster?.value === 'search') ?? clusters[0];
+      if (!turns.length) {
+        name = 'inspect_dataset_landscape'; args = {offset: 0, limit: 20};
+      } else if (turns.length === 1) {
+        if (!cluster) throw Error('No V3 dataset landscape cluster');
+        name = 'inspect_dataset_clusters'; args = {clusterIds: [cluster.id], cursor: 0, limit: 8};
+      } else if (turns.length === 2) {
+        const rows = turns[1].tools[0].result.items;
+        const row = rows.find(item => item.content.question.includes('Search')) ?? rows[0];
+        if (!row?.content?.investigation?.anchorFingerprint) throw Error('No V3 investigation anchor');
+        name = 'preview_repair_plan';
+        args = {schemaVersion: 3, summary: 'Add one precise search variant for the weak evaluated cluster.', stop: false, targets: [{
+          targetId: 'search-variant', clusterKeys: [cluster.id], evidenceIds: [cluster.id],
+          hypothesis: 'One context-preserving search variant may improve recall for the observed weak capability.',
+          evidenceLimitations: 'Coverage is descriptive and the development failures are sampled.',
+          intendedFailurePattern: 'Specific search requests rank the retrieval capability below a distractor.',
+          alternativeExplanation: 'The model may need parameter changes rather than additional data.',
+          operation: {kind: 'label_preserving_variants', count: {basis: 'absolute_rows', desiredRows: 1},
+            allocationRationale: 'Use one inspected anchor for a minimal falsifiable change.',
+            anchors: [{rowId: row.id, rowFingerprint: row.content.investigation.anchorFingerprint, additions: 1}]},
+          targetMetric: {name: 'recall_at_1', direction: 'increase'}
+        }]};
+      } else {
+        const previewTurn = turns.find(turn => turn.tools.some(tool => tool.name === 'preview_repair_plan'));
+        const previewTool = previewTurn?.tools.find(tool => tool.name === 'preview_repair_plan');
+        if (!previewTool?.result?.preview?.fingerprint) throw Error('No accepted V3 preview');
+        name = 'submit_repair_plan';
+        args = {plan: previewTool.arguments, previewFingerprint: previewTool.result.preview.fingerprint};
+      }
+    } else if (input.scope.analysisProtocol === 2) {
       const clusters = turns[0]?.tools[0]?.result?.items ?? [];
       const cluster = clusters.find(item => item.content.cluster?.dimension === 'expected_capability' && item.content.cluster?.value === 'search') ?? clusters[0];
       if (!turns.length) {

@@ -77,6 +77,16 @@ async fn cli_agent_inspects_generates_qualifies_and_replays_exact_dataset_withou
 }
 
 #[tokio::test]
+async fn cli_v3_repairs_reviews_and_publishes_only_native_semantic_admissions() {
+    scenario(false, Some("v3_prepare")).await;
+}
+
+#[tokio::test]
+async fn cli_v3_wrong_label_review_is_durable_and_never_published() {
+    scenario(false, Some("v3_semantic_reject")).await;
+}
+
+#[tokio::test]
 async fn cli_agent_preflight_blocks_irreparable_starting_dataset_before_provider_dispatch() {
     scenario(true, Some("dirty_preflight")).await;
 }
@@ -368,8 +378,16 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
     .unwrap();
     let mut settings = OptimizationAgentSettings::quick_test();
     if let Some(mode) = loop_mode {
-        settings = OptimizationAgentSettings::default();
-        settings.maximum_iterations = if mode == "two_iterations" {
+        settings = if matches!(mode, "v3_prepare" | "v3_semantic_reject") {
+            let mut value = OptimizationAgentSettings::quick_test();
+            value.analysis_protocol = 3;
+            value
+        } else {
+            OptimizationAgentSettings::default()
+        };
+        settings.maximum_iterations = if matches!(mode, "v3_prepare" | "v3_semantic_reject") {
+            1
+        } else if mode == "two_iterations" {
             2
         } else if matches!(
             mode,
@@ -483,7 +501,9 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
                 "workspace",
                 "optimization-run",
                 invocation_folder.to_str().unwrap(),
-                if loop_mode.is_some() {
+                if loop_mode.is_some()
+                    && !matches!(loop_mode, Some("v3_prepare" | "v3_semantic_reject"))
+                {
                     "drive-agent"
                 } else if complete {
                     "complete-iteration"
@@ -834,7 +854,7 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
             .unwrap();
         db.close().await.unwrap();
     }
-    if loop_mode.is_some() {
+    if loop_mode.is_some() && !matches!(loop_mode, Some("v3_prepare" | "v3_semantic_reject")) {
         let mut db = SqliteConnection::connect(&format!(
             "sqlite://{}",
             folder.join("project.sqlite").display()
@@ -912,9 +932,67 @@ async fn scenario(complete: bool, loop_mode: Option<&str>) {
             .unwrap();
         db.close().await.unwrap();
     }
+    if loop_mode == Some("v3_semantic_reject") {
+        let rejected = invoke_iteration();
+        assert!(!rejected.status.success());
+        assert!(
+            String::from_utf8_lossy(&rejected.stderr).contains("Every generated row was rejected"),
+            "{}",
+            String::from_utf8_lossy(&rejected.stderr)
+        );
+        generator.unwrap().join().unwrap();
+        let reviews =
+            project_workspace_local::optimization_native_review::ProjectNativeReviewStore::open(
+                &folder,
+                reserved.id,
+            )
+            .await
+            .unwrap();
+        let admissions =
+            dataset_quality_core::ports::NativeReviewStore::admissions(&reviews, reserved.id, 1)
+                .await
+                .unwrap();
+        assert_eq!(admissions.len(), 1);
+        assert_eq!(
+            admissions[0].admission.decision,
+            dataset_quality_core::native_assessment::NativeAdmissionDecision::LabelMismatch
+        );
+        assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 6);
+        assert!(
+            project_workspace_local::optimization_dataset::publication(&folder, reserved.id, 1)
+                .await
+                .is_err()
+        );
+        return;
+    }
     let first = execute();
     if let Some(generator) = generator {
         generator.join().unwrap();
+    }
+    if loop_mode == Some("v3_prepare") {
+        let publication: project_workspace_local::optimization_dataset::OptimizationDatasetPublication =
+            serde_json::from_value(first["datasetStep"]["publication"].clone()).unwrap();
+        assert_eq!(publication.generated.len(), 1);
+        assert_eq!(publication.semantic_rejections, 0);
+        assert_eq!(publication.cross_batch_duplicates, 0);
+        assert!(publication.generated[0].source_record.is_some());
+        let reviews =
+            project_workspace_local::optimization_native_review::ProjectNativeReviewStore::open(
+                &folder,
+                reserved.id,
+            )
+            .await
+            .unwrap();
+        let admissions =
+            dataset_quality_core::ports::NativeReviewStore::admissions(&reviews, reserved.id, 1)
+                .await
+                .unwrap();
+        assert_eq!(admissions.len(), 1);
+        assert!(admissions[0].admission.admitted());
+        assert_eq!(fs::read_to_string(&calls).unwrap().lines().count(), 6);
+        assert!(first["datasetStep"]["qualification"].is_object());
+        assert!(first["datasetStep"]["candidate"].is_null());
+        return;
     }
     if let Some(mode) = loop_mode {
         loop_check::assert_loop(root, &folder, reserved.id, mode, &first, execute).await;
