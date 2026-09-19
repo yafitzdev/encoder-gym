@@ -62,6 +62,7 @@ test("presets are a strict core-owned read with no execution or provider credent
 test("Advanced settings reach the same start command and uncertain retries reuse pinned authority", async () => {
   const f = fixture(), files = [], calls = [], wire = f.run(), authorization = agentAuthorization(f);
   const settings = structuredClone(authorization.scope.agentic);
+  settings.analysisProtocol = 2;
   settings.generationConcurrency = 4; settings.training.device = "cpu"; settings.training.learningRateNanos = 4000;
   settings.providerLimits = { advisor: { ...f.scope.advisor, maximumRequests: 2 }, generation: { ...f.scope.generation, maximumRequests: 3 } };
   const options = { id: f.launchId, settings };
@@ -153,7 +154,8 @@ test("agent settings history preserves strict quick-test limits and legacy launc
   quick.scope.limits = { maximumIterations: 1, maximumModels: 1, maximumDatasetRowChanges: 8, maximumTrainingSeconds: 120, maximumDevelopmentEvaluations: 2, maximumFinalEvaluations: 0 };
   quick.scope.finalEvaluation = "development_only";
   const backend = new ManagedOptimizationLaunch(ports(f, async () => [legacy, quick]));
-  assert.deepEqual(await backend.list(f.projectId), [legacy, quick]);
+  const parsedQuick = structuredClone(quick); parsedQuick.scope.agentic.analysisProtocol = 1;
+  assert.deepEqual(await backend.list(f.projectId), [legacy, parsedQuick]);
   for (const alter of [
     value => value.scope.agentic.generationConcurrency = 0,
     value => value.scope.agentic.generationConcurrency = 17,

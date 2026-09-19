@@ -15,6 +15,7 @@ import { failureReason } from "../presentation-errors.js";
 import { iterationReport } from "./iteration-report.js";
 import { optimizationSettings } from "./optimization-settings.js";
 import { optimizationFinalPanel } from "./optimization-final-panel.js";
+import { optimizationLaunchSummary } from "./optimization-launch-summary.js";
 
 // The standalone renderer verification uses the same keyed replacement rule
 // as the full application shell.
@@ -160,17 +161,32 @@ export function renderOverview(workspace: WorkspaceSnapshot, state: OverviewStat
     const advisor = setup.workspace.providerCatalog?.providers.find(item => item.role === "advisor");
     const generation = setup.workspace.providerCatalog?.providers.find(item => item.role === "generation");
     const settingsId = record?.id ?? "draft";
+    const summaryDataset = setup.data?.datasets.flatMap(entry => entry.versions.map(item => ({ name: entry.dataset.name, ...item }))).find(item => item.version.id === datasetId);
+    const summaryBenchmark = setup.data?.benchmarks.find(item => item.id === benchmarkId);
+    const settings = historical ? launch?.scope.agentic : setup.settings;
+    const limits = historical ? launch ? { advisor: launch.scope.advisor, generation: launch.scope.generation } : undefined : advisor && generation ? { advisor: advisor.limits, generation: generation.limits } : undefined;
     return h("div", { class: "focus-setup" },
+      h("div", { class: "launch-fields" },
       selector("optimization-baseline", "Baseline", [["baseline", modelName], ...(!historical ? [["models", "Models…"] as [string, string]] : [])], "baseline", value => { if (value === "models") actions.navigate({ page: "models" }); }),
       selector("optimization-dataset", "Starting Dataset", [["", historical ? "Not recorded" : "Choose dataset"], ...datasets], datasetId, value => setup.select("dataset", value)),
       selector("optimization-benchmark", "Evaluation", [...(!benchmarks.length ? [["", historical ? "Not recorded" : setup.workspace.scientificBinding ? "Project evaluation" : "Choose in Evaluation"] as [string, string]] : []), ...benchmarks, ...(!historical ? [["evaluation", "Evaluation…"] as [string, string]] : [])], benchmarkId, value => { if (value === "evaluation") actions.navigate({ page: "benchmarks" }); }),
       provider("advisor", "LLM agent"), provider("generation", "LLM data generator"),
-      optimizationSettings({ id: `optimization-advanced-${settingsId}`, settings: historical ? launch?.scope.agentic : setup.settings,
-        limits: historical ? launch ? { advisor: launch.scope.advisor, generation: launch.scope.generation } : undefined : advisor && generation ? { advisor: advisor.limits, generation: generation.limits } : undefined,
+      optimizationSettings({ id: `optimization-advanced-${settingsId}`, settings, limits,
         historical, disabled: historical || busy || !setup.canEditSettings, open: state.advanced.has(settingsId),
         toggle: open => { if (open) state.advanced.add(settingsId); else state.advanced.delete(settingsId); },
-        change: value => setup.changeSettings(value), mode: value => setup.selectMode(value), error: historical ? undefined : setup.settingsError }),
-      !historical ? h("div", { class: "focus-controls" }, start) : null);
+        change: value => setup.changeSettings(value), mode: value => setup.selectMode(value), error: historical ? undefined : setup.settingsError })),
+      optimizationLaunchSummary({ id: `launch-${settingsId}`, historical, model: modelName,
+        dataset: summaryDataset ? `${summaryDataset.name} · v${summaryDataset.version.number} · ${summaryDataset.rows.toLocaleString()} rows` : "Not selected or unavailable",
+        benchmark: summaryBenchmark ? `Benchmark · v${summaryBenchmark.number}` : historical ? "Not recorded" : setup.canInitializeBenchmark ? "Initialize project evaluation at launch" : "Not available",
+        agent: providers?.find(item => item.role === "advisor")?.model ?? (historical ? "Earlier project settings" : "Not assigned"),
+        generator: providers?.find(item => item.role === "generation")?.model ?? (historical ? "Earlier project settings" : "Not assigned"),
+        settings, limits, blockers: busy && !setup.launchBlockers.length ? [{ code: "busy", message: "Another run operation is active. Wait for it to finish." }] : setup.launchBlockers,
+        start: historical ? undefined : start,
+        act: action => {
+          if (action === "refresh") { setup.refresh(); actions.refresh(); }
+          else if (action === "settings") { state.advanced.add(settingsId); actions.render(); document.getElementById(`optimization-advanced-${settingsId}`)?.querySelector("summary")?.focus(); }
+          else actions.navigate({ page: action });
+        } }));
   }
   function statusPanel(record?: OverviewRecord): HTMLElement {
     const iteration = record?.input?.iterations?.length ? selectedIteration(record) ?? null : undefined;

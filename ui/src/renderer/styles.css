@@ -16,6 +16,23 @@
 .focus-stages button.active { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
 .focus-stage-number { display: inline-grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; width: 25px; height: 25px; font-size: 12px; }
 .focus-panel { min-width: 0; }
+.focus-setup { display: grid; grid-template-columns: minmax(0,1fr) minmax(270px,320px); gap: 28px; align-items: start; }
+.launch-fields { min-width: 0; }
+.optimization-launch-summary { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); overflow-wrap: anywhere; position: sticky; top: 16px; }
+.optimization-launch-summary h2 { font-size: 17px; margin: 0 0 16px; }
+.optimization-launch-summary .facts { display: grid; gap: 10px; margin: 0; }
+.optimization-launch-summary .facts > div { display: block; padding: 0; border: 0; }
+.optimization-launch-summary .facts dt { font-size: 11px; color: var(--muted); }
+.optimization-launch-summary .facts dd { margin: 3px 0 0; font-size: 13px; }
+.optimization-launch-summary p { font-size: 12px; line-height: 1.6; margin: 6px 0; }
+.launch-limits, .launch-provider-limits, .launch-readiness { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 16px; font-size: 13px; }
+.launch-provider-limits summary { cursor: pointer; color: var(--muted); }
+.launch-provider-limits > div { margin-top: 12px; }
+.launch-readiness ul { margin: 8px 0; padding-left: 18px; display: grid; gap: 10px; }
+.launch-readiness li > span { display: block; line-height: 1.5; }
+.launch-readiness .button { white-space: normal; margin-top: 4px; padding-left: 0; text-align: left; }
+.optimization-launch-summary > .button { margin-top: 16px; width: 100%; }
+@media(max-width:1100px) { .focus-setup { grid-template-columns: minmax(0,1fr); gap: 20px; } .optimization-launch-summary { position: static; } }
 .focus-field { display: grid; grid-template-columns: 175px minmax(0,1fr); gap: 24px; align-items: center; padding: 18px 0; border-bottom: 1px solid var(--line-soft); }
 .focus-field:last-of-type { border-bottom: none; }
 .focus-field > span { font-weight: 600; }

@@ -23,6 +23,14 @@ before launching changed code; a second normal launch focuses that instance.
 
 ## Project folders and page responsibilities
 
+Overview's Setup view pairs the input fields with a launch summary: exact
+dataset version and row count, baseline, evaluation, assigned models, and
+finite iteration/edit/training/provider ceilings. Disabled launch controls list
+specific reasons with actions in the owning page. Credential availability is
+checked locally; this is not a live provider probe or a replacement for native
+file/runtime validation at launch. Historical summaries use saved launch
+authority, never today's provider models or default limits.
+
 Use **New project** (the sidebar plus) to choose a local checkpoint, preview its
 format/size, name the project, and choose a parent location. Gym copies the
 checkpoint into a new owned folder and creates its manifest, registry database,

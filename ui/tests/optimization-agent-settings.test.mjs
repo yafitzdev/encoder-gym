@@ -6,6 +6,9 @@ import { agentPresets, setupFixture } from "./optimization-setup-fixture.mjs";
 test("settings preserve legacy shape and strictly bound optional whole-run provider ceilings", () => {
   const presets = agentPresets(), limits = setupFixture().workspace.providerCatalog.providers[0].limits;
   assert.deepEqual(parseOptimizationAgentPresets(presets), presets);
+  const legacy = structuredClone(presets.standard); delete legacy.analysisProtocol;
+  assert.equal(parseOptimizationAgentSettings(legacy).analysisProtocol, 1);
+  assert.equal(parseOptimizationAgentSettings(presets.standard).analysisProtocol, 2);
   assert.equal(Object.hasOwn(parseOptimizationAgentSettings(presets.standard), "providerLimits"), false);
   const settings = { ...presets.standard, providerLimits: { advisor: { ...limits }, generation: { ...limits } } };
   assert.deepEqual(parseOptimizationAgentSettings(settings), settings);

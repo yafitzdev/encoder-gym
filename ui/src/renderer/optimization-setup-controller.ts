@@ -5,10 +5,16 @@ import type { ManagedWorkspace } from "../managed-workspace.js";
 import type { WorkspaceSnapshot } from "../workspace.js";
 import type { OptimizationLaunchAuthorization } from "../optimization-launch.js";
 import { parseOptimizationAgentSettings, providerLimitsWithin, type OptimizationAgentPresets, type OptimizationAgentSettings, type OptimizationStartOptions } from "../optimization-agent-settings.js";
-import type { NativeProgress } from "../managed-control.js";
+import type { ManagedProviderStatus, NativeProgress } from "../managed-control.js";
 import type { OptimizationInputs, OptimizationSetup, OptimizationSetupRequest } from "../optimization-setup.js";
 import { inputOptimizationPhase, inputOptimizationTerminal, newerInputRun, observedInputRun, type InputOptimizationPhase, type InputOptimizationRun } from "../input-optimization.js";
 import { appendLiveActivity, inputRunActivity, inputRunStageLabel, type InputRunActivity, type InputRunActivityEntry } from "./input-run-activity.js";
+
+export interface LaunchBlocker {
+  code: string;
+  message: string;
+  action?: "models" | "datasets" | "benchmarks" | "project" | "settings" | "refresh";
+}
 
 /** Per-project input selection. Running experiments have a separate controller. */
 export class OptimizationSetupController {
@@ -34,6 +40,7 @@ export class OptimizationSetupController {
   liveProgressAt?: number;
   startedAt?: number;
   error?: unknown;
+  providerStatus?: ManagedProviderStatus;
   private epoch = 0;
   private retry?: OptimizationSetupRequest;
   private launchRetry?: OptimizationStartOptions & { setupId: string };
@@ -102,12 +109,35 @@ export class OptimizationSetupController {
       && !this.loading && !this.saving && !this.running && !this.initializingEvaluation;
   }
   get canSave(): boolean { return !!this.selected && !this.saved && !this.saving && !this.loading && !this.running && !this.initializingEvaluation; }
-  get canOptimize(): boolean {
-    const canCreateInputs = this.canInitializeBenchmark && !!this.model && !!this.dataset?.version.rows;
+  get launchBlockers(): LaunchBlocker[] {
+    if (this.preparationId || this.saving || this.running || this.initializingEvaluation) return [{ code: "busy", message: "A run is being prepared or executed. Stop it or wait for it to finish." }];
+    if (this.loading) return [{ code: "loading", message: "Checking saved inputs and local credentials…" }];
+    if (!this.data) return [{ code: "inputs-unavailable", message: "Run inputs could not be loaded.", action: "refresh" }];
+    const blockers: LaunchBlocker[] = [];
+    if (!this.model || !this.baseline) blockers.push({ code: "model-missing", message: "Choose a registered baseline model.", action: "models" });
+    if (!this.dataset) blockers.push({ code: "dataset-missing", message: "Choose an available starting dataset version.", action: "datasets" });
+    else if (!this.dataset.version.rows) blockers.push({ code: "dataset-empty", message: "The selected dataset has no training rows.", action: "datasets" });
+    if (!this.benchmark && !this.canInitializeBenchmark) blockers.push({ code: "benchmark-missing", message: "The project evaluation is missing or no longer available.", action: "benchmarks" });
     const providers = this.workspace.providerCatalog?.providers ?? [];
-    const providersReady = providers.some(provider => provider.role === "advisor") && providers.some(provider => provider.role === "generation");
-    return providersReady && !this.settingsError && (!!this.selected || canCreateInputs) && !this.preparationId && !this.loading && !this.saving && !this.running && !this.initializingEvaluation;
+    for (const [role, label] of [["advisor", "Agent"], ["generation", "Data generator"]] as const) {
+      if (!providers.some(provider => provider.role === role)) blockers.push({ code: `provider-${role}`, message: `${label} has no assigned connection and model.`, action: "project" });
+    }
+    const checked = this.providerStatus;
+    if (this.launchRetry) {
+      // Reconcile the already-requested immutable launch. Today's credential
+      // status cannot speak for its pinned catalog; execution checks that one.
+    } else if (providers.length && (!checked || checked.projectId !== this.projectId || checked.catalog?.id !== this.workspace.providerCatalog?.id || checked.catalog?.fingerprint !== this.workspace.providerCatalog?.fingerprint)) {
+      blockers.push({ code: "credentials-unverified", message: "Local connection credentials could not be checked for these project settings.", action: "refresh" });
+    } else for (const [role, label] of [["advisor", "Agent"], ["generation", "Data generator"]] as const) {
+      const provider = providers.find(item => item.role === role);
+      if (provider?.authentication === "bearer" && !checked?.credentialAvailability.some(item => item.role === role && item.authentication === "bearer" && item.availability === "available")) {
+        blockers.push({ code: `credential-${role}`, message: `${label} credential is missing or unavailable.`, action: "project" });
+      }
+    }
+    if (this.settingsError) blockers.push({ code: "settings-invalid", message: this.settingsError, action: "settings" });
+    return blockers;
   }
+  get canOptimize(): boolean { return !this.launchBlockers.length; }
   get canCancel(): boolean { return this.running && !!this.run && !inputOptimizationTerminal(this.run.state) && !this.cancelling; }
   get runPhase(): InputOptimizationPhase | undefined { return this.run ? inputOptimizationPhase(this.run.state) : undefined; }
   sync(workspace: ManagedWorkspace): void {
@@ -116,7 +146,7 @@ export class OptimizationSetupController {
     if (this.preparationId || this.running || this.initializingEvaluation) return;
     if (workspace !== this.workspace) { this.workspace = workspace; this.invalidate(); }
   }
-  private invalidate(): void { this.epoch++; this.loading = false; this.error = undefined; this.data = undefined; this.retry = undefined; }
+  private invalidate(): void { this.epoch++; this.loading = false; this.error = undefined; this.data = undefined; this.providerStatus = undefined; this.retry = undefined; }
   refresh(): void { if (!this.saving && !this.running && !this.initializingEvaluation) { this.invalidate(); this.render(); } }
   select(kind: "dataset" | "benchmark", id: string): void {
     if (this.saving || this.loading || this.running || this.initializingEvaluation) return;
@@ -128,14 +158,18 @@ export class OptimizationSetupController {
   private async load(): Promise<void> {
     this.loading = true; const epoch = this.epoch; this.render();
     try {
-      const [datasets, benchmarks, history, launches, presets] = await Promise.all([
+      const [datasets, benchmarks, history, launches, presets, providerStatus] = await Promise.all([
         this.bridge.queryDatasets(this.projectId, { kind: "list" }), this.bridge.queryBenchmarks(this.projectId, { kind: "list" }), this.bridge.optimizationSetups(this.projectId),
         this.bridge.optimizationLaunches(this.projectId),
         this.bridge.optimizationAgentPresets(this.projectId),
+        // This is a local availability check, not a paid provider probe. A
+        // credential-store failure must not hide otherwise readable inputs.
+        this.bridge.managedProviders(this.projectId).catch(() => undefined),
       ]);
       if (datasets.kind !== "list" || benchmarks.kind !== "list") throw new Error("Could not read optimization inputs.");
       if (epoch !== this.epoch) return;
       this.data = { datasets: datasets.entries, benchmarks: benchmarks.versions, history };
+      this.providerStatus = providerStatus;
       this.launches = launches;
       this.presets = presets;
       this.settings ??= structuredClone(presets.standard);

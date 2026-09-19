@@ -43,6 +43,20 @@ app.whenReady().then(async()=>{
     await check('selection survives collapsing','document.getElementById("optimization-dataset").value===qa.setup.datasetId');
     await check('disclosure is an SVG with centered stable geometry','document.querySelector(".focus-run.expanded .disclosure-indicator.is-expanded svg path") && document.querySelector(".disclosure-indicator").textContent===""');
     await capture('setup-dark');
+    await check('launch summary shows exact selected versions and finite limits', `document.querySelector('.optimization-launch-summary').textContent.includes('Base · v1 · 10 rows') && document.querySelector('.optimization-launch-summary').textContent.includes('3 iterations · 192 row changes total') && document.querySelector('.launch-readiness').textContent.includes('Inputs ready') && getComputedStyle(document.querySelector('.optimization-launch-summary')).display==='block'`);
+    await evaluate(`qa.setup.workspace.providerCatalog.providers[0].authentication='bearer';qa.render()`);
+    await check('missing local credentials explain the disabled launch', `document.getElementById('optimization-start').disabled && document.querySelector('[data-blocker="credential-advisor"]').textContent.includes('Agent credential') && document.getElementById('optimization-start').getAttribute('aria-describedby')==='launch-draft-readiness'`);
+    await click('[data-blocker="credential-advisor"] button');
+    await check('readiness action opens the owning settings page', `window.lastNavigation.page==='project'`);
+    await capture('setup-blocked');
+    await evaluate(`qa.setup.workspace.providerCatalog.providers[0].authentication='none';qa.render()`);
+    await evaluate(`qa.setup.providerStatus=undefined;qa.render()`);
+    await click('[data-blocker="credentials-unverified"] button');
+    await evaluate('new Promise(resolve=>setTimeout(resolve,30))');
+    await check('Retry checks refreshes project custody and recovers local availability', `window.projectRefreshed && !document.getElementById('optimization-start').disabled`);
+    window.setSize(390,1000);await evaluate(`document.querySelector('.optimization-launch-summary').scrollIntoView({block:'start'})`);await capture('setup-summary-narrow');
+    await check('launch summary fits a narrow viewport', `document.documentElement.scrollWidth<=innerWidth && document.querySelector('.optimization-launch-summary').getBoundingClientRect().right<=innerWidth`);
+    window.setSize(1440,1000);
     await click('#optimization-advanced-draft > summary');
     const setSetting=async(key,value,event='change')=>evaluate(`(()=>{const input=document.getElementById('optimization-advanced-draft-${key}');input.value=${JSON.stringify(value)};input.dispatchEvent(new Event('${event}',{bubbles:true}))})()`);
     await setSetting('objective','Inspect routing failures','input');
@@ -207,6 +221,7 @@ app.whenReady().then(async()=>{
     await evaluate(`qa.runs.runs[0].launchId='pinned-quick';qa.runs.runs[0].iterations=qa.runs.runs[0].iterations.slice(0,1);qa.state.iterations.clear();qa.setup.launches=[{id:'pinned-quick',scope:{agentic:${JSON.stringify(pinnedSettings)},providerCatalog:{id:'earlier'},...${JSON.stringify(pinnedSettings.providerLimits)}}}];qa.render()`);
     await click('#overview-agent-root-setup');await click('#optimization-advanced-agent-root > summary');
     await check('historical Advanced shows immutable launch values, not current defaults',`document.getElementById('optimization-advanced-agent-root-objective').value==='Original objective' && document.getElementById('optimization-advanced-agent-root-advisor-maximumRequests').value==='2' && [...document.querySelectorAll('.optimization-advanced input,.optimization-advanced select,.optimization-advanced textarea')].every(node=>node.disabled) && !document.getElementById('optimization-start') && document.querySelector('.focus-setup').textContent.includes('read only')`);
+    await check('saved launch summary does not borrow current provider or budget settings', `document.querySelector('.optimization-launch-summary').textContent.includes('1 iteration · 8 row changes total') && document.querySelector('.optimization-launch-summary').textContent.includes('Earlier project settings') && !document.querySelector('.optimization-launch-summary').textContent.includes('deepseek-chat') && document.querySelector('.launch-provider-limits').textContent.includes('2 requests') && !document.querySelector('.launch-readiness')`);
     await click('#overview-agent-root-report');
     await check('Quick-test reports cannot be mistaken for promotion evidence',`document.querySelector('.diagnostic-notice').textContent.includes('no final holdout') && document.querySelector('.focus-run-heading').children.length===4 && document.querySelector('.run-mode-label').textContent==='Quick test'`);
     await capture('quick-history-390');

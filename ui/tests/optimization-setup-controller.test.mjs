@@ -44,6 +44,7 @@ function fixture(overrides = {}) {
   const f = setupFixture(), history = [], writes = [], runs = [];
   const run = (state = "queued") => ({ id: randomUUID(), projectId: f.projectId, createdAt: new Date().toISOString(), state, attempt: 0, materializationAttempt: 0, experimentAttempt: 0, executionAttempt: 0, finalAttempt: 0, lastSequence: 1, updatedAt: new Date().toISOString() });
   const bridge = { queryDatasets: async () => ({ kind: "list", entries: f.datasets }), queryBenchmarks: async () => ({ kind: "list", versions: f.workspace.benchmarkVersions }),
+    managedProviders: async () => ({ projectId: f.projectId, configured: true, catalog: f.workspace.providerCatalog, credentialAvailability: [], liveProbePerformed: false }),
     optimizationSetups: async () => [...history], optimizationLaunches: async () => [], optimizationAgentPresets: async () => agentPresets(), previewOptimizationSetup: async () => f.preview,
     finishInputPreparation: async () => {}, stopInputPreparation: async () => {},
     saveOptimizationSetup: async (_, request) => { writes.push(structuredClone(request)); const result = f.saved(request); history.push(result.setup); return result; },
@@ -90,6 +91,7 @@ test("uncertain launch retries keep their identity and exact settings across pro
   pending.reject(new Error("Lost reservation reply")); await starting;
   assert.equal(f.controller.run, undefined); assert.ok(f.controller.error);
   f.workspace.providerCatalog.providers[0].limits.maximumRequests = 1;
+  f.bridge.managedProviders = async () => { throw new Error("Current catalog credential status unavailable"); };
   f.controller.refresh(); await f.controller.ensure(); await f.controller.optimize();
   assert.deepEqual(requests[1], requests[0]); assert.equal(f.runs.length, 1);
   assert.equal(f.controller.run.state, "baseline_retained");
@@ -106,6 +108,49 @@ test("Optimize stays unavailable until Agent and Data generation are assigned", 
   const f = fixture(); f.workspace.providerCatalog = undefined;
   await f.controller.ensure();
   assert.equal(f.controller.canOptimize, false);
+  assert.deepEqual(f.controller.launchBlockers.filter(item => item.code.startsWith("provider-")).map(item => item.code), ["provider-advisor", "provider-generation"]);
+});
+
+test("launch readiness explains stale inputs, empty datasets and invalid settings", async () => {
+  const f = fixture(); await f.controller.ensure();
+  assert.deepEqual(f.controller.launchBlockers, []);
+  f.controller.select("dataset", randomUUID());
+  assert.equal(f.controller.launchBlockers[0].code, "dataset-missing");
+  assert.equal(f.controller.launchBlockers[0].action, "datasets");
+  f.controller.select("dataset", f.version.id); f.datasets[0].versions[0].rows = 0;
+  assert.equal(f.controller.launchBlockers[0].code, "dataset-empty");
+  f.datasets[0].versions[0].rows = 10;
+  f.controller.select("benchmark", randomUUID());
+  assert.equal(f.controller.launchBlockers[0].code, "benchmark-missing");
+  f.controller.select("benchmark", f.benchmark.id);
+  f.controller.settings.maximumRowChanges = 0;
+  assert.equal(f.controller.launchBlockers[0].code, "settings-invalid");
+  assert.equal(f.controller.canOptimize, false);
+  await f.controller.optimize(); assert.equal(f.runs.length, 0);
+});
+
+test("launch checks local credential availability against the selected provider revision", async () => {
+  const f = fixture();
+  f.workspace.providerCatalog.providers[0].authentication = "bearer";
+  f.bridge.managedProviders = async () => ({ projectId: f.projectId, catalog: structuredClone(f.workspace.providerCatalog),
+    credentialAvailability: [{role:"advisor",authentication:"bearer",availability:"missing"}], liveProbePerformed:false });
+  await f.controller.ensure();
+  assert.equal(f.controller.canOptimize, false);
+  assert.match(f.controller.launchBlockers.find(item => item.code === "credential-advisor").message, /Agent.*credential/);
+  f.controller.providerStatus.credentialAvailability[0].availability = "available";
+  assert.equal(f.controller.canOptimize, true);
+  f.controller.providerStatus.catalog.id = randomUUID();
+  assert.equal(f.controller.launchBlockers[0].code, "credentials-unverified");
+  await f.controller.optimize(); assert.equal(f.runs.length, 0);
+});
+
+test("failed local credential checks keep inputs visible and offer a retry", async () => {
+  const f = fixture();
+  f.bridge.managedProviders = async () => { throw new Error("Credential store is locked"); };
+  await f.controller.ensure();
+  assert.ok(f.controller.data); assert.equal(f.controller.canOptimize, false);
+  assert.equal(f.controller.launchBlockers[0].code, "credentials-unverified");
+  assert.equal(f.controller.launchBlockers[0].action, "refresh");
 });
 
 test("Optimize creates a missing project evaluation and continues in the same click", async () => {
