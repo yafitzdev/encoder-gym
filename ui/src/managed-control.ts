@@ -247,6 +247,11 @@ export interface NomosBindingPreview {
   runtimeLocation: string; sourceRevision: string; sourceFingerprint: string;
   projectSnapshot: { id: string; fingerprint: string };
   python: { executable: string; version: string; compatibleVersion: boolean; capabilities: PythonCapability[]; ready: boolean };
+  package: {
+    action: "publish_managed_runtime_package"; destination: string;
+    runtimeFiles: number; runtimeBytes: number; pythonFiles: number; pythonBytes: number;
+    totalBytes: number; selfContained: true;
+  };
   store: {
     databasePath: string; action: "initialize_new_store" | "verify_existing_store" | "import_verified_history" | "extend_existing_store_for_promoted_baseline";
     importedHistory?: { sourceName: string; projectSnapshot: { id: string; fingerprint: string }; inventory: ScientificStoreInventory; verification: string };

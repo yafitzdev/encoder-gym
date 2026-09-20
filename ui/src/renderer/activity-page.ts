@@ -51,7 +51,7 @@ const operationLabels: Record<string, string> = {
   "provider.models.assign": "Provider models assigned",
   "runtime.verify": "Runtime verified",
   "runtime.prepare_python": "Python runtime prepared",
-  "runtime.bind": "Runtime connected",
+  "runtime.bind": "Runtime copied into project",
 };
 const label = (value: string): string => operationLabels[value] ?? value.replaceAll("_", " ").replaceAll(".", " · ");
 const time = (value: string): string => new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" }).format(new Date(value));

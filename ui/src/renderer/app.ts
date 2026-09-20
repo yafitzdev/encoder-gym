@@ -457,7 +457,7 @@ export function mount(): void {
       scientificRuntimeDialog(element("project-dialog") as HTMLDialogElement, bridge, id, result => {
         if (selection.selectedId !== id) return;
         opened = result; view.optimization = { loading: false }; render();
-        notify("Scientific runtime connected. No training or evaluation was run.");
+        notify("Scientific runtime copied into the project. No training or evaluation was run.");
       });
     },
     upgrade: () => {

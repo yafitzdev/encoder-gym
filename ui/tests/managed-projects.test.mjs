@@ -443,6 +443,7 @@ test("scientific binding uses only native-picked runtime tokens and requires a s
     runtimeLocation: join(root, "isolated"), sourceRevision: "abc123", sourceFingerprint: "sha256:" + "b".repeat(64),
     projectSnapshot: { id: randomUUID(), fingerprint: "sha256:" + "d".repeat(64) },
     python: { executable: join(root, "python.exe"), version: "3.12.4", compatibleVersion: true, capabilities: [], ready: true },
+    package: { action: "publish_managed_runtime_package", destination: "runtimes/nomos/<package-sha256>", runtimeFiles: 20, runtimeBytes: 1_000, pythonFiles: 30, pythonBytes: 2_000, totalBytes: 3_000, selfContained: true },
     store: { databasePath: "runs/scientific-<snapshot-sha256>.sqlite", action: "import_verified_history", importedHistory: { sourceName: "history.sqlite", projectSnapshot: { id: randomUUID(), fingerprint: "sha256:" + "d".repeat(64) }, inventory: { projects: 1, protocols: 1, experimentRuns: 1, benchmarkGenerations: 2, diagnoses: 1, proposals: 2, approvedDeltaSelections: 2, trainingSnapshots: 1, optimizationRuns: 1 }, verification: "current_schema_integrity_and_runtime_project_match" } }, ready: true,
   };
   let runtimeReady = false;

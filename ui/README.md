@@ -248,9 +248,13 @@ Scientific runtime setup also stays behind native picker tokens. The desktop
 first previews the isolated checkout and Python executable through the fixed
 `workspace preview-nomos-binding` intent. The preview checks the exact baseline,
 clean/no-remote source state, supported Python version, and required execution
-capabilities without writing or contacting a provider. **Connect runtime** is
-enabled only for a ready preview; the binding command rechecks the same facts
-before creating or verifying the contained scientific store. The same dialog
+capabilities without writing or contacting a provider. The preview also shows
+the exact managed-package file count and disk size. **Copy into project** is
+enabled only for a ready preview; the binding command rechecks the same facts,
+copies a content-addressed Nomos workspace and portable Python runtime below
+the project, and records only project-relative execution paths before creating
+or verifying the contained scientific store. The source checkout and selected
+virtual environment are no longer needed after it succeeds. The same dialog
 can explicitly select existing Encoder Gym scientific history. The main process
 keeps that native path behind a project-scoped token; preview checks its exact
 schema, SQLite integrity, and current runtime project, then connection creates a
