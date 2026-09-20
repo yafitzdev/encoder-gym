@@ -96,7 +96,11 @@ async fn fixture(root: &Path) -> (std::path::PathBuf, BenchmarkSource) {
         RuntimeBinding {
             kind: RuntimeKind::Managed,
             location: "runs/runtime".into(),
-            executable: None,
+            executable: Some("runs/runtime/python.exe".into()),
+            package: Some(BoundIdentity {
+                id: project_workspace_core::MANAGED_RUNTIME_PACKAGE_ID.into(),
+                fingerprint: fp('9'),
+            }),
             project_snapshot: project_snapshot.clone(),
         },
         ScientificStoreBinding {

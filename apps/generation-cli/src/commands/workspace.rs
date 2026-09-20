@@ -4,6 +4,7 @@ mod dataset_versions;
 mod optimization_launch;
 mod optimization_runs;
 mod optimization_setup;
+mod runtime_package;
 
 use crate::{
     cli::{
@@ -73,6 +74,16 @@ struct RawPythonInspection {
     major: u32,
     minor: u32,
     modules: BTreeMap<String, bool>,
+    #[serde(default)]
+    prefix: Option<String>,
+    #[serde(default)]
+    base_prefix: Option<String>,
+    #[serde(default)]
+    base_executable: Option<String>,
+    #[serde(default)]
+    purelib: Option<String>,
+    #[serde(default)]
+    platlib: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -143,6 +154,7 @@ struct NomosBindingPreview {
     source_fingerprint: String,
     project_snapshot: BoundIdentity,
     python: PythonRuntimeInspection,
+    package: runtime_package::ManagedPackagePreview,
     store: BindingStorePreview,
     previous_binding_id: Option<Uuid>,
     ready: bool,
@@ -154,6 +166,7 @@ struct VerifiedNomosBinding {
     project: ExternalProjectSnapshot,
     runtime_root: PathBuf,
     python: PythonRuntimeInspection,
+    python_source: runtime_package::PythonPackageSource,
     history: Option<VerifiedScientificHistory>,
     existing_store: Option<PathBuf>,
 }
@@ -299,7 +312,11 @@ async fn execute_inner(command: WorkspaceCommand) -> anyhow::Result<()> {
             )
         }
         WorkspaceCommand::Open { folder } => print(&open_workspace(&folder, false).await?),
-        WorkspaceCommand::Verify { folder } => print(&open_workspace(&folder, true).await?),
+        WorkspaceCommand::Verify { folder } => {
+            let workspace = open_workspace(&folder, true).await?;
+            verify_managed_nomos_package(&workspace).await?;
+            print(&workspace)
+        }
         WorkspaceCommand::Upgrade { folder } => {
             eprintln!("Upgrading the project registry; model and dataset artifacts are unchanged.");
             print(&upgrade_workspace(&folder).await?)
@@ -611,7 +628,7 @@ async fn prepare_optimization(
 
     let store = open_bound_store_mutable(&workspace.folder, binding).await?;
     let project = load_bound_project(&store, binding).await?;
-    let backend = open_nomos_binding(binding, &project)?;
+    let backend = open_nomos_binding(&workspace.folder, binding, &project)?;
     let result = super::encoder_optimize::prepare_managed(
         &store,
         &backend,
@@ -656,14 +673,10 @@ async fn managed_optimize(
     let project = load_bound_project(&store, binding).await?;
     store.pool().close().await;
 
-    let executable = binding
-        .runtime
-        .executable
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Rebind the runtime with an executable selection."))?;
+    let (runtime, executable) = resolve_nomos_runtime(&workspace.folder, binding, false)?;
     let backend = NomosWorkspaceArgs {
-        workspace: binding.runtime.location.clone().into(),
-        python: executable.into(),
+        workspace: runtime,
+        python: executable,
     };
     let command = managed_command(command, backend);
     let root = std::path::Path::new(&workspace.folder);
@@ -704,7 +717,7 @@ async fn promote_accepted(
     );
     let store = open_bound_store(&workspace.folder, binding).await?;
     let project = load_bound_project(&store, binding).await?;
-    let backend = open_nomos_binding(binding, &project)?;
+    let backend = open_nomos_binding(&workspace.folder, binding, &project)?;
     let evidence =
         super::encoder_optimize::accepted_promotion_evidence(&store, &backend, run_id).await?;
     store.pool().close().await;
@@ -1041,7 +1054,7 @@ async fn readiness(
             let (project_matches, project_evidence) = match bound_project {
                 Ok(project) => {
                     runtime_project = Some(project.clone());
-                    match open_nomos_binding(binding, &project) {
+                    match open_nomos_binding(&workspace.folder, binding, &project) {
                         Ok(_) => {
                             checks.push(check(
                             "scientific.runtime",
@@ -1468,6 +1481,7 @@ async fn readiness(
 }
 
 fn open_nomos_binding(
+    workspace_folder: impl AsRef<Path>,
     binding: &ScientificBinding,
     project: &ExternalProjectSnapshot,
 ) -> anyhow::Result<NomosBackend> {
@@ -1476,10 +1490,8 @@ fn open_nomos_binding(
         "This executable has no compiled adapter for '{}'.",
         binding.adapter.key
     );
-    let executable = binding.runtime.executable.as_ref().ok_or_else(|| {
-        anyhow::anyhow!("The runtime binding predates executable selection; rebind it.")
-    })?;
-    let backend = NomosBackend::open(&binding.runtime.location, executable)?
+    let (runtime, executable) = resolve_nomos_runtime(workspace_folder, binding, false)?;
+    let backend = NomosBackend::open(runtime, executable)?
         .with_baseline_model(project.baseline_model.clone())?;
     let identity = backend.identity();
     anyhow::ensure!(
@@ -1494,6 +1506,48 @@ fn open_nomos_binding(
         "The scientific project identity differs from this runtime binding."
     );
     Ok(backend)
+}
+
+fn resolve_nomos_runtime(
+    workspace_folder: impl AsRef<Path>,
+    binding: &ScientificBinding,
+    deep: bool,
+) -> anyhow::Result<(PathBuf, PathBuf)> {
+    match binding.runtime.kind {
+        RuntimeKind::Managed => {
+            let resolved = runtime_package::resolve(workspace_folder.as_ref(), binding, deep)?;
+            Ok((resolved.runtime, resolved.executable))
+        }
+        RuntimeKind::ExternalIsolated => Ok((
+            PathBuf::from(&binding.runtime.location),
+            PathBuf::from(binding.runtime.executable.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("The runtime binding predates executable selection; rebind it.")
+            })?),
+        )),
+    }
+}
+
+async fn verify_managed_nomos_package(
+    workspace: &project_workspace_local::ManagedWorkspace,
+) -> anyhow::Result<()> {
+    let Some(binding) = workspace.scientific_binding.as_ref() else {
+        return Ok(());
+    };
+    if binding.runtime.kind != RuntimeKind::Managed {
+        return Ok(());
+    }
+    let resolved = runtime_package::resolve(Path::new(&workspace.folder), binding, true)?;
+    let inspection = inspect_python_runtime(&resolved.executable, &resolved.runtime).await?;
+    anyhow::ensure!(
+        inspection.ready,
+        "The managed Python runtime no longer provides every required capability."
+    );
+    let store = open_bound_store(&workspace.folder, binding).await?;
+    let project = load_bound_project(&store, binding).await?;
+    let backend = open_nomos_binding(&workspace.folder, binding, &project)?;
+    backend.verify_current_snapshot(project).await?;
+    store.pool().close().await;
+    Ok(())
 }
 
 async fn load_bound_project(
@@ -1757,6 +1811,7 @@ async fn bind_nomos(
         project,
         runtime_root,
         python: python_inspection,
+        python_source,
         history,
         existing_store,
     } = verified;
@@ -1770,6 +1825,23 @@ async fn bind_nomos(
     );
 
     let root = Path::new(&workspace.folder);
+    let adapter_identity = backend.identity();
+    let adapter = AdapterBinding {
+        key: adapter_identity.name,
+        protocol: adapter_identity.protocol_version,
+        configuration_fingerprint: adapter_identity.configuration_fingerprint,
+    };
+    eprintln!(
+        "Copying the verified Nomos workspace and Python runtime into managed project custody."
+    );
+    let published = runtime_package::publish(
+        root,
+        &runtime_root,
+        &python_source,
+        adapter.clone(),
+        &project,
+    )
+    .await?;
     let (store_path, store_fingerprint, store_bytes) = match (history, existing_store) {
         (Some(history), None) => import_scientific_history(root, &backend, &history).await?,
         (None, Some(path)) => {
@@ -1815,7 +1887,6 @@ async fn bind_nomos(
         .to_string_lossy()
         .replace('\\', "/");
 
-    let adapter = backend.identity();
     let previous = workspace
         .scientific_binding
         .as_ref()
@@ -1825,18 +1896,15 @@ async fn bind_nomos(
         workspace.manifest.id,
         catalog.active_baseline_revision_id,
         previous,
-        AdapterBinding {
-            key: adapter.name,
-            protocol: adapter.protocol_version,
-            configuration_fingerprint: adapter.configuration_fingerprint,
-        },
+        adapter,
         RuntimeBinding {
-            kind: RuntimeKind::ExternalIsolated,
-            location: runtime_root.to_string_lossy().into_owned(),
-            executable: Some(python.to_string_lossy().into_owned()),
+            kind: RuntimeKind::Managed,
+            location: published.runtime_location,
+            executable: Some(published.executable),
+            package: Some(published.package.identity()),
             project_snapshot: BoundIdentity {
                 id: project.id.to_string(),
-                fingerprint: project.fingerprint,
+                fingerprint: project.fingerprint.clone(),
             },
         },
         ScientificStoreBinding {
@@ -1853,7 +1921,7 @@ async fn bind_nomos(
         Utc::now(),
     )?;
     eprintln!(
-        "Binding the verified isolated Nomos runtime to a contained scientific store; no training or evaluation will run."
+        "Binding the managed Nomos runtime package to its contained scientific store; no training or evaluation will run."
     );
     print(&record_scientific_binding(folder, binding, previous).await?)
 }
@@ -1865,6 +1933,7 @@ async fn preview_nomos_binding(
     history_database: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
     let verified = verify_nomos_binding(folder, runtime, python, history_database).await?;
+    let package = runtime_package::preview(&verified.runtime_root, &verified.python_source)?;
     let catalog = verified
         .workspace
         .model_catalog
@@ -1942,6 +2011,7 @@ async fn preview_nomos_binding(
             .map(|value| value.id),
         ready: verified.python.ready,
         python: verified.python,
+        package,
     };
     print(&preview)
 }
@@ -2023,13 +2093,14 @@ async fn verify_nomos_binding(
         .as_ref()
         .map(|value| value.project.clone())
         .unwrap_or(current_project);
-    let python = inspect_python_runtime(python, &runtime_root).await?;
+    let (python, python_source) = inspect_python_runtime_source(python, &runtime_root).await?;
     Ok(VerifiedNomosBinding {
         workspace,
         backend,
         project,
         runtime_root,
         python,
+        python_source,
         history,
         existing_store,
     })
@@ -2243,9 +2314,19 @@ async fn inspect_python_runtime(
     executable: &std::path::Path,
     runtime: &std::path::Path,
 ) -> anyhow::Result<PythonRuntimeInspection> {
-    const SCRIPT: &str = r#"import importlib.util,json,sys
+    Ok(inspect_python_runtime_source(executable, runtime).await?.0)
+}
+
+async fn inspect_python_runtime_source(
+    executable: &std::path::Path,
+    runtime: &std::path::Path,
+) -> anyhow::Result<(
+    PythonRuntimeInspection,
+    runtime_package::PythonPackageSource,
+)> {
+    const SCRIPT: &str = r#"import importlib.util,json,sys,sysconfig
 names=['torch','sentence_transformers','transformers','datasets','accelerate','numpy','sklearn','psutil','onnxruntime_genai']
-print(json.dumps({'version':'.'.join(map(str,sys.version_info[:3])),'major':sys.version_info[0],'minor':sys.version_info[1],'modules':{name:importlib.util.find_spec(name) is not None for name in names}}))"#;
+print(json.dumps({'version':'.'.join(map(str,sys.version_info[:3])),'major':sys.version_info[0],'minor':sys.version_info[1],'modules':{name:importlib.util.find_spec(name) is not None for name in names},'prefix':sys.prefix,'base_prefix':sys.base_prefix,'base_executable':getattr(sys,'_base_executable',sys.executable),'purelib':sysconfig.get_path('purelib'),'platlib':sysconfig.get_path('platlib')}))"#;
     let output = tokio::time::timeout(
         Duration::from_secs(15),
         tokio::process::Command::new(executable)
@@ -2265,9 +2346,31 @@ print(json.dumps({'version':'.'.join(map(str,sys.version_info[:3])),'major':sys.
     let raw: RawPythonInspection = serde_json::from_slice(&output.stdout).map_err(|_| {
         anyhow::anyhow!("The selected Python runtime returned an unreadable capability report.")
     })?;
-    Ok(python_runtime_inspection(
-        executable.to_string_lossy().into_owned(),
-        raw,
+    let source = match (
+        raw.prefix.as_deref(),
+        raw.base_prefix.as_deref(),
+        raw.base_executable.as_deref(),
+        raw.purelib.as_deref(),
+        raw.platlib.as_deref(),
+    ) {
+        (Some(prefix), Some(base_prefix), Some(base_executable), Some(purelib), Some(platlib)) => {
+            runtime_package::PythonPackageSource::from_inspection(
+                executable,
+                prefix,
+                base_prefix,
+                base_executable,
+                purelib,
+                platlib,
+            )?
+        }
+        (None, None, None, None, None) => {
+            runtime_package::PythonPackageSource::standalone(executable)?
+        }
+        _ => anyhow::bail!("The selected Python runtime returned incomplete packaging paths."),
+    };
+    Ok((
+        python_runtime_inspection(executable.to_string_lossy().into_owned(), raw),
+        source,
     ))
 }
 
@@ -2587,6 +2690,11 @@ mod tests {
                 major: 3,
                 minor: 12,
                 modules: python_modules(true),
+                prefix: None,
+                base_prefix: None,
+                base_executable: None,
+                purelib: None,
+                platlib: None,
             },
         );
         assert!(ready.ready);
@@ -2602,6 +2710,11 @@ mod tests {
                 major: 3,
                 minor: 10,
                 modules,
+                prefix: None,
+                base_prefix: None,
+                base_executable: None,
+                purelib: None,
+                platlib: None,
             },
         );
         assert!(!incomplete.ready);
@@ -2641,6 +2754,7 @@ mod tests {
                 kind: RuntimeKind::ExternalIsolated,
                 location: "runtime".into(),
                 executable: Some("python".into()),
+                package: None,
                 project_snapshot: BoundIdentity {
                     id: project.id.to_string(),
                     fingerprint: project.fingerprint.clone(),

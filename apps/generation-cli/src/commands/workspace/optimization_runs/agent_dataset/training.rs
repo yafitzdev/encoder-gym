@@ -101,7 +101,7 @@ pub(super) async fn complete(
     let store = super::super::super::open_bound_store_mutable(&workspace.folder, &runtime).await?;
     let result: Result<_> = async {
         let bound_project = super::super::super::load_bound_project(&store, &runtime).await?;
-        let base = super::super::super::open_nomos_binding(&runtime, &bound_project)?;
+        let base = super::super::super::open_nomos_binding(folder, &runtime, &bound_project)?;
         let native = if training.id == full.id {
             qualified.native_dataset.clone()
         } else {

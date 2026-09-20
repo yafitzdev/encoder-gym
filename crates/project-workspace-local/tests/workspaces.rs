@@ -236,6 +236,7 @@ fn scientific_binding(
             kind: RuntimeKind::ExternalIsolated,
             location: "C:/isolated/nomos".into(),
             executable: Some("python".into()),
+            package: None,
             project_snapshot: BoundIdentity {
                 id: "revision-1".into(),
                 fingerprint: digest('b'),

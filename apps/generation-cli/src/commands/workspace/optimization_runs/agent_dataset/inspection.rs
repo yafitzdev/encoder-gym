@@ -105,7 +105,7 @@ impl IterationInspection {
                 protocol.fingerprint == iteration.development.protocol.fingerprint,
                 "Iteration development protocol changed"
             );
-            let backend = super::super::super::open_nomos_binding(&binding, &runtime_project)?;
+            let backend = super::super::super::open_nomos_binding(folder, &binding, &runtime_project)?;
             let mut failures = Vec::new();
             let mut current_evidence = Vec::<NomosDevelopmentEvidence>::new();
             let reports: Vec<_> = if let Some(prior) = &prior { prior.reports.values().collect() }
@@ -317,7 +317,7 @@ pub(super) async fn result_repair_metric_points(
             .get_protocol(training.protocol.id.parse()?)
             .await?
             .context("Iteration scientific protocol missing")?;
-        let backend = super::super::super::open_nomos_binding(&binding, &runtime_project)?;
+        let backend = super::super::super::open_nomos_binding(folder, &binding, &runtime_project)?;
         let candidate = result
             .reports
             .values()

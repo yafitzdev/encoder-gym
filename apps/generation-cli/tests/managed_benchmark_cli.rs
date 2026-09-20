@@ -102,6 +102,17 @@ async fn executable_path_rebind_reuses_the_exact_existing_scientific_store() {
         rebound["scientificBinding"]["store"]["databasePath"],
         before_binding.store.database_path
     );
+    assert_eq!(rebound["scientificBinding"]["runtime"]["kind"], "managed");
+    let managed_runtime = rebound["scientificBinding"]["runtime"]["location"]
+        .as_str()
+        .unwrap();
+    assert!(managed_runtime.starts_with("runtimes/nomos/"));
+    assert!(managed_runtime.ends_with("/workspace"));
+    assert!(rebound["scientificBinding"]["runtime"]["package"].is_object());
+
+    fs::rename(root.join("runtime"), root.join("runtime-moved-away")).unwrap();
+    let readiness = run(root, &["readiness", "project"]);
+    assert_eq!(readiness["report"]["projectId"], rebound["manifest"]["id"]);
 
     let after = project_workspace_local::open_workspace(&folder, true)
         .await

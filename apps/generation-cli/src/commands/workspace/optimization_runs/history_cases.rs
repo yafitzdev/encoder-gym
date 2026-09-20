@@ -88,7 +88,7 @@ pub(super) async fn read(folder: &Path, run_id: Uuid, number: u32) -> Result<Dev
         let events = store.load_events(training.experiment_run_id).await?;
         let result =
             IterationDevelopmentResult::from_journal(&training, &project, &protocol, &events)?;
-        let backend = super::super::open_nomos_binding(binding, &runtime_project)?;
+        let backend = super::super::open_nomos_binding(folder, binding, &runtime_project)?;
         let baseline = protocol.baseline_development_reports();
         let comparisons = result
             .reports

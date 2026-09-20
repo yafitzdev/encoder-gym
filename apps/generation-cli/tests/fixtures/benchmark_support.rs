@@ -101,7 +101,11 @@ pub async fn fixture(root: &Path) -> (std::path::PathBuf, ExternalProjectSnapsho
         RuntimeBinding {
             kind: RuntimeKind::Managed,
             location: "runs/missing-runtime".into(),
-            executable: None,
+            executable: Some("runs/missing-runtime/python.exe".into()),
+            package: Some(BoundIdentity {
+                id: project_workspace_core::MANAGED_RUNTIME_PACKAGE_ID.into(),
+                fingerprint: fp('0'),
+            }),
             project_snapshot: BoundIdentity {
                 id: project.id.to_string(),
                 fingerprint: project.fingerprint.clone(),
@@ -304,6 +308,7 @@ pub async fn initial_benchmark_fixture(
             kind: RuntimeKind::ExternalIsolated,
             location: runtime.to_string_lossy().into_owned(),
             executable: Some(executable.to_string_lossy().into_owned()),
+            package: None,
             project_snapshot: BoundIdentity {
                 id: project.id.to_string(),
                 fingerprint: project.fingerprint.clone(),

@@ -179,7 +179,7 @@ pub(super) async fn backend(
     let store = super::super::open_bound_store(&folder.to_string_lossy(), &binding).await?;
     let bound_project = super::super::load_bound_project(&store, &binding).await;
     store.pool().close().await;
-    let base = super::super::open_nomos_binding(&binding, &bound_project?)?;
+    let base = super::super::open_nomos_binding(folder, &binding, &bound_project?)?;
     let scope = &view.authorization.scope;
     let training = project_workspace_local::optimization_iteration_execution::training(
         folder,

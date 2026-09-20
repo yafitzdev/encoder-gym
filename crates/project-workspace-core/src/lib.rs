@@ -23,6 +23,7 @@ mod optimization_settings;
 mod optimization_setup;
 mod providers;
 mod readiness;
+mod runtime_package;
 mod scientific;
 mod training_data;
 pub use benchmark::{BenchmarkSource, ProjectBenchmarkVersion};
@@ -58,6 +59,9 @@ pub use providers::{
 };
 pub use readiness::{
     ReadinessAction, ReadinessCategory, ReadinessCheck, ReadinessReport, ReadinessState,
+};
+pub use runtime_package::{
+    MANAGED_RUNTIME_PACKAGE_ID, ManagedRuntimePackage, RuntimePackageInventory,
 };
 pub use scientific::{
     AdapterBinding, RuntimeBinding, RuntimeKind, ScientificBinding, ScientificStoreBinding,

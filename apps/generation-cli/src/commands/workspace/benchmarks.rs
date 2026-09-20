@@ -70,9 +70,10 @@ async fn initialize(folder: &Path, expected_parent: Option<Uuid>) -> Result<()> 
             .context("Connect an evaluation runtime first.")?;
         let store = super::open_bound_store_mutable(&workspace.folder, binding).await?;
         let project = super::load_bound_project(&store, binding).await?;
-        let backend = super::open_nomos_binding(binding, &project)?.with_progress_observer(
-            std::sync::Arc::new(crate::commands::encoder_optimize::activity::ProgressOutput),
-        );
+        let backend = super::open_nomos_binding(&workspace.folder, binding, &project)?
+            .with_progress_observer(std::sync::Arc::new(
+                crate::commands::encoder_optimize::activity::ProgressOutput,
+            ));
         let plan = NomosBackend::initial_benchmark_plan(&project)?;
         let candidate_id = derived_uuid(
             "initial-benchmark-candidate-v1",

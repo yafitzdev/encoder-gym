@@ -134,7 +134,8 @@ isolated runtime, proves that its baseline matches the active model, and runs a
 15-second offline Python capability check. The check requires Python 3.11 or
 3.12 plus the training, retrieval-evaluation, local-agent-evaluation, and
 diagnostic modules used by the compiled Nomos adapter. It writes nothing and
-makes no network or provider call.
+makes no network or provider call. It also inventories the source runtime and
+Python installation and reports the exact managed-package copy size.
 
 If the selected interpreter is compatible but incomplete, the desktop can
 explicitly install only the compiled adapter's fixed missing package mapping.
@@ -157,10 +158,12 @@ Installer output is not relayed into application errors where authenticated
 index URLs could leak.
 
 Without a history selection, the binding command repeats every check and
-rejects an incomplete interpreter. If the project already has an exact current
-binding, the command integrity-checks and reuses that contained scientific
-store; this permits an executable-path rebind after a local source-directory
-rename without discarding scientific history. Otherwise it initializes a new
+rejects an incomplete interpreter. It then copies the verified workspace and a
+portable Python runtime below `runtimes/nomos/<package-sha256>/`, verifies the
+copy, and appends a managed binding containing only project-relative paths. If
+the project already has an exact current binding, the command integrity-checks
+and reuses that contained scientific store; this migrates an older external
+binding without discarding scientific history. Otherwise it initializes a new
 production scientific store at `runs/scientific.sqlite`. With a history
 selection it additionally requires the current schema, a complete SQLite
 integrity check, and the exact current runtime project snapshot. It then uses
@@ -170,7 +173,8 @@ content identity, and records the hash and byte count in the binding. The
 selected source database is opened
 read-only and remains separate and unchanged. Neither path starts training,
 evaluates a model, or calls a provider. The source `nomos` repository is not
-a valid runtime.
+a valid runtime. After binding, execution no longer depends on either selected
+source path. See `managed-runtime-packages.md` for layout and verification.
 
 `workspace readiness` is passive: it reopens and rehashes the managed project,
 reproduces the active runtime and scientific-store identities when configured,

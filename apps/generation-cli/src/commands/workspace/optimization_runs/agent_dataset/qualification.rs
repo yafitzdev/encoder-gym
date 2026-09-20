@@ -237,7 +237,7 @@ async fn qualify_version(
     let loaded = super::super::super::load_bound_project(&store, binding).await;
     store.pool().close().await;
     let project = loaded?;
-    let backend = super::super::super::open_nomos_binding(binding, &project)?;
+    let backend = super::super::super::open_nomos_binding(folder, binding, &project)?;
     let rows = dataset_versions::materialization_rows(folder, version.id).await?;
     ensure!(
         rows.len() == version.members.len(),

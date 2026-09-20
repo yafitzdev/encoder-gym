@@ -368,9 +368,10 @@ async fn run_final_evaluation(
     .await?;
     let store = super::open_bound_store_mutable(&workspace.folder, binding).await?;
     let bound_project = super::load_bound_project(&store, binding).await?;
-    let backend = super::open_nomos_binding(binding, &bound_project)?.with_progress_observer(
-        std::sync::Arc::new(crate::commands::encoder_optimize::activity::ProgressOutput),
-    );
+    let backend = super::open_nomos_binding(&workspace.folder, binding, &bound_project)?
+        .with_progress_observer(std::sync::Arc::new(
+            crate::commands::encoder_optimize::activity::ProgressOutput,
+        ));
     let project_id: Uuid = experiment.scientific_project.id.parse()?;
     let project = store
         .get_project(project_id)
@@ -592,7 +593,7 @@ async fn run_attached_candidate(
     .await?;
     let store = super::open_bound_store_mutable(&workspace.folder, binding).await?;
     let bound_project = super::load_bound_project(&store, binding).await?;
-    let base_backend = super::open_nomos_binding(binding, &bound_project)?;
+    let base_backend = super::open_nomos_binding(&workspace.folder, binding, &bound_project)?;
     let project_id: Uuid = experiment.scientific_project.id.parse()?;
     let project = store
         .get_project(project_id)
@@ -981,7 +982,7 @@ async fn attach_experiment(
     );
     let store = super::open_bound_store_mutable(&workspace.folder, binding).await?;
     let bound_project = super::load_bound_project(&store, binding).await?;
-    let base_backend = super::open_nomos_binding(binding, &bound_project)?;
+    let base_backend = super::open_nomos_binding(&workspace.folder, binding, &bound_project)?;
     let native = base_backend.load_training_dataset(
         view.run.id,
         preparation.dataset.id,
@@ -1146,7 +1147,7 @@ async fn materialize_training_project(
 
     let store = super::open_bound_store_mutable(&workspace.folder, binding).await?;
     let source_project = super::load_bound_project(&store, binding).await?;
-    let backend = super::open_nomos_binding(binding, &source_project)?;
+    let backend = super::open_nomos_binding(&workspace.folder, binding, &source_project)?;
     let mut writer = backend.materialize_training_dataset(
         view.run.id,
         dataset.id,
@@ -1251,7 +1252,7 @@ async fn verify_preparation(
     );
     let store = super::open_bound_store(&workspace.folder, binding).await?;
     let project = super::load_bound_project(&store, binding).await?;
-    let backend = super::open_nomos_binding(binding, &project)?;
+    let backend = super::open_nomos_binding(&workspace.folder, binding, &project)?;
     verify_runtime_baseline(
         workspace
             .model_catalog

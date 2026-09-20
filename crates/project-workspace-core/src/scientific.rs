@@ -50,15 +50,38 @@ pub struct RuntimeBinding {
     /// configuration, never an argument vector or shell command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable: Option<String>,
+    /// Required content identity for managed packages. Historical external
+    /// bindings predate package custody and therefore have no package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<BoundIdentity>,
     pub project_snapshot: BoundIdentity,
 }
 
 impl RuntimeBinding {
     pub fn validate(&self) -> Result<(), Invalid> {
         match self.kind {
-            RuntimeKind::Managed => validate_relative(&self.location)?,
+            RuntimeKind::Managed => {
+                validate_relative(&self.location)?;
+                validate_relative(
+                    self.executable
+                        .as_deref()
+                        .ok_or_else(|| Invalid("Managed runtime executable is missing.".into()))?,
+                )?;
+                let package = self.package.as_ref().ok_or_else(|| {
+                    Invalid("Managed runtime package identity is missing.".into())
+                })?;
+                package.validate("Managed runtime package")?;
+                require(
+                    package.id == crate::MANAGED_RUNTIME_PACKAGE_ID,
+                    "Managed runtime package identity is unsupported.",
+                )?;
+            }
             RuntimeKind::ExternalIsolated => {
-                safe_identifier(&self.location, "External runtime location")?
+                safe_identifier(&self.location, "External runtime location")?;
+                require(
+                    self.package.is_none(),
+                    "Historical external runtimes cannot claim managed package custody.",
+                )?;
             }
         }
         if let Some(executable) = &self.executable {
@@ -239,6 +262,7 @@ mod tests {
                 kind: RuntimeKind::ExternalIsolated,
                 location: "C:/isolated/nomos".into(),
                 executable: Some("python".into()),
+                package: None,
                 project_snapshot: BoundIdentity {
                     id: "revision".into(),
                     fingerprint: digest('2'),
@@ -298,5 +322,25 @@ mod tests {
         value.specification_fingerprint = value.reproduce_specification_fingerprint().unwrap();
         value.fingerprint = value.reproduce_fingerprint().unwrap();
         assert!(value.validate().is_ok());
+    }
+
+    #[test]
+    fn managed_binding_requires_relative_packaged_execution() {
+        let mut value = binding();
+        value.runtime.kind = RuntimeKind::Managed;
+        value.runtime.location = "runtimes/nomos/abc/workspace".into();
+        value.runtime.executable = Some("runtimes/nomos/abc/python/runtime/python.exe".into());
+        value.runtime.package = Some(BoundIdentity {
+            id: crate::MANAGED_RUNTIME_PACKAGE_ID.into(),
+            fingerprint: digest('9'),
+        });
+        value.specification_fingerprint = value.reproduce_specification_fingerprint().unwrap();
+        value.fingerprint = value.reproduce_fingerprint().unwrap();
+        assert!(value.validate().is_ok());
+
+        value.runtime.executable = Some("C:/outside/python.exe".into());
+        value.specification_fingerprint = value.reproduce_specification_fingerprint().unwrap();
+        value.fingerprint = value.reproduce_fingerprint().unwrap();
+        assert!(value.validate().is_err());
     }
 }

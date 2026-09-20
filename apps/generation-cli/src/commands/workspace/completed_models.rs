@@ -117,7 +117,7 @@ async fn register_project_output(
     );
     let store = open_bound_store(&workspace.folder, binding).await?;
     let bound_project = load_bound_project(&store, binding).await?;
-    let backend = open_nomos_binding(binding, &bound_project)?;
+    let backend = open_nomos_binding(&workspace.folder, binding, &bound_project)?;
     let project_id: Uuid = materialization.scientific_project.id.parse()?;
     let project = store
         .get_project(project_id)
@@ -396,7 +396,7 @@ async fn register_outputs(
         .context("The bound baseline revision is missing.")?;
     let store = open_bound_store(&workspace.folder, binding).await?;
     let project = load_bound_project(&store, binding).await?;
-    let backend = open_nomos_binding(binding, &project)?;
+    let backend = open_nomos_binding(&workspace.folder, binding, &project)?;
     let outputs =
         super::super::encoder_optimize::completed_model_evidence(&store, run_id, &project).await?;
     store.pool().close().await;

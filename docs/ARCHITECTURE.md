@@ -14,6 +14,16 @@ execution, evaluation policy, or scientific approval. Existing slices retain
 those responsibilities. See `features/workspaces/managed-workspaces-spec.md` and
 `features/workspaces/managed-workspaces.md`.
 
+An adapter becomes executable through a project-contained managed runtime
+package, not through a durable absolute checkout or virtual-environment path.
+`project-workspace-core` owns the portable package identity and inventory
+contract. The CLI's adapter-specific packaging boundary copies and verifies a
+Nomos workspace and Python runtime, while the ordinary Nomos adapter continues
+to own native manifests, Git-source integrity, task inputs, and execution.
+Scientific bindings point only to contained paths. Historical external
+bindings remain append-only migration inputs. See
+`features/workspaces/managed-runtime-packages.md`.
+
 ## Dependency direction
 
 ```text

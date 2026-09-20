@@ -106,11 +106,12 @@ async fn main() -> Result<()> {
 // Deterministic native adapter boundary, not an alternative production path.
 // Python tests separately exercise the embedded complete-population algorithm.
 fn native_capabilities(arguments: &[String]) -> Result<()> {
-    const SCRIPT: &str = r#"import importlib.util,json,sys
-names=['torch','sentence_transformers','transformers','datasets','accelerate','numpy','sklearn','psutil','onnxruntime_genai']
-print(json.dumps({'version':'.'.join(map(str,sys.version_info[:3])),'major':sys.version_info[0],'minor':sys.version_info[1],'modules':{name:importlib.util.find_spec(name) is not None for name in names}}))"#;
     ensure!(
-        arguments == ["-B", "-c", SCRIPT],
+        arguments.len() == 3
+            && arguments[0] == "-B"
+            && arguments[1] == "-c"
+            && arguments[2].contains("onnxruntime_genai")
+            && arguments[2].contains("base_prefix"),
         "Unexpected native capability program: {arguments:?}"
     );
     println!(
