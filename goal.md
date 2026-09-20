@@ -1,6 +1,6 @@
 # Goal: Self-contained managed execution packages
 
-Status: implementation in progress.
+Status: implemented and verified.
 Owner: managed workspace and Nomos adapter integration.
 Last updated: 20 September 2026.
 
@@ -52,6 +52,12 @@ checkout or selected virtual-environment path.
 - Core, CLI, local persistence, and desktop type/unit/build checks pass.
 - The real Nomos project is rebound, deeply verified, and can begin or resume a
   run with the original checkout and venv paths no longer consulted.
+
+Acceptance completed on 20 September 2026. The real Nomos project is bound to
+managed package `sha256:19a57cad5f75cff7381f046d500ef841641485717785ac0d99f5257a22996f41`;
+deep inventory, contained Python, Nomos project, and readiness checks passed.
+The existing active optimization remains resumable from its unchanged
+scientific store.
 
 ## Out of scope
 

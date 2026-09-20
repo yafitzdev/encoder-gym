@@ -2324,9 +2324,10 @@ async fn inspect_python_runtime_source(
     PythonRuntimeInspection,
     runtime_package::PythonPackageSource,
 )> {
-    const SCRIPT: &str = r#"import importlib.util,json,sys,sysconfig
+    const SCRIPT: &str = r#"import importlib.util,json,os,sys,sysconfig
 names=['torch','sentence_transformers','transformers','datasets','accelerate','numpy','sklearn','psutil','onnxruntime_genai']
-print(json.dumps({'version':'.'.join(map(str,sys.version_info[:3])),'major':sys.version_info[0],'minor':sys.version_info[1],'modules':{name:importlib.util.find_spec(name) is not None for name in names},'prefix':sys.prefix,'base_prefix':sys.base_prefix,'base_executable':getattr(sys,'_base_executable',sys.executable),'purelib':sysconfig.get_path('purelib'),'platlib':sysconfig.get_path('platlib')}))"#;
+base_candidate=os.path.join(sys.base_prefix,os.path.basename(sys.executable)); base_executable=base_candidate if os.path.isfile(base_candidate) else getattr(sys,'_base_executable',sys.executable)
+print(json.dumps({'version':'.'.join(map(str,sys.version_info[:3])),'major':sys.version_info[0],'minor':sys.version_info[1],'modules':{name:importlib.util.find_spec(name) is not None for name in names},'prefix':sys.prefix,'base_prefix':sys.base_prefix,'base_executable':base_executable,'purelib':sysconfig.get_path('purelib'),'platlib':sysconfig.get_path('platlib')}))"#;
     let output = tokio::time::timeout(
         Duration::from_secs(15),
         tokio::process::Command::new(executable)
